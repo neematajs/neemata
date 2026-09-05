@@ -33,6 +33,7 @@ export type StoredRun = {
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
   readonly version: number
+  readonly activeSince: Date
   readonly createdAt: Date
   readonly updatedAt: Date
 }
@@ -78,6 +79,7 @@ export type StoredNodeChild = {
   readonly output?: unknown
   readonly error?: StoredError
   readonly childRunId?: string
+  /** Cleared by manual retry while attemptCount and attempt history survive. */
   readonly currentAttemptId?: string
   readonly attemptCount: number
   readonly version: number

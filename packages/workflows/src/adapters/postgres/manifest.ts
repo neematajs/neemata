@@ -1,4 +1,4 @@
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 1
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 2
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   version: WORKFLOW_POSTGRES_SCHEMA_VERSION,
   enums: [
@@ -257,6 +257,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       unique_scope: { type: 'text', nullable: true },
       unique_behavior: { type: 'text', nullable: true },
       version: { type: 'int4', nullable: false },
+      active_since: { type: 'timestamptz', nullable: false },
       created_at: { type: 'timestamptz', nullable: false },
       updated_at: { type: 'timestamptz', nullable: false },
     },

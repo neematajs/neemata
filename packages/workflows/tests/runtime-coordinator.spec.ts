@@ -2644,7 +2644,7 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
-  it('cancels in-flight parallel child workflow siblings when a member fails', async () => {
+  it('preserves in-flight parallel siblings until all members settle', async () => {
     const childWorkflow = defineWorkflow({
       name: 'parallel-cancel-sibling-child',
       input: t.object({ text: t.string() }),
@@ -2728,9 +2728,9 @@ describe('workflow runtime coordinator', () => {
 
     const parent = await runtime.store.loadRunSnapshot(run.id)
     const child = await runtime.store.loadRunSnapshot(childRunId!)
-    expect(parent?.run.status).toBe('failed')
-    expect(parent?.nodes[0]?.status).toBe('failed')
-    expect(child?.run.status).toBe('cancelled')
+    expect(parent?.run.status).toBe('waiting')
+    expect(parent?.nodes[0]?.status).toBe('waiting')
+    expect(child?.run.status).toBe('queued')
   })
 
   it('runs mapTask wait-all items as child task runs and preserves item order', async () => {
@@ -2748,7 +2748,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.object({ id: t.string(), text: t.string() }),
-        mode: 'wait-all',
       })
       .build()
 
@@ -2882,7 +2881,7 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
-  it('cancels in-flight mapTask siblings when a wait-all child fails', async () => {
+  it('preserves in-flight mapTask siblings after one child fails', async () => {
     const embeddingTask = defineTask({
       name: 'map.cancel-sibling-embedding',
       input: t.object({ text: t.string() }),
@@ -2895,7 +2894,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.string(),
-        mode: 'wait-all',
       })
       .build()
     const taskImplementation = implementTask(embeddingTask, {
@@ -2968,12 +2966,12 @@ describe('workflow runtime coordinator', () => {
     const parent = await runtime.store.loadRunSnapshot(run.id)
     const failedChild = await runtime.store.loadRunSnapshot(failedRunId)
     const sibling = await runtime.store.loadRunSnapshot(siblingRunId)
-    expect(parent?.run.status).toBe('failed')
-    expect(parent?.nodes[0]?.status).toBe('failed')
+    expect(parent?.run.status).toBe('waiting')
+    expect(parent?.nodes[0]?.status).toBe('waiting')
     expect(failedChild?.run.status).toBe('failed')
-    expect(sibling?.run.status).toBe('cancelled')
-    expect(sibling?.nodes[0]?.status).toBe('cancelled')
-    expect(runtime.inspect().taskCommands).toStrictEqual([])
+    expect(sibling?.run.status).toBe('queued')
+    expect(sibling?.nodes[0]?.status).toBe('running')
+    expect(runtime.inspect().taskCommands).toHaveLength(1)
   })
 
   it('bounds mapTask child run dispatch by node concurrency', async () => {
@@ -2989,7 +2987,7 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.string(),
-        mode: 'wait-all',
+
         concurrency: 2,
       })
       .build()
@@ -3105,7 +3103,7 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
-  it('runs mapTask wait-settled items without failing parent on item failure', async () => {
+  it('runs mapTask items and fails the parent after every item settles', async () => {
     const embeddingTask = defineTask({
       name: 'map.settled-embedding',
       input: t.object({ text: t.string() }),
@@ -3118,7 +3116,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.string(),
-        mode: 'wait-settled',
       })
       .build()
 
@@ -3192,37 +3189,19 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.children.map((child) => child.childRunId)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toMatchObject({
-      items: [
-        {
-          item: 'alpha',
-          index: 0,
-          runId: runIds[0],
-          status: 'completed',
-          output: { id: 'embedding:alpha' },
-        },
-        {
-          item: 'beta',
-          index: 1,
-          runId: runIds[1],
-          status: 'failed',
-          error: {
-            message: 'bad embedding',
-            cause: { message: 'embedding service down' },
-          },
-        },
-      ],
-    })
-    expect(JSON.stringify(final?.nodes[0]?.output)).toContain(
+    expect(final?.nodes[0]?.status).toBe('failed')
+    expect(final?.run.status).toBe('failed')
+    expect(final?.run.output).toBeUndefined()
+    expect(final?.children.map((child) => child.status)).toEqual([
+      'completed',
+      'failed',
+    ])
+    expect(final?.children[1]?.error?.cause?.message).toBe(
       'embedding service down',
     )
-    expect(final?.run.status).toBe('completed')
-    expect(final?.run.output).toStrictEqual({ count: 2 })
   })
 
-  it('runs mapTask start-only and completes after child task runs are started', async () => {
+  it('runs mapTask and waits for started task runs', async () => {
     const embeddingTask = defineTask({
       name: 'map.start-only-embedding',
       input: t.object({ text: t.string() }),
@@ -3235,7 +3214,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.string(),
-        mode: 'start-only',
       })
       .build()
 
@@ -3267,20 +3245,13 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.children.map((child) => child.childRunId)
-    expect(runtime.inspect().taskCommands).toHaveLength(2)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      items: [
-        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
-        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
-      ],
-    })
-    expect(final?.run.status).toBe('completed')
-    expect(final?.run.output).toStrictEqual({ started: 2 })
+    expect(final?.nodes[0]?.status).toBe('waiting')
+    expect(final?.nodes[0]?.output).toBeUndefined()
+    expect(final?.run.status).toBe('waiting')
+    expect(final?.run.output).toBeUndefined()
   })
 
-  it('runs mapTask start-only concurrency as start batches without waiting for child completion', async () => {
+  it('runs mapTask with concurrency retaining pending items until child completion', async () => {
     const embeddingTask = defineTask({
       name: 'map.start-only-batched-embedding',
       input: t.object({ text: t.string() }),
@@ -3293,7 +3264,7 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', embeddingTask, {
         item: t.string(),
-        mode: 'start-only',
+
         concurrency: 1,
       })
       .build()
@@ -3340,7 +3311,7 @@ describe('workflow runtime coordinator', () => {
         .continueRunCommands.some(
           (queued) => queued.payload.runId === command.runId,
         ),
-    ).toBe(true)
+    ).toBe(false)
 
     await continueWorkflowRun({
       store: runtime.store,
@@ -3353,15 +3324,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(command.runId)
-    const runIds = final!.children.map((child) => child.childRunId)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      items: [
-        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
-        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
-      ],
-    })
-    expect(final?.run.output).toStrictEqual({ started: 2 })
+    expect(final?.nodes[0]?.status).toBe('waiting')
+    expect(final?.nodes[0]?.output).toBeUndefined()
+    expect(final?.run.status).toBe('waiting')
+    expect(final?.run.output).toBeUndefined()
   })
 
   it('runs mapWorkflow wait-all children on separate workers and preserves item order', async () => {
@@ -3377,7 +3343,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapWorkflow('children', childWorkflow, {
         item: t.string(),
-        mode: 'wait-all',
       })
       .build()
 
@@ -3518,7 +3483,7 @@ describe('workflow runtime coordinator', () => {
     })
       .mapWorkflow('children', childWorkflow, {
         item: t.string(),
-        mode: 'wait-all',
+
         concurrency: 2,
       })
       .build()
@@ -3634,7 +3599,7 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
-  it('runs mapWorkflow wait-settled without failing parent on child failure', async () => {
+  it('runs mapWorkflow children and fails the parent after every child settles', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-settled-child',
       input: t.object({ text: t.string() }),
@@ -3647,7 +3612,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapWorkflow('children', childWorkflow, {
         item: t.string(),
-        mode: 'wait-settled',
       })
       .build()
 
@@ -3704,34 +3668,17 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(parentRun.id)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toMatchObject({
-      items: [
-        {
-          item: 'alpha',
-          index: 0,
-          runId: childRunIds[0],
-          status: 'completed',
-          output: { id: 'child:alpha' },
-        },
-        {
-          item: 'beta',
-          index: 1,
-          runId: childRunIds[1],
-          status: 'failed',
-          error: {
-            message: 'child failed',
-            cause: { message: 'child cause' },
-          },
-        },
-      ],
-    })
-    expect(JSON.stringify(final?.nodes[0]?.output)).toContain('child cause')
-    expect(final?.run.status).toBe('completed')
-    expect(final?.run.output).toStrictEqual({ count: 2 })
+    expect(final?.nodes[0]?.status).toBe('failed')
+    expect(final?.run.status).toBe('failed')
+    expect(final?.run.output).toBeUndefined()
+    expect(final?.children.map((child) => child.status)).toEqual([
+      'completed',
+      'failed',
+    ])
+    expect(final?.children[1]?.error?.cause?.message).toBe('child cause')
   })
 
-  it('runs mapWorkflow start-only and completes after child workflow runs are started', async () => {
+  it('runs mapWorkflow and waits for started workflow runs', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-start-only-child',
       input: t.object({ text: t.string() }),
@@ -3744,7 +3691,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapWorkflow('children', childWorkflow, {
         item: t.string(),
-        mode: 'start-only',
       })
       .build()
 
@@ -3776,26 +3722,13 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(run.id)
-    const runIds = final!.children.map((child) => child.childRunId)
-    expect(
-      runtime
-        .inspect()
-        .continueRunCommands.filter(
-          (command) => command.payload.workflowName === childWorkflow.name,
-        ),
-    ).toHaveLength(2)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      items: [
-        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
-        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
-      ],
-    })
-    expect(final?.run.status).toBe('completed')
-    expect(final?.run.output).toStrictEqual({ started: 2 })
+    expect(final?.nodes[0]?.status).toBe('waiting')
+    expect(final?.nodes[0]?.output).toBeUndefined()
+    expect(final?.run.status).toBe('waiting')
+    expect(final?.run.output).toBeUndefined()
   })
 
-  it('runs mapWorkflow start-only concurrency as start batches without waiting for child completion', async () => {
+  it('runs mapWorkflow with concurrency retaining pending items until child completion', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-start-only-batched-child',
       input: t.object({ text: t.string() }),
@@ -3808,7 +3741,7 @@ describe('workflow runtime coordinator', () => {
     })
       .mapWorkflow('children', childWorkflow, {
         item: t.string(),
-        mode: 'start-only',
+
         concurrency: 1,
       })
       .build()
@@ -3855,7 +3788,7 @@ describe('workflow runtime coordinator', () => {
         .continueRunCommands.some(
           (queued) => queued.payload.runId === command.runId,
         ),
-    ).toBe(true)
+    ).toBe(false)
 
     await continueWorkflowRun({
       store: runtime.store,
@@ -3868,15 +3801,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const final = await runtime.store.loadRunSnapshot(command.runId)
-    const runIds = final!.children.map((child) => child.childRunId)
-    expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      items: [
-        { item: 'alpha', index: 0, runId: runIds[0], status: 'queued' },
-        { item: 'beta', index: 1, runId: runIds[1], status: 'queued' },
-      ],
-    })
-    expect(final?.run.output).toStrictEqual({ started: 2 })
+    expect(final?.nodes[0]?.status).toBe('waiting')
+    expect(final?.nodes[0]?.output).toBeUndefined()
+    expect(final?.run.status).toBe('waiting')
+    expect(final?.run.output).toBeUndefined()
   })
 
   it('reuses original branch child task run input on repeated continuation', async () => {
@@ -4448,7 +4376,6 @@ describe('workflow runtime coordinator', () => {
     })
       .mapTask('embeddings', task, {
         item: t.object({ text: t.string() }),
-        mode: 'wait-all',
       })
       .build()
     const implementation = implementWorkflow(workflow)

@@ -128,16 +128,24 @@ export async function installPostgresWorkflowSchemaForTesting(
       unique_scope text,
       unique_behavior text,
       version integer NOT NULL,
+      active_since timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL
     )
   `)
   await db.query(`
     ALTER TABLE workflow_runs
+    ADD COLUMN IF NOT EXISTS active_since timestamptz,
     ADD COLUMN IF NOT EXISTS unique_key jsonb,
     ADD COLUMN IF NOT EXISTS unique_scope text,
     ADD COLUMN IF NOT EXISTS unique_behavior text
   `)
+  await db.query(
+    'UPDATE workflow_runs SET active_since = created_at WHERE active_since IS NULL',
+  )
+  await db.query(
+    'ALTER TABLE workflow_runs ALTER COLUMN active_since SET NOT NULL, ALTER COLUMN active_since SET DEFAULT now()',
+  )
   await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_idempotency_idx
     ON workflow_runs (idempotency_key)

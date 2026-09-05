@@ -364,7 +364,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -406,7 +406,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -440,7 +440,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id, {
+    const retried = await client.restart(run.id, {
       tags: { tenantId: 'tenant-2' },
     })
 
@@ -471,7 +471,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id, {
+    const retried = await client.restart(run.id, {
       idempotencyKey: ['retry', 'alpha'],
     })
 
@@ -505,7 +505,7 @@ describe('workflow runtime client', () => {
       output: { id: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'task',
@@ -540,7 +540,7 @@ describe('workflow runtime client', () => {
     })
     const run = await client.start(workflow, { scenario: 'alpha' })
 
-    await expect(client.retry(run.id)).rejects.toThrow(
+    await expect(client.restart(run.id)).rejects.toThrow(
       `Run [${run.id}] is not terminal`,
     )
   })
@@ -549,7 +549,7 @@ describe('workflow runtime client', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
 
-    await expect(client.retry('missing-run-id')).rejects.toThrow(
+    await expect(client.restart('missing-run-id')).rejects.toThrow(
       'Run [missing-run-id] not found',
     )
   })
@@ -570,7 +570,7 @@ describe('workflow runtime client', () => {
     })
     await runtime.store.completeRun({ runId: child.id, output: { ok: true } })
 
-    await expect(client.retry(child.id)).rejects.toThrow(
+    await expect(client.restart(child.id)).rejects.toThrow(
       `Run [${child.id}] is not a root run`,
     )
   })
@@ -589,8 +589,8 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    await expect(client.retry(run.id)).rejects.toThrow(
-      `Cannot retry run [${run.id}]: no workflow definition [${workflow.name}] is known to this client`,
+    await expect(client.restart(run.id)).rejects.toThrow(
+      `Cannot restart run [${run.id}]: no workflow definition [${workflow.name}] is known to this client`,
     )
   })
 
@@ -615,7 +615,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -641,7 +641,7 @@ describe('workflow runtime client', () => {
     const run = await client.start(task, { text: 'alpha' })
     await runtime.store.completeRun({ runId: run.id, output: { id: 'alpha' } })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'task',

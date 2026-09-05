@@ -41,11 +41,9 @@ describe('workflow orchestration nodes', () => {
     }))
     .mapWorkflow('caseRuns', childWorkflow, {
       item: t.object({ id: t.string(), text: t.string() }),
-      mode: 'start-only',
     })
     .mapTask('embeddings', embeddingTask, {
       item: t.object({ id: t.string(), text: t.string() }),
-      mode: 'wait-all',
     })
     .build()
 
@@ -132,7 +130,7 @@ describe('workflow orchestration nodes', () => {
       })
         .mapTask('embeddings', embeddingTask, {
           item: t.string(),
-          mode: 'wait-all',
+
           concurrency: 0,
         })
         .build(),
@@ -145,7 +143,7 @@ describe('workflow orchestration nodes', () => {
       })
         .mapWorkflow('children', childWorkflow, {
           item: t.string(),
-          mode: 'wait-all',
+
           concurrency: Number.NaN,
         })
         .build(),

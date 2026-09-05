@@ -111,7 +111,7 @@ verification:
 
 ```sql
 INSERT INTO workflow_schema_version (id, version)
-VALUES (1, 1)
+VALUES (1, 2)
 ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
 ```
 
@@ -120,3 +120,57 @@ installed schema does not match the runtime. The helper
 `installPostgresWorkflowSchemaForTesting(connection)` is available from
 `@nmtjs/workflows/postgres/testing` for tests and local development only, not
 production migrations.
+
+## Retrying failed work
+
+`client.retry(runId, { expectedVersion })` reopens a failed root run in place.
+The ID, input, tags, idempotency key, successful nodes and child runs are retained.
+Only failed work executes again, using the previous attempt's stored input and
+idempotency key. Attempt history and absolute attempt numbers are preserved;
+manual retry authorizes one further attempt without resetting automatic retry
+budgets. `expectedVersion` is optional, but management UIs should supply the
+version they displayed to reject stale retry requests.
+
+`client.restart(runId, options)` creates a new root run from the stored input.
+It accepts failed, completed and cancelled roots, plus the same start options
+as `start()`. This is the old `retry()` behavior. Definitions are required by
+`restart()` for name resolution; in-place `retry()` is registry-free. Existing
+uniqueness and idempotency rules still apply to a restart. In-place retry always
+rejects an occupied uniqueness key, even when the constraint normally joins.
+
+All `parallel`, `mapTask` and `mapWorkflow` nodes wait for every child to settle.
+Failures do not cancel siblings or stop admission of pending map items. A node
+succeeds only when every child succeeds; otherwise it fails after settling.
+Explicit cancellation still cancels unfinished work. The map `mode` option and
+mode-specific output types were removed. Successful map output is always
+`{ items: { item, index, runId, output }[] }`, in original item order. Expected
+business rejections belong in typed task outputs; thrown errors remain runtime
+failures. Consumers of `start-only` now wait for child completion, and consumers
+of `wait-settled` must stop reading per-item runtime status from successful output.
+
+After retry, refresh the same run and open a new `watch()` iterator: the previous
+iterator ended when the run failed. A retry is rejected while a coordinator or
+attempt still holds a live lease; allow it to settle before retrying. This avoids
+restarting work while its previous handler is still completing. Handlers must
+still make external side effects idempotent, as with ordinary crash recovery.
+
+## Schema version 2 migration
+
+Apply this application-owned PostgreSQL migration before deploying this version,
+with workflow workers stopped. It preserves the timeout age of existing runs.
+New retries reset `active_since`; ordinary progress does not extend the timeout.
+
+```sql
+BEGIN;
+ALTER TABLE workflow_runs ADD COLUMN active_since timestamptz;
+UPDATE workflow_runs SET active_since = created_at;
+ALTER TABLE workflow_runs
+  ALTER COLUMN active_since SET NOT NULL,
+  ALTER COLUMN active_since SET DEFAULT now();
+UPDATE workflow_schema_version SET version = 2 WHERE id = 1;
+COMMIT;
+```
+
+Attempt errors remain in immutable attempt history. Run/node callback errors are
+current-state fields and are cleared by retry; durable callback-error history and
+workflow-definition version pinning are outside this change.

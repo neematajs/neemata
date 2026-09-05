@@ -18,7 +18,6 @@ import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
   BranchCaseKind,
-  MapRunMode,
   WorkflowNodeKind,
 } from '../types/index.ts'
 import { parseChildKey, type ParsedChildKey } from '../runtime/child-key.ts'
@@ -45,7 +44,6 @@ export type WorkflowGraphNode = {
   /** Branch and parallel members, in definition order. */
   readonly cases?: readonly WorkflowGraphCase[]
   /** Fan-out completion mode for mapTask and mapWorkflow nodes. */
-  readonly mode?: MapRunMode
 }
 
 export type WorkflowGraphTarget = {
@@ -150,7 +148,6 @@ export function serializeWorkflowGraph(
             kind: node.kind,
             ...presentationMetadata(node),
             target: serializeWorkflowGraphTarget('task', node.task),
-            mode: node.mode,
           }
         case 'mapWorkflow':
           return {
@@ -158,7 +155,6 @@ export function serializeWorkflowGraph(
             kind: node.kind,
             ...presentationMetadata(node),
             target: serializeWorkflowGraphTarget('workflow', node.workflow),
-            mode: node.mode,
           }
       }
     }),
@@ -282,7 +278,11 @@ export type NodeUnitDto = {
 }
 
 export function toRunDto(run: StoredRun): RunDto {
-  return convertDates(run, { createdAt: true, updatedAt: true })
+  return convertDates(run, {
+    activeSince: true,
+    createdAt: true,
+    updatedAt: true,
+  })
 }
 
 export function toNodeDto(node: StoredNode): NodeDto {
@@ -350,7 +350,11 @@ export function nodeUnits(
 }
 
 export function toRunSummaryDto(summary: RunSummary): RunSummaryDto {
-  return convertDates(summary, { createdAt: true, updatedAt: true })
+  return convertDates(summary, {
+    activeSince: true,
+    createdAt: true,
+    updatedAt: true,
+  })
 }
 
 function toNodeSummaryDto(summary: NodeSummary): NodeSummaryDto {

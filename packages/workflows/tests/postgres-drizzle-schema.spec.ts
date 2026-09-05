@@ -478,32 +478,23 @@ function rejectClientClockCommandParams(
   return wrap(connection)
 }
 
-function failChildUpdateAfterAttemptInsert(
+async function installChildAttemptUpdateFailure(
   connection: WorkflowPostgresConnection,
-): WorkflowPostgresConnection {
-  let attemptInserted = false
-  const wrap = (
-    target: WorkflowPostgresConnection,
-  ): WorkflowPostgresConnection => ({
-    async query<T extends Record<string, unknown> = Record<string, unknown>>(
-      sql: string,
-      params: readonly unknown[] = [],
-    ): Promise<WorkflowPostgresQueryResult<T>> {
-      if (/INSERT\s+INTO\s+workflow_attempts/i.test(sql)) {
-        attemptInserted = true
-      }
-      if (
-        attemptInserted &&
-        /UPDATE\s+workflow_node_children\s+SET\s+current_attempt_id/i.test(sql)
-      ) {
-        throw new Error('forced child update failure')
-      }
-      return target.query<T>(sql, params)
-    },
-    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
-  })
-
-  return wrap(connection)
+) {
+  // A database error exercises rollback inside a grouped statement too.
+  await connection.query(`
+    CREATE FUNCTION pg_temp.reject_child_attempt_update() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'forced child update failure';
+    END;
+    $$
+  `)
+  await connection.query(`
+    CREATE TRIGGER reject_child_attempt_update
+    BEFORE UPDATE OF current_attempt_id ON workflow_node_children
+    FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_child_attempt_update();
+  `)
 }
 
 const primaryKeyColumns = (table: Parameters<typeof getTableConfig>[0]) =>
@@ -541,7 +532,7 @@ test('creates drizzle schema with canonical runtime names', () => {
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
   expectTypeOf(schema.tables).toHaveProperty('schedules')
-  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(1)
+  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(2)
 
   expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
   expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()
@@ -2170,9 +2161,8 @@ test('rolls back createAttempt when the child update fails', async () => {
     nodeName: 'content',
     children: [{ childKey: '$self', kind: 'activity' }],
   })
-  const runtime = createPostgresWorkflowRuntime({
-    connection: failChildUpdateAfterAttemptInsert(connection),
-  })
+  await installChildAttemptUpdateFailure(connection)
+  const runtime = setupRuntime
 
   await expect(
     runtime.store.createAttempt({
@@ -2219,9 +2209,8 @@ test('rolls back ensureChildAttempt when the child update fails', async () => {
     nodeName: 'content',
     children: [{ childKey: '$self', kind: 'activity' }],
   })
-  const runtime = createPostgresWorkflowRuntime({
-    connection: failChildUpdateAfterAttemptInsert(connection),
-  })
+  await installChildAttemptUpdateFailure(connection)
+  const runtime = setupRuntime
 
   await expect(
     runtime.store.ensureChildAttempt({
@@ -2637,4 +2626,124 @@ test('verifies postgres schema constraint definitions', async () => {
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
     'Invalid workflow Postgres schema constraints: workflow_attempts_child_attempt_key',
   )
+})
+
+test('groups attempt persistence while preserving history and current-attempt fences', async () => {
+  const database = new PGlite()
+  const connection = createPgliteConnection(database)
+  try {
+    await installPostgresWorkflowSchemaForTesting(connection)
+    let queries = 0
+    const wrap = (
+      target: WorkflowPostgresConnection,
+    ): WorkflowPostgresConnection => ({
+      query(sql, params) {
+        queries++
+        return target.query(sql, params)
+      },
+      transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
+    })
+    const runtime = createPostgresWorkflowRuntime({
+      connection: wrap(connection),
+    })
+    const run = await runtime.store.createRun({
+      workflowName: 'grouped-attempt',
+      input: {},
+    })
+    const ref = { runId: run.id, nodeName: 'content', childKey: '$self' }
+    await runtime.store.createNode({
+      runId: run.id,
+      name: ref.nodeName,
+      kind: 'activity',
+    })
+    await runtime.store.ensureNodeChildren({
+      ...ref,
+      children: [{ childKey: ref.childKey, kind: 'activity' }],
+    })
+    queries = 0
+    const first = await runtime.store.ensureChildAttempt({
+      ...ref,
+      input: { value: 1 },
+    })
+    expect(queries).toBe(2)
+    queries = 0
+    const second = await runtime.store.createAttempt({
+      ...ref,
+      input: { value: 2 },
+      idempotencyKey: ['saved'],
+    })
+    expect(queries).toBe(1)
+    for (const [attemptId, leaseToken] of [
+      [first.attempt.id, first.attempt.leaseToken!],
+      [second.id, first.attempt.leaseToken!],
+    ]) {
+      queries = 0
+      expect(
+        await runtime.store.failCurrentAttempt({
+          attemptId,
+          leaseToken,
+          error: new Error('stale'),
+        }),
+      ).toBeUndefined()
+      expect(queries).toBe(1)
+    }
+    queries = 0
+    expect(
+      (
+        await runtime.store.failCurrentAttempt({
+          attemptId: second.id,
+          leaseToken: second.leaseToken!,
+          error: new Error('failed'),
+        })
+      )?.status,
+    ).toBe('failed')
+    expect(queries).toBe(1)
+    await runtime.store.failNodeChild({ ...ref, error: new Error('failed') })
+    const failed = await runtime.store.failRun({
+      runId: run.id,
+      error: new Error('failed'),
+    })
+    await runtime.store.reopenFailedRun({
+      runId: run.id,
+      expectedVersion: failed!.version,
+    })
+    queries = 0
+    const retried = await runtime.store.ensureChildAttempt({
+      ...ref,
+      input: { value: 'ignored' },
+    })
+    expect(queries).toBe(3)
+    expect(retried.attempt).toMatchObject({
+      attemptNumber: 3,
+      input: { value: 2 },
+      idempotencyKey: ['saved'],
+    })
+    const snapshot = await runtime.store.loadRunSnapshot(run.id)
+    expect(snapshot?.attempts).toHaveLength(3)
+    expect(snapshot?.children[0]).toMatchObject({
+      status: 'running',
+      currentAttemptId: retried.attempt.id,
+      attemptCount: 3,
+    })
+    expect(snapshot?.nodes[0]?.status).toBe('running')
+    await runtime.store.completeNodeChild({ ...ref, output: 'done' })
+    expect(
+      await runtime.store.failCurrentAttempt({
+        attemptId: retried.attempt.id,
+        leaseToken: retried.attempt.leaseToken!,
+        error: new Error('late'),
+      }),
+    ).toBeUndefined()
+    await expect(
+      runtime.store.createAttempt({ ...ref, input: {} }),
+    ).rejects.toThrow('Terminal node child')
+    await expect(
+      runtime.store.createAttempt({ ...ref, childKey: 'missing', input: {} }),
+    ).rejects.toThrow('Missing node child')
+    expect(
+      (await runtime.store.loadRunSnapshot(run.id))?.attempts,
+    ).toHaveLength(3)
+  } finally {
+    await database.close()
+  }
 })

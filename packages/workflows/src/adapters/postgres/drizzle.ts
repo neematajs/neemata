@@ -153,6 +153,9 @@ export function createSchema(options?: CreateSchemaOptions) {
       uniqueScope: text('unique_scope'),
       uniqueBehavior: text('unique_behavior'),
       version: integer('version').notNull(),
+      activeSince: timestamp('active_since', { withTimezone: true })
+        .notNull()
+        .defaultNow(),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },
