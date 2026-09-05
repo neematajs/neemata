@@ -36,7 +36,7 @@ function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   if (value instanceof Error) {
     logger?.error(new Error(`Neem runtime ${origin} error`, { cause: value }))
   } else {
-    logger?.error({ thrown: value }, `Neem runtime ${origin} error`)
+    logger?.error({ err: value }, `Neem runtime ${origin} error`)
   }
   postMessage({ type: 'error', data: { ...serializeError(value), origin } })
 }
