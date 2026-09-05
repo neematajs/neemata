@@ -279,6 +279,7 @@ export function createSchema(options?: CreateSchemaOptions) {
       workerId: text('worker_id'),
       leaseToken: text('lease_token'),
       attemptNumber: integer('attempt_number').notNull(),
+      retryAttemptNumber: integer('retry_attempt_number').notNull(),
       input: jsonb('input').notNull(),
       idempotencyKey: jsonb('idempotency_key'),
       output: jsonb('output'),

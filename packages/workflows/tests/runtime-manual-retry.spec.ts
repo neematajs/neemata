@@ -233,14 +233,14 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
     })
 
-    it('retries root tasks once without replenishing their automatic attempt budget', async () => {
+    it('replenishes root task retry budgets while rejecting concurrent retries', async () => {
       const runtime = await setup()
       let calls = 0
       const task = defineTask({
         name: 'root-task',
         input: t.number(),
         output: t.number(),
-        retry: { attempts: 1 },
+        retry: { attempts: 3 },
       })
       const impl = implementTask(task, {
         handler: async () => {
@@ -268,14 +268,136 @@ for (const adapter of ['memory', 'postgres'] as const) {
         results.filter((result) => result.status === 'fulfilled'),
       ).toHaveLength(1)
       await execute()
-      expect(calls).toBe(2)
+      expect(calls).toBe(6)
       expect(
         (await client.get(run.id))?.attempts.map((a) => a.attemptNumber),
-      ).toEqual([1, 2])
+      ).toEqual([1, 2, 3, 4, 5, 6])
       await expect(
         client.retry(run.id, { expectedVersion: before.run.version }),
       ).rejects.toThrow('Stale retry version')
     })
+
+    for (const kind of ['task', 'activity'] as const) {
+      it(`resets ${kind} budgets and backoff on repeated manual retries`, async () => {
+        const runtime = await setup()
+        const retry = {
+          attempts: 3,
+          delay: '1s',
+          backoff: 'exponential',
+        } as const
+        let calls = 0
+        let succeed = false
+        const handler = async () => {
+          calls++
+          if (!succeed) throw new Error('temporary')
+          return 7
+        }
+        const task = defineTask({
+          name: 'budget-task',
+          input: t.number(),
+          output: t.number(),
+          retry,
+        })
+        const taskImpl = implementTask(task, { handler })
+        const workflow = defineWorkflow({
+          name: 'budget-workflow',
+          input: t.number(),
+        })
+          .activity('review', { input: t.number(), output: t.number(), retry })
+          .build()
+        const workflowImpl = implementWorkflow(workflow)
+          .review(handler)
+          .finish((_ctx, outputs) => outputs.review)
+        const delays: number[] = []
+        const dispatch = kind === 'task' ? 'dispatchTask' : 'dispatchActivity'
+        // Inspect scheduling without waiting for timers, including transaction-scoped executors.
+        const interceptBackoff = (executor: typeof runtime.attemptExecutor) => {
+          const original = executor[dispatch].bind(executor)
+          vi.spyOn(executor, dispatch).mockImplementation(
+            async (command, options) => {
+              if (options?.runAt)
+                delays.push(
+                  Math.round((options.runAt.getTime() - Date.now()) / 1000),
+                )
+              return original(command as never)
+            },
+          )
+        }
+        interceptBackoff(runtime.attemptExecutor)
+        const atomicCompletion =
+          'atomicCompletion' in runtime ? runtime.atomicCompletion : undefined
+        if (atomicCompletion) {
+          const original = atomicCompletion.run.bind(atomicCompletion)
+          vi.spyOn(atomicCompletion, 'run').mockImplementation((handler) =>
+            original(async (scoped) => {
+              interceptBackoff(scoped.attemptExecutor)
+              return handler(scoped)
+            }),
+          )
+        }
+        const client = createWorkflowRuntimeClient(runtime)
+        const run =
+          kind === 'task'
+            ? await client.start(task, 7)
+            : await client.start(workflow, 7)
+        const execute = async () => {
+          if (kind === 'activity')
+            await runWorkflowWorker({
+              ...runtime,
+              workflows: [workflowImpl],
+              workerId: 'coordinator',
+              reaping: false,
+              runTimeouts: false,
+            })
+          await runExecutionWorker({
+            ...runtime,
+            workflows: [workflowImpl],
+            tasks: [taskImpl],
+            workerId: 'executor',
+            reaping: false,
+          })
+          if (kind === 'activity')
+            await runWorkflowWorker({
+              ...runtime,
+              workflows: [workflowImpl],
+              workerId: 'coordinator',
+              reaping: false,
+              runTimeouts: false,
+            })
+        }
+        await execute()
+        const before = (await client.get(run.id))!
+        expect(before.run.status).toBe('failed')
+        expect(calls).toBe(3)
+        await client.retry(run.id)
+        await execute()
+        const after = (await client.get(run.id))!
+        expect(after.run.status).toBe('failed')
+        expect(calls).toBe(6)
+        expect(delays).toEqual([1, 2, 1, 2])
+        expect(after.attempts.map((attempt) => attempt.attemptNumber)).toEqual([
+          1, 2, 3, 4, 5, 6,
+        ])
+        expect(
+          after.attempts.map((attempt) => attempt.retryAttemptNumber),
+        ).toEqual([1, 2, 3, 1, 2, 3])
+        for (const attempt of before.attempts)
+          expect(after.attempts.find((item) => item.id === attempt.id)).toEqual(
+            attempt,
+          )
+        succeed = true
+        await client.retry(run.id)
+        await execute()
+        const completed = (await client.get(run.id))!
+        expect(completed.run.status).toBe('completed')
+        expect(calls).toBe(7)
+        expect(completed.attempts.at(-1)).toMatchObject({
+          attemptNumber: 7,
+          retryAttemptNumber: 1,
+        })
+        expect(delays).toEqual([1, 2, 1, 2])
+      })
+    }
 
     it('retries finish failures without repeating successful activities and resets timeout age', async () => {
       const runtime = await setup()

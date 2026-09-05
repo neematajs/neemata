@@ -97,6 +97,8 @@ export type StoredAttempt = {
   readonly leaseToken?: string
   /** Per-child ordinal: retries of the same child count from 1. */
   readonly attemptNumber: number
+  /** Per-child attempt number since the most recent manual retry. */
+  readonly retryAttemptNumber: number
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly output?: unknown

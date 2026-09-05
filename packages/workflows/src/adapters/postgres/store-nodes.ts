@@ -212,18 +212,20 @@ export const createPostgresWorkflowNodeStore = (
         db,
         `
         WITH child AS MATERIALIZED (
-          SELECT c.*, r.root_run_id
+          SELECT c.*, r.root_run_id,
+            COALESCE(a.retry_attempt_number, 0) + 1 AS next_retry_attempt_number
           FROM workflow_node_children c
+          LEFT JOIN workflow_attempts a ON a.id = c.current_attempt_id
           JOIN workflow_runs r ON r.id = c.run_id
           WHERE c.run_id = $2 AND c.node_name = $3 AND c.child_key = $4
           FOR UPDATE OF c
         ), inserted AS (
           INSERT INTO workflow_attempts (
             id, run_id, node_name, child_key, status, lease_token,
-            attempt_number, input, idempotency_key, dispatched_at
+            attempt_number, retry_attempt_number, input, idempotency_key, dispatched_at
           )
           SELECT $1, run_id, node_name, child_key, 'started', $5,
-            attempt_count + 1, $6::jsonb, $7::jsonb, now()
+            attempt_count + 1, next_retry_attempt_number, $6::jsonb, $7::jsonb, now()
           FROM child
           WHERE status IN (${nodeStatusSourcesSql('running', { self: true })})
           RETURNING *, NULL::text AS old_status

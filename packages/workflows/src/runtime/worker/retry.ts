@@ -94,7 +94,7 @@ async function retryAttemptCore(
   })
   await dispatch(
     retryAttempt,
-    retryDispatchOptions(params.retry, params.failedAttempt.attemptNumber),
+    retryDispatchOptions(params.retry, params.failedAttempt.retryAttemptNumber),
   )
   return true
 }
@@ -107,7 +107,7 @@ function shouldRetryAttempt(
     retry !== undefined &&
     (failedAttempt.status === 'failed' ||
       failedAttempt.status === 'timedOut') &&
-    failedAttempt.attemptNumber < retry.attempts
+    failedAttempt.retryAttemptNumber < retry.attempts
   )
 }
 

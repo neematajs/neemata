@@ -1457,6 +1457,10 @@ export function createInMemoryWorkflowRuntime(
       status: 'started',
       leaseToken: id('attempt-lease'),
       attemptNumber: child.attemptCount + 1,
+      retryAttemptNumber:
+        (child.currentAttemptId
+          ? attempts.get(child.currentAttemptId)!.retryAttemptNumber
+          : 0) + 1,
       input,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       dispatchedAt: now(),

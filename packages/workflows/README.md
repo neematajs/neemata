@@ -127,9 +127,9 @@ production migrations.
 The ID, input, tags, idempotency key, successful nodes and child runs are retained.
 Only failed work executes again, using the previous attempt's stored input and
 idempotency key. Attempt history and absolute attempt numbers are preserved;
-manual retry authorizes one further attempt without resetting automatic retry
-budgets. `expectedVersion` is optional, but management UIs should supply the
-version they displayed to reject stale retry requests.
+manual retry replenishes the automatic retry budget and resets exponential
+backoff for each reopened child. `expectedVersion` is optional, but management
+UIs should supply the version they displayed to reject stale retry requests.
 
 `client.restart(runId, options)` creates a new root run from the stored input.
 It accepts failed, completed and cancelled roots, plus the same start options
@@ -174,3 +174,18 @@ COMMIT;
 Attempt errors remain in immutable attempt history. Run/node callback errors are
 current-state fields and are cleared by retry; durable callback-error history and
 workflow-definition version pinning are outside this change.
+
+## Schema version 3 migration
+
+Apply after the version 2 migration, with workflow workers stopped. Existing
+attempts retain their prior retry accounting; the next manual retry starts a
+fresh budget while absolute attempt numbers and history remain unchanged.
+
+```sql
+BEGIN;
+ALTER TABLE workflow_attempts ADD COLUMN retry_attempt_number integer;
+UPDATE workflow_attempts SET retry_attempt_number = attempt_number;
+ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL;
+UPDATE workflow_schema_version SET version = 3 WHERE id = 1;
+COMMIT;
+```
