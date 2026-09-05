@@ -182,7 +182,7 @@ describe.skipIf(!postgresTarget.url)(
         })
         .mapTask('items', task, {
           item: t.string(),
-          mode: 'wait-all',
+
           concurrency: 3,
         })
         .activity('finalize', {

@@ -9,7 +9,6 @@ import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
-import { cancelFailedFanInNodeChildren } from './cancel.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
 
 class StaleRunLeaseError extends Error {
@@ -89,14 +88,6 @@ export async function continueWorkflowRun(
           (node) => node.status === 'failed',
         )
         if (failedNode) {
-          await cancelFailedFanInNodeChildren({
-            store,
-            attemptExecutor: input.attemptExecutor,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            workflow: implementation,
-            runId: snapshot.run.id,
-            node: failedNode,
-          })
           await failRunAndWakeParent({
             store,
             runCoordinationExecutor: input.runCoordinationExecutor,

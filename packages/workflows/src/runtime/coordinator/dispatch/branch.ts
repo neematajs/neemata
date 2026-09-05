@@ -267,7 +267,7 @@ export async function dispatchBranchNode(
       })
       return {
         attempt: result.attempt,
-        commandInput: result.created ? nodeInput : result.attempt.input,
+        commandInput: result.attempt.input,
         created: result.created,
       }
     },

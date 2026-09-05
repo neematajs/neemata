@@ -175,6 +175,7 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
         },
       }),
   version: row.version as number,
+  activeSince: row.active_since as Date,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,
 })
@@ -196,6 +197,7 @@ export const mapRunSummary = (row: JsonRecord): RunSummary => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   version: row.version as number,
+  activeSince: row.active_since as Date,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,
   nodesTotal: Number(row.nodes_total ?? 0),

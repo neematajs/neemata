@@ -16,10 +16,6 @@ export type {
   DurationString,
   IdempotencyKey,
   MapNodeOutput,
-  MapRunMode,
-  MapStartOnlyOutput,
-  MapWaitAllOutput,
-  MapWaitSettledOutput,
   MaybePromise,
   RetryPolicy,
   RunnableDefinition,
@@ -61,7 +57,6 @@ export type {
   WorkflowOutput,
   WorkflowParallelNode,
   WorkflowRun,
-  WorkflowSettledError,
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types/index.ts'

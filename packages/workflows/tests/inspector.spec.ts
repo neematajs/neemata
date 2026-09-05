@@ -68,11 +68,9 @@ const workflow = defineWorkflow({
   }))
   .mapTask('scoreAll', scoreTask, {
     item: t.object({ text: t.string() }),
-    mode: 'wait-all',
   })
   .mapWorkflow('enrichAll', childWorkflow, {
     item: t.object({ text: t.string() }),
-    mode: 'wait-settled',
   })
   .build()
 
@@ -155,13 +153,11 @@ const metadataWorkflow = defineWorkflow({
     title: 'Score all',
     description: 'Scores every item',
     item: t.object({ text: t.string() }),
-    mode: 'wait-all',
   })
   .mapWorkflow('enrichAll', metadataChildWorkflow, {
     title: 'Enrich all',
     description: 'Enriches every item',
     item: t.object({ text: t.string() }),
-    mode: 'wait-settled',
   })
   .build()
 
@@ -213,13 +209,11 @@ describe('serializeWorkflowGraph', () => {
           name: 'scoreAll',
           kind: 'mapTask',
           target: { kind: 'task', name: 'score' },
-          mode: 'wait-all',
         },
         {
           name: 'enrichAll',
           kind: 'mapWorkflow',
           target: { kind: 'workflow', name: 'child' },
-          mode: 'wait-settled',
         },
       ],
     })
@@ -344,7 +338,6 @@ describe('serializeWorkflowGraph', () => {
             title: 'Metadata score task',
             description: 'Scores text for metadata graph',
           },
-          mode: 'wait-all',
         },
         {
           name: 'enrichAll',
@@ -357,7 +350,6 @@ describe('serializeWorkflowGraph', () => {
             title: 'Metadata child workflow',
             description: 'Enriches text for metadata graph',
           },
-          mode: 'wait-settled',
         },
       ],
     })
@@ -440,6 +432,7 @@ describe('snapshot DTO mappers', () => {
       workflowName: 'everything',
       status: 'running',
       input: { text: 'hi' },
+      activeSince: createdAt,
       rootRunId: 'run-1',
       tags: { env: 'test' },
       version: 3,
@@ -553,6 +546,7 @@ describe('read model inspector helpers', () => {
     name: id,
     workflowName: id,
     status: 'running',
+    activeSince: createdAt,
     rootRunId: 'run-1',
     tags: {},
     version: 1,

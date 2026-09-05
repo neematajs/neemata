@@ -63,10 +63,10 @@ Builder nodes:
   case helpers are `activity` / `task` / `workflow`.
 - `.parallel(name, (helpers) => cases)` - run all cases concurrently; output
   is a record keyed by case name.
-- `.mapTask(name, task, { item, mode, concurrency })` and
-  `.mapWorkflow(name, workflow, { item, mode, concurrency })` - fan out over
-  items; `mode` is `'wait-all'` (fail fast), `'wait-settled'` (collect
-  per-item status), or `'start-only'`.
+- `.mapTask(name, task, { item, concurrency })` and
+  `.mapWorkflow(name, workflow, { item, concurrency })` - fan out over
+  items. Maps and parallel nodes wait for all children, preserving successful
+  work and failing only after all children settle. Maps have no `mode` option.
 - Task-backed nodes accept `retry` / `timeout` overrides; child-workflow nodes
   accept a `cancellation` policy.
 - Everything accepts optional `title` / `description` presentation metadata
@@ -152,7 +152,7 @@ const client = createWorkflowRuntimeClient({
 // needed to start runs (start resolves schemas/tags/idempotency/unique from
 // the definition argument), so callers that only enqueue don't import the
 // implementation graph and can't form import cycles with it. `definitions`
-// is only consulted by retry(), which resolves stored runs by name.
+// is only consulted by restart(), which resolves stored runs by name.
 const enqueueClient = createWorkflowRuntimeClient({
   ...runtime,
   definitions: [publishWorkflow, embedTask],
@@ -185,9 +185,9 @@ full payloads, these don't):
   attempts, and child runs into per-unit view entries.
 
 Management: `client.deleteRun(runId)` deletes a terminal run and its whole
-descendant tree; `client.retry(runId)` starts a fresh run from a stored one —
+descendant tree; `client.restart(runId)` starts a fresh run from a stored one —
 copies input and tags but NOT the idempotency key (the old key still points
-at the original run), `options` overrides win. Retry is the only by-name
+at the original run), `options` overrides win. Restart is the only by-name
 operation: it maps the stored `workflowName`/`taskName` back to a definition,
 so the client needs that name in `definitions` (or a registered
 implementation) and fails with a specific error otherwise.
@@ -229,7 +229,7 @@ Framework-agnostic serialization for building workflow UIs over any
 transport:
 
 - `serializeWorkflowGraph(definition)` - stable JSON topology (nodes, targets,
-  branch/parallel cases, map modes) incl. `title`/`description` metadata.
+  branch/parallel cases, maps) incl. `title`/`description` metadata.
 - `serializeWorkflowCatalog({ workflows?, tasks? })` - "what exists" listing.
 - `to*Dto` mappers (`toRunSummaryDto`, `toRunDetailDto`, `toRunSnapshotDto`,
   `toRunEventDto`, ...) - wire-safe counterparts of runtime values: `Date`
@@ -290,3 +290,11 @@ in-flight handlers with reason `shutdown` and releases their commands for
 redelivery. Every task and child workflow referenced by a registered workflow
 must also have an implementation in `tasks` or `workflows`; startup rejects
 incomplete registries before they can create unclaimable work.
+
+`client.retry(runId, { expectedVersion })` retries failed work in the same root
+run. Preserve the run page, refresh it, and reopen its watch after retry. Completed
+nodes and child runs are reused; only failed work receives new attempts, with
+stored input and idempotency keys. `expectedVersion` rejects stale UI actions.
+Manual retry does not replenish the automatic attempt budget. It reacquires
+uniqueness atomically and resets the run timeout epoch (`activeSince`). PostgreSQL
+consumers must migrate to schema version 2 as described in the package README.

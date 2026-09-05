@@ -206,124 +206,77 @@ export const createPostgresWorkflowNodeStore = (
     },
     async createAttempt(input) {
       await ready
-      return db.transaction(async (tx) => {
-        const child = await one(
-          tx,
-          `
-          SELECT *
-          FROM workflow_node_children
-          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-        `,
-          [input.runId, input.nodeName, input.childKey],
-        )
-        if (!child) {
-          throw new Error(
-            `Missing node child [${input.runId}.${input.nodeName}.${input.childKey}]`,
-          )
-        }
-        if (isTerminalNodeStatus(child.status as StoredNodeChild['status'])) {
-          throw new Error(
-            `Terminal node child [${input.runId}.${input.nodeName}.${input.childKey}] cannot create attempt`,
-          )
-        }
-
-        const attemptId = id()
-        const leaseToken = id()
-        const attempt = await one(
-          tx,
-          `
-          WITH inserted AS (
+      // Lock the child before allocating its next attempt number. CTE dependencies
+      // keep the attempt, child pointer and node hint atomic, including notifications.
+      const attempt = await one(
+        db,
+        `
+        WITH child AS MATERIALIZED (
+          SELECT c.*, r.root_run_id
+          FROM workflow_node_children c
+          JOIN workflow_runs r ON r.id = c.run_id
+          WHERE c.run_id = $2 AND c.node_name = $3 AND c.child_key = $4
+          FOR UPDATE OF c
+        ), inserted AS (
           INSERT INTO workflow_attempts (
             id, run_id, node_name, child_key, status, lease_token,
             attempt_number, input, idempotency_key, dispatched_at
           )
-          VALUES (
-            $1, $2, $3, $4, 'started', $5, $6, $7::jsonb, $8::jsonb, now()
-          )
+          SELECT $1, run_id, node_name, child_key, 'started', $5,
+            attempt_count + 1, $6::jsonb, $7::jsonb, now()
+          FROM child
+          WHERE status IN (${nodeStatusSourcesSql('running', { self: true })})
           RETURNING *, NULL::text AS old_status
-          ),
-          event_source AS (
-            SELECT inserted.*, r.root_run_id
-            FROM inserted
-            JOIN workflow_runs r ON r.id = inserted.run_id
-          ),
-          ${emitStatusChangeNotifySql('event_source', 'attempt_started')}
-          SELECT inserted.*${notifyRunStatusEventColumnsSql('attempt_started')}
-          FROM inserted
-        `,
-          [
-            attemptId,
-            input.runId,
-            input.nodeName,
-            input.childKey,
-            leaseToken,
-            (child.attempt_count as number) + 1,
-            json(input.input),
-            input.idempotencyKey ? json(input.idempotencyKey) : null,
-          ],
+        ), attempt_event_source AS (
+          SELECT inserted.*, child.root_run_id FROM inserted CROSS JOIN child
+        ), updated_child AS (
+          UPDATE workflow_node_children c
+          SET current_attempt_id = inserted.id,
+            attempt_count = inserted.attempt_number, status = 'running',
+            version = c.version + 1, updated_at = now()
+          FROM inserted, child
+          WHERE c.run_id = inserted.run_id AND c.node_name = inserted.node_name
+            AND c.child_key = inserted.child_key
+          RETURNING c.*, child.status::text AS old_status, child.root_run_id
+        ), node AS (
+          SELECT n.run_id, n.name, n.status::text AS old_status, c.root_run_id
+          FROM workflow_nodes n JOIN updated_child c
+            ON n.run_id = c.run_id AND n.name = c.node_name
+        ), updated_node AS (
+          UPDATE workflow_nodes n
+          SET status = 'running', version = n.version + 1, updated_at = now()
+          FROM node
+          WHERE n.run_id = node.run_id AND n.name = node.name
+            AND n.status IN (${nodeStatusSourcesSql('running', { self: true })})
+          RETURNING n.*, node.old_status, node.root_run_id
+        ), ${emitStatusChangeNotifySql('attempt_event_source', 'attempt_started')},
+        ${emitStatusChangeNotifySql('updated_child', 'child_running')},
+        ${emitStatusChangeNotifySql('updated_node', 'node_running')}
+        SELECT inserted.*, EXISTS (SELECT 1 FROM child) AS child_exists
+          ${notifyRunStatusEventColumnsSql('attempt_started', 'child_running', 'node_running')}
+        FROM (SELECT 1) AS result LEFT JOIN inserted ON true
+      `,
+        [
+          id(),
+          input.runId,
+          input.nodeName,
+          input.childKey,
+          id(),
+          json(input.input),
+          input.idempotencyKey ? json(input.idempotencyKey) : null,
+        ],
+      )
+      if (!attempt?.child_exists) {
+        throw new Error(
+          `Missing node child [${input.runId}.${input.nodeName}.${input.childKey}]`,
         )
-        const updatedChild = await one(
-          tx,
-          `
-          WITH candidate AS (
-            SELECT c.run_id, c.node_name, c.child_key,
-              c.status::text AS old_status, r.root_run_id
-            FROM workflow_node_children c
-            JOIN workflow_runs r ON r.id = c.run_id
-            WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
-          ),
-          updated AS (
-          UPDATE workflow_node_children
-          SET current_attempt_id = $4,
-              attempt_count = attempt_count + 1,
-              status = 'running',
-              version = version + 1,
-              updated_at = now()
-          FROM candidate
-          WHERE workflow_node_children.run_id = candidate.run_id
-            AND workflow_node_children.node_name = candidate.node_name
-            AND workflow_node_children.child_key = candidate.child_key
-            AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
-          RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
-          ),
-          ${emitStatusChangeNotifySql('updated', 'child_running')}
-          SELECT updated.*${notifyRunStatusEventColumnsSql('child_running')}
-          FROM updated
-        `,
-          [input.runId, input.nodeName, input.childKey, attemptId],
+      }
+      if (!attempt.id) {
+        throw new Error(
+          `Terminal node child [${input.runId}.${input.nodeName}.${input.childKey}] cannot create attempt`,
         )
-        if (!updatedChild) {
-          throw new Error(
-            `Terminal node child [${input.runId}.${input.nodeName}.${input.childKey}] cannot create attempt`,
-          )
-        }
-        // Aggregate hint only: retrying a child means the node has local work
-        // again, but never fail the retry when the node cannot move.
-        await tx.query(
-          `
-          WITH candidate AS (
-            SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
-            FROM workflow_nodes n
-            JOIN workflow_runs r ON r.id = n.run_id
-            WHERE n.run_id = $1 AND n.name = $2
-          ),
-          updated AS (
-          UPDATE workflow_nodes
-          SET status = 'running', version = version + 1, updated_at = now()
-          FROM candidate
-          WHERE workflow_nodes.run_id = candidate.run_id
-            AND workflow_nodes.name = candidate.name
-            AND workflow_nodes.status IN (${nodeStatusSourcesSql('running', { self: true })})
-          RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
-          ),
-          ${emitStatusChangeNotifySql('updated', 'node_running')}
-          SELECT count(*)${notifyRunStatusEventColumnsSql('node_running')}
-          FROM updated
-        `,
-          [input.runId, input.nodeName],
-        )
-        return mapAttempt(attempt!)
-      })
+      }
+      return mapAttempt(attempt)
     },
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
       await ready
@@ -400,9 +353,6 @@ export const createPostgresWorkflowNodeStore = (
     },
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
       await ready
-      const attempt = await loadFencedAttempt(attemptId, leaseToken)
-      if (!attempt) return undefined
-
       const row = await one(
         db,
         `
@@ -410,7 +360,11 @@ export const createPostgresWorkflowNodeStore = (
           SELECT a.id, a.status::text AS old_status, r.root_run_id
           FROM workflow_attempts a
           JOIN workflow_runs r ON r.id = a.run_id
+          JOIN workflow_node_children c ON c.run_id = a.run_id
+            AND c.node_name = a.node_name AND c.child_key = a.child_key
           WHERE a.id = $1 AND a.lease_token = $2 AND a.status = 'started'
+            AND c.current_attempt_id = a.id
+            AND c.status NOT IN ('completed', 'failed', 'cancelled')
         ),
         updated AS (
         UPDATE workflow_attempts

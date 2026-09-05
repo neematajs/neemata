@@ -57,7 +57,7 @@ export async function dispatchTaskRunAttempt(input: {
       })
       return {
         attempt: result.attempt,
-        commandInput: result.created ? input.taskInput : result.attempt.input,
+        commandInput: result.attempt.input,
         created: result.created,
       }
     },

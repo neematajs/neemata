@@ -1,9 +1,7 @@
-import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { StoredNode, StoredRun } from '../state.ts'
+import type { StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { isTerminalRunStatus } from '../status.ts'
-import { getWorkflowNodeDeclaration } from './codec.ts'
 
 export async function cancelRunTree(input: {
   readonly store: WorkflowStore
@@ -65,34 +63,4 @@ export async function cancelNodeChildRunsAndCommands(input: {
     await cancelRunTree({ ...input, runId: child.childRunId })
   }
   await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
-}
-
-export async function cancelFailedFanInNodeChildren(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly workflow: WorkflowImplementation
-  readonly runId: string
-  readonly node: StoredNode
-}) {
-  if (!shouldCancelFailedFanInNode(input.workflow, input.node)) return
-  await cancelNodeChildRunsAndCommands({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    runId: input.runId,
-    nodeName: input.node.name,
-  })
-}
-
-function shouldCancelFailedFanInNode(
-  workflow: WorkflowImplementation,
-  node: StoredNode,
-): boolean {
-  const declaration = getWorkflowNodeDeclaration(workflow, node.name)
-  if (declaration.kind === 'parallel') return true
-  if (declaration.kind === 'mapTask' || declaration.kind === 'mapWorkflow') {
-    return declaration.mode !== 'wait-settled'
-  }
-  return false
 }

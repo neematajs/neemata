@@ -49,6 +49,7 @@ export type ListRunsFilter = {
   readonly kind?: RunKind
   readonly name?: string
   readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
+  readonly activeBefore?: Date
   readonly createdBefore?: Date
   readonly parentRunId?: string | null
   readonly rootRunId?: string
@@ -238,6 +239,11 @@ export type CancelNonTerminalRunNodesParams = {
 
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
+  /** Atomically reopens failed work and enqueues continuation for the same root. */
+  reopenFailedRun(params: {
+    readonly runId: string
+    readonly expectedVersion: number
+  }): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
   listRunSummaries(filter?: ListRunsFilter): Promise<ListRunSummariesResult>
   pruneTerminalRuns(
@@ -257,6 +263,7 @@ export type WorkflowStore = {
    * recovery writes are idempotent, making duplicate processing harmless.
    */
   listUnreapedDeadCommands(params?: {
+    readonly commandId?: string
     readonly limit?: number
   }): Promise<readonly DeadWorkflowCommand[]>
   markDeadCommandReaped(id: string): Promise<void>
@@ -300,8 +307,9 @@ export type WorkflowStore = {
    */
   ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
   /**
-   * Idempotently creates the child's first attempt; once the child has any
-   * attempts, returns the current one instead.
+   * Idempotently creates the first attempt or returns the current one. A
+   * manually reopened child has no current pointer; its next attempt copies
+   * the previous attempt's immutable input and idempotency key.
    */
   ensureChildAttempt(
     params: EnsureChildAttemptParams,
@@ -374,4 +382,129 @@ export type WorkflowStore = {
   cancelNonTerminalRunNodes(
     params: CancelNonTerminalRunNodesParams,
   ): Promise<readonly StoredNode[]>
+}
+
+/** Validate the whole family before either adapter mutates any retry state. */
+export function validateFailedRunRetry(
+  snapshots: readonly RunSnapshot[],
+  params: { readonly runId: string; readonly expectedVersion: number },
+): readonly RunSnapshot[] {
+  const root = snapshots.find(({ run }) => run.id === params.runId)?.run
+  if (!root) throw new Error(`Run [${params.runId}] not found`)
+  if (root.parentRunId !== undefined)
+    throw new Error(`Run [${root.id}] is not a root run`)
+  if (root.status !== 'failed')
+    throw new Error(`Run [${root.id}] is not failed`)
+  if (root.version !== params.expectedVersion)
+    throw new Error(`Stale retry version for run [${root.id}]`)
+  if (root.rootRunId !== root.id)
+    throw new Error(`Conflicting root run [${root.id}]`)
+  const byId = new Map(snapshots.map((snapshot) => [snapshot.run.id, snapshot]))
+  for (const snapshot of snapshots) {
+    if (
+      snapshot.run.rootRunId !== root.id ||
+      (snapshot.run.id !== root.id &&
+        !byId
+          .get(snapshot.run.parentRunId!)
+          ?.children.some(
+            (child) =>
+              child.childRunId === snapshot.run.id &&
+              child.nodeName === snapshot.run.parentNodeName,
+          ))
+    ) {
+      throw new Error(`Orphaned child run [${snapshot.run.id}]`)
+    }
+    if (!['failed', 'cancelled', 'completed'].includes(snapshot.run.status)) {
+      throw new Error(`Run family [${root.id}] still has active work`)
+    }
+    if (
+      snapshot.run.kind === 'task' &&
+      !snapshot.children.some(
+        (child) =>
+          child.nodeName === '$task' &&
+          child.childKey === '$self' &&
+          child.attemptCount > 0,
+      )
+    ) {
+      throw new Error(`Missing task attempt [${snapshot.run.id}]`)
+    }
+    for (const child of snapshot.children) {
+      if (!snapshot.nodes.some((node) => node.name === child.nodeName)) {
+        throw new Error(`Missing node [${snapshot.run.id}.${child.nodeName}]`)
+      }
+      if (child.childRunId !== undefined) {
+        const nested = byId.get(child.childRunId)?.run
+        if (
+          !nested ||
+          nested.parentRunId !== snapshot.run.id ||
+          nested.parentNodeName !== child.nodeName
+        ) {
+          throw new Error(
+            `Missing or conflicting child run [${child.childRunId}]`,
+          )
+        }
+      }
+      if (
+        child.attemptCount > 0 &&
+        !snapshot.attempts.some(
+          (attempt) =>
+            (attempt.id === child.currentAttemptId ||
+              (child.currentAttemptId === undefined &&
+                child.status === 'pending')) &&
+            attempt.childKey === child.childKey &&
+            attempt.nodeName === child.nodeName &&
+            attempt.attemptNumber === child.attemptCount,
+        )
+      ) {
+        throw new Error(
+          `Missing current attempt [${snapshot.run.id}.${child.nodeName}.${child.childKey}]`,
+        )
+      }
+      const latest = snapshot.attempts.find(
+        (attempt) =>
+          attempt.nodeName === child.nodeName &&
+          attempt.childKey === child.childKey &&
+          attempt.attemptNumber === child.attemptCount,
+      )
+      if (
+        latest &&
+        child.status !== 'completed' &&
+        (latest.status === 'started' || latest.status === 'completed')
+      ) {
+        throw new Error(`Unsettled or conflicting attempt [${latest.id}]`)
+      }
+    }
+    for (const node of snapshot.nodes) {
+      const children = snapshot.children.filter(
+        (child) => child.nodeName === node.name,
+      )
+      if (
+        (node.kind === 'mapTask' || node.kind === 'mapWorkflow') &&
+        Array.isArray(node.input) &&
+        (children.length !== node.input.length ||
+          children.some((child, index) => child.ordinal !== index))
+      ) {
+        throw new Error(
+          `Incomplete map children [${snapshot.run.id}.${node.name}]`,
+        )
+      }
+    }
+  }
+  // Completed aggregates are checkpoints too. Older settled-map runs can
+  // contain failed descendants beneath one; those are outside this retry.
+  const frontier = new Set([root.id])
+  for (const runId of frontier) {
+    const snapshot = byId.get(runId)!
+    for (const child of snapshot.children) {
+      if (child.status === 'completed' || !child.childRunId) continue
+      if (
+        snapshot.nodes.find((node) => node.name === child.nodeName)?.status ===
+        'completed'
+      )
+        continue
+      if (byId.get(child.childRunId)!.run.status !== 'completed')
+        frontier.add(child.childRunId)
+    }
+  }
+  return snapshots.filter(({ run }) => frontier.has(run.id))
 }
