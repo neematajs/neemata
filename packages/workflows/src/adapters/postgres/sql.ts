@@ -239,6 +239,7 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   ...optional('workerId', row.worker_id as string | undefined),
   ...optional('leaseToken', row.lease_token as string | undefined),
   attemptNumber: row.attempt_number as number,
+  retryAttemptNumber: row.retry_attempt_number as number,
   input: row.input,
   ...optional(
     'idempotencyKey',
@@ -260,6 +261,7 @@ export const mapAttemptSummary = (row: JsonRecord): AttemptSummary => ({
   ...optional('workerId', row.worker_id as string | undefined),
   ...optional('leaseToken', row.lease_token as string | undefined),
   attemptNumber: row.attempt_number as number,
+  retryAttemptNumber: row.retry_attempt_number as number,
   ...optional(
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,

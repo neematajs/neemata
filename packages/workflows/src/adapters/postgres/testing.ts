@@ -210,6 +210,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       worker_id text,
       lease_token text,
       attempt_number integer NOT NULL,
+      retry_attempt_number integer NOT NULL,
       input jsonb NOT NULL,
       idempotency_key jsonb,
       output jsonb,
@@ -221,6 +222,15 @@ export async function installPostgresWorkflowSchemaForTesting(
         UNIQUE (run_id, node_name, child_key, attempt_number)
     )
   `)
+  await db.query(
+    'ALTER TABLE workflow_attempts ADD COLUMN IF NOT EXISTS retry_attempt_number integer',
+  )
+  await db.query(
+    'UPDATE workflow_attempts SET retry_attempt_number = attempt_number WHERE retry_attempt_number IS NULL',
+  )
+  await db.query(
+    'ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL',
+  )
   await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_node_children (
       run_id uuid NOT NULL,

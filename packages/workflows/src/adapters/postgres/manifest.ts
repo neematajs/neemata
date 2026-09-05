@@ -1,4 +1,4 @@
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 2
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 3
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   version: WORKFLOW_POSTGRES_SCHEMA_VERSION,
   enums: [
@@ -283,6 +283,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       worker_id: { type: 'text', nullable: true },
       lease_token: { type: 'text', nullable: true },
       attempt_number: { type: 'int4', nullable: false },
+      retry_attempt_number: { type: 'int4', nullable: false },
       input: { type: 'jsonb', nullable: false },
       idempotency_key: { type: 'jsonb', nullable: true },
       output: { type: 'jsonb', nullable: true },
