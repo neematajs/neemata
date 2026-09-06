@@ -210,10 +210,11 @@ jobs:
           VALKEY_PROXY_UPSTREAM: valkey:6379
           TOXIPROXY_URL: http://localhost:8474
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
-      - name: Run workflow adapter contracts against Redis and Valkey
+      - name: Run workflow adapter contracts and retries against Redis and Valkey
         run: >-
           pnpm --filter @nmtjs/workflows exec vitest run
           --config vitest.config.ts tests/runtime-adapter-contract.spec.ts
+          tests/runtime-manual-retry.spec.ts
           --reporter=agent --reporter=github-actions
         env:
           REDIS_URL: redis://localhost:6379

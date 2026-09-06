@@ -192,7 +192,7 @@ for (const target of targets) {
           input: t.object({ items: t.array(t.string()) }),
           output: t.number(),
         })
-          .mapTask('items', task, { item: t.string(), mode: 'wait-all' })
+          .mapTask('items', task, { item: t.string() })
           .build()
         const implementation = implementWorkflow(workflow)
           .items(task, {
@@ -294,6 +294,50 @@ for (const target of targets) {
         )
         await new Promise((resolve) => setTimeout(resolve, 160))
         expect(await client.exists(`${keyPrefix}runs:terminal`)).toBe(0)
+      })
+
+      it('removes family retention on retry and rearms it after completion', async () => {
+        const { client, keyPrefix, runtime } = createHarness(250)
+        const workflows = createWorkflowRuntimeClient(runtime)
+        const run = await runtime.store.createRun({
+          workflowName: 'retry-retention',
+          input: payload,
+          idempotencyKey: ['retry-retention'],
+          unique: {
+            scope: 'active',
+            key: ['retry-retention'],
+            behavior: 'reject',
+          },
+        })
+        const failed = await runtime.store.failRun({
+          runId: run.id,
+          error: new Error('failed'),
+        })
+        expect(
+          await client.pttl(`${keyPrefix}family:${run.id}`),
+        ).toBeGreaterThan(0)
+        const retried = await workflows.retry(run.id, {
+          expectedVersion: failed!.version,
+        })
+        expect(retried.status).toBe('queued')
+        expect(await client.pttl(`${keyPrefix}family:${run.id}`)).toBe(-1)
+        expect(await client.pttl(`${keyPrefix}run-root:${run.id}`)).toBe(-1)
+        expect(
+          await client.zscore(`${keyPrefix}runs:terminal`, run.id),
+        ).toBeNull()
+        expect(
+          await client.zscore(`${keyPrefix}runs:active`, run.id),
+        ).not.toBeNull()
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(
+          (await runtime.store.loadRunSnapshot(run.id))?.run.input,
+        ).toStrictEqual(payload)
+        await runtime.store.completeRun({ runId: run.id, output: payload })
+        expect(
+          await client.pttl(`${keyPrefix}family:${run.id}`),
+        ).toBeGreaterThan(0)
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        expect(await runtime.store.loadRunSnapshot(run.id)).toBeUndefined()
       })
 
       it('repairs a joined task with the original task, payload, identity and schedule', async () => {

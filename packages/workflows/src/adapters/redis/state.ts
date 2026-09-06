@@ -22,6 +22,7 @@ export type RedisWorkflowFamily = {
 }
 
 const dateKeys = new Set([
+  'activeSince',
   'createdAt',
   'updatedAt',
   'dispatchedAt',
