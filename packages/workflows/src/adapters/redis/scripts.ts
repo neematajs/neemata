@@ -50,6 +50,28 @@ local function orphaned(item, prefix)
 end
 `
 
+const COALESCE_READY = `
+local function coalesceReady(item, items, ready, dedup)
+  if item.payload.kind ~= 'continueRun' then return false end
+  local currentId = redis.call('HGET', dedup, item.payload.runId)
+  if not currentId or currentId == item.id then return false end
+  local raw = redis.call('HGET', items, currentId)
+  if not raw then return false end
+  local current = cjson.decode(raw)
+  if current.deadAt or current.leaseToken or not redis.call('ZSCORE', ready, currentId) then return false end
+  -- The pending command owns the newest payload; only bring its wake forward.
+  local score = current.runAtScore or current.createdAtScore
+  local incomingScore = item.runAtScore or item.createdAtScore
+  if incomingScore < score then
+    current.runAt = item.runAt
+    current.runAtScore = item.runAtScore
+    redis.call('HSET', items, currentId, cjson.encode(current))
+    redis.call('ZADD', ready, incomingScore, currentId)
+  end
+  return true
+end
+`
+
 const SCRIPTS = {
   enqueue: `
 ${SERVER_TIME}
@@ -172,6 +194,7 @@ return 1
 `,
   releaseClaimed: `
 ${SERVER_TIME}
+${COALESCE_READY}
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
 local item = cjson.decode(ARGV[3])
@@ -180,6 +203,12 @@ local runAt = now + tonumber(ARGV[4])
 item.runAt = runAt
 item.runAtScore = runAt
 if ARGV[5] == '1' then item.deadAt = now end
+if ARGV[5] ~= '1' and coalesceReady(item, KEYS[1], KEYS[3], KEYS[6]) then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  redis.call('PUBLISH', KEYS[5], '1')
+  return 1
+end
 local encoded = cjson.encode(item)
 redis.call('HSET', KEYS[1], ARGV[1], encoded)
 redis.call('ZREM', KEYS[2], ARGV[1])
@@ -195,6 +224,7 @@ return 1
 ${SERVER_TIME}
 ${ROUTING}
 ${QUEUE_CLEANUP}
+${COALESCE_READY}
 local scan = redis.call('ZSCAN', KEYS[3], ARGV[1], 'COUNT', ARGV[2])
 local nextCursor = scan[1]
 local entries = scan[2]
@@ -228,10 +258,15 @@ for index = 1, #entries, 2 do
         else
           item.runAt = nil
           item.runAtScore = nil
-          redis.call('ZADD', KEYS[2], now, id)
+          if coalesceReady(item, KEYS[1], KEYS[2], KEYS[5]) then
+            redis.call('HDEL', KEYS[1], id)
+          else
+            redis.call('ZADD', KEYS[2], now, id)
+            redis.call('HSET', KEYS[1], id, cjson.encode(item))
+          end
           requeued = requeued + 1
         end
-        redis.call('HSET', KEYS[1], id, cjson.encode(item))
+        if item.deadAt then redis.call('HSET', KEYS[1], id, cjson.encode(item)) end
       end
     end
   end
@@ -276,8 +311,14 @@ end
 return 1
 `,
   transitionDead: `
+${COALESCE_READY}
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
+if coalesceReady(cjson.decode(ARGV[3]), KEYS[1], KEYS[3], KEYS[4]) then
+  redis.call('HDEL', KEYS[1], ARGV[1])
+  redis.call('ZREM', KEYS[2], ARGV[1])
+  return 1
+end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZADD', KEYS[3], ARGV[4], ARGV[1])

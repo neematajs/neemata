@@ -71,6 +71,40 @@ for (const target of targets) {
         }
       }
 
+      it('coalesces an expired continue lease into the latest pending payload', async () => {
+        const { runtime } = createHarness()
+        const run = await runtime.store.createRun({
+          workflowName: 'coalesced',
+          input: null,
+        })
+        const first = {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+          generation: 1,
+        }
+        const latest = { ...first, generation: 2 }
+        const worker = {
+          workerId: 'coalesced',
+          workflowNames: [run.workflowName],
+          leaseMs: 50,
+        }
+        await runtime.runCoordinationExecutor.enqueue(first)
+        const expired = await runtime.runCoordinationExecutor.claim(worker)
+        expect(expired).not.toBeNull()
+        await runtime.runCoordinationExecutor.enqueue(latest)
+        await wait(80)
+        const claim = await runtime.runCoordinationExecutor.claim(worker)
+        expect(claim?.command).toStrictEqual(latest)
+        await runtime.runCoordinationExecutor.ack(claim!)
+        await expect(
+          runtime.runCoordinationExecutor.ack(expired!),
+        ).rejects.toThrow('Stale')
+        await expect(
+          runtime.runCoordinationExecutor.claim(worker),
+        ).resolves.toBeNull()
+      })
+
       it('drains routed work beyond the first sorted-set scan page', async () => {
         const { client, keys, runtime } = createHarness()
         const workflow = defineWorkflow({
