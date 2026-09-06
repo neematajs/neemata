@@ -55,6 +55,147 @@ end
 `
 
 const SCRIPTS = {
+  reopenFailedRun: `
+${FAMILY_HELPERS}
+${RECORD_HELPERS}
+local expected = cjson.decode(ARGV[1])
+if redis.call('EXISTS', KEYS[1]) == 0 then return { 'stale' } end
+for index, records in ipairs(expected) do
+  local count = 0
+  for field, raw in pairs(records) do
+    count = count + 1
+    if redis.call('HGET', KEYS[index + 1], field) ~= raw then return { 'stale' } end
+  end
+  if redis.call('HLEN', KEYS[index + 1]) ~= count then return { 'stale' } end
+end
+local runIds = cjson.decode(ARGV[2])
+local reopening = {}
+local clock = redis.call('TIME')
+local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+for _, id in ipairs(runIds) do
+  reopening[id] = true
+  local lease = redis.call('HGET', KEYS[6], id)
+  if lease and cjson.decode(lease).expiresAt > now then return { 'busy', id } end
+end
+local guards = cjson.decode(ARGV[3])
+local owners = {}
+for _, guard in ipairs(guards) do
+  local owner = owners[guard.key]
+  if owner and owner ~= guard.runId then return { 'conflict', expected[1][owner] } end
+  owners[guard.key] = guard.runId
+  local holder = mappedRun(ARGV[7], guard.key)
+  if holder and holder[1] ~= guard.runId then return { 'conflict', holder[3] } end
+end
+local queues = { 12, 17 }
+local queueRows = {}
+for _, base in ipairs(queues) do
+  local rows = redis.call('HGETALL', KEYS[base])
+  queueRows[base] = rows
+  for index = 1, #rows, 2 do
+    local item = cjson.decode(rows[index + 1])
+    if reopening[item.payload.runId] and not item.deadAt and item.leaseExpiresAt and item.leaseExpiresAt > now then
+      return { 'claimed', item.payload.runId }
+    end
+  end
+end
+
+-- Reopening, retention removal, fencing and dispatch form one commit. A
+-- duplicate request either observes the old family or fails its version check.
+local function reset(record, status)
+  record.status = status
+  record.error = nil
+  record.output = nil
+  record.updatedAt = now
+  record.version = record.version + 1
+end
+for _, id in ipairs(runIds) do
+  local run = cjson.decode(expected[1][id])
+  reset(run, 'queued')
+  run.activeSince = now
+  redis.call('HSET', KEYS[2], id, cjson.encode(run))
+  redis.call('HDEL', KEYS[6], id)
+end
+redis.call('HINCRBY', KEYS[1], 'nonTerminalCount', #runIds)
+for field, raw in pairs(expected[2]) do
+  local node = cjson.decode(raw)
+  if reopening[node.runId] and node.status ~= 'completed' then
+    reset(node, 'pending')
+    redis.call('HSET', KEYS[3], field, cjson.encode(node))
+  end
+end
+for field, raw in pairs(expected[3]) do
+  local child = cjson.decode(raw)
+  local node = cjson.decode(expected[2][child.runId .. string.char(0) .. child.nodeName])
+  if reopening[child.runId] and child.status ~= 'completed' and node.status ~= 'completed' then
+    reset(child, 'pending')
+    child.currentAttemptId = nil
+    redis.call('HSET', KEYS[4], field, cjson.encode(child))
+  end
+end
+for _, guard in ipairs(guards) do
+  redis.call('SET', guard.key, guard.runId)
+  redis.call('HSET', KEYS[1], 'owner:' .. guard.key, guard.runId)
+end
+for index = 1, 9 do redis.call('PERSIST', KEYS[index]) end
+local external = cjson.decode(redis.call('HGET', KEYS[1], 'externalKeys') or '[]')
+for _, key in ipairs(external) do
+  if redis.call('GET', key) == redis.call('HGET', KEYS[1], 'owner:' .. key) then redis.call('PERSIST', key) end
+end
+local familyIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds'))
+for _, id in ipairs(familyIds) do
+  redis.call('ZREM', KEYS[11], id)
+  redis.call('ZADD', KEYS[10], redis.call('HGET', KEYS[7], id), id)
+end
+for _, base in ipairs(queues) do
+  local rows = queueRows[base]
+  for index = 1, #rows, 2 do
+    local id = rows[index]
+    local item = cjson.decode(rows[index + 1])
+    if reopening[item.payload.runId] then
+      if item.deadAt then
+        item.reapedAt = now
+        redis.call('HSET', KEYS[base], id, cjson.encode(item))
+      else
+        redis.call('HDEL', KEYS[base], id)
+        redis.call('ZREM', KEYS[base + 1], id)
+        redis.call('ZREM', KEYS[base + 2], id)
+        local dedup = item.payload.attemptId or item.payload.runId
+        if redis.call('HGET', KEYS[base + 4], dedup) == id then redis.call('HDEL', KEYS[base + 4], dedup) end
+      end
+    end
+  end
+end
+local attempt = cjson.decode(ARGV[4])
+local base = 12
+if attempt ~= cjson.null then
+  base = 17
+  local nodeField = attempt.runId .. string.char(0) .. attempt.nodeName
+  local childField = nodeField .. string.char(0) .. attempt.childKey
+  local child = cjson.decode(redis.call('HGET', KEYS[4], childField))
+  local node = cjson.decode(redis.call('HGET', KEYS[3], nodeField))
+  attempt.dispatchedAt = now
+  redis.call('HSET', KEYS[5], attempt.id, cjson.encode(attempt))
+  local attemptRoot = ARGV[7] .. 'attempt-root:' .. attempt.id
+  redis.call('SET', attemptRoot, ARGV[6])
+  trackExternal(KEYS[1], attemptRoot, ARGV[6])
+  append(KEYS[8], 'attempts:' .. nodeField, attempt.id)
+  child.currentAttemptId = attempt.id
+  child.attemptCount = attempt.attemptNumber
+  reset(child, 'running')
+  reset(node, 'running')
+  redis.call('HSET', KEYS[4], childField, cjson.encode(child))
+  redis.call('HSET', KEYS[3], nodeField, cjson.encode(node))
+end
+local item = cjson.decode(ARGV[5])
+item.createdAt = now
+item.createdAtScore = now
+redis.call('HSET', KEYS[base], item.id, cjson.encode(item))
+redis.call('ZADD', KEYS[base + 1], now, item.id)
+redis.call('HSET', KEYS[base + 4], item.payload.attemptId or item.payload.runId, item.id)
+redis.call('PUBLISH', KEYS[22], '1')
+redis.call('PUBLISH', KEYS[23], '1')
+return { 'updated', redis.call('HGET', KEYS[2], ARGV[6]) }
+`,
   createRun: `
 ${FAMILY_HELPERS}
 local run = cjson.decode(ARGV[1])
@@ -226,8 +367,7 @@ ${RECORD_HELPERS}
 local childRaw = redis.call('HGET', KEYS[2], ARGV[1])
 if not childRaw then return { 'missing-child' } end
 local child = cjson.decode(childRaw)
-if ARGV[8] == '1' and child.attemptCount > 0 then
-  if not child.currentAttemptId then return { 'missing-attempt' } end
+if ARGV[8] == '1' and child.currentAttemptId then
   local current = redis.call('HGET', KEYS[4], child.currentAttemptId)
   if not current then return { 'missing-attempt' } end
   return { 'existing', current }
@@ -236,6 +376,28 @@ if isTerminal(child.status) then return { 'terminal-child' } end
 
 local attempt = cjson.decode(ARGV[3])
 attempt.attemptNumber = child.attemptCount + 1
+attempt.retryAttemptNumber = 1
+if child.currentAttemptId then
+  local previous = redis.call('HGET', KEYS[4], child.currentAttemptId)
+  if not previous then return { 'missing-attempt' } end
+  attempt.retryAttemptNumber = cjson.decode(previous).retryAttemptNumber + 1
+elseif child.attemptCount > 0 then
+  local ids = cjson.decode(redis.call('HGET', KEYS[5], ARGV[7]) or '[]')
+  local previous = nil
+  for _, id in ipairs(ids) do
+    local raw = redis.call('HGET', KEYS[4], id)
+    if raw then
+      local candidate = cjson.decode(raw)
+      if candidate.childKey == child.childKey and candidate.attemptNumber == child.attemptCount then
+        previous = candidate
+        break
+      end
+    end
+  end
+  if not previous then return { 'missing-attempt' } end
+  attempt.input = previous.input
+  attempt.idempotencyKey = previous.idempotencyKey
+end
 local attemptRaw = cjson.encode(attempt)
 redis.call('HSET', KEYS[4], attempt.id, attemptRaw)
 redis.call('SET', ARGV[5], ARGV[6])
@@ -380,6 +542,18 @@ for _, nodeField in ipairs(nodeFields) do
       node = applyChanges(node, { status = 'cancelled' }, ARGV[2])
       redis.call('HSET', KEYS[1], nodeField, cjson.encode(node))
       table.insert(updated, node)
+    end
+    local attemptIds = cjson.decode(redis.call('HGET', KEYS[3], 'attempts:' .. nodeField) or '[]')
+    for _, attemptId in ipairs(attemptIds) do
+      local attemptRaw = redis.call('HGET', KEYS[5], attemptId)
+      if attemptRaw then
+        local attempt = cjson.decode(attemptRaw)
+        if attempt.status == 'started' then
+          attempt.status = 'cancelled'
+          attempt.completedAt = tonumber(ARGV[2])
+          redis.call('HSET', KEYS[5], attemptId, cjson.encode(attempt))
+        end
+      end
     end
     local childIndex = 'children:' .. nodeField
     local childFields = cjson.decode(redis.call('HGET', KEYS[3], childIndex) or '[]')

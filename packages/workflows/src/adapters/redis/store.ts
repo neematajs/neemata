@@ -34,6 +34,7 @@ import {
   toStoredError,
 } from '../../runtime/errors.ts'
 import { isTerminalRunStatus } from '../../runtime/status.ts'
+import { validateFailedRunRetry } from '../../runtime/store.ts'
 import {
   RUN_TRANSITIONS,
   transitionSources as runtimeTransitionSources,
@@ -174,6 +175,148 @@ export class RedisWorkflowStoreRuntime {
     throw new Error(`Unexpected Redis create-run result [${result[0]}]`)
   }
 
+  async #reopenFailedRun(params: { runId: string; expectedVersion: number }) {
+    const rootRunId = await this.#requireRootRunId(params.runId)
+    const stateKeys = this.#keys.familyStateKeys(rootRunId)
+    const expected = await Promise.all([
+      this.#client.hgetall(stateKeys[1]),
+      this.#client.hgetall(stateKeys[2]),
+      this.#client.hgetall(stateKeys[3]),
+      this.#client.hgetall(stateKeys[4]),
+    ])
+    const runs = decodeRecord<StoredRun>(expected[0]!)
+    const nodes = decodeRecord<StoredNode>(expected[1]!)
+    const children = decodeRecord<StoredNodeChild>(expected[2]!)
+    const attempts = decodeRecord<StoredAttempt>(expected[3]!)
+    const snapshots: RunSnapshot[] = []
+    for (const run of Object.values(runs)) {
+      snapshots.push({
+        run,
+        nodes: Object.values(nodes).filter((node) => node.runId === run.id),
+        children: Object.values(children)
+          .filter((child) => child.runId === run.id)
+          .sort(compareChildrenForDetail),
+        attempts: Object.values(attempts).filter(
+          (attempt) => attempt.runId === run.id,
+        ),
+      })
+    }
+    const reopening = validateFailedRunRetry(snapshots, params)
+    const guards: { key: string; runId: string }[] = []
+    const runIds: string[] = []
+    for (const { run } of reopening) {
+      runIds.push(run.id)
+      if (run.unique) {
+        guards.push({
+          key: this.#keys.unique(run.unique.scope, run.unique.key),
+          runId: run.id,
+        })
+      }
+    }
+    const root = runs[params.runId]!
+    const date = new Date()
+    let attempt: StoredAttempt | undefined
+    let command: unknown = {
+      kind: 'continueRun',
+      runId: root.id,
+      workflowName: root.workflowName,
+    }
+    let wakeKind: 'continue' | 'task' = 'continue'
+    if (root.kind === 'task') {
+      const child = children[redisChildKey(root.id, '$task', '$self')]!
+      const previous = Object.values(attempts).find(
+        (entry) =>
+          entry.runId === root.id &&
+          entry.nodeName === child.nodeName &&
+          entry.childKey === child.childKey &&
+          entry.attemptNumber === child.attemptCount,
+      )!
+      attempt = {
+        id: createRedisId(),
+        runId: root.id,
+        nodeName: '$task',
+        childKey: '$self',
+        status: 'started',
+        leaseToken: createRedisId(),
+        attemptNumber: child.attemptCount + 1,
+        retryAttemptNumber: 1,
+        input: previous.input,
+        idempotencyKey: previous.idempotencyKey,
+        dispatchedAt: date,
+      }
+      command = {
+        kind: 'taskAttempt',
+        runId: root.id,
+        workflowName: root.workflowName,
+        taskName: root.taskName ?? root.name,
+        nodeName: '$task',
+        childKey: '$self',
+        attemptId: attempt.id,
+        leaseToken: attempt.leaseToken,
+        input: attempt.input,
+        idempotencyKey: attempt.idempotencyKey,
+      }
+      wakeKind = 'task'
+    }
+    const continueQueue = this.#keys.queue('continue')
+    const attemptQueue = this.#keys.queue('attempt')
+    // Validate the shared contract first, then compare every observed record
+    // inside Lua so cleanup, competing retries and execution cannot interleave.
+    const result = scriptResult(
+      await this.#scripts.run(
+        'reopenFailedRun',
+        [
+          ...stateKeys,
+          this.#keys.activeRuns(),
+          this.#keys.terminalRuns(),
+          continueQueue.items,
+          continueQueue.ready,
+          continueQueue.claimed,
+          continueQueue.dead,
+          continueQueue.dedup,
+          attemptQueue.items,
+          attemptQueue.ready,
+          attemptQueue.claimed,
+          attemptQueue.dead,
+          attemptQueue.dedup,
+          this.#keys.runWake(rootRunId),
+          this.#keys.commandWake(wakeKind),
+        ],
+        [
+          JSON.stringify(expected),
+          JSON.stringify(runIds),
+          JSON.stringify(guards),
+          encodeRedisValue(attempt ?? null),
+          encodeRedisValue({
+            id: createRedisId(),
+            payload: command,
+            rootRunId,
+            deliveryCount: 0,
+            createdAt: date,
+            createdAtScore: date.getTime(),
+          }),
+          root.id,
+          this.#keys.prefix,
+        ],
+      ),
+    )
+    if (result[0] === 'conflict') {
+      const holder = decodeScriptValue<StoredRun>(result[1])
+      throw new WorkflowRunConflictError({
+        runId: holder.id,
+        status: holder.status,
+        key: holder.unique!.key,
+        scope: holder.unique!.scope,
+      })
+    }
+    if (result[0] === 'busy') throw new Error(`Run [${result[1]}] is busy`)
+    if (result[0] === 'claimed')
+      throw new Error(`Run [${result[1]}] has an active attempt`)
+    if (result[0] !== 'updated')
+      throw new Error(`Stale retry version for run [${root.id}]`)
+    return decodeScriptValue<StoredRun>(result[1])
+  }
+
   async #normalizeCreateInput(input: CreateRunInput): Promise<CreateRunInput> {
     if (input.rootRunId !== undefined || input.parentRunId === undefined) {
       return input
@@ -204,6 +347,7 @@ export class RedisWorkflowStoreRuntime {
       rootRunId: input.rootRunId ?? id,
       tags: input.tags ?? {},
       version: 1,
+      activeSince: date,
       createdAt: date,
       updatedAt: date,
     }
@@ -221,6 +365,7 @@ export class RedisWorkflowStoreRuntime {
 
   #createStore(): WorkflowStore {
     return {
+      reopenFailedRun: (params) => this.#reopenFailedRun(params),
       createRun: async (input) => {
         const result = await this.createRunWithState(input)
         return result.run
@@ -906,6 +1051,7 @@ export class RedisWorkflowStoreRuntime {
       status: 'started',
       leaseToken: createRedisId(),
       attemptNumber: 0,
+      retryAttemptNumber: 1,
       input: input.input,
       dispatchedAt: new Date(),
     }
@@ -1116,6 +1262,7 @@ export class RedisWorkflowStoreRuntime {
         this.#keys.familyChildren(rootRunId),
         this.#keys.familyIndexes(rootRunId),
         this.#keys.runWake(rootRunId),
+        this.#keys.familyAttempts(rootRunId),
       ],
       [runId, String(Date.now())],
     )
@@ -1400,6 +1547,11 @@ const jsonContains = (target: unknown, expected: unknown): boolean => {
 }
 
 const runMatchesFilter = (run: StoredRun, filter: ListRunsFilter) => {
+  if (
+    filter.activeBefore !== undefined &&
+    run.activeSince >= filter.activeBefore
+  )
+    return false
   if (filter.kind !== undefined && run.kind !== filter.kind) return false
   if (filter.name !== undefined && run.name !== filter.name) return false
   if (Array.isArray(filter.status)) {
