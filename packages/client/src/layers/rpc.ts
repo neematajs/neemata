@@ -753,9 +753,12 @@ export const createRpcLayer = (
         )
 
         const encodedPayload = transformer.encode(procedure, payload)
+        // Cancellation/disconnection must settle the call even if encoding never finishes.
         const transformedPayload = isPromiseLike(encodedPayload)
-          ? await encodedPayload
+          ? await Promise.race([encodedPayload, call.promise])
           : encodedPayload
+
+        if (signal?.aborted) throw toAbortError(signal)
 
         if (core.transportType === ConnectionType.Bidirectional) {
           if (!core.messageContext) {

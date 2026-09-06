@@ -98,8 +98,8 @@ export abstract class BaseType<
 
     this.props = props
     this.params = Object.assign({ checks: [] }, params)
-    this.encode = standard.create(this.encodeZodType, typesRegistry)
-    this.decode = standard.create(this.decodeZodType, typesRegistry)
+    this.encode = standard.create(this.encodeZodType, typesRegistry, 'output')
+    this.decode = standard.create(this.decodeZodType, typesRegistry, 'input')
   }
 
   optional(): OptionalType<this> {
@@ -138,6 +138,8 @@ export abstract class BaseType<
     const metadata = typesRegistry.get(this.encodeZodType) ?? {}
     Object.assign(metadata, newMetadata)
     typesRegistry.add(this.encodeZodType, metadata)
+    // Transformed types use separate schemas, but describe the same public field.
+    typesRegistry.add(this.decodeZodType, metadata)
     return this
   }
 }

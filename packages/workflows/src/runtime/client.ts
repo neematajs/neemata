@@ -194,11 +194,11 @@ export function createWorkflowRuntimeClient<Connection = never>(
   })
   const definitions = createDefinitionIndex(registry, input.definitions)
 
-  const start = (async (
+  const startStored = async (
     runnable: AnyWorkflowDefinition | AnyTaskDefinition,
     runnableInput: unknown,
     options?: WorkflowRuntimeStartOptions<Connection>,
-  ) => {
+  ): Promise<StoredRun> => {
     switch (runnable.kind) {
       case 'workflow': {
         const run = await startWorkflowRun({
@@ -214,14 +214,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
           startAt: options?.startAt,
           connection: options?.connection,
         })
-        return {
-          ...run,
-          input: await decodeSchemaValue(
-            runnable.input,
-            run.input,
-            `workflow input [${runnable.name}]`,
-          ),
-        } as WorkflowRun<typeof runnable>
+        return run
       }
       case 'task': {
         const run = await startTaskRun({
@@ -238,15 +231,33 @@ export function createWorkflowRuntimeClient<Connection = never>(
           startAt: options?.startAt,
           connection: options?.connection,
         })
-        return {
-          ...run,
-          input: await decodeSchemaValue(
-            runnable.input,
-            run.input,
-            `task input [${runnable.name}]`,
-          ),
-        } as TaskRun<typeof runnable>
+        return run
       }
+    }
+  }
+  const start = (async (
+    runnable: RunnableDefinition,
+    runnableInput: unknown,
+    options?: WorkflowRuntimeStartOptions<Connection>,
+  ) => {
+    const run = await startStored(runnable, runnableInput, options)
+    return {
+      ...run,
+      input: await decodeSchemaValue(
+        runnable.input,
+        run.input,
+        `${runnable.kind} input [${runnable.name}]`,
+      ),
+      // An idempotent start may return an already completed stored run.
+      ...(run.status === 'completed' && runnable.output
+        ? {
+            output: await decodeSchemaValue(
+              runnable.output,
+              run.output,
+              `${runnable.kind} output [${runnable.name}]`,
+            ),
+          }
+        : {}),
     }
   }) as WorkflowRuntimeClient<Connection>['start']
   const requireScheduler = () => {
@@ -260,7 +271,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
     start,
     deleteRun: (runId) => input.store.deleteRun(runId),
     retry: (runId, options) =>
-      retryRun(input.store, definitions, start, runId, options),
+      retryRun(input.store, definitions, startStored, runId, options),
     cancel: async (runId) => {
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
@@ -478,7 +489,11 @@ function createDefinitionIndex(
 async function retryRun<Connection>(
   store: WorkflowStore,
   definitions: WorkflowDefinitionIndex,
-  start: WorkflowRuntimeClient<Connection>['start'],
+  start: (
+    runnable: RunnableDefinition,
+    input: unknown,
+    options?: WorkflowRuntimeStartOptions<Connection>,
+  ) => Promise<StoredRun>,
   runId: string,
   options?: WorkflowRuntimeStartOptions<Connection>,
 ): Promise<StoredRun> {
@@ -499,13 +514,13 @@ async function retryRun<Connection>(
           `Cannot retry run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
         )
       }
-      return (await start(workflow, run.input as never, {
+      return await start(workflow, run.input, {
         tags: run.tags,
         // scope 'all' constraints conflict with the terminal run itself on
         // retry — surfaced honestly; override via options.unique if intended
         ...(run.unique === undefined ? {} : { unique: run.unique }),
         ...options,
-      })) as StoredRun
+      })
     }
     case 'task': {
       const taskName = run.taskName ?? run.name
@@ -515,11 +530,11 @@ async function retryRun<Connection>(
           `Cannot retry run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
         )
       }
-      return (await start(task, run.input as never, {
+      return await start(task, run.input, {
         tags: run.tags,
         ...(run.unique === undefined ? {} : { unique: run.unique }),
         ...options,
-      })) as StoredRun
+      })
     }
   }
 }

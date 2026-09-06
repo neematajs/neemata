@@ -79,6 +79,66 @@ const runtimeContract = c.router({
 })
 
 describe('public clients', () => {
+  it('requires codecs at the RuntimeClient constructor, including nested streams', () => {
+    const transport = createMockUnidirectionalTransport()
+    const directionalInput = c.router({
+      routes: {
+        invalid: c.procedure({ input: t.string().decode, output: t.string() }),
+      },
+    })
+    expect(
+      () =>
+        new RuntimeClient(
+          // @ts-expect-error Runtime clients must encode input through a codec.
+          createBaseOptions({ contract: directionalInput }),
+          transport.factory,
+          {},
+        ),
+    ).toThrow('Runtime client procedure input must be a codec: invalid')
+
+    const createMixedClient = (
+      contract: typeof runtimeContract | typeof directionalInput,
+    ) =>
+      new RuntimeClient(
+        // @ts-expect-error Every possible router must provide codecs, even with different route names.
+        createBaseOptions({ contract }),
+        transport.factory,
+        {},
+      )
+    expect(() => createMixedClient(directionalInput)).toThrow(
+      'Runtime client procedure input must be a codec: invalid',
+    )
+    createMixedClient(runtimeContract).dispose()
+
+    const directionalOutput = c.router({
+      routes: {
+        nested: c.router({
+          routes: {
+            invalid: c.procedure({ output: t.string().encode, stream: true }),
+          },
+        }),
+      },
+    })
+    expect(
+      () =>
+        new RuntimeClient(
+          // @ts-expect-error Runtime clients must decode output through a codec at every depth.
+          createBaseOptions({ contract: directionalOutput }),
+          transport.factory,
+          {},
+        ),
+    ).toThrow('Runtime client procedure output must be a codec: nested/invalid')
+
+    const noSchemas = c.router({ routes: { empty: c.procedure({}) } })
+    const client = new RuntimeClient(
+      createBaseOptions({ contract: noSchemas }),
+      transport.factory,
+      {},
+    )
+    expect(typeof client.call.empty).toBe('function')
+    client.dispose()
+  })
+
   it('awaits async runtime codecs and rejects directional-only schemas', async () => {
     const schema = <Input, Output>(
       transform: (value: Input) => Promise<Output>,

@@ -4,6 +4,7 @@ import type {
   StandardSchemaV1,
 } from '@standard-schema/spec'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import { number, string } from 'zod/mini'
 
 import { t } from '../src/index.ts'
 
@@ -122,6 +123,86 @@ describe('Standard schema', () => {
 
     expect('~standard' in baseSchema).toBe(false)
     expect(baseSchema.decode).not.toBe(baseSchema.encode)
+  })
+
+  it.each(['draft-2020-12', 'draft-07', 'openapi-3.0'] as const)(
+    'preserves transformed field metadata on both wire projections for %s',
+    (target) => {
+      const date = t
+        .date()
+        .title('Created at')
+        .description('Creation timestamp')
+        .examples(new Date('2026-09-01T00:00:00.000Z'))
+      const schema = t.object({ createdAt: date })
+      const metadata = {
+        title: 'Created at',
+        description: 'Creation timestamp',
+        examples: ['2026-09-01T00:00:00.000Z'],
+      }
+      expect(
+        schema.decode['~standard'].jsonSchema.input({ target }),
+      ).toMatchObject({
+        properties: { createdAt: metadata },
+      })
+      expect(
+        schema.encode['~standard'].jsonSchema.output({ target }),
+      ).toMatchObject({
+        properties: { createdAt: metadata },
+      })
+      date.title('Updated title')
+      expect(
+        date.decode['~standard'].jsonSchema.input({ target }),
+      ).toMatchObject({
+        ...metadata,
+        title: 'Updated title',
+      })
+    },
+  )
+
+  it('keeps encoded examples off runtime projections and honors JSON overrides', () => {
+    const schema = t
+      .custom({
+        type: string(),
+        decodedType: number(),
+        decode: Number,
+        encode: String,
+      })
+      .examples(42)
+    const options = { target: 'draft-07' } as const
+
+    expect(schema.decode['~standard'].jsonSchema.input(options)).toMatchObject({
+      type: 'string',
+      examples: ['42'],
+    })
+    expect(schema.encode['~standard'].jsonSchema.output(options)).toMatchObject(
+      {
+        type: 'string',
+        examples: ['42'],
+      },
+    )
+    for (const projected of [
+      schema.decode['~standard'].jsonSchema.output(options),
+      schema.encode['~standard'].jsonSchema.input(options),
+    ]) {
+      expect(projected).toMatchObject({ type: 'number' })
+      expect(projected).not.toHaveProperty('examples')
+    }
+    expect(
+      schema.decode['~standard'].jsonSchema.input({
+        ...options,
+        libraryOptions: {
+          json: {
+            override: ({
+              jsonSchema,
+            }: {
+              jsonSchema: Record<string, unknown>
+            }) => {
+              jsonSchema.examples = ['custom']
+            },
+          },
+        },
+      }),
+    ).toMatchObject({ examples: ['custom'] })
   })
 
   it('has correct typings', async () => {

@@ -65,6 +65,70 @@ class MockCore extends EventEmitter<{
 }
 
 describe('RPC streams', () => {
+  it.each(['abort', 'timeout', 'disconnect'] as const)(
+    'settles %s while input encoding is pending and ignores its late rejection',
+    async (reason) => {
+      const core = new MockCore()
+      const transformer = new BaseClientTransformer()
+      let rejectEncoding!: (error: Error) => void
+      transformer.encode = () =>
+        new Promise((_resolve, reject) => {
+          rejectEncoding = reject
+        })
+      const rpcLayer = createRpcLayer(
+        core as any,
+        { addServerBlobStream: vi.fn() } as any,
+        transformer,
+      )
+      const controller = new AbortController()
+      const unhandled: unknown[] = []
+      const stopTracking = trackUnhandledRejections(unhandled)
+      let settled = false
+      const call = rpcLayer
+        .call(
+          'users/profile',
+          {},
+          {
+            signal: controller.signal,
+            ...(reason === 'timeout' ? { timeout: 10 } : {}),
+          },
+        )
+        .then(
+          () => {
+            throw new Error('Expected the call to reject')
+          },
+          (error) => {
+            settled = true
+            return error
+          },
+        )
+      try {
+        if (reason === 'abort') controller.abort('cancelled')
+        if (reason === 'disconnect') core.emit('disconnected', 'server')
+
+        await vi.waitFor(() => expect(settled).toBe(true))
+        expect(await call).toBeInstanceOf(Error)
+        expect(rpcLayer.pendingCallCount).toBe(0)
+        expect(core.protocol.encodeMessage).not.toHaveBeenCalledWith(
+          expect.anything(),
+          ClientMessageType.Rpc,
+          expect.anything(),
+        )
+      } finally {
+        rejectEncoding(new Error('late encoding failure'))
+        await call
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        stopTracking()
+      }
+      expect(unhandled).toEqual([])
+      expect(core.protocol.encodeMessage).not.toHaveBeenCalledWith(
+        expect.anything(),
+        ClientMessageType.Rpc,
+        expect.anything(),
+      )
+    },
+  )
+
   it('awaits Promise-compatible transformer results before sending', async () => {
     const core = new MockCore()
     const transformer = new BaseClientTransformer()

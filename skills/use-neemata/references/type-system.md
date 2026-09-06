@@ -216,6 +216,11 @@ settings such as `cycles` and `reused`. Conversion is strict by default and
 throws when a boundary cannot be represented faithfully. Neemata runtime
 validation does not require JSON Schema support.
 
+Titles and descriptions are preserved on both directions, including nested
+transformed fields. Examples describe encoded wire values and are emitted on
+decode-input and encode-output JSON Schema projections. A custom
+`libraryOptions.json.override` runs after these metadata defaults.
+
 Framework-neutral helpers and contracts are available from
 `@nmtjs/common/schema`:
 

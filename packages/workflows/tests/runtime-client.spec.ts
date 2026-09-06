@@ -14,6 +14,47 @@ import {
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
+  it.each(['workflow', 'task'] as const)(
+    'decodes completed %s outputs on idempotent start and keeps retries stored',
+    async (kind) => {
+      const options = {
+        name: `client-coded-${kind}-boundaries`,
+        input: t.date(),
+        output: t.date(),
+      }
+      const definition =
+        kind === 'workflow'
+          ? defineWorkflow(options).build()
+          : defineTask(options)
+      const runtime = createInMemoryWorkflowRuntime()
+      const client = createWorkflowRuntimeClient({
+        ...runtime,
+        definitions: [definition],
+      })
+      const input = '2026-09-01T00:00:00.000Z'
+      const output = '2026-09-02T00:00:00.000Z'
+      const start = () =>
+        definition.kind === 'workflow'
+          ? client.start(definition, input, { idempotencyKey: ['same'] })
+          : client.start(definition, input, { idempotencyKey: ['same'] })
+      const first = await start()
+      await runtime.store.completeRun({ runId: first.id, output })
+
+      const joined = await start()
+      expect(joined.id).toBe(first.id)
+      expect(joined.status).toBe('completed')
+      expect(joined.input).toStrictEqual(new Date(input))
+      expect(joined.output).toStrictEqual(new Date(output))
+      expect((await client.get(first.id))?.run).toMatchObject({ input, output })
+
+      const retried = await client.retry(first.id)
+      expect(retried.id).not.toBe(first.id)
+      expect(retried.input).toBe(input)
+      expect(retried.output).toBeUndefined()
+      expect(retried).toStrictEqual((await client.get(retried.id))?.run)
+    },
+  )
+
   it('rejects directional schemas at durable boundaries', async () => {
     const workflow = defineWorkflow({
       name: 'directional-schema-workflow',
