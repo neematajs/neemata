@@ -246,6 +246,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         queue.ready,
         queue.dead,
         this.#keys.commandWake(this.#wakeKind(item.payload)),
+        queue.dedup,
       ],
       [
         item.id,
@@ -317,7 +318,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     if (item.rootRunId !== undefined) requeued.rootRunId = item.rootRunId
     const moved = await this.#scripts.run(
       'transitionDead',
-      [queue.items, queue.dead, queue.ready],
+      [queue.items, queue.dead, queue.ready, queue.dedup],
       [id, raw, encodeRedisValue(requeued), String(readyScore(requeued))],
     )
     const didRequeue = moved === 1
