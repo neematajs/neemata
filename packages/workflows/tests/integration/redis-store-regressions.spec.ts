@@ -82,6 +82,98 @@ for (const target of targets) {
         return { client, keyPrefix, runtime }
       }
 
+      it('pages mixed active and terminal runs in creation order with bounded reads', async () => {
+        const { client, runtime } = createHarness(5000)
+        const runs: { id: string }[] = []
+        for (let index = 0; index < 140; index += 1) {
+          const run = await runtime.store.createRun({
+            workflowName: 'paged',
+            input: index,
+          })
+          runs.push(run)
+          if (index % 2 === 0)
+            await runtime.store.completeRun({ runId: run.id, output: null })
+        }
+        const calls = vi.spyOn(client, 'evalsha')
+        const reads = vi.spyOn(client, 'hget')
+        const first = await runtime.store.listRuns({ limit: 1 })
+        expect(first.runs.map((run) => run.id)).toEqual([runs[139]!.id])
+        expect(calls).toHaveBeenCalledTimes(1)
+        expect(reads).not.toHaveBeenCalled()
+        const second = await runtime.store.listRuns({
+          limit: 1,
+          cursor: first.nextCursor,
+        })
+        expect(second.runs.map((run) => run.id)).toEqual([runs[138]!.id])
+        const filtered = await runtime.store.listRuns({
+          limit: 2,
+          status: 'completed',
+        })
+        expect(filtered.runs.map((run) => run.id)).toEqual([
+          runs[138]!.id,
+          runs[136]!.id,
+        ])
+        expect(
+          (await runtime.store.listRuns()).runs.map((run) => run.id),
+        ).toEqual(runs.toReversed().map((run) => run.id))
+      })
+
+      it('summarizes sibling runs without loading whole families', async () => {
+        const { client, runtime } = createHarness()
+        const root = await runtime.store.createRun({
+          workflowName: 'summary',
+          input: null,
+        })
+        const runs = [root]
+        for (let index = 0; index < 9; index += 1)
+          runs.push(
+            await runtime.store.createRun({
+              workflowName: 'summary',
+              input: null,
+              parentRunId: root.id,
+              rootRunId: root.id,
+            }),
+          )
+        for (const run of runs)
+          await runtime.store.createNode({
+            runId: run.id,
+            name: 'work',
+            kind: 'activity',
+          })
+        const calls = vi.spyOn(client, 'evalsha')
+        const reads = vi.spyOn(client, 'hgetall')
+        const result = await runtime.store.listRunSummaries({ limit: 10 })
+        expect(result.runs).toHaveLength(10)
+        expect(
+          result.runs.every(
+            (run) => run.nodesTotal === 1 && run.nodesCompleted === 0,
+          ),
+        ).toBe(true)
+        expect(calls).toHaveBeenCalledTimes(2)
+        expect(reads).not.toHaveBeenCalled()
+        for (let index = 0; index < 300; index += 1)
+          await runtime.store.createNode({
+            runId: root.id,
+            name: `extra-${index}`,
+            kind: 'activity',
+          })
+        await runtime.store.completeNode({
+          runId: root.id,
+          nodeName: 'work',
+          output: null,
+        })
+        calls.mockClear()
+        const expanded = await runtime.store.listRunSummaries({
+          rootRunId: root.id,
+        })
+        expect(expanded.runs.find((run) => run.id === root.id)).toMatchObject({
+          nodesTotal: 301,
+          nodesCompleted: 1,
+        })
+        expect(calls.mock.calls.length).toBeLessThanOrEqual(4)
+        expect(reads).not.toHaveBeenCalled()
+      })
+
       it('keeps Date identities distinct and replays Date inputs using their stored JSON form', async () => {
         const { runtime } = createHarness()
         const firstDate = new Date('2025-01-01T00:00:00.000Z')
@@ -652,6 +744,29 @@ for (const target of targets) {
         await expect(runtime.store.createRun(input)).rejects.toThrow()
       })
 
+      it('keeps chronological pages alive when new work outlives retained history', async () => {
+        const { client, keyPrefix, runtime } = createHarness(100)
+        const old = await runtime.store.createRun({
+          workflowName: 'old',
+          input: null,
+        })
+        await runtime.store.completeRun({ runId: old.id, output: null })
+        expect(await client.pttl(`${keyPrefix}runs:ordered`)).toBeGreaterThan(0)
+        const active = await runtime.store.createRun({
+          workflowName: 'active',
+          input: null,
+        })
+        expect(await client.pttl(`${keyPrefix}runs:ordered`)).toBe(-1)
+        await new Promise((resolve) => setTimeout(resolve, 160))
+        expect(
+          (await runtime.store.listRuns()).runs.map((run) => run.id),
+        ).toEqual([active.id])
+        expect(await client.zcard(`${keyPrefix}runs:ordered`)).toBe(1)
+        await runtime.store.completeRun({ runId: active.id, output: null })
+        await runtime.store.deleteRun(active.id)
+        expect(await client.exists(`${keyPrefix}runs:ordered`)).toBe(0)
+      })
+
       it('expires the terminal index without requiring a reader or pruner', async () => {
         const { client, keyPrefix, runtime } = createHarness(100)
         const run = await runtime.store.createRun({
@@ -664,6 +779,7 @@ for (const target of targets) {
         )
         await new Promise((resolve) => setTimeout(resolve, 160))
         expect(await client.exists(`${keyPrefix}runs:terminal`)).toBe(0)
+        expect(await client.exists(`${keyPrefix}runs:ordered`)).toBe(0)
       })
 
       it('removes family retention on retry and rearms it after completion', async () => {
@@ -691,6 +807,7 @@ for (const target of targets) {
         })
         expect(retried.status).toBe('queued')
         expect(await client.pttl(`${keyPrefix}family:${run.id}`)).toBe(-1)
+        expect(await client.pttl(`${keyPrefix}runs:ordered`)).toBe(-1)
         expect(await client.pttl(`${keyPrefix}run-root:${run.id}`)).toBe(-1)
         expect(
           await client.zscore(`${keyPrefix}runs:terminal`, run.id),

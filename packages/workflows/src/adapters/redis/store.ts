@@ -51,6 +51,7 @@ import {
 } from './state.ts'
 import { RedisWorkflowStoreScripts } from './store-scripts.ts'
 
+const READ_BATCH_SIZE = 128
 const DEFAULT_PRUNE_BATCH_SIZE = 100
 const DEFAULT_PRUNE_STATUSES = [
   'completed',
@@ -371,14 +372,7 @@ export class RedisWorkflowStoreRuntime {
       listRuns: (filter = {}) => this.#listRuns(filter),
       listRunSummaries: async (filter = {}) => {
         const result = await this.#listRuns(filter)
-        const pending: Promise<RunSummary>[] = []
-        pending.length = result.runs.length
-        let index = 0
-        for (const run of result.runs) {
-          pending[index] = this.#loadRunSummary(run)
-          index += 1
-        }
-        const summaries = await Promise.all(pending)
+        const summaries = await this.#loadRunSummaries(result.runs)
         const response: { runs: RunSummary[]; nextCursor?: string } = {
           runs: summaries,
         }
@@ -538,74 +532,81 @@ export class RedisWorkflowStoreRuntime {
     if (!Number.isInteger(offset) || offset < 0) {
       throw new Error(`Invalid run list cursor [${filter.cursor}]`)
     }
-    await this.#scripts.run('pruneRunIndex', [this.#keys.terminalRuns()], [])
-    const [active, terminal] = await Promise.all([
-      this.#client.zrevrange(this.#keys.activeRuns(), 0, -1),
-      this.#client.zrevrange(this.#keys.terminalRuns(), 0, -1),
-    ])
-    const ids: string[] = []
-    const seen = new Set<string>()
-    for (const id of active) {
-      if (seen.has(id)) continue
-      seen.add(id)
-      ids.push(id)
-    }
-    for (const id of terminal) {
-      if (seen.has(id)) continue
-      seen.add(id)
-      ids.push(id)
-    }
-    const pending: Promise<{ run: StoredRun; order: number } | undefined>[] = []
-    pending.length = ids.length
-    let pendingIndex = 0
-    for (const id of ids) {
-      pending[pendingIndex] = this.#loadOrderedRun(id)
-      pendingIndex += 1
-    }
-    const loaded = await Promise.all(pending)
-    const filtered: { run: StoredRun; order: number }[] = []
-    for (const entry of loaded) {
-      if (entry && runMatchesFilter(entry.run, filter)) filtered.push(entry)
-    }
-    filtered.sort((left, right) => right.order - left.order)
-    const end = Math.min(filtered.length, offset + limit)
     const page: StoredRun[] = []
-    page.length = Math.max(0, end - offset)
-    let pageIndex = 0
-    for (let index = offset; index < end; index += 1) {
-      const entry = filtered[index]
-      if (!entry) continue
-      page[pageIndex] = entry.run
-      pageIndex += 1
-    }
-    const nextOffset = offset + page.length
-    const result: { runs: StoredRun[]; nextCursor?: string } = { runs: page }
-    if (nextOffset < filtered.length) {
-      result.nextCursor = String(nextOffset)
-    }
-    return result
+    let cursor = '+inf'
+    let matched = 0
+    do {
+      // Sparse filters still scan full pages after the initial small request.
+      const size =
+        cursor === '+inf'
+          ? Math.min(READ_BATCH_SIZE, offset + limit + 1)
+          : READ_BATCH_SIZE
+      const result = scriptResult(
+        await this.#scripts.run(
+          'listRuns',
+          [
+            this.#keys.orderedRuns(),
+            this.#keys.activeRuns(),
+            this.#keys.terminalRuns(),
+          ],
+          [cursor, String(size), this.#keys.prefix],
+        ),
+      )
+      cursor = result[0]!
+      for (const raw of result.slice(1)) {
+        const run = decodeRedisValue<StoredRun>(raw)
+        if (!runMatchesFilter(run, filter)) continue
+        if (matched++ < offset) continue
+        if (page.length === limit)
+          return { runs: page, nextCursor: String(offset + page.length) }
+        page.push(run)
+      }
+    } while (cursor !== '')
+    return { runs: page }
   }
 
-  async #loadRunSummary(run: StoredRun): Promise<RunSummary> {
-    const family = await this.#loadFamilyByRun(run.id)
-    if (!family) throw new Error(`Missing workflow run [${run.id}]`)
-    return runSummary(family, run)
-  }
-
-  async #loadOrderedRun(
-    runId: string,
-  ): Promise<{ run: StoredRun; order: number } | undefined> {
-    const rootRunId = await this.#client.get(this.#keys.runRoot(runId))
-    if (!rootRunId) return undefined
-    const [runRaw, orderRaw] = await Promise.all([
-      this.#client.hget(this.#keys.familyRuns(rootRunId), runId),
-      this.#client.hget(this.#keys.familyOrders(rootRunId), runId),
-    ])
-    if (!runRaw) return undefined
-    const run = decodeRedisValue<StoredRun>(runRaw)
-    let order = run.createdAt.getTime()
-    if (orderRaw) order = Number(orderRaw)
-    return { run, order }
+  async #loadRunSummaries(runs: readonly StoredRun[]): Promise<RunSummary[]> {
+    const summaries: RunSummary[] = []
+    for (let offset = 0; offset < runs.length; offset += READ_BATCH_SIZE) {
+      const batch = runs.slice(offset, offset + READ_BATCH_SIZE)
+      const counts = batch.map(() => ({ total: 0, completed: 0 }))
+      const encoded = JSON.stringify(
+        batch.map(({ id, rootRunId }) => ({ id, rootRunId })),
+      )
+      let position = '1'
+      let nodePosition = '1'
+      do {
+        const result = scriptResult(
+          await this.#scripts.run(
+            'summarizeRuns',
+            [],
+            [
+              this.#keys.prefix,
+              encoded,
+              position,
+              nodePosition,
+              String(READ_BATCH_SIZE),
+            ],
+          ),
+        )
+        position = result[0]!
+        nodePosition = result[1]!
+        for (let index = 2; index < result.length; index += 3) {
+          const count = counts[Number(result[index]) - 1]!
+          count.total += Number(result[index + 1])
+          count.completed += Number(result[index + 2])
+        }
+      } while (position !== '0')
+      for (let index = 0; index < batch.length; index += 1) {
+        const { input: _input, output: _output, ...run } = batch[index]!
+        summaries.push({
+          ...run,
+          nodesTotal: counts[index]!.total,
+          nodesCompleted: counts[index]!.completed,
+        })
+      }
+    }
+    return summaries
   }
 
   async #loadFamilyByRun(runId: string) {
@@ -1228,6 +1229,7 @@ export class RedisWorkflowStoreRuntime {
           '',
           String(this.#terminalRetentionMs),
           uniqueKey,
+          this.#keys.orderedRuns(),
         ],
       ),
     )
@@ -1431,6 +1433,7 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.familyRuns(rootRunId),
           this.#keys.activeRuns(),
           this.#keys.terminalRuns(),
+          this.#keys.orderedRuns(),
           ...stateKeys,
         ],
         prune

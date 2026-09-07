@@ -92,7 +92,16 @@ oldest due command across the selected routes. Per-run indexes scope manual
 retry, cancellation, and family deletion to the affected runs. Lua maintains
 these indexes atomically with queue transitions. Manual retry still performs
 work proportional to the affected family and its own retained commands;
-retention maintenance scans shared queues in bounded batches.
+retention maintenance scans shared queues in bounded batches. Recovery and
+command deletion batch work across routes and runs; heartbeats renew the lease
+and read run status in one atomic call. Dead-command reads honor limits and
+page through retained records.
+
+Run listing uses a chronological index to fetch bounded candidate pages before
+applying filters. Summary reads count only the selected runs' nodes in bounded
+batches, without downloading their families. The chronological index survives
+while active runs exist and expires with the latest retained terminal run when
+all families are terminal.
 
 The caller owns the command client and must close it. `runtime.dispose()` closes
 only the duplicated Pub/Sub connection. Redis Cluster is not supported in this

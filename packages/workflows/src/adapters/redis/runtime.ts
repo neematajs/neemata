@@ -105,8 +105,8 @@ export function createRedisWorkflowRuntime(
       },
       async listUnreapedDeadCommands({ limit, commandId } = {}) {
         const groups = await Promise.all([
-          continueQueue.listUnreaped(undefined, commandId),
-          attemptQueue.listUnreaped(undefined, commandId),
+          continueQueue.listUnreaped(limit, commandId),
+          attemptQueue.listUnreaped(limit, commandId),
         ])
         const commands: DeadWorkflowCommand[] = []
         for (const group of groups) {
@@ -167,13 +167,9 @@ export function createRedisWorkflowRuntime(
       return attemptQueue.asAttemptClaim(claim)
     },
     heartbeat: async (attempt, leaseMs = DEFAULT_LEASE_MS) => {
-      const renewed = await attemptQueue.heartbeat(attempt, leaseMs)
-      if (!renewed) {
-        throw new Error('Workflow attempt heartbeat lease lost')
-      }
-      const run = await storeRuntime.loadRun(attempt.command.runId)
-      const runStatus = run?.status ?? 'queued'
-      return { runStatus }
+      const result = await attemptQueue.heartbeat(attempt, leaseMs)
+      if (!result) throw new Error('Workflow attempt heartbeat lease lost')
+      return result
     },
     ack: (attempt) => attemptQueue.ack(attempt),
     release: (attempt, options) => attemptQueue.release(attempt, options),

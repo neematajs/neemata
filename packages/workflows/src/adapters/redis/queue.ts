@@ -9,7 +9,7 @@ import type {
   RunCoordinationWorkerClaim,
 } from '../../runtime/commands.ts'
 import type { CommandReleaseOptions } from '../../runtime/executors.ts'
-import type { StoredError } from '../../runtime/state.ts'
+import type { StoredError, StoredRun } from '../../runtime/state.ts'
 import type { DeadWorkflowCommand } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
 import type { WorkflowRedisClient } from './client.ts'
@@ -187,18 +187,21 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     }
   }
 
-  async heartbeat(claim: QueueClaim<T>, leaseMs: number): Promise<boolean> {
+  async heartbeat(
+    claim: QueueClaim<T>,
+    leaseMs: number,
+  ): Promise<{ runStatus: StoredRun['status'] } | undefined> {
     const queue = this.#keys.queue(this.#kind)
-    const raw = await this.#client.hget(queue.items, claim.id)
-    if (!raw) return false
-    const item = decodeRedisValue<RedisQueueItem<T>>(raw)
-    if (!matchesClaim(item, claim)) return false
-    const result = await this.#scripts.run(
-      'heartbeat',
-      [queue.items, queue.claimed],
-      [item.id, raw, String(leaseMs)],
+    const result = queueScriptResult(
+      await this.#scripts.runRaw(
+        'heartbeat',
+        [queue.items, queue.claimed],
+        [claim.id, claim.leaseToken, String(leaseMs), this.#keys.prefix],
+      ),
     )
-    return result === 1
+    if (result.length === 0) return undefined
+    const run = decodeRedisValue<Pick<StoredRun, 'status'>>(result[0]!)
+    return { runStatus: run.status }
   }
 
   async ack(claim: QueueClaim<T>): Promise<void> {
@@ -254,17 +257,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 
   async listDead(runId?: string): Promise<readonly DeadWorkflowCommand[]> {
-    const queue = this.#keys.queue(this.#kind)
-    await this.#pruneOrphans(queue.dead)
-    const ids = await this.#client.zrevrange(queue.dead, 0, -1)
-    const dead: DeadWorkflowCommand[] = []
-    for (const id of ids) {
-      const item = await this.#loadItem(id)
-      if (!item || !item.deadAt) continue
-      if (runId !== undefined && item.payload.runId !== runId) continue
-      dead.push(this.#mapDead(item))
-    }
-    return dead
+    return this.#listDead(true, undefined, runId)
   }
 
   async listUnreaped(
@@ -276,17 +269,36 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
       if (!item || !item.deadAt || item.reapedAt !== undefined) return []
       return [this.#mapDead(item)]
     }
+    return this.#listDead(false, limit)
+  }
 
+  async #listDead(newest: boolean, limit?: number, runId?: string) {
+    if (limit !== undefined && limit < 1) return []
     const queue = this.#keys.queue(this.#kind)
-    await this.#pruneOrphans(queue.dead)
-    const ids = await this.#client.zrange(queue.dead, '0', '-1')
     const dead: DeadWorkflowCommand[] = []
-    for (const id of ids) {
-      const item = await this.#loadItem(id)
-      if (!item || !item.deadAt) continue
-      if (item.reapedAt !== undefined) continue
-      dead.push(this.#mapDead(item))
-      if (limit !== undefined && dead.length >= limit) break
+    for (let offset = 0; ; ) {
+      const size = QUEUE_BATCH_SIZE
+      const result = queueScriptResult(
+        await this.#scripts.runRaw(
+          'listDead',
+          [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
+          [
+            String(offset),
+            String(size),
+            newest ? '1' : '0',
+            this.#keys.prefix,
+            runId ?? '',
+            newest ? '0' : '1',
+            String(limit === undefined ? size : limit - dead.length),
+          ],
+        ),
+      )
+      const inspected = Number(result[0])
+      for (const raw of result.slice(1))
+        dead.push(this.#mapDead(decodeRedisValue<RedisQueueItem<T>>(raw)))
+      if (inspected < size || (limit !== undefined && dead.length >= limit))
+        break
+      offset += inspected
     }
     return dead
   }
@@ -352,30 +364,33 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   async #deleteForRuns(runIds: ReadonlySet<string>, unclaimedOnly: boolean) {
     const queue = this.#keys.queue(this.#kind)
     let deleted = 0
-    for (const runId of runIds) {
+    const ids = Array.from(runIds)
+    for (let offset = 0; offset < ids.length; offset += QUEUE_BATCH_SIZE) {
+      const batch = JSON.stringify(ids.slice(offset, offset + QUEUE_BATCH_SIZE))
+      let position = '1'
       let cursor = '0'
-      let changedInPass = false
-      while (true) {
+      let changed = '0'
+      do {
         const result = queueScriptResult(
           await this.#scripts.runRaw(
             'deleteForRuns',
             [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
             [
+              position,
               cursor,
               String(QUEUE_BATCH_SIZE),
-              runId,
               this.#keys.prefix,
               unclaimedOnly ? '1' : '0',
+              batch,
+              changed,
             ],
           ),
         )
-        deleted += Number(result[1] ?? 0)
-        changedInPass ||= result[2] !== '0'
-        cursor = result[0] ?? '0'
-        if (cursor !== '0') continue
-        if (!changedInPass) break
-        changedInPass = false
-      }
+        position = result[0]!
+        cursor = result[1]!
+        deleted += Number(result[2])
+        changed = result[3]!
+      } while (position !== '0')
     }
     return deleted
   }
@@ -385,17 +400,14 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     // Routed workers no longer visit abandoned routes; maintenance owns their
     // expired-family cleanup, including delayed and still-leased commands.
     await this.#pruneOrphans(queue.ready, queue.claimed, queue.dead)
-    const ids = await this.#client.zrangebyscore(
-      queue.dead,
-      '-inf',
-      String(olderThan.getTime()),
-    )
-    for (const id of ids) {
-      const raw = await this.#client.hget(queue.items, id)
-      if (!raw) continue
-      const item = decodeRedisValue<RedisQueueItem<T>>(raw)
-      await this.#deleteIndexed(item, raw, queue.dead)
-    }
+    let count: number
+    do {
+      count = await this.#scripts.run(
+        'pruneDead',
+        [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
+        [String(olderThan.getTime()), String(QUEUE_BATCH_SIZE)],
+      )
+    } while (count === QUEUE_BATCH_SIZE)
   }
 
   asContinueClaim(
@@ -468,15 +480,6 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     )
     if (!value) return undefined
     return decodeRedisValue<RedisQueueItem<T>>(value)
-  }
-
-  #deleteIndexed(item: RedisQueueItem<T>, raw: string, requiredIndex: string) {
-    const queue = this.#keys.queue(this.#kind)
-    return this.#scripts.run(
-      'deleteCommand',
-      [queue.items, requiredIndex, queue.ready, queue.claimed, queue.dedup],
-      [item.id, raw, this.#dedupKey(item.payload)],
-    )
   }
 
   #mapDead(item: RedisQueueItem<T>): DeadWorkflowCommand {
