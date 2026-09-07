@@ -1,6 +1,7 @@
 import type { Callback } from '@nmtjs/common'
 
-export type EventMap = { [K: string]: any[] }
+import type { EventMap } from './types.ts'
+
 type CustomEventName = string & {}
 
 type ListenerRegistration = {

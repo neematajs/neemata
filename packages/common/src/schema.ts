@@ -69,6 +69,33 @@ export namespace WireSchema {
 export type SchemaIssue = StandardSchemaV1.Issue
 export type SchemaValidationOptions = StandardSchemaV1.Options
 
+/** Passes values through unchanged; T declares a type without runtime validation. */
+export function noopSchema<T = unknown>(): Schema.WithJSONSchema<T> {
+  const jsonSchema = ({ target }: StandardJSONSchemaV1.Options) => {
+    switch (target) {
+      case 'draft-2020-12':
+        return { $schema: 'https://json-schema.org/draft/2020-12/schema' }
+      case 'draft-07':
+        return { $schema: 'http://json-schema.org/draft-07/schema#' }
+      case 'draft-04':
+        return { $schema: 'http://json-schema.org/draft-04/schema#' }
+      case 'openapi-3.0':
+        return {}
+      default:
+        throw new Error(`Unsupported JSON Schema target: ${target}`)
+    }
+  }
+
+  return Object.freeze({
+    '~standard': Object.freeze({
+      version: 1,
+      vendor: 'neemata',
+      validate: (value: unknown) => ({ value: value as T }),
+      jsonSchema: Object.freeze({ input: jsonSchema, output: jsonSchema }),
+    }),
+  })
+}
+
 export class SchemaValidationError extends Error {
   override readonly name = 'SchemaValidationError'
 

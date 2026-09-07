@@ -1,10 +1,12 @@
 import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import type { ProtocolBlobInterface } from '@nmtjs/protocol'
+import { noopSchema } from '@nmtjs/common/schema'
 import { c } from '@nmtjs/contract'
 import { ServerMessageType } from '@nmtjs/protocol'
 import { blobType, t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
+import type { ClientTransportFactory } from '../src/transport.ts'
 import {
   RuntimeClient,
   RuntimeContractTransformer,
@@ -79,6 +81,71 @@ const runtimeContract = c.router({
 })
 
 describe('public clients', () => {
+  it('preserves inferred output shapes in nested static calls and streams', () => {
+    const contract = c.router({
+      routes: {
+        nested: c.router({
+          routes: {
+            item: c.procedure({ output: noopSchema<{ id: number }>() }),
+            feed: c.procedure({
+              input: t.object({ since: t.date() }),
+              output: noopSchema<{ id: number }>(),
+              stream: true,
+            }),
+          },
+        }),
+      },
+    })
+    type Client = StaticClient<ClientTransportFactory, typeof contract>
+    type Item = Client['call']['nested']['item']
+    type Feed = Client['stream']['nested']['feed']
+    expectTypeOf<ReturnType<Item>>().toEqualTypeOf<Promise<{ id: number }>>()
+    expectTypeOf<Parameters<Item>[0]>().toEqualTypeOf<undefined>()
+    expectTypeOf<Parameters<Feed>[0]>().toEqualTypeOf<{ since: string }>()
+    expectTypeOf<ReturnType<Feed>>().toEqualTypeOf<
+      Promise<AsyncIterable<{ id: number }>>
+    >()
+    expectTypeOf<keyof Client['call']['nested']>().toEqualTypeOf<'item'>()
+    expectTypeOf<keyof Client['stream']['nested']>().toEqualTypeOf<'feed'>()
+
+    const transport = createMockUnidirectionalTransport()
+    expect(
+      () =>
+        new RuntimeClient(
+          // @ts-expect-error A no-op schema still has no decoding direction for runtime clients.
+          createBaseOptions({ contract }),
+          transport.factory,
+          {},
+        ),
+    ).toThrow('Runtime client procedure output must be a codec: nested/item')
+  })
+
+  it('keeps static wire types separate from runtime codec types', () => {
+    type Static = StaticClient<ClientTransportFactory, typeof runtimeContract>
+    type Runtime = RuntimeClient<ClientTransportFactory, typeof runtimeContract>
+    type Wire = { id: string; createdAt: string }
+    type Value = { id: bigint; createdAt: Date }
+
+    expectTypeOf<
+      Parameters<Static['call']['events']['create']>[0]
+    >().toEqualTypeOf<Wire>()
+    expectTypeOf<
+      ReturnType<Static['call']['events']['create']>
+    >().toEqualTypeOf<Promise<Wire>>()
+    expectTypeOf<
+      Parameters<Runtime['call']['events']['create']>[0]
+    >().toEqualTypeOf<Value>()
+    expectTypeOf<
+      ReturnType<Runtime['call']['events']['create']>
+    >().toEqualTypeOf<Promise<Value>>()
+    expectTypeOf<
+      ReturnType<Static['stream']['events']['feed']>
+    >().toEqualTypeOf<Promise<AsyncIterable<Wire>>>()
+    expectTypeOf<
+      ReturnType<Runtime['stream']['events']['feed']>
+    >().toEqualTypeOf<Promise<AsyncIterable<Value>>>()
+  })
+
   it('requires codecs at the RuntimeClient constructor, including nested streams', () => {
     const transport = createMockUnidirectionalTransport()
     const directionalInput = c.router({

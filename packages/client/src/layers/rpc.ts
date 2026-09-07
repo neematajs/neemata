@@ -1,4 +1,3 @@
-import type { Future } from '@nmtjs/common'
 import type { ServerMessageTypePayload } from '@nmtjs/protocol/client'
 import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
 import {
@@ -13,27 +12,14 @@ import { ProtocolError, ProtocolServerRPCStream } from '@nmtjs/protocol/client'
 
 import type { ClientCore } from '../core.ts'
 import type { BaseClientTransformer } from '../transformers.ts'
-import type { ClientCallOptions } from '../types.ts'
-import type { StreamLayerApi } from './streams.ts'
+import type {
+  ClientCallOptions,
+  ProtocolClientCall,
+  RpcLayerApi,
+  StreamLayerApi,
+} from '../types.ts'
 import { ServerStreams } from '../streams.ts'
 import { toReasonString } from './streams.ts'
-
-export type ProtocolClientCall = Future<any> & {
-  procedure: string
-  signal?: AbortSignal
-  rpcStreamWindow: number
-  cleanup?: () => void
-}
-
-export interface RpcLayerApi {
-  call(
-    procedure: string,
-    payload: any,
-    options?: ClientCallOptions,
-  ): Promise<any>
-  readonly pendingCallCount: number
-  readonly activeStreamCount: number
-}
 
 const DEFAULT_RPC_STREAM_WINDOW = 16
 

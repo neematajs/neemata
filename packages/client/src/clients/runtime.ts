@@ -1,4 +1,3 @@
-import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   TAnyProcedureContract,
   TAnyRouterContract,
@@ -12,22 +11,16 @@ import {
 } from '@nmtjs/common/schema'
 import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../client.ts'
-import type { RpcLayerApi } from '../layers/rpc.ts'
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
+  BaseClientOptions,
+  RpcLayerApi,
   ClientCallOptions,
+  NonCodecSchemas,
   RuntimeInputContractTypeProvider,
   RuntimeOutputContractTypeProvider,
 } from '../types.ts'
 import { Client } from '../client.ts'
-
-type DirectionalSchemas<Route extends TRouteContract> =
-  Route extends TAnyProcedureContract
-    ? Exclude<Route['input'] | Route['output'], WireSchema.Codec | undefined>
-    : Route extends TAnyRouterContract
-      ? DirectionalSchemas<Route['routes'][keyof Route['routes']]>
-      : never
 
 export class RuntimeContractTransformer {
   #procedures = new Map<string, TAnyProcedureContract>()
@@ -154,7 +147,7 @@ export class RuntimeClient<
 > {
   constructor(
     options: BaseClientOptions<RouterContract, SafeCall> &
-      ([DirectionalSchemas<RouterContract>] extends [never] ? unknown : never),
+      ([NonCodecSchemas<RouterContract>] extends [never] ? unknown : never),
     transport: Transport,
     transportOptions: Transport extends ClientTransportFactory<
       any,

@@ -7,11 +7,7 @@ import {
 } from '@nmtjs/protocol'
 
 import type { ClientCore } from '../core.ts'
-
-export interface PingLayerApi {
-  ping(timeout: number, signal?: AbortSignal): Promise<void>
-  stopAll(reason?: unknown): void
-}
+import type { PingLayerApi } from '../types.ts'
 
 export const createPingLayer = (core: ClientCore): PingLayerApi => {
   let pingNonce = 0

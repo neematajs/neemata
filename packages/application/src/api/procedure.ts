@@ -1,6 +1,7 @@
 import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
 import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
+import { noopSchema } from '@nmtjs/common/schema'
 import { c } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
@@ -8,15 +9,6 @@ import type { AnyGuard } from './guards.ts'
 import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
 import { kProcedure } from './constants.ts'
-
-// Inferred outputs are already wire values; transformations require an explicit schema.
-const passthroughOutputSchema: Schema = Object.freeze({
-  '~standard': Object.freeze({
-    version: 1,
-    vendor: 'neemata-passthrough',
-    validate: (value) => ({ value }),
-  }),
-})
 
 export type {
   AnyCompatibleMetaBinding,
@@ -193,14 +185,14 @@ export function createProcedure<
 ): Procedure<
   TProcedureContract<
     TInput,
-    TOutput extends undefined ? WireSchema.Encode<Return> : TOutput,
+    TOutput extends undefined ? Schema.WithJSONSchema<Return> : TOutput,
     TStream extends true | number ? true : undefined
   >,
   Deps
 > {
   const {
     input = undefined as any,
-    output = passthroughOutputSchema as WireSchema.Encode<Return>,
+    output = noopSchema<Return>(),
     stream = undefined as any,
     dependencies = {} as Deps,
     guards = [],

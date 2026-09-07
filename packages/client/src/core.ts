@@ -1,4 +1,3 @@
-import type { ProtocolVersion } from '@nmtjs/protocol'
 import type {
   BaseClientFormat,
   MessageContext,
@@ -24,6 +23,7 @@ import type {
   TransportCallResponse,
   TransportRpcParams,
 } from './transport.ts'
+import type { ClientCoreOptions, ConnectionState } from './types.ts'
 import { EventEmitter } from './events.ts'
 
 export {
@@ -31,21 +31,6 @@ export {
   ProtocolBlob,
   type ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
-
-export type ConnectionState =
-  | 'idle'
-  | 'connecting'
-  | 'connected'
-  | 'disconnecting'
-  | 'disconnected'
-
-export interface ClientCoreOptions {
-  protocol: ProtocolVersion
-  format: BaseClientFormat
-  application?: string
-  autoConnect?: boolean
-  plugins?: ClientPlugin[]
-}
 
 export class ClientError extends ProtocolError {}
 

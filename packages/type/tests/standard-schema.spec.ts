@@ -3,12 +3,25 @@ import type {
   StandardJSONSchemaV1,
   StandardSchemaV1,
 } from '@standard-schema/spec'
+import { noopSchema } from '@nmtjs/common/schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { any, number, string } from 'zod/mini'
+import { any, number, string, toJSONSchema } from 'zod/mini'
 
 import { t } from '../src/index.ts'
 
 describe('Standard schema', () => {
+  it.each(['draft-2020-12', 'draft-07', 'draft-04', 'openapi-3.0'] as const)(
+    'generates the same unconstrained JSON Schema as Zod any for %s',
+    (target) => {
+      const schema = noopSchema()['~standard'].jsonSchema
+      for (const io of ['input', 'output'] as const) {
+        expect(schema[io]({ target })).toEqual(
+          toJSONSchema(any(), { target, io }),
+        )
+      }
+    },
+  )
+
   const schema = t.object({
     id: t.bigInt(),
     createdAt: t.date(),

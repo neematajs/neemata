@@ -1,10 +1,133 @@
-import type { CallTypeProvider, OneOf, TypeProvider } from '@nmtjs/common'
+import type {
+  CallTypeProvider,
+  Future,
+  OneOf,
+  TypeProvider,
+} from '@nmtjs/common'
 import type { WireSchema } from '@nmtjs/common/schema'
-import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
-import type { ProtocolError } from '@nmtjs/protocol/client'
+import type {
+  TAnyProcedureContract,
+  TAnyRouterContract,
+  TRouteContract,
+} from '@nmtjs/contract'
+import type {
+  ProtocolBlob,
+  ProtocolBlobInterface,
+  ProtocolBlobMetadata,
+  ProtocolVersion,
+} from '@nmtjs/protocol'
+import type {
+  BaseClientFormat,
+  ProtocolClientBlobStream,
+  ProtocolError,
+  ProtocolServerBlobStream,
+} from '@nmtjs/protocol/client'
+
+import type { ClientPlugin } from './plugins/types.ts'
+import type { ClientStreams, ServerStreams } from './streams.ts'
 
 export const ResolvedType: unique symbol = Symbol('ResolvedType')
 export type ResolvedType = typeof ResolvedType
+
+export interface ClientOptions<
+  RouterContract extends TAnyRouterContract = TAnyRouterContract,
+  SafeCall extends boolean = false,
+> {
+  contract: RouterContract
+  protocol: ProtocolVersion
+  format: BaseClientFormat
+  application?: string
+  autoConnect?: boolean
+  timeout?: number
+  /**
+   * Backpressure defaults for streaming responses; individual calls override
+   * them.
+   */
+  backpressure?: ClientBackpressureOptions
+  plugins?: ClientPlugin[]
+  safe?: SafeCall
+}
+
+export type BaseClientOptions<
+  RouterContract extends TAnyRouterContract = TAnyRouterContract,
+  SafeCall extends boolean = false,
+> = ClientOptions<RouterContract, SafeCall>
+
+export interface ClientCallersFactory<
+  Routes extends AnyResolvedContractRouter,
+  SafeCall extends boolean,
+> {
+  call: ClientCallers<Routes, SafeCall, false>
+  stream: ClientCallers<Routes, SafeCall, true>
+}
+
+export type ConnectionState =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'disconnecting'
+  | 'disconnected'
+
+export interface ClientCoreOptions {
+  protocol: ProtocolVersion
+  format: BaseClientFormat
+  application?: string
+  autoConnect?: boolean
+  plugins?: ClientPlugin[]
+}
+
+export type ProtocolClientCall = Future<any> & {
+  procedure: string
+  signal?: AbortSignal
+  rpcStreamWindow: number
+  cleanup?: () => void
+}
+
+export interface RpcLayerApi {
+  call(
+    procedure: string,
+    payload: any,
+    options?: ClientCallOptions,
+  ): Promise<any>
+  readonly pendingCallCount: number
+  readonly activeStreamCount: number
+}
+
+export interface StreamLayerApi {
+  readonly clientStreams: ClientStreams
+  readonly serverStreams: ServerStreams
+  getStreamId: () => number
+  addClientStream: (blob: ProtocolBlob) => ProtocolClientBlobStream
+  createServerBlob: (
+    streamId: number,
+    metadata: ProtocolBlobMetadata,
+  ) => ProtocolBlobInterface
+  addServerBlobStream: (
+    metadata: ProtocolBlobMetadata,
+    options?: {
+      source?: ReadableStream<ArrayBufferView>
+      start?: (
+        stream: ProtocolServerBlobStream,
+        options?: { signal?: AbortSignal },
+      ) => void
+    },
+  ) => {
+    blob: ProtocolBlobInterface
+    streamId: number
+    stream: ProtocolServerBlobStream
+  }
+  consumeServerBlob: (
+    blob: ProtocolBlobInterface,
+    options?: { signal?: AbortSignal },
+  ) => ProtocolServerBlobStream
+}
+
+export interface PingLayerApi {
+  ping(timeout: number, signal?: AbortSignal): Promise<void>
+  stopAll(reason?: unknown): void
+}
+
+export type EventMap = { [K: string]: any[] }
 
 export type RpcCallOptions = {
   timeout?: number
@@ -52,6 +175,14 @@ export type ClientCallOptions = StreamCallOptions & {
 export type BlobSubscriptionOptions = { signal?: AbortSignal }
 
 export type StreamSubscriptionOptions = Partial<StreamCallOptions>
+
+/** Runtime clients require both codec directions at every nesting level. */
+export type NonCodecSchemas<Route extends TRouteContract> =
+  Route extends TAnyProcedureContract
+    ? Exclude<Route['input'] | Route['output'], WireSchema.Codec | undefined>
+    : Route extends TAnyRouterContract
+      ? NonCodecSchemas<Route['routes'][keyof Route['routes']]>
+      : never
 
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends WireSchema.Decode | WireSchema.Codec
