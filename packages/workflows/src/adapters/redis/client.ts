@@ -18,7 +18,6 @@ export type WorkflowRedisClient = {
   get(...args: any[]): Promise<string | null>
   hget(...args: any[]): Promise<string | null>
   hgetall(...args: any[]): Promise<Record<string, string>>
-  hkeys(...args: any[]): Promise<string[]>
   hmget(...args: any[]): Promise<(string | null)[]>
   publish(...args: any[]): Promise<number>
   zrange(...args: any[]): Promise<string[]>

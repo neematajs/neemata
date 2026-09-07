@@ -69,10 +69,6 @@ worker APIs still return `Date` objects. Application payloads are stored as
 opaque JSON so Lua transitions preserve empty arrays, numeric precision, and
 payload fields that happen to have timestamp names. Lease deadlines and
 retention use Redis server time to avoid disagreement between worker clocks.
-The timestamp format and queue indexes are incompatible with earlier experimental
-adapter data, including versions without route/run indexes. Finish existing work
-with that version before switching to a fresh `keyPrefix`; do not mix adapter
-versions in one namespace.
 
 Active run families never receive a TTL. Retention starts only when every run
 in the root family is terminal, then the complete family and its lookup keys
