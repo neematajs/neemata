@@ -5,20 +5,20 @@ import type {
   WorkflowWakeEvents,
 } from '../../runtime/wake-events.ts'
 import type { WorkflowRedisClient } from './client.ts'
-import type { RedisWorkflowKeys } from './keys.ts'
+import type { Keys } from './keys.ts'
 
-export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
+export class WakeEvents implements WorkflowWakeEvents {
   readonly #events = new EventEmitter()
   readonly #subscriber: WorkflowRedisClient
   readonly #subscriptions = new Map<string, number>()
-  readonly #subscribedChannels = new Set<string>()
-  readonly #uncertainChannels = new Set<string>()
-  readonly #pendingReconciliations = new Map<string, Promise<boolean>>()
+  readonly #subscribed = new Set<string>()
+  readonly #uncertain = new Set<string>()
+  readonly #pending = new Map<string, Promise<boolean>>()
   #disposed = false
 
   constructor(
     client: WorkflowRedisClient,
-    readonly keys: RedisWorkflowKeys,
+    readonly keys: Keys,
   ) {
     this.#subscriber = client.duplicate({ lazyConnect: true })
     this.#subscriber.on('message', (channel: string) => {
@@ -27,14 +27,14 @@ export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
     this.#subscriber.on('ready', () => {
       const channels = new Set([
         ...this.#subscriptions.keys(),
-        ...this.#subscribedChannels,
-        ...this.#uncertainChannels,
+        ...this.#subscribed,
+        ...this.#uncertain,
       ])
       for (const channel of channels) {
         // Reassert remote state after every reconnect; the local subscription
         // set cannot prove what the replacement connection restored.
-        this.#uncertainChannels.add(channel)
-        this.#reconcileSubscription(channel)
+        this.#uncertain.add(channel)
+        this.#scheduleReconcile(channel)
       }
     })
     // Wake notifications are optional hints; connection failures fall back to
@@ -63,8 +63,8 @@ export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
     this.#disposed = true
     this.#events.removeAllListeners()
     this.#subscriptions.clear()
-    this.#subscribedChannels.clear()
-    this.#uncertainChannels.clear()
+    this.#subscribed.clear()
+    this.#uncertain.clear()
     await this.#subscriber.quit()
   }
 
@@ -73,7 +73,7 @@ export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
     const count = this.#subscriptions.get(channel) ?? 0
     this.#subscriptions.set(channel, count + 1)
     this.#events.on(channel, listener)
-    this.#reconcileSubscription(channel)
+    this.#scheduleReconcile(channel)
 
     let subscribed = true
     return () => {
@@ -86,43 +86,43 @@ export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
         return
       }
       this.#subscriptions.delete(channel)
-      this.#reconcileSubscription(channel)
+      this.#scheduleReconcile(channel)
     }
   }
 
-  #reconcileSubscription(channel: string) {
-    if (this.#disposed || this.#pendingReconciliations.has(channel)) return
+  #scheduleReconcile(channel: string) {
+    if (this.#disposed || this.#pending.has(channel)) return
 
     // Redis subscriber commands share one connection. Keep each channel's
     // subscribe/unsubscribe sequence ordered so a listener removed and added
     // during an in-flight command cannot leave local and server state opposed.
-    const pending = this.#reconcileChannel(channel).catch(() => false)
-    this.#pendingReconciliations.set(channel, pending)
+    const pending = this.#reconcile(channel).catch(() => false)
+    this.#pending.set(channel, pending)
     void pending.then((reconciled) => {
-      if (this.#pendingReconciliations.get(channel) !== pending) return
-      this.#pendingReconciliations.delete(channel)
-      if (reconciled && this.#needsReconciliation(channel)) {
-        this.#reconcileSubscription(channel)
+      if (this.#pending.get(channel) !== pending) return
+      this.#pending.delete(channel)
+      if (reconciled && this.#needsReconcile(channel)) {
+        this.#scheduleReconcile(channel)
       }
     })
   }
 
-  async #reconcileChannel(channel: string) {
+  async #reconcile(channel: string) {
     while (!this.#disposed) {
-      const desired = this.#subscriptionIsDesired(channel)
-      if (!this.#needsReconciliation(channel)) return true
+      const desired = this.#subscriptions.has(channel)
+      if (!this.#needsReconcile(channel)) return true
 
       if (desired) {
         try {
           await this.#subscriber.subscribe(channel)
         } catch {
-          this.#uncertainChannels.add(channel)
+          this.#uncertain.add(channel)
           // Polling remains authoritative. Reconnect retries this optional hint.
           return false
         }
         if (this.#disposed) return true
-        this.#uncertainChannels.delete(channel)
-        this.#subscribedChannels.add(channel)
+        this.#uncertain.delete(channel)
+        this.#subscribed.add(channel)
         if (channel.startsWith(this.keys.runWake(''))) {
           // A run may change before the asynchronous subscription is active.
           // A coarse catch-up hint makes watchers reread durable state once it is.
@@ -132,29 +132,21 @@ export class RedisWorkflowWakeEvents implements WorkflowWakeEvents {
         try {
           await this.#subscriber.unsubscribe(channel)
         } catch {
-          this.#uncertainChannels.add(channel)
+          this.#uncertain.add(channel)
           // Keep the channel marked subscribed so reconnect retries removal.
           return false
         }
-        this.#uncertainChannels.delete(channel)
-        this.#subscribedChannels.delete(channel)
+        this.#uncertain.delete(channel)
+        this.#subscribed.delete(channel)
       }
     }
     return true
   }
 
-  #subscriptionIsDesired(channel: string) {
-    return this.#subscriptions.has(channel)
-  }
-
-  #isSubscribed(channel: string) {
-    return this.#subscribedChannels.has(channel)
-  }
-
-  #needsReconciliation(channel: string) {
+  #needsReconcile(channel: string) {
     return (
-      this.#uncertainChannels.has(channel) ||
-      this.#subscriptionIsDesired(channel) !== this.#isSubscribed(channel)
+      this.#uncertain.has(channel) ||
+      this.#subscriptions.has(channel) !== this.#subscribed.has(channel)
     )
   }
 }

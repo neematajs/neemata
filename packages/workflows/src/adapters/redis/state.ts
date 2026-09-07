@@ -1,24 +1,19 @@
-import { randomUUID } from 'node:crypto'
-
 import type {
   StoredAttempt,
   StoredNode,
   StoredNodeChild,
   StoredRun,
 } from '../../runtime/state.ts'
-import type { RunLease } from '../../runtime/store.ts'
+import type { CreateRunInput, RunLease } from '../../runtime/store.ts'
 
-export type RedisRunLease = RunLease & { readonly expiresAt: Date }
+export type StoredLease = RunLease & { readonly expiresAt: Date }
 
-export type RedisWorkflowFamily = {
+export type Family = {
   readonly rootRunId: string
   readonly runs: Record<string, StoredRun>
   readonly nodes: Record<string, StoredNode>
   readonly children: Record<string, StoredNodeChild>
   readonly attempts: Record<string, StoredAttempt>
-  readonly runLeases: Record<string, RedisRunLease>
-  readonly runOrder: Record<string, number>
-  readonly externalKeys: string[]
 }
 
 const dateKeys = new Set([
@@ -50,7 +45,7 @@ const payloadKeys = new Set([
   'lastError',
 ])
 
-export const encodeRedisValue = (value: unknown): string =>
+export const encode = (value: unknown): string =>
   JSON.stringify(
     value,
     function (this: Record<string, unknown>, key, item: unknown) {
@@ -62,7 +57,7 @@ export const encodeRedisValue = (value: unknown): string =>
     },
   )
 
-export const decodeRedisValue = <T>(value: string): T =>
+export const decode = <T>(value: string): T =>
   JSON.parse(value, (key, item: unknown) => {
     // Parsing payloads separately keeps their fields outside the metadata
     // reviver, without allocating a second copy of the record envelope.
@@ -72,35 +67,21 @@ export const decodeRedisValue = <T>(value: string): T =>
     return item
   }) as T
 
-export const redisNodeKey = (runId: string, nodeName: string) =>
+export const nodeKey = (runId: string, nodeName: string) =>
   `${runId}\u0000${nodeName}`
 
-export const redisChildKey = (
-  runId: string,
-  nodeName: string,
-  childKey: string,
-) => `${runId}\u0000${nodeName}\u0000${childKey}`
+export const childKey = (runId: string, nodeName: string, childKey: string) =>
+  `${runId}\u0000${nodeName}\u0000${childKey}`
 
-export const createRedisId = () => randomUUID()
-
-export const stableJsonValue = (value: unknown): unknown => {
+const stableJsonValue = (value: unknown): unknown => {
   // Dates serialize as ISO strings, so their identity must match stored JSON.
   if (value instanceof Date) return value.toJSON()
   if (Array.isArray(value)) {
-    const stable: unknown[] = []
-    stable.length = value.length
-    for (let index = 0; index < value.length; index += 1) {
-      stable[index] = stableJsonValue(value[index])
-    }
-    return stable
+    return Array.from(value, stableJsonValue)
   }
   if (value && typeof value === 'object') {
     const record = value as Record<string, unknown>
-    const keys: string[] = []
-    for (const key in record) {
-      if (Object.hasOwn(record, key)) keys.push(key)
-    }
-    keys.sort()
+    const keys = Object.keys(record).sort()
     const stable: Record<string, unknown> = Object.create(null)
     for (const key of keys) {
       stable[key] = stableJsonValue(record[key])
@@ -110,21 +91,11 @@ export const stableJsonValue = (value: unknown): unknown => {
   return value
 }
 
-export const redisValueKey = (value: unknown) =>
+export const valueKey = (value: unknown) =>
   JSON.stringify(stableJsonValue(value))
 
-export const redisRunSignature = (run: {
-  readonly kind?: string
-  readonly name?: string
-  readonly workflowName: string
-  readonly taskName?: string
-  readonly parentRunId?: string
-  readonly parentNodeName?: string
-  readonly rootRunId?: string
-  readonly idempotencyKey?: readonly unknown[]
-  readonly input: unknown
-}) =>
-  redisValueKey([
+export const runSignature = (run: CreateRunInput) =>
+  valueKey([
     run.kind ?? 'workflow',
     run.name ?? run.taskName ?? run.workflowName,
     run.workflowName,
@@ -136,11 +107,5 @@ export const redisRunSignature = (run: {
     run.input,
   ])
 
-export const sameRedisValue = (left: unknown, right: unknown) =>
-  redisValueKey(left) === redisValueKey(right)
-
-export const sameOptionalRedisValue = (left: unknown, right: unknown) => {
-  if (left === undefined) return right === undefined
-  if (right === undefined) return false
-  return sameRedisValue(left, right)
-}
+export const sameValue = (left: unknown, right: unknown) =>
+  valueKey(left) === valueKey(right)

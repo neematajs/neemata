@@ -1,5 +1,9 @@
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
-import type { TaskAttemptCommand } from '../../runtime/commands.ts'
+import type {
+  AttemptCommand,
+  ContinueRunCommand,
+  TaskAttemptCommand,
+} from '../../runtime/commands.ts'
 import type { WorkflowRuntimeAtomicStart } from '../../runtime/coordinator.ts'
 import type { DispatchTaskRunAttemptInput } from '../../runtime/coordinator/attempt.ts'
 import type { AttemptDispatchOptions } from '../../runtime/executors.ts'
@@ -11,14 +15,10 @@ import type { WorkflowRedisClient } from './client.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import { isTerminalRunStatus } from '../../runtime/status.ts'
-import { RedisWorkflowKeys } from './keys.ts'
-import {
-  RedisWorkflowQueue,
-  type RedisAttemptQueue,
-  type RedisContinueQueue,
-} from './queue.ts'
-import { RedisWorkflowStoreRuntime } from './store.ts'
-import { RedisWorkflowWakeEvents } from './wake-events.ts'
+import { Keys } from './keys.ts'
+import { Queue } from './queue.ts'
+import { StoreRuntime } from './store.ts'
+import { WakeEvents } from './wake-events.ts'
 
 const DEFAULT_KEY_PREFIX = 'nmtjs:workflows:'
 const DEFAULT_TERMINAL_RETENTION_MS = 15 * 60 * 1_000
@@ -52,6 +52,7 @@ export type RedisWorkflowRuntime = WorkflowRuntimeAdapter & {
 export function createRedisWorkflowRuntime(
   params: CreateRedisWorkflowRuntimeParams,
 ): RedisWorkflowRuntime {
+  const { client } = params
   const keyPrefix = params.keyPrefix ?? DEFAULT_KEY_PREFIX
   const terminalRetentionMs =
     params.terminalRetentionMs ?? DEFAULT_TERMINAL_RETENTION_MS
@@ -59,35 +60,25 @@ export function createRedisWorkflowRuntime(
   assertPositiveInteger('terminalRetentionMs', terminalRetentionMs)
   assertPositiveInteger('maxDeliveries', maxDeliveries)
 
-  const keys = new RedisWorkflowKeys(keyPrefix)
-  const wakeEvents = new RedisWorkflowWakeEvents(params.client, keys)
-  const continueQueue: RedisContinueQueue = new RedisWorkflowQueue({
-    client: params.client,
+  const keys = new Keys(keyPrefix)
+  const wakeEvents = new WakeEvents(client, keys)
+  const continueQueue = new Queue<ContinueRunCommand>({
+    client,
     keys,
     kind: 'continue',
     maxDeliveries,
-    wakeKind: () => 'continue',
     dedupKey: (command) => command.runId,
-    deadKind: () => 'continue',
   })
-  const attemptQueue: RedisAttemptQueue = new RedisWorkflowQueue({
-    client: params.client,
+  const attemptQueue = new Queue<AttemptCommand>({
+    client,
     keys,
     kind: 'attempt',
     maxDeliveries,
-    wakeKind: (command) => {
-      if (command.kind === 'activityAttempt') return 'activity'
-      return 'task'
-    },
     dedupKey: (command) => command.attemptId,
-    deadKind: (command) => {
-      if (command.kind === 'activityAttempt') return 'activity'
-      return 'task'
-    },
   })
 
-  const storeRuntime = new RedisWorkflowStoreRuntime({
-    client: params.client,
+  const storeRuntime = new StoreRuntime({
+    client,
     keys,
     terminalRetentionMs,
     delegates: {
@@ -96,10 +87,7 @@ export function createRedisWorkflowRuntime(
           continueQueue.listDead(runId),
           attemptQueue.listDead(runId),
         ])
-        const commands: DeadWorkflowCommand[] = []
-        for (const group of groups) {
-          for (const command of group) commands.push(command)
-        }
+        const commands = groups.flat()
         commands.sort(compareDeadNewest)
         return commands
       },
@@ -108,10 +96,7 @@ export function createRedisWorkflowRuntime(
           continueQueue.listUnreaped(limit, commandId),
           attemptQueue.listUnreaped(limit, commandId),
         ])
-        const commands: DeadWorkflowCommand[] = []
-        for (const group of groups) {
-          for (const command of group) commands.push(command)
-        }
+        const commands = groups.flat()
         commands.sort(compareDeadOldest)
         if (limit !== undefined && commands.length > limit) {
           commands.length = limit
@@ -148,11 +133,7 @@ export function createRedisWorkflowRuntime(
     {
       enqueue: (command) => continueQueue.enqueue(command),
       enqueueDelayed: (command, runAt) => continueQueue.enqueue(command, runAt),
-      claim: async (worker) => {
-        const claim = await continueQueue.claim(worker, worker.leaseMs)
-        if (!claim) return null
-        return continueQueue.asContinueClaim(claim)
-      },
+      claim: (worker) => continueQueue.claim(worker, worker.leaseMs),
       ack: (command) => continueQueue.ack(command),
       release: (command, options) => continueQueue.release(command, options),
     }
@@ -161,11 +142,7 @@ export function createRedisWorkflowRuntime(
       attemptQueue.enqueue(command, options?.runAt),
     dispatchTask: (command, options) =>
       attemptQueue.enqueue(command, options?.runAt),
-    claim: async (worker) => {
-      const claim = await attemptQueue.claim(worker, worker.leaseMs)
-      if (!claim) return null
-      return attemptQueue.asAttemptClaim(claim)
-    },
+    claim: (worker) => attemptQueue.claim(worker, worker.leaseMs),
     heartbeat: async (attempt, leaseMs = DEFAULT_LEASE_MS) => {
       const result = await attemptQueue.heartbeat(attempt, leaseMs)
       if (!result) throw new Error('Workflow attempt heartbeat lease lost')
@@ -196,11 +173,11 @@ export function createRedisWorkflowRuntime(
   }
 
   async function startRun(run: CreateRunInput, startAt?: Date) {
-    const started = await storeRuntime.createRunWithState(run, startAt)
+    const started = await storeRuntime.createRun(run, startAt)
     const stored = started.run
     if (isTerminalRunStatus(stored.status)) return stored
     const markerKey = keys.startDispatch(stored.id)
-    if (!started.created && (await params.client.exists(markerKey))) {
+    if (!started.created && (await client.exists(markerKey))) {
       return stored
     }
     try {
@@ -215,7 +192,7 @@ export function createRedisWorkflowRuntime(
           started.startAt,
         )
       } else {
-        const startAttemptExecutor = {
+        const startExecutor = {
           ...attemptExecutor,
           dispatchTask: (
             command: TaskAttemptCommand,
@@ -225,10 +202,10 @@ export function createRedisWorkflowRuntime(
         }
         // A join can repair another caller's interrupted start. Its payload,
         // identity and schedule must come from that persisted run.
-        const dispatchInput: Mutable<DispatchTaskRunAttemptInput> = {
+        const dispatch: Mutable<DispatchTaskRunAttemptInput> = {
           store,
           runCoordinationExecutor,
-          attemptExecutor: startAttemptExecutor,
+          attemptExecutor: startExecutor,
           taskName: stored.taskName ?? stored.name,
           taskRunId: stored.id,
           taskInput: stored.input,
@@ -238,12 +215,12 @@ export function createRedisWorkflowRuntime(
           throwOnDispatchFailure: false,
         }
         if (stored.idempotencyKey !== undefined) {
-          dispatchInput.idempotencyKey = stored.idempotencyKey
+          dispatch.idempotencyKey = stored.idempotencyKey
         }
-        await dispatchTaskRunAttempt(dispatchInput)
+        await dispatchTaskRunAttempt(dispatch)
       }
     } catch (error) {
-      if (await startMarkerExists(params.client, markerKey)) return stored
+      if (await startMarkerExists(client, markerKey)) return stored
       throw error
     }
     return stored
@@ -256,7 +233,7 @@ export function createRedisWorkflowRuntime(
     retentionPruner: store,
     wakeEvents,
     atomicStart,
-    client: params.client,
+    client,
     keyPrefix,
     dispose: () => wakeEvents.dispose(),
   }

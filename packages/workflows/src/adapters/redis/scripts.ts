@@ -549,7 +549,7 @@ return 1
 
 type ScriptName = keyof typeof SCRIPTS
 
-export class RedisWorkflowScripts {
+export class QueueScripts {
   readonly #client: WorkflowRedisClient
   readonly #shas = new Map<ScriptName, Promise<string>>()
 

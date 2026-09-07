@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 
 import type {
   AttemptCommand,
-  ClaimedAttempt,
-  ClaimedCommand,
   ContinueRunCommand,
   ExecutionWorkerClaim,
   RunCoordinationWorkerClaim,
@@ -13,24 +11,24 @@ import type { StoredError, StoredRun } from '../../runtime/state.ts'
 import type { DeadWorkflowCommand } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
 import type { WorkflowRedisClient } from './client.ts'
-import type { RedisWorkflowKeys } from './keys.ts'
+import type { Keys } from './keys.ts'
 import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
-import { RedisWorkflowScripts } from './scripts.ts'
-import { decodeRedisValue, encodeRedisValue } from './state.ts'
+import { QueueScripts } from './scripts.ts'
+import { decode, encode } from './state.ts'
 
 const RELEASE_BACKOFF_MS = 50
 const UNROUTABLE_BACKOFF_MS = 1_000
 const MAX_ERROR_BACKOFF_MS = 300_000
 const QUEUE_BATCH_SIZE = 128
 
-type QueueKind = 'continue' | 'attempt'
+type Kind = 'continue' | 'attempt'
 
 type Mutable<T> = { -readonly [Key in keyof T]: T[Key] }
 
-type RedisQueueItem<T> = {
+type Item<T> = {
   readonly id: string
   readonly payload: T
   readonly rootRunId?: string
@@ -46,43 +44,37 @@ type RedisQueueItem<T> = {
   readonly leaseExpiresAt?: Date
 }
 
-type QueueClaim<T> = {
+type Claim<T> = {
   readonly id: string
   readonly command: T
   readonly leaseToken: string
 }
 
-type QueueClaimSelector = ExecutionWorkerClaim | RunCoordinationWorkerClaim
+type ClaimSelector = ExecutionWorkerClaim | RunCoordinationWorkerClaim
 
-type QueueOptions<T> = {
+type Options<T> = {
   readonly client: WorkflowRedisClient
-  readonly keys: RedisWorkflowKeys
-  readonly kind: QueueKind
+  readonly keys: Keys
+  readonly kind: Kind
   readonly maxDeliveries: number
-  readonly wakeKind: (payload: T) => 'continue' | 'activity' | 'task'
   readonly dedupKey: (payload: T) => string
-  readonly deadKind: (payload: T) => DeadWorkflowCommand['kind']
 }
 
-export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
+export class Queue<T extends AttemptCommand | ContinueRunCommand> {
   readonly #client: WorkflowRedisClient
-  readonly #keys: RedisWorkflowKeys
-  readonly #kind: QueueKind
+  readonly #keys: Keys
+  readonly #kind: Kind
   readonly #maxDeliveries: number
-  readonly #wakeKind: QueueOptions<T>['wakeKind']
-  readonly #dedupKey: QueueOptions<T>['dedupKey']
-  readonly #deadKind: QueueOptions<T>['deadKind']
-  readonly #scripts: RedisWorkflowScripts
+  readonly #dedupKey: Options<T>['dedupKey']
+  readonly #scripts: QueueScripts
 
-  constructor(options: QueueOptions<T>) {
+  constructor(options: Options<T>) {
     this.#client = options.client
     this.#keys = options.keys
     this.#kind = options.kind
     this.#maxDeliveries = options.maxDeliveries
-    this.#wakeKind = options.wakeKind
     this.#dedupKey = options.dedupKey
-    this.#deadKind = options.deadKind
-    this.#scripts = new RedisWorkflowScripts(options.client)
+    this.#scripts = new QueueScripts(options.client)
   }
 
   async enqueueWithMarker(
@@ -104,7 +96,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   ): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
     const createdAt = new Date()
-    const item: Mutable<RedisQueueItem<T>> = {
+    const item: Mutable<Item<T>> = {
       id: randomUUID(),
       payload,
       deliveryCount: 0,
@@ -115,12 +107,8 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
       item.runAt = runAt
       item.runAtScore = runAt.getTime()
     }
-    let markerTarget = queue.items
-    let hasMarker = '0'
-    if (markerKey) {
-      markerTarget = markerKey
-      hasMarker = '1'
-    }
+    const markerTarget = markerKey || queue.items
+    const hasMarker = markerKey ? '1' : '0'
     // Deduplication and scheduling happen in the script so contention cannot
     // turn into an unbounded client-side compare-and-swap loop.
     await this.#scripts.run(
@@ -130,13 +118,13 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         queue.ready,
         queue.dedup,
         markerTarget,
-        this.#keys.commandWake(this.#wakeKind(payload)),
+        this.#keys.commandWake(commandKind(payload)),
         this.#keys.runRoot(payload.runId),
       ],
       [
         this.#dedupKey(payload),
         this.#kind,
-        encodeRedisValue(item),
+        encode(item),
         hasMarker,
         this.#keys.prefix,
       ],
@@ -144,28 +132,28 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 
   async claim(
-    selector: QueueClaimSelector,
+    selector: ClaimSelector,
     leaseMs: number,
-  ): Promise<QueueClaim<T> | null> {
+  ): Promise<Claim<T> | null> {
     if (!selectorCanClaim(selector)) return null
     await this.#reclaimExpired(selector)
     return await this.#claimReady(selector, leaseMs)
   }
 
   async #claimReady(
-    selector: QueueClaimSelector,
+    selector: ClaimSelector,
     leaseMs: number,
-  ): Promise<QueueClaim<T> | null> {
+  ): Promise<Claim<T> | null> {
     const queue = this.#keys.queue(this.#kind)
     const leaseToken = randomUUID()
     while (true) {
-      const result = queueScriptResult(
+      const result = scriptResult(
         await this.#scripts.runRaw(
           'claim',
           [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
           [
             String(QUEUE_BATCH_SIZE),
-            encodeRedisValue(selector),
+            encode(selector),
             leaseToken,
             String(leaseMs),
             this.#keys.prefix,
@@ -180,7 +168,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         if (!id || !raw) {
           throw new Error('Redis returned an invalid workflow claim result')
         }
-        const item = decodeRedisValue<RedisQueueItem<T>>(raw)
+        const item = decode<Item<T>>(raw)
         return { id, command: item.payload, leaseToken }
       }
       throw new Error('Redis returned an invalid workflow claim result')
@@ -188,11 +176,11 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 
   async heartbeat(
-    claim: QueueClaim<T>,
+    claim: Claim<T>,
     leaseMs: number,
   ): Promise<{ runStatus: StoredRun['status'] } | undefined> {
     const queue = this.#keys.queue(this.#kind)
-    const result = queueScriptResult(
+    const result = scriptResult(
       await this.#scripts.runRaw(
         'heartbeat',
         [queue.items, queue.claimed],
@@ -200,15 +188,15 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
       ),
     )
     if (result.length === 0) return undefined
-    const run = decodeRedisValue<Pick<StoredRun, 'status'>>(result[0]!)
+    const run = decode<Pick<StoredRun, 'status'>>(result[0]!)
     return { runStatus: run.status }
   }
 
-  async ack(claim: QueueClaim<T>): Promise<void> {
+  async ack(claim: Claim<T>): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
     const raw = await this.#client.hget(queue.items, claim.id)
     if (!raw) throw new Error('Stale workflow command ack')
-    const item = decodeRedisValue<RedisQueueItem<T>>(raw)
+    const item = decode<Item<T>>(raw)
     if (!matchesClaim(item, claim)) {
       throw new Error('Stale workflow command ack')
     }
@@ -221,21 +209,15 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 
   async release(
-    claim: QueueClaim<T>,
+    claim: Claim<T>,
     options?: CommandReleaseOptions,
   ): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
     const raw = await this.#client.hget(queue.items, claim.id)
     if (!raw) return
-    const item = decodeRedisValue<RedisQueueItem<T>>(raw)
+    const item = decode<Item<T>>(raw)
     if (!matchesClaim(item, claim)) return
-    const released = releaseQueueItem(
-      clearClaim(item),
-      options,
-      this.#maxDeliveries,
-    )
-    let deadFlag = '0'
-    if (released.dead) deadFlag = '1'
+    const released = releaseItem(clearClaim(item), options, this.#maxDeliveries)
     await this.#scripts.run(
       'releaseClaimed',
       [
@@ -243,15 +225,15 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         queue.claimed,
         queue.ready,
         queue.dead,
-        this.#keys.commandWake(this.#wakeKind(item.payload)),
+        this.#keys.commandWake(commandKind(item.payload)),
         queue.dedup,
       ],
       [
         item.id,
         raw,
-        encodeRedisValue(released.item),
+        encode(released.item),
         String(released.delayMs),
-        deadFlag,
+        released.dead ? '1' : '0',
       ],
     )
   }
@@ -278,7 +260,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     const dead: DeadWorkflowCommand[] = []
     for (let offset = 0; ; ) {
       const size = QUEUE_BATCH_SIZE
-      const result = queueScriptResult(
+      const result = scriptResult(
         await this.#scripts.runRaw(
           'listDead',
           [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
@@ -294,8 +276,10 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         ),
       )
       const inspected = Number(result[0])
-      for (const raw of result.slice(1))
-        dead.push(this.#mapDead(decodeRedisValue<RedisQueueItem<T>>(raw)))
+      for (const raw of result.slice(1)) {
+        const item = decode<Item<T>>(raw)
+        dead.push(this.#mapDead(item))
+      }
       if (inspected < size || (limit !== undefined && dead.length >= limit))
         break
       offset += inspected
@@ -307,24 +291,23 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     const queue = this.#keys.queue(this.#kind)
     const raw = await this.#client.hget(queue.items, id)
     if (!raw) return false
-    const item = decodeRedisValue<RedisQueueItem<T>>(raw)
+    const item = decode<Item<T>>(raw)
     if (!item.deadAt || item.reapedAt !== undefined) return false
     const result = await this.#scripts.run(
       'updateDead',
       [queue.items, queue.dead],
-      [id, raw, encodeRedisValue({ ...item, reapedAt: new Date() })],
+      [id, raw, encode({ ...item, reapedAt: new Date() })],
     )
     return result === 1
   }
 
   async requeueDead(id: string): Promise<boolean> {
     const queue = this.#keys.queue(this.#kind)
-    let wakeKind: WorkflowCommandWakeKind | undefined
     const raw = await this.#client.hget(queue.items, id)
     if (!raw) return false
-    const item = decodeRedisValue<RedisQueueItem<T>>(raw)
+    const item = decode<Item<T>>(raw)
     if (!item.deadAt) return false
-    const requeued: Mutable<RedisQueueItem<T>> = {
+    const requeued: Mutable<Item<T>> = {
       id: item.id,
       payload: item.payload,
       deliveryCount: 0,
@@ -338,19 +321,15 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
       [
         id,
         raw,
-        encodeRedisValue(requeued),
-        String(readyScore(requeued)),
+        encode(requeued),
+        String(requeued.createdAtScore),
         this.#dedupKey(requeued.payload),
       ],
     )
-    const didRequeue = moved === 1
-    if (didRequeue) {
-      wakeKind = this.#wakeKind(item.payload)
-    }
-    if (wakeKind) {
-      await this.#client.publish(this.#keys.commandWake(wakeKind), '1')
-    }
-    return didRequeue
+    if (moved !== 1) return false
+    const kind = commandKind(item.payload)
+    await this.#client.publish(this.#keys.commandWake(kind), '1')
+    return true
   }
 
   deleteUnclaimed(runIds: ReadonlySet<string>): Promise<number> {
@@ -371,7 +350,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
       let cursor = '0'
       let changed = '0'
       do {
-        const result = queueScriptResult(
+        const result = scriptResult(
           await this.#scripts.runRaw(
             'deleteForRuns',
             [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
@@ -410,21 +389,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     } while (count === QUEUE_BATCH_SIZE)
   }
 
-  asContinueClaim(
-    this: RedisWorkflowQueue<ContinueRunCommand>,
-    claim: QueueClaim<ContinueRunCommand>,
-  ): ClaimedCommand {
-    return claim
-  }
-
-  asAttemptClaim(
-    this: RedisWorkflowQueue<AttemptCommand>,
-    claim: QueueClaim<AttemptCommand>,
-  ): ClaimedAttempt {
-    return claim
-  }
-
-  async #reclaimExpired(selector: QueueClaimSelector) {
+  async #reclaimExpired(selector: ClaimSelector) {
     const queue = this.#keys.queue(this.#kind)
     let position = 1
     do {
@@ -434,9 +399,9 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         [
           String(position),
           String(QUEUE_BATCH_SIZE),
-          encodeRedisValue(selector),
+          encode(selector),
           String(this.#maxDeliveries),
-          encodeRedisValue({ lastError: COMMAND_LEASE_EXPIRED_ERROR }),
+          encode({ lastError: COMMAND_LEASE_EXPIRED_ERROR }),
           this.#keys.prefix,
         ],
       )
@@ -456,7 +421,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     let cursors = indexes.map(() => '0')
     let changedInPass = false
     while (true) {
-      const result = queueScriptResult(
+      const result = scriptResult(
         await this.#scripts.runRaw('pruneOrphans', keys, [
           String(QUEUE_BATCH_SIZE),
           this.#keys.prefix,
@@ -473,22 +438,21 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     }
   }
 
-  async #loadItem(id: string): Promise<RedisQueueItem<T> | undefined> {
+  async #loadItem(id: string): Promise<Item<T> | undefined> {
     const value = await this.#client.hget(
       this.#keys.queue(this.#kind).items,
       id,
     )
     if (!value) return undefined
-    return decodeRedisValue<RedisQueueItem<T>>(value)
+    return decode<Item<T>>(value)
   }
 
-  #mapDead(item: RedisQueueItem<T>): DeadWorkflowCommand {
-    const payload = item.payload as T & Partial<AttemptCommand>
-    const deadAt = item.deadAt
+  #mapDead(item: Item<T>): DeadWorkflowCommand {
+    const { payload, deadAt } = item
     if (!deadAt) throw new Error(`Workflow command [${item.id}] is not dead`)
     const command: Mutable<DeadWorkflowCommand> = {
       id: item.id,
-      kind: this.#deadKind(item.payload),
+      kind: commandKind(item.payload),
       runId: payload.runId,
       payload,
       deliveryCount: item.deliveryCount,
@@ -505,25 +469,24 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 }
 
-export type RedisContinueQueue = RedisWorkflowQueue<ContinueRunCommand>
-export type RedisAttemptQueue = RedisWorkflowQueue<AttemptCommand>
+const commandKind = (
+  command: AttemptCommand | ContinueRunCommand,
+): WorkflowCommandWakeKind => {
+  if (command.kind === 'continueRun') return 'continue'
+  if (command.kind === 'activityAttempt') return 'activity'
+  return 'task'
+}
 
-const readyScore = (
-  item: Pick<RedisQueueItem<unknown>, 'runAtScore' | 'createdAtScore'>,
-) => item.runAtScore ?? item.createdAtScore
+const matchesClaim = <T>(item: Item<T>, claim: Pick<Claim<T>, 'leaseToken'>) =>
+  item.leaseToken === claim.leaseToken
 
-const matchesClaim = <T>(
-  item: RedisQueueItem<T> | undefined,
-  claim: Pick<QueueClaim<T>, 'leaseToken'>,
-) => item?.leaseToken === claim.leaseToken
-
-const selectorCanClaim = (selector: QueueClaimSelector) => {
+const selectorCanClaim = (selector: ClaimSelector) => {
   if (selector.workflowNames.length > 0) return true
   if (!('taskNames' in selector)) return false
   return selector.taskNames.length > 0
 }
 
-const queueScriptResult = (value: unknown): string[] => {
+const scriptResult = (value: unknown): string[] => {
   if (!Array.isArray(value)) {
     throw new Error('Redis returned an invalid workflow script result')
   }
@@ -542,7 +505,7 @@ const queueScriptResult = (value: unknown): string[] => {
   return result
 }
 
-const clearClaim = <T>(item: RedisQueueItem<T>): RedisQueueItem<T> => {
+const clearClaim = <T>(item: Item<T>): Item<T> => {
   const {
     leaseToken: _leaseToken,
     leaseExpiresAt: _leaseExpiresAt,
@@ -551,25 +514,12 @@ const clearClaim = <T>(item: RedisQueueItem<T>): RedisQueueItem<T> => {
   return rest
 }
 
-const countFailedDelivery = <T>(
-  item: RedisQueueItem<T>,
-  error: StoredError,
-): RedisQueueItem<T> => {
-  const deliveryCount = item.deliveryCount + 1
-  const failed: Mutable<RedisQueueItem<T>> = {
-    ...item,
-    deliveryCount,
-    lastError: error,
-  }
-  return failed
-}
-
-const releaseQueueItem = <T>(
-  item: RedisQueueItem<T>,
+const releaseItem = <T>(
+  item: Item<T>,
   options: CommandReleaseOptions | undefined,
   maxDeliveries: number,
 ): {
-  readonly item: RedisQueueItem<T>
+  readonly item: Item<T>
   readonly delayMs: number
   readonly dead: boolean
 } => {
@@ -581,10 +531,10 @@ const releaseQueueItem = <T>(
   if (options.reason === 'unroutable') base = UNROUTABLE_BACKOFF_MS
   const error =
     options.error ?? new Error('No implementation can execute this command')
-  const counted = countFailedDelivery(item, toStoredError(error))
-  return {
-    item: counted,
-    delayMs: Math.min(2 ** counted.deliveryCount * base, MAX_ERROR_BACKOFF_MS),
-    dead: counted.deliveryCount >= maxDeliveries,
-  }
+  const deliveryCount = item.deliveryCount + 1
+  const lastError = toStoredError(error)
+  const failed = { ...item, deliveryCount, lastError }
+  const delayMs = Math.min(2 ** deliveryCount * base, MAX_ERROR_BACKOFF_MS)
+  const dead = deliveryCount >= maxDeliveries
+  return { item: failed, delayMs, dead }
 }

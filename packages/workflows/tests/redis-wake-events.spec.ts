@@ -3,8 +3,8 @@ import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { WorkflowRedisClient } from '../src/adapters/redis.ts'
-import { RedisWorkflowKeys } from '../src/adapters/redis/keys.ts'
-import { RedisWorkflowWakeEvents } from '../src/adapters/redis/wake-events.ts'
+import { Keys } from '../src/adapters/redis/keys.ts'
+import { WakeEvents } from '../src/adapters/redis/wake-events.ts'
 
 type FakeSubscriber = EventEmitter & {
   status: string
@@ -19,8 +19,8 @@ const createHarness = () => {
   subscriber.subscribe = vi.fn().mockResolvedValue(undefined)
   subscriber.unsubscribe = vi.fn().mockResolvedValue(undefined)
   subscriber.quit = vi.fn().mockResolvedValue(undefined)
-  const keys = new RedisWorkflowKeys('nmtjs:test:wakes:')
-  const events = new RedisWorkflowWakeEvents(
+  const keys = new Keys('nmtjs:test:wakes:')
+  const events = new WakeEvents(
     { duplicate: () => subscriber } as unknown as WorkflowRedisClient,
     keys,
   )
