@@ -253,10 +253,10 @@ ${SERVER_TIME}
 ${ROUTING}
 ${QUEUE_CLEANUP}
 local now = nowMs()
-local routing = cjson.decode(ARGV[3])
+local routing = cjson.decode(ARGV[2])
 local routes = selectedRoutes(KEYS[1], routing)
 -- Compare route heads so a busy route cannot starve the worker's other routes.
-for cleanup = 1, tonumber(ARGV[2]) do
+for cleanup = 1, tonumber(ARGV[1]) do
   local id = nil
   local score = nil
   local indexKey = nil
@@ -272,34 +272,34 @@ for cleanup = 1, tonumber(ARGV[2]) do
       end
     end
   end
-  if not id then return { 'empty', '', '', '0', '0' } end
+  if not id then return { 'empty' } end
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then
     redis.call('ZREM', indexKey, id)
     redis.call('ZREM', KEYS[2], id)
   else
     local item = cjson.decode(raw)
-    if orphaned(item, ARGV[6]) then
+    if orphaned(item, ARGV[5]) then
       deleteItem(id, item)
     elseif item.deadAt or item.leaseToken then
       removeReady(KEYS[1], item)
       redis.call('ZREM', KEYS[2], id)
     elseif eligible(item.payload, routing) then
-      local leaseExpiresAt = now + tonumber(ARGV[5])
-      item.leaseToken = ARGV[4]
+      local leaseExpiresAt = now + tonumber(ARGV[4])
+      item.leaseToken = ARGV[3]
       item.leaseExpiresAt = leaseExpiresAt
       redis.call('HSET', KEYS[1], id, cjson.encode(item))
       redis.call('ZREM', KEYS[2], id)
       redis.call('ZADD', KEYS[3], leaseExpiresAt, id)
       removeReady(KEYS[1], item)
       addClaimed(KEYS[1], item, leaseExpiresAt)
-      return { 'claimed', id, raw, '0', '0' }
+      return { 'claimed', id, raw }
     else
       redis.call('ZREM', indexKey, id)
     end
   end
 end
-return { 'empty', '', '', '1', '0' }
+return { 'more' }
 `,
   heartbeat: `
 ${SERVER_TIME}
@@ -352,13 +352,12 @@ ${COALESCE_READY}
 local now = nowMs()
 local routing = cjson.decode(ARGV[3])
 local routes = selectedRoutes(KEYS[1], routing)
-local position = math.max(1, tonumber(ARGV[1]))
+local position = tonumber(ARGV[1])
 local route = routes[position]
-if not route then return { '0', '0', '0' } end
+if not route then return 0 end
 local indexKey = route .. ':claimed'
 local entries = redis.call('ZRANGEBYSCORE', indexKey, '-inf', now, 'LIMIT', 0, ARGV[2])
 local leaseError = cjson.decode(ARGV[5]).lastError
-local requeued = 0
 for _, id in ipairs(entries) do
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then
@@ -390,16 +389,15 @@ for _, id in ipairs(entries) do
           addReady(KEYS[1], item, now)
           redis.call('HSET', KEYS[1], id, cjson.encode(item))
         end
-        requeued = requeued + 1
       end
     else
       redis.call('ZREM', indexKey, id)
     end
   end
 end
-if #entries >= tonumber(ARGV[2]) then return { tostring(position), tostring(requeued), '0' } end
-if position < #routes then return { tostring(position + 1), tostring(requeued), '0' } end
-return { '0', tostring(requeued), '0' }
+if #entries >= tonumber(ARGV[2]) then return position end
+if position < #routes then return position + 1 end
+return 0
 `,
   pruneOrphans: `
 ${QUEUE_CLEANUP}
@@ -407,7 +405,6 @@ local indexKey = KEYS[tonumber(ARGV[4])]
 local scan = redis.call('ZSCAN', indexKey, ARGV[1], 'COUNT', ARGV[2])
 local nextCursor = scan[1]
 local entries = scan[2]
-local deleted = 0
 local changed = 0
 for index = 1, #entries, 2 do
   local id = entries[index]
@@ -419,12 +416,11 @@ for index = 1, #entries, 2 do
     local item = cjson.decode(raw)
     if orphaned(item, ARGV[3]) then
       deleteItem(id, item)
-      deleted = deleted + 1
       changed = changed + 1
     end
   end
 end
-return { nextCursor, tostring(deleted), tostring(changed) }
+return { nextCursor, tostring(changed) }
 `,
   deleteForRuns: `
 ${QUEUE_CLEANUP}
@@ -453,20 +449,6 @@ for _, id in ipairs(scan[2]) do
 end
 return { nextCursor, tostring(deleted), tostring(changed) }
 `,
-  ack: `
-if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
-if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-if raw then removeCommandIndexes(KEYS[1], cjson.decode(raw)) end
-redis.call('HDEL', KEYS[1], ARGV[1])
-redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('ZREM', KEYS[3], ARGV[1])
-redis.call('ZREM', KEYS[4], ARGV[1])
-if redis.call('HGET', KEYS[5], ARGV[3]) == ARGV[1] then
-  redis.call('HDEL', KEYS[5], ARGV[3])
-end
-return 1
-`,
   transitionDead: `
 ${COALESCE_READY}
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
@@ -491,11 +473,10 @@ if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 return 1
 `,
-  deleteIndexed: `
+  deleteCommand: `
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
-local raw = redis.call('HGET', KEYS[1], ARGV[1])
-if raw then removeCommandIndexes(KEYS[1], cjson.decode(raw)) end
+removeCommandIndexes(KEYS[1], cjson.decode(ARGV[2]))
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[3], ARGV[1])

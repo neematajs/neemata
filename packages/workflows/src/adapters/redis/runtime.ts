@@ -136,8 +136,8 @@ export function createRedisWorkflowRuntime(
       },
       async pruneDeadCommands(olderThan) {
         await Promise.all([
-          continueQueue.pruneDead(olderThan),
-          attemptQueue.pruneDead(olderThan),
+          continueQueue.prune(olderThan),
+          attemptQueue.prune(olderThan),
         ])
       },
     },
