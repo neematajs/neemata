@@ -84,6 +84,8 @@ export const redisChildKey = (
 export const createRedisId = () => randomUUID()
 
 export const stableJsonValue = (value: unknown): unknown => {
+  // Dates serialize as ISO strings, so their identity must match stored JSON.
+  if (value instanceof Date) return value.toJSON()
   if (Array.isArray(value)) {
     const stable: unknown[] = []
     stable.length = value.length

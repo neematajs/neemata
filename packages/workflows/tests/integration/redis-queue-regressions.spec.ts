@@ -5,7 +5,6 @@ import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { WorkflowRedisClient } from '../../src/adapters/redis.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
 import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
 import { RedisWorkflowQueue } from '../../src/adapters/redis/queue.ts'
@@ -16,7 +15,7 @@ import { createTestContainer, wait } from './helpers.ts'
 type Target = {
   readonly name: string
   readonly url: string | undefined
-  createClient(): WorkflowRedisClient
+  createClient(): Redis | Valkey
 }
 
 const targets: readonly Target[] = [
@@ -36,7 +35,7 @@ for (const target of targets) {
   describe.skipIf(!target.url)(
     `Redis queue regressions against ${target.name}`,
     () => {
-      const clients: WorkflowRedisClient[] = []
+      const clients: (Redis | Valkey)[] = []
       const runtimes: ReturnType<typeof createRedisWorkflowRuntime>[] = []
 
       afterEach(async () => {
@@ -71,8 +70,8 @@ for (const target of targets) {
         }
       }
 
-      it('coalesces an expired continue lease into the latest pending payload', async () => {
-        const { runtime } = createHarness()
+      it('preserves expired deliveries while coalescing the latest pending payload', async () => {
+        const { runtime } = createHarness({ maxDeliveries: 2 })
         const run = await runtime.store.createRun({
           workflowName: 'coalesced',
           input: null,
@@ -83,23 +82,139 @@ for (const target of targets) {
           workflowName: run.workflowName,
           generation: 1,
         }
-        const latest = { ...first, generation: 2 }
+        const second = { ...first, generation: 2 }
+        const latest = { ...first, generation: 3 }
         const worker = {
           workerId: 'coalesced',
           workflowNames: [run.workflowName],
           leaseMs: 50,
         }
         await runtime.runCoordinationExecutor.enqueue(first)
-        const expired = await runtime.runCoordinationExecutor.claim(worker)
-        expect(expired).not.toBeNull()
+        const firstExpired = await runtime.runCoordinationExecutor.claim(worker)
+        expect(firstExpired).not.toBeNull()
+        await runtime.runCoordinationExecutor.enqueue(second)
+        await wait(80)
+
+        const secondExpired =
+          await runtime.runCoordinationExecutor.claim(worker)
+        expect(secondExpired?.command).toStrictEqual(second)
         await runtime.runCoordinationExecutor.enqueue(latest)
         await wait(80)
+
         const claim = await runtime.runCoordinationExecutor.claim(worker)
         expect(claim?.command).toStrictEqual(latest)
+        expect(claim?.id).not.toBe(secondExpired?.id)
+        await expect(
+          runtime.store.listDeadCommands({ runId: run.id }),
+        ).resolves.toMatchObject([
+          {
+            id: secondExpired?.id,
+            deliveryCount: 2,
+            lastError: {
+              message: expect.stringContaining('lease expired without release'),
+            },
+          },
+        ])
         await runtime.runCoordinationExecutor.ack(claim!)
         await expect(
-          runtime.runCoordinationExecutor.ack(expired!),
+          runtime.runCoordinationExecutor.ack(firstExpired!),
         ).rejects.toThrow('Stale')
+        await expect(
+          runtime.runCoordinationExecutor.ack(secondExpired!),
+        ).rejects.toThrow('Stale')
+        await expect(
+          runtime.runCoordinationExecutor.claim(worker),
+        ).resolves.toBeNull()
+      })
+
+      it('preserves failed deliveries while releasing into a fresh pending continue', async () => {
+        const { runtime } = createHarness({ maxDeliveries: 2 })
+        const run = await runtime.store.createRun({
+          workflowName: 'released-coalesced',
+          input: null,
+        })
+        const first = {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+          generation: 1,
+        }
+        const second = { ...first, generation: 2 }
+        const latest = { ...first, generation: 3 }
+        const worker = {
+          workerId: 'released-coalesced',
+          workflowNames: [run.workflowName],
+          leaseMs: 30_000,
+        }
+
+        await runtime.runCoordinationExecutor.enqueue(first)
+        const firstClaim = await runtime.runCoordinationExecutor.claim(worker)
+        await runtime.runCoordinationExecutor.enqueue(second)
+        await runtime.runCoordinationExecutor.release(firstClaim!, {
+          error: new Error('first failure'),
+        })
+
+        const secondClaim = await runtime.runCoordinationExecutor.claim(worker)
+        expect(secondClaim?.command).toStrictEqual(second)
+        await runtime.runCoordinationExecutor.enqueue(latest)
+        await runtime.runCoordinationExecutor.release(secondClaim!, {
+          error: new Error('second failure'),
+        })
+
+        await expect(
+          runtime.store.listDeadCommands({ runId: run.id }),
+        ).resolves.toMatchObject([
+          {
+            id: secondClaim?.id,
+            deliveryCount: 2,
+            lastError: { message: 'second failure' },
+          },
+        ])
+        const pending = await runtime.runCoordinationExecutor.claim(worker)
+        expect(pending?.command).toStrictEqual(latest)
+        await runtime.runCoordinationExecutor.ack(pending!)
+      })
+
+      it('restores continuation dedup after requeueing dead work', async () => {
+        const { client, keys, runtime } = createHarness({ maxDeliveries: 1 })
+        const run = await runtime.store.createRun({
+          workflowName: 'requeued-dedup',
+          input: null,
+        })
+        const first = {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+          generation: 1,
+        }
+        const second = { ...first, generation: 2 }
+        const latest = { ...first, generation: 3 }
+        const worker = {
+          workerId: 'requeued-dedup',
+          workflowNames: [run.workflowName],
+          leaseMs: 30_000,
+        }
+
+        await runtime.runCoordinationExecutor.enqueue(first)
+        const failed = await runtime.runCoordinationExecutor.claim(worker)
+        await runtime.runCoordinationExecutor.enqueue(second)
+        await runtime.runCoordinationExecutor.release(failed!, {
+          error: new Error('dead continuation'),
+        })
+        const pending = await runtime.runCoordinationExecutor.claim(worker)
+        await runtime.runCoordinationExecutor.ack(pending!)
+
+        const [dead] = await runtime.store.listDeadCommands({ runId: run.id })
+        await runtime.store.requeueDeadCommand(dead!.id)
+        expect(await client.hget(keys.queue('continue').dedup, run.id)).toBe(
+          dead!.id,
+        )
+
+        await runtime.runCoordinationExecutor.enqueue(latest)
+        const requeued = await runtime.runCoordinationExecutor.claim(worker)
+        expect(requeued?.id).toBe(dead!.id)
+        expect(requeued?.command).toStrictEqual(latest)
+        await runtime.runCoordinationExecutor.ack(requeued!)
         await expect(
           runtime.runCoordinationExecutor.claim(worker),
         ).resolves.toBeNull()
@@ -222,6 +337,73 @@ for (const target of targets) {
         ).resolves.toBeNull()
         expect(hgetCalls).toBe(0)
         expect(await client.zcard(claimedKey)).toBe(300)
+      })
+
+      it('deletes only matching unclaimed attempts without client-side item reads', async () => {
+        const { client, keys, runtime } = createHarness()
+        const targetRunId = randomUUID()
+        const unrelatedRunId = randomUUID()
+        const claimed = activityCommand(
+          targetRunId,
+          'cleanup-workflow',
+          'claimed',
+        )
+        const target = activityCommand(
+          targetRunId,
+          'cleanup-workflow',
+          'target',
+        )
+        const unrelated = activityCommand(
+          unrelatedRunId,
+          'cleanup-workflow',
+          'unrelated',
+        )
+        await runtime.attemptExecutor.dispatchActivity(claimed)
+        const claimedAttempt = await runtime.attemptExecutor.claim({
+          workerId: 'cleanup-claimed-worker',
+          workflowNames: ['cleanup-workflow'],
+          activityNames: ['claimed'],
+          taskNames: [],
+          leaseMs: 30_000,
+        })
+        await runtime.attemptExecutor.dispatchActivity(target)
+        await runtime.attemptExecutor.dispatchActivity(unrelated)
+
+        const mutableClient = client as unknown as { hget: HgetCommand }
+        const hget = mutableClient.hget.bind(client)
+        let hgetCalls = 0
+        mutableClient.hget = async (...arguments_) => {
+          hgetCalls += 1
+          return await hget(...arguments_)
+        }
+
+        await expect(
+          runtime.attemptExecutor.deleteUnclaimed({ runId: targetRunId }),
+        ).resolves.toBe(1)
+        expect(hgetCalls).toBe(0)
+        const queue = keys.queue('attempt')
+        expect(await client.zcard(queue.ready)).toBe(1)
+        expect(await client.zcard(queue.claimed)).toBe(1)
+
+        await runtime.attemptExecutor.ack(claimedAttempt!)
+        const unrelatedAttempt = await runtime.attemptExecutor.claim({
+          workerId: 'cleanup-unrelated-worker',
+          workflowNames: ['cleanup-workflow'],
+          activityNames: ['unrelated'],
+          taskNames: [],
+          leaseMs: 30_000,
+        })
+        expect(unrelatedAttempt?.command).toStrictEqual(unrelated)
+        await runtime.attemptExecutor.ack(unrelatedAttempt!)
+        await expect(
+          runtime.attemptExecutor.claim({
+            workerId: 'cleanup-target-worker',
+            workflowNames: ['cleanup-workflow'],
+            activityNames: ['target'],
+            taskNames: [],
+            leaseMs: 30_000,
+          }),
+        ).resolves.toBeNull()
       })
 
       it('uses the Redis clock for leases and preserves opaque payloads through renewal', async () => {

@@ -103,10 +103,10 @@ export function createRedisWorkflowRuntime(
         commands.sort(compareDeadNewest)
         return commands
       },
-      async listUnreapedDeadCommands(limit) {
+      async listUnreapedDeadCommands({ limit, commandId } = {}) {
         const groups = await Promise.all([
-          continueQueue.listUnreaped(),
-          attemptQueue.listUnreaped(),
+          continueQueue.listUnreaped(undefined, commandId),
+          attemptQueue.listUnreaped(undefined, commandId),
         ])
         const commands: DeadWorkflowCommand[] = []
         for (const group of groups) {

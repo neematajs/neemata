@@ -310,6 +310,12 @@ local field = 'nodes:' .. ARGV[3]
 local fields = cjson.decode(redis.call('HGET', KEYS[2], field) or '[]')
 table.insert(fields, ARGV[1])
 redis.call('HSET', KEYS[2], field, cjson.encode(fields))
+-- A coordinator may finish this write after the family became terminal.
+local ttl = redis.call('PTTL', KEYS[4])
+if ttl >= 0 then
+  redis.call('PEXPIRE', KEYS[1], ttl)
+  redis.call('PEXPIRE', KEYS[2], ttl)
+end
 redis.call('PUBLISH', KEYS[3], '1')
 return { 'created', ARGV[2] }
 `,
@@ -327,6 +333,11 @@ end
 local encoded = '[]'
 if #fields > 0 then encoded = cjson.encode(fields) end
 redis.call('HSET', KEYS[3], ARGV[2], encoded)
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl >= 0 then
+  redis.call('PEXPIRE', KEYS[2], ttl)
+  redis.call('PEXPIRE', KEYS[3], ttl)
+end
 redis.call('PUBLISH', KEYS[4], '1')
 return { 'created', encoded }
 `,
@@ -402,9 +413,15 @@ local attemptRaw = cjson.encode(attempt)
 redis.call('HSET', KEYS[4], attempt.id, attemptRaw)
 redis.call('SET', ARGV[5], ARGV[6])
 trackExternal(KEYS[1], ARGV[5], ARGV[6])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl >= 0 then
+  redis.call('PEXPIRE', KEYS[4], ttl)
+  redis.call('PEXPIRE', ARGV[5], ttl)
+end
 local attempts = cjson.decode(redis.call('HGET', KEYS[5], ARGV[7]) or '[]')
 table.insert(attempts, attempt.id)
 redis.call('HSET', KEYS[5], ARGV[7], cjson.encode(attempts))
+if ttl >= 0 then redis.call('PEXPIRE', KEYS[5], ttl) end
 
 child = applyChanges(child, {
   status = 'running',
@@ -578,6 +595,16 @@ return cjson.encode(updated)
 ${RECORD_HELPERS}
 local runIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds') or '[]')
 if #runIds == 0 then return { 'missing' } end
+if ARGV[1] then
+  local rootId = redis.call('HGET', KEYS[1], 'rootRunId')
+  local rootRaw = rootId and redis.call('HGET', KEYS[2], rootId)
+  if not rootRaw then return { 'missing' } end
+  local root = cjson.decode(rootRaw)
+  -- Selection may predate a retry and completion; recheck before deleting.
+  if root.updatedAt >= tonumber(ARGV[1]) or not contains(cjson.decode(ARGV[2]), root.status) then
+    return { 'skipped' }
+  end
+end
 for _, runId in ipairs(runIds) do
   local raw = redis.call('HGET', KEYS[2], runId)
   if raw and not isTerminal(cjson.decode(raw).status) then return { 'active' } end
