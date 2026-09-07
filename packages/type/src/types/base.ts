@@ -44,9 +44,9 @@ export type PrimitiveZodType =
   | ZodMiniIntersection
   | ZodMiniRecord
 
-export type SimpleZodType = ZodMiniType<any, any, any>
+export type SimpleZodType = ZodMiniType<any, any>
 
-export type ZodType = SimpleZodType | ZodMiniType<any, any, any>
+export type ZodType = SimpleZodType
 
 export type TypeProps = Record<string, any>
 
@@ -62,7 +62,7 @@ export type DefaultTypeParams = {
 export type BaseTypeAny<
   EncodedZodType extends SimpleZodType = SimpleZodType,
   DecodedZodType extends ZodType = ZodMiniType,
-> = BaseType<EncodedZodType, DecodedZodType, any>
+> = BaseType<EncodedZodType, DecodedZodType, any, any>
 
 export const NeemataTypeError = core.$ZodError
 export type NeemataTypeError = core.$ZodError
@@ -71,12 +71,15 @@ export abstract class BaseType<
   EncodeZodType extends SimpleZodType = SimpleZodType,
   DecodeZodType extends ZodType = EncodeZodType,
   Props extends TypeProps = TypeProps,
+  RuntimeZodType extends ZodMiniType = EncodeZodType,
 > implements WireSchema.Codec<
   standard.Schema<DecodeZodType>,
   standard.Schema<EncodeZodType>
 > {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
+  readonly runtimeZodType: RuntimeZodType
+  readonly parse: standard.Schema<RuntimeZodType>
   readonly wireZodTypes: WireZodTypes
   private metadata: TypeMetadata = {}
   readonly props: Props
@@ -87,18 +90,22 @@ export abstract class BaseType<
   constructor({
     encodeZodType,
     decodeZodType = encodeZodType as unknown as DecodeZodType,
+    runtimeZodType,
     wireZodTypes,
     props = {} as Props,
     params = {} as Partial<TypeParams>,
   }: {
     encodeZodType: EncodeZodType
     decodeZodType?: DecodeZodType
+    runtimeZodType: RuntimeZodType
     wireZodTypes?: WireZodTypes
     props?: Props
     params?: Partial<TypeParams>
   }) {
     this.encodeZodType = encodeZodType
     this.decodeZodType = decodeZodType
+    this.runtimeZodType = runtimeZodType.clone()
+    this.parse = standard.create(this.runtimeZodType, typesRegistry)
 
     // Caller-supplied schemas may be reused; each type must own its metadata.
     this.wireZodTypes = wireZodTypes ?? {
@@ -160,6 +167,7 @@ export abstract class BaseType<
     delete annotations.examples
     typesRegistry.add(this.encodeZodType, annotations)
     typesRegistry.add(this.decodeZodType, annotations)
+    typesRegistry.add(this.runtimeZodType, annotations)
     for (const schema of Object.values(this.wireZodTypes)) {
       typesRegistry.add(schema, { ...this.metadata })
     }
@@ -172,10 +180,12 @@ export class OptionalType<
 > extends BaseType<
   ZodMiniOptional<Type['encodeZodType']>,
   ZodMiniOptional<Type['decodeZodType']>,
-  { inner: Type }
+  { inner: Type },
+  ZodMiniOptional<Type['runtimeZodType']>
 > {
   static factory<T extends BaseTypeAny>(type: T) {
     return new OptionalType<T>({
+      runtimeZodType: optional<T['runtimeZodType']>(type.runtimeZodType),
       encodeZodType: optional(type.encodeZodType),
       decodeZodType: optional(type.decodeZodType),
       wireZodTypes: mapWireZodTypes((side) =>
@@ -191,10 +201,12 @@ export class NullableType<
 > extends BaseType<
   ZodMiniNullable<Type['encodeZodType']>,
   ZodMiniNullable<Type['decodeZodType']>,
-  { inner: Type }
+  { inner: Type },
+  ZodMiniNullable<Type['runtimeZodType']>
 > {
   static factory<T extends BaseTypeAny<any>>(type: T) {
     return new NullableType<T>({
+      runtimeZodType: nullable<T['runtimeZodType']>(type.runtimeZodType),
       encodeZodType: nullable(type.encodeZodType),
       decodeZodType: nullable(type.decodeZodType),
       wireZodTypes: mapWireZodTypes((side) =>
@@ -210,7 +222,8 @@ export class DefaultType<
 > extends BaseType<
   ZodMiniPrefault<Type['encodeZodType']>,
   ZodMiniPrefault<Type['decodeZodType']>,
-  { inner: Type }
+  { inner: Type },
+  ZodMiniPrefault<Type['runtimeZodType']>
 > {
   static factory<T extends BaseTypeAny<any>>(
     type: T,
@@ -219,6 +232,10 @@ export class DefaultType<
     const encodedDefault = type.encodeZodType.parse(defaultValue)
 
     return new DefaultType<T>({
+      runtimeZodType: prefault<T['runtimeZodType']>(
+        type.runtimeZodType,
+        defaultValue,
+      ),
       encodeZodType: prefault(type.encodeZodType, defaultValue),
       decodeZodType: prefault(
         type.decodeZodType,

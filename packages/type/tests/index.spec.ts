@@ -89,10 +89,8 @@ describe('Type string conversion', () => {
   it('renders custom schemas with multiple JSON types as a union', () => {
     const zodType = zodUnion([zodString(), zodNumber()])
     const schema = t.custom({
-      type: zodType,
-      decodedType: zodType,
-      decode: (value) => value,
-      encode: (value) => value,
+      decode: { type: zodType, transform: (value) => value },
+      encode: { type: zodType, transform: (value) => value },
     })
 
     expect(typeToString(schema)).toBe('string | number')

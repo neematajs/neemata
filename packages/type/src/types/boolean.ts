@@ -5,7 +5,8 @@ import { BaseType } from './base.ts'
 
 export class BooleanType extends BaseType<ZodMiniBoolean<boolean>> {
   static factory() {
-    return new BooleanType({ encodeZodType: zodBoolean() })
+    const schema = zodBoolean()
+    return new BooleanType({ encodeZodType: schema, runtimeZodType: schema })
   }
 }
 

@@ -4,7 +4,7 @@ import type {
   StandardSchemaV1,
 } from '@standard-schema/spec'
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { number, string } from 'zod/mini'
+import { any, number, string } from 'zod/mini'
 
 import { t } from '../src/index.ts'
 
@@ -68,8 +68,8 @@ describe('Standard schema', () => {
 
   it('awaits asynchronous provider validation through Standard Schema', async () => {
     const asyncSchema = t.custom<string>({
-      decode: (value) => String(value),
-      encode: (value) => value,
+      decode: { type: string(), transform: (value) => String(value) },
+      encode: { type: any(), transform: (value) => value },
       validation: {
         decode: async (value, context) => {
           await Promise.resolve()
@@ -162,10 +162,8 @@ describe('Standard schema', () => {
   it('keeps encoded examples off runtime projections and honors JSON overrides', () => {
     const schema = t
       .custom({
-        type: string(),
-        decodedType: number(),
-        decode: Number,
-        encode: String,
+        decode: { type: number(), transform: Number },
+        encode: { type: string(), transform: String },
       })
       .examples(42)
     const options = { target: 'draft-07' } as const

@@ -122,16 +122,12 @@ describe('wire metadata ownership', () => {
     const wire = string()
     const runtime = number()
     const first = t.custom({
-      type: wire,
-      decodedType: runtime,
-      decode: Number,
-      encode: String,
+      decode: { type: runtime, transform: Number },
+      encode: { type: wire, transform: String },
     })
     const second = t.custom({
-      type: wire,
-      decodedType: runtime,
-      decode: Number,
-      encode: String,
+      decode: { type: runtime, transform: Number },
+      encode: { type: wire, transform: String },
     })
     const optional = first.optional().title('Optional')
     const nested = t.object({ first, second, optional })
@@ -188,10 +184,8 @@ describe('wire metadata ownership', () => {
   it('preserves named references to reused wire schemas', () => {
     const amount = t
       .custom({
-        type: string(),
-        decodedType: number(),
-        decode: Number,
-        encode: String,
+        decode: { type: number(), transform: Number },
+        encode: { type: string(), transform: String },
       })
       .meta({ id: 'Amount', examples: [42] })
     const nested = t.object({ first: amount, second: amount })
@@ -212,12 +206,13 @@ describe('wire metadata ownership', () => {
   it('encodes examples once through either entry point and preserves other annotations', () => {
     let encodes = 0
     const schema = t.custom({
-      type: string(),
-      decodedType: number(),
-      decode: Number,
-      encode: (value) => {
-        encodes++
-        return String(value)
+      decode: { type: number(), transform: Number },
+      encode: {
+        type: string(),
+        transform: (value) => {
+          encodes++
+          return String(value)
+        },
       },
     })
     schema.meta({ title: 'Amount', examples: [42] }).description('An amount')
@@ -251,10 +246,8 @@ describe('wire metadata ownership', () => {
   it('keeps examples on wire schemas without changing validation or runtime schemas', () => {
     const schema = t
       .custom({
-        type: string(),
-        decodedType: number(),
-        decode: Number,
-        encode: String,
+        decode: { type: number(), transform: Number },
+        encode: { type: string(), transform: String },
       })
       .title('Amount')
       .examples(42)

@@ -1,6 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { core, ZodMiniCodec, ZodMiniType } from 'zod/mini'
-import { NEVER, any, codec, invertCodec, superRefine } from 'zod/mini'
+import { NEVER, codec, invertCodec, superRefine } from 'zod/mini'
 
 import type { SimpleZodType, ZodType } from './base.ts'
 import { BaseType } from './base.ts'
@@ -18,7 +18,9 @@ export abstract class TransformType<
   DecodeType extends ZodType = ZodMiniType<Type, Type>,
 > extends BaseType<
   ZodMiniCodec<DecodeType, EncodeType>,
-  ZodMiniCodec<EncodeType, DecodeType>
+  ZodMiniCodec<EncodeType, DecodeType>,
+  Record<string, never>,
+  DecodeType
 > {}
 
 const addIssue = (
@@ -82,41 +84,48 @@ export class CustomType<
     encode,
     validation,
     error,
-    type = any() as unknown as EncodeType,
-    decodedType = any() as unknown as DecodeType,
     prototype,
   }: {
-    decode: CustomTransformFn<
-      EncodeType['_zod']['output'],
-      DecodeType['_zod']['input']
-    >
-    encode: CustomTransformFn<
-      DecodeType['_zod']['output'],
-      EncodeType['_zod']['input']
-    >
+    decode: {
+      /** Runtime schema validated after decoding and by .parse(). */
+      type: DecodeType
+      transform: CustomTransformFn<
+        EncodeType['_zod']['output'],
+        DecodeType['_zod']['input']
+      >
+    }
+    encode: {
+      /** Wire schema validated after encoding and before decoding. */
+      type: EncodeType
+      transform: CustomTransformFn<
+        DecodeType['_zod']['output'],
+        EncodeType['_zod']['input']
+      >
+    }
     validation?:
       | CustomValidation<DecodeType>
       | {
+          runtime?: CustomValidation<DecodeType>
           encode?: CustomValidation<DecodeType>
           decode?: CustomValidation<DecodeType>
         }
     error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
-    /** Schema for the encoded/wire representation. */
-    type?: EncodeType
-    /** Schema for the decoded/runtime representation. */
-    decodedType?: DecodeType
     prototype?: object
   }): CustomType<Type, EncodeType, DecodeType> {
-    const _validation = validation
-      ? typeof validation === 'function'
-        ? { encode: validation, decode: validation }
-        : validation
-      : undefined
+    if (!decode?.type) throw new TypeError('Custom types require decode.type')
+    if (!encode?.type) throw new TypeError('Custom types require encode.type')
+    const shared =
+      typeof validation === 'function' ? validation : validation?.runtime
+    const directional = typeof validation === 'object' ? validation : undefined
+    // Runtime constraints run on every path; transport-specific checks stay on their direction.
+    const runtimeZodType: DecodeType = shared
+      ? decode.type.check(superRefine(shared))
+      : decode.type
 
-    const baseDecodeZodType = codec(type, decodedType, {
+    const baseDecodeZodType = codec(encode.type, runtimeZodType, {
       decode: (value, payload) => {
         try {
-          return decode(value)
+          return decode.transform(value)
         } catch (cause) {
           addTransformIssue(payload, value, error, cause)
           return NEVER
@@ -127,25 +136,26 @@ export class CustomType<
           if (payload.issues.length > 0) return NEVER
 
           try {
-            return encode(value)
+            return encode.transform(value)
           } catch (cause) {
             addTransformIssue(payload, value, error, cause)
             return NEVER
           }
         }
-        const result = _validation?.encode?.(value, refinementContext(payload))
+        const result = directional?.encode?.(value, refinementContext(payload))
 
         return result instanceof Promise ? result.then(transform) : transform()
       },
     })
     const encodeZodType = invertCodec(baseDecodeZodType)
-    const decodeZodType = _validation?.decode
-      ? baseDecodeZodType.check(superRefine(_validation.decode))
+    const decodeZodType = directional?.decode
+      ? baseDecodeZodType.check(superRefine(directional.decode))
       : baseDecodeZodType
 
     const instance = new CustomType<Type, EncodeType, DecodeType>({
       encodeZodType,
       decodeZodType,
+      runtimeZodType,
     })
 
     if (prototype) Object.setPrototypeOf(instance, prototype)
