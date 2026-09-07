@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { StoredRun } from '../../src/runtime/state.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
+import { RedisWorkflowScripts } from '../../src/adapters/redis/scripts.ts'
 import { RedisWorkflowStoreScripts } from '../../src/adapters/redis/store-scripts.ts'
 import {
   defineTask,
@@ -152,7 +153,7 @@ for (const target of targets) {
       })
 
       it('does not erase a successful retry while deleting its terminal family', async () => {
-        const { client, keyPrefix, runtime } = createHarness()
+        const { runtime } = createHarness()
         const run = await runtime.store.createRun({
           workflowName: 'retry-delete',
           input: null,
@@ -163,16 +164,19 @@ for (const target of targets) {
         })
         const entered = createFuture<void>()
         const release = createFuture<void>()
-        const hkeys = client.hkeys.bind(client)
+        // oxlint-disable-next-line typescript/unbound-method -- Rebound to the intercepted queue script instance below.
+        const runRaw = RedisWorkflowScripts.prototype.runRaw
         let queues = 0
-        vi.spyOn(client, 'hkeys').mockImplementation(async (key) => {
-          if (String(key).startsWith(`${keyPrefix}queue:`)) {
-            queues += 1
-            if (queues === 2) entered.resolve()
-            await release.promise
-          }
-          return hkeys(key)
-        })
+        vi.spyOn(RedisWorkflowScripts.prototype, 'runRaw').mockImplementation(
+          async function (this: RedisWorkflowScripts, name, keys, args) {
+            if (name === 'deleteForRuns') {
+              queues += 1
+              if (queues === 2) entered.resolve()
+              await release.promise
+            }
+            return runRaw.call(this, name, keys, args)
+          },
+        )
         const deleting = runtime.store.deleteRun(run.id).then(
           () => true,
           () => false,
@@ -203,6 +207,95 @@ for (const target of targets) {
         } else {
           expect(deleted).toBe(true)
           expect(await runtime.store.loadRunSnapshot(run.id)).toBeUndefined()
+        }
+      })
+
+      it('retries only its indexed commands with unrelated work in both queues', async () => {
+        const { client, keyPrefix, runtime } = createHarness()
+        const run = await runtime.store.createRun({
+          workflowName: 'indexed-retry',
+          input: null,
+        })
+        await runtime.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: run.workflowName,
+        })
+        await runtime.store.failRun({
+          runId: run.id,
+          error: new Error('retry'),
+        })
+        await Promise.all(
+          Array.from({ length: 1000 }, async () => {
+            const unrelated = randomUUID()
+            await runtime.runCoordinationExecutor.enqueue({
+              kind: 'continueRun',
+              runId: unrelated,
+              workflowName: 'offline',
+            })
+            await runtime.attemptExecutor.dispatchActivity({
+              kind: 'activityAttempt',
+              runId: unrelated,
+              workflowName: 'offline',
+              activityName: 'offline',
+              nodeName: 'offline',
+              childKey: 'one',
+              attemptId: randomUUID(),
+              leaseToken: randomUUID(),
+              input: null,
+            })
+          }),
+        )
+        const monitor = await client.monitor()
+        const commands: string[][] = []
+        monitor.on('monitor', (_time: unknown, args: string[]) =>
+          commands.push(args),
+        )
+        try {
+          await createWorkflowRuntimeClient(runtime).retry(run.id)
+          await client.echo('retried')
+          await expect
+            .poll(() =>
+              commands.some(
+                ([name, value]) =>
+                  name?.toLowerCase() === 'echo' && value === 'retried',
+              ),
+            )
+            .toBe(true)
+          const queueKeys = new Set(
+            ['continue', 'attempt'].map(
+              (kind) => `${keyPrefix}queue:${kind}:items`,
+            ),
+          )
+          expect(
+            commands.filter(
+              ([name, key]) =>
+                name?.toLowerCase() === 'hgetall' && queueKeys.has(key!),
+            ),
+          ).toEqual([])
+          const reads = commands.filter(
+            ([name, key]) =>
+              name?.toLowerCase() === 'hget' && queueKeys.has(key!),
+          )
+          expect(reads.length).toBeLessThan(10)
+          const claim = await runtime.runCoordinationExecutor.claim({
+            workerId: 'retry',
+            workflowNames: [run.workflowName],
+            leaseMs: 1000,
+          })
+          expect(claim?.command.runId).toBe(run.id)
+          await runtime.runCoordinationExecutor.ack(claim!)
+          expect(
+            await client.smembers(`${keyPrefix}queue:continue:run:${run.id}`),
+          ).toEqual([])
+          expect(await client.hlen(`${keyPrefix}queue:continue:items`)).toBe(
+            1000,
+          )
+          expect(await client.hlen(`${keyPrefix}queue:attempt:items`)).toBe(
+            1000,
+          )
+        } finally {
+          monitor.disconnect()
         }
       })
 

@@ -10,7 +10,7 @@ import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
 import { RedisWorkflowQueue } from '../../src/adapters/redis/queue.ts'
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import { runWorkflowWorker } from '../../src/runtime/index.ts'
-import { createTestContainer, wait } from './helpers.ts'
+import { createTestContainer, matchingKeys, wait } from './helpers.ts'
 
 type Target = {
   readonly name: string
@@ -41,7 +41,14 @@ for (const target of targets) {
       afterEach(async () => {
         vi.restoreAllMocks()
         await Promise.allSettled(
-          runtimes.splice(0).map(async (runtime) => await runtime.dispose?.()),
+          runtimes.splice(0).map(async (runtime, index) => {
+            await runtime.dispose?.()
+            const client = clients[index]!
+            const keys = await matchingKeys(client, `${runtime.keyPrefix}*`)
+            for (let offset = 0; offset < keys.length; offset += 100) {
+              await client.del(...keys.slice(offset, offset + 100))
+            }
+          }),
         )
         await Promise.allSettled(
           clients.splice(0).map(async (client) => await client.quit()),
@@ -220,7 +227,7 @@ for (const target of targets) {
         ).resolves.toBeNull()
       })
 
-      it('drains routed work beyond the first sorted-set scan page', async () => {
+      it('drains routed work without traversing unrelated ready commands', async () => {
         const { client, keys, runtime } = createHarness()
         const workflow = defineWorkflow({
           name: `scan-target-${randomUUID()}`,
@@ -249,51 +256,201 @@ for (const target of targets) {
           workflowName: workflow.name,
         })
 
-        const queue = keys.queue('continue')
-        const targetId = await client.hget(queue.dedup, run.id)
-        expect(targetId).toBeTypeOf('string')
-        const [, firstPage] = await client.zscan(queue.ready, '0', 'COUNT', 128)
-        const firstIds = new Set(
-          firstPage.filter((_entry, index) => index % 2 === 0),
+        const monitor = await client.monitor()
+        const commands: string[][] = []
+        monitor.on('monitor', (_time: unknown, args: string[]) =>
+          commands.push(args),
         )
-        if (firstIds.has(targetId!)) {
-          const allIds = await client.zrange(queue.ready, '0', '-1')
-          const outsideId = allIds.find((id) => !firstIds.has(id))
-          expect(outsideId).toBeTypeOf('string')
-          const [targetRaw, outsideRaw] = await Promise.all([
-            client.hget(queue.items, targetId!),
-            client.hget(queue.items, outsideId!),
-          ])
-          const targetItem = JSON.parse(targetRaw!) as QueueRecord
-          const outsideItem = JSON.parse(outsideRaw!) as QueueRecord
-          const outsideRunId = outsideItem.payload.runId
-          const targetPayload = targetItem.payload
-          targetItem.payload = outsideItem.payload
-          outsideItem.payload = targetPayload
-          await client.hset(queue.items, targetId!, JSON.stringify(targetItem))
-          await client.hset(
-            queue.items,
-            outsideId!,
-            JSON.stringify(outsideItem),
+        try {
+          await runWorkflowWorker({
+            ...runtime,
+            container: createTestContainer(),
+            workflows: [implementation],
+            workerId: 'full-scan-worker',
+          })
+
+          const snapshot = await runtime.store.loadRunSnapshot(run.id)
+          expect(snapshot?.run.status).toBe('completed')
+          expect(snapshot?.run.output).toStrictEqual({ value: 'target' })
+          await client.echo('drained')
+          await expect
+            .poll(() =>
+              commands.some(
+                ([name, value]) =>
+                  name?.toLowerCase() === 'echo' && value === 'drained',
+              ),
+            )
+            .toBe(true)
+          const queue = keys.queue('continue')
+          const queueReads = commands.filter(
+            ([name, key]) =>
+              name?.toLowerCase() === 'hget' && key === queue.items,
           )
-          await client.hset(queue.dedup, run.id, outsideId!)
-          await client.hset(queue.dedup, outsideRunId, targetId!)
+          expect(queueReads.length).toBeLessThan(20)
+          expect(await client.zcard(queue.ready)).toBe(600)
+        } finally {
+          monitor.disconnect()
         }
+      })
 
-        await runWorkflowWorker({
-          ...runtime,
-          container: createTestContainer(),
-          workflows: [implementation],
-          workerId: 'full-scan-worker',
+      it('continues past a full batch of expired-family commands on its own route', async () => {
+        const { client, keys, runtime } = createHarness({
+          terminalRetentionMs: 20,
         })
+        const ids = await Promise.all(
+          Array.from({ length: 150 }, async () => {
+            const run = await runtime.store.createRun({
+              workflowName: 'orphan-heads',
+              input: null,
+            })
+            await runtime.runCoordinationExecutor.enqueue({
+              kind: 'continueRun',
+              runId: run.id,
+              workflowName: run.workflowName,
+            })
+            await runtime.store.completeRun({ runId: run.id, output: null })
+            return run.id
+          }),
+        )
+        await waitUntil(
+          async () =>
+            (await client.exists(...ids.map((id) => keys.family(id)))) === 0,
+        )
+        const live = await runtime.store.createRun({
+          workflowName: 'orphan-heads',
+          input: null,
+        })
+        await runtime.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: live.id,
+          workflowName: live.workflowName,
+        })
+        const claim = await runtime.runCoordinationExecutor.claim({
+          workerId: 'orphan-heads',
+          workflowNames: [live.workflowName],
+          leaseMs: 1000,
+        })
+        expect(claim?.command.runId).toBe(live.id)
+        await runtime.runCoordinationExecutor.ack(claim!)
+        expect(await client.hlen(keys.queue('continue').items)).toBe(0)
+      })
 
-        const snapshot = await runtime.store.loadRunSnapshot(run.id)
-        expect(snapshot?.run.status).toBe('completed')
-        expect(snapshot?.run.output).toStrictEqual({ value: 'target' })
+      it('checks an empty route in constant calls despite an unrelated backlog', async () => {
+        const { client, runtime } = createHarness()
+        await Promise.all(
+          Array.from({ length: 2000 }, () =>
+            runtime.runCoordinationExecutor.enqueue({
+              kind: 'continueRun',
+              runId: randomUUID(),
+              workflowName: 'offline',
+            }),
+          ),
+        )
+        const evalsha = vi.spyOn(client, 'evalsha')
+        expect(
+          await runtime.runCoordinationExecutor.claim({
+            workerId: 'idle',
+            workflowNames: ['empty'],
+            leaseMs: 1000,
+          }),
+        ).toBeNull()
+        expect(evalsha.mock.calls.length).toBeLessThanOrEqual(2)
+      })
+
+      it('indexes wildcard and exact activity selectors without name collisions', async () => {
+        const { runtime } = createHarness()
+        const first = activityCommand(randomUUID(), 'a:b', 'c')
+        const second = activityCommand(randomUUID(), 'a', 'b:c')
+        const unicode = activityCommand(randomUUID(), '工作:🧩', '')
+        for (const command of [first, second, unicode])
+          await runtime.attemptExecutor.dispatchActivity(command)
+        expect(
+          await runtime.attemptExecutor.claim({
+            workerId: 'none',
+            workflowNames: ['a'],
+            activityNames: [],
+            taskNames: [],
+            leaseMs: 1000,
+          }),
+        ).toBeNull()
+        const exact = await runtime.attemptExecutor.claim({
+          workerId: 'exact',
+          workflowNames: ['a'],
+          activityNames: ['b:c'],
+          taskNames: [],
+          leaseMs: 1000,
+        })
+        expect(exact?.command).toStrictEqual(second)
+        await runtime.attemptExecutor.ack(exact!)
+        const wildcard = await runtime.attemptExecutor.claim({
+          workerId: 'wildcard',
+          workflowNames: ['a:b'],
+          taskNames: [],
+          leaseMs: 1000,
+        })
+        expect(wildcard?.command).toStrictEqual(first)
+        await runtime.attemptExecutor.ack(wildcard!)
+        const last = await runtime.attemptExecutor.claim({
+          workerId: 'unicode',
+          workflowNames: ['工作:🧩'],
+          activityNames: [''],
+          taskNames: [],
+          leaseMs: 1000,
+        })
+        expect(last?.command).toStrictEqual(unicode)
+        await runtime.attemptExecutor.ack(last!)
+      })
+
+      it('does not starve an older command on a later route', async () => {
+        const { runtime } = createHarness()
+        const older = {
+          kind: 'continueRun' as const,
+          runId: randomUUID(),
+          workflowName: 'second',
+        }
+        const later = {
+          kind: 'continueRun' as const,
+          runId: randomUUID(),
+          workflowName: 'first',
+        }
+        const now = Date.now()
+        await runtime.runCoordinationExecutor.enqueueDelayed(
+          older,
+          new Date(now - 1000),
+        )
+        await runtime.runCoordinationExecutor.enqueueDelayed(
+          later,
+          new Date(now - 500),
+        )
+        const claim = await runtime.runCoordinationExecutor.claim({
+          workerId: 'fair',
+          workflowNames: ['first', 'second'],
+          leaseMs: 1000,
+        })
+        expect(claim?.command).toStrictEqual(older)
+        await runtime.runCoordinationExecutor.ack(claim!)
+      })
+
+      it('renews the routed lease deadline before reclaiming', async () => {
+        const { runtime } = createHarness()
+        const command = activityCommand(randomUUID(), 'renewed', 'activity')
+        await runtime.attemptExecutor.dispatchActivity(command)
+        const worker = {
+          workerId: 'renewed',
+          workflowNames: ['renewed'],
+          taskNames: [],
+          leaseMs: 100,
+        }
+        const claim = await runtime.attemptExecutor.claim(worker)
+        expect(claim).not.toBeNull()
+        await runtime.attemptExecutor.heartbeat(claim!, 2000)
+        await wait(150)
+        expect(await runtime.attemptExecutor.claim(worker)).toBeNull()
+        await runtime.attemptExecutor.ack(claim!)
       })
 
       it('reclaims expired routes without sequential client-side item reads', async () => {
-        const { client, keys, runtime } = createHarness()
+        const { client, keyPrefix, keys, runtime } = createHarness()
         await Promise.all(
           Array.from({ length: 300 }, async () => {
             await runtime.runCoordinationExecutor.enqueue({
@@ -316,8 +473,16 @@ for (const target of targets) {
 
         const claimedKey = keys.queue('continue').claimed
         const ids = await client.zrange(claimedKey, '0', '-1')
+        const routeKeys = await matchingKeys(
+          client,
+          `${keyPrefix}queue:continue:route:*:claimed`,
+        )
+        expect(routeKeys).toHaveLength(1)
         await Promise.all(
-          ids.map(async (id) => await client.zadd(claimedKey, 0, id)),
+          ids.map(async (id) => {
+            await client.zadd(claimedKey, 0, id)
+            await client.zadd(routeKeys[0]!, 0, id)
+          }),
         )
 
         const mutableClient = client as unknown as { hget: HgetCommand }
@@ -328,6 +493,7 @@ for (const target of targets) {
           return await hget(...arguments_)
         }
 
+        const evalsha = vi.spyOn(client, 'evalsha')
         await expect(
           runtime.runCoordinationExecutor.claim({
             workerId: 'other-worker',
@@ -336,6 +502,7 @@ for (const target of targets) {
           }),
         ).resolves.toBeNull()
         expect(hgetCalls).toBe(0)
+        expect(evalsha.mock.calls.length).toBeLessThanOrEqual(2)
         expect(await client.zcard(claimedKey)).toBe(300)
       })
 
@@ -470,8 +637,8 @@ for (const target of targets) {
         await runtime.attemptExecutor.ack(redelivered!)
       })
 
-      it('removes ready, claimed, and dead commands after their run family expires', async () => {
-        const { client, keys, runtime } = createHarness({
+      it('maintenance removes commands and indexes for expired families on abandoned routes', async () => {
+        const { client, keyPrefix, keys, runtime } = createHarness({
           maxDeliveries: 1,
           terminalRetentionMs: 80,
         })
@@ -530,6 +697,8 @@ for (const target of targets) {
           }),
         ).resolves.toBeNull()
 
+        await runtime.store.pruneTerminalRuns({ olderThan: new Date() })
+
         for (const kind of ['continue', 'attempt'] as const) {
           const queue = keys.queue(kind)
           expect(await client.hlen(queue.items)).toBe(0)
@@ -538,6 +707,8 @@ for (const target of targets) {
           expect(await client.zcard(queue.dead)).toBe(0)
           expect(await client.hlen(queue.dedup)).toBe(0)
         }
+        const remaining = await matchingKeys(client, `${keyPrefix}queue:*`)
+        expect(remaining).toEqual([])
       })
 
       it('bounds a late start marker by the terminal family retention window', async () => {
@@ -584,13 +755,6 @@ for (const target of targets) {
       })
     },
   )
-}
-
-type QueueRecord = {
-  payload: {
-    runId: string
-    workflowName: string
-  }
 }
 
 type HgetCommand = (...arguments_: readonly unknown[]) => Promise<string | null>

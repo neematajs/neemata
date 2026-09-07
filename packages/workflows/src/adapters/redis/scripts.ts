@@ -1,5 +1,67 @@
 import type { WorkflowRedisClient } from './client.ts'
 
+// Every queue mutation maintains these indexes in the same Lua execution.
+// Length prefixes keep arbitrary workflow/activity names collision-free.
+export const QUEUE_INDEXES = `
+local function queueBase(items)
+  return string.sub(items, 1, #items - 6)
+end
+
+local function routePart(value)
+  return tostring(#value) .. ':' .. value
+end
+
+local function runCommands(items, runId)
+  return queueBase(items) .. ':run:' .. runId
+end
+
+local function commandRoutes(items, payload)
+  local base = queueBase(items) .. ':route:'
+  if payload.kind == 'continueRun' then
+    return { base .. 'workflow:' .. routePart(payload.workflowName) }
+  end
+  if payload.kind == 'taskAttempt' then
+    return { base .. 'task:' .. routePart(payload.taskName) }
+  end
+  local workflow = base .. 'activity:' .. routePart(payload.workflowName)
+  return { workflow, workflow .. ':' .. routePart(payload.activityName) }
+end
+
+local function addReady(items, item, score)
+  for _, route in ipairs(commandRoutes(items, item.payload)) do
+    redis.call('ZADD', route .. ':ready', score, item.id)
+  end
+end
+
+local function removeReady(items, item)
+  for _, route in ipairs(commandRoutes(items, item.payload)) do
+    redis.call('ZREM', route .. ':ready', item.id)
+  end
+end
+
+local function addClaimed(items, item, score)
+  for _, route in ipairs(commandRoutes(items, item.payload)) do
+    redis.call('ZADD', route .. ':claimed', score, item.id)
+  end
+end
+
+local function removeClaimed(items, item)
+  for _, route in ipairs(commandRoutes(items, item.payload)) do
+    redis.call('ZREM', route .. ':claimed', item.id)
+  end
+end
+
+local function indexRun(items, item)
+  redis.call('SADD', runCommands(items, item.payload.runId), item.id)
+end
+
+local function removeCommandIndexes(items, item)
+  removeReady(items, item)
+  removeClaimed(items, item)
+  redis.call('SREM', runCommands(items, item.payload.runId), item.id)
+end
+`
+
 const SERVER_TIME = `
 local function nowMs()
   local time = redis.call('TIME')
@@ -14,6 +76,38 @@ local function contains(values, expected)
     if value == expected then return true end
   end
   return false
+end
+
+local function selectedRoutes(items, routing)
+  local routes = {}
+  local seen = {}
+  local base = queueBase(items)
+  local function include(route)
+    if not seen[route] then
+      seen[route] = true
+      table.insert(routes, route)
+    end
+  end
+  if string.sub(base, -9) == ':continue' then
+    for _, name in ipairs(routing.workflowNames) do
+      include(base .. ':route:workflow:' .. routePart(name))
+    end
+  else
+    for _, name in ipairs(routing.taskNames or {}) do
+      include(base .. ':route:task:' .. routePart(name))
+    end
+    for _, workflow in ipairs(routing.workflowNames) do
+      local route = base .. ':route:activity:' .. routePart(workflow)
+      if not routing.activityNames then
+        include(route)
+      else
+        for _, activity in ipairs(routing.activityNames) do
+          include(route .. ':' .. routePart(activity))
+        end
+      end
+    end
+  end
+  return routes
 end
 
 local function eligible(payload, routing)
@@ -35,6 +129,7 @@ local function dedupKey(item)
 end
 
 local function deleteItem(id, item)
+  removeCommandIndexes(KEYS[1], item)
   redis.call('HDEL', KEYS[1], id)
   redis.call('ZREM', KEYS[2], id)
   redis.call('ZREM', KEYS[3], id)
@@ -67,6 +162,7 @@ local function coalesceReady(item, items, ready, dedup)
     current.runAtScore = item.runAtScore
     redis.call('HSET', items, currentId, cjson.encode(current))
     redis.call('ZADD', ready, incomingScore, currentId)
+    addReady(items, current, incomingScore)
   end
   -- Preserve the furthest retry progress so fresh wakes cannot reset poison work.
   if item.deliveryCount > current.deliveryCount then
@@ -117,6 +213,7 @@ if currentId then
       return 1
     end
     if not current.deadAt and not current.leaseToken then
+      removeReady(KEYS[1], current)
       current.payload = item.payload
       if not current.runAtScore or not item.runAtScore then
         current.runAt = nil
@@ -134,6 +231,7 @@ if currentId then
       end
       redis.call('HSET', KEYS[1], currentId, cjson.encode(current))
       redis.call('ZADD', KEYS[2], score, currentId)
+      addReady(KEYS[1], current, score)
       recordMarker()
       if score <= now then redis.call('PUBLISH', KEYS[5], '1') end
       return 1
@@ -143,6 +241,8 @@ end
 
 redis.call('HSET', KEYS[1], item.id, cjson.encode(item))
 redis.call('ZADD', KEYS[2], score, item.id)
+addReady(KEYS[1], item, score)
+indexRun(KEYS[1], item)
 redis.call('HSET', KEYS[3], dedupKey, item.id)
 recordMarker()
 if score <= now then redis.call('PUBLISH', KEYS[5], '1') end
@@ -152,40 +252,54 @@ return 1
 ${SERVER_TIME}
 ${ROUTING}
 ${QUEUE_CLEANUP}
-local scan = redis.call('ZSCAN', KEYS[2], ARGV[1], 'COUNT', ARGV[2])
-local nextCursor = scan[1]
-local entries = scan[2]
 local now = nowMs()
 local routing = cjson.decode(ARGV[3])
-local changed = 0
-for index = 1, #entries, 2 do
-  local id = entries[index]
+local routes = selectedRoutes(KEYS[1], routing)
+-- Compare route heads so a busy route cannot starve the worker's other routes.
+for cleanup = 1, tonumber(ARGV[2]) do
+  local id = nil
+  local score = nil
+  local indexKey = nil
+  for _, route in ipairs(routes) do
+    local key = route .. ':ready'
+    local head = redis.call('ZRANGEBYSCORE', key, '-inf', now, 'WITHSCORES', 'LIMIT', 0, 1)
+    if #head > 0 then
+      local candidateScore = tonumber(head[2])
+      if not id or candidateScore < score or (candidateScore == score and head[1] < id) then
+        id = head[1]
+        score = candidateScore
+        indexKey = key
+      end
+    end
+  end
+  if not id then return { 'empty', '', '', '0', '0' } end
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then
+    redis.call('ZREM', indexKey, id)
     redis.call('ZREM', KEYS[2], id)
-    changed = 1
   else
     local item = cjson.decode(raw)
     if orphaned(item, ARGV[6]) then
       deleteItem(id, item)
-      changed = 1
-    elseif item.deadAt then
+    elseif item.deadAt or item.leaseToken then
+      removeReady(KEYS[1], item)
       redis.call('ZREM', KEYS[2], id)
-      changed = 1
-    elseif tonumber(entries[index + 1]) <= now then
-      if eligible(item.payload, routing) then
-        local leaseExpiresAt = now + tonumber(ARGV[5])
-        item.leaseToken = ARGV[4]
-        item.leaseExpiresAt = leaseExpiresAt
-        redis.call('HSET', KEYS[1], id, cjson.encode(item))
-        redis.call('ZREM', KEYS[2], id)
-        redis.call('ZADD', KEYS[3], leaseExpiresAt, id)
-        return { 'claimed', id, raw, nextCursor, tostring(changed) }
-      end
+    elseif eligible(item.payload, routing) then
+      local leaseExpiresAt = now + tonumber(ARGV[5])
+      item.leaseToken = ARGV[4]
+      item.leaseExpiresAt = leaseExpiresAt
+      redis.call('HSET', KEYS[1], id, cjson.encode(item))
+      redis.call('ZREM', KEYS[2], id)
+      redis.call('ZADD', KEYS[3], leaseExpiresAt, id)
+      removeReady(KEYS[1], item)
+      addClaimed(KEYS[1], item, leaseExpiresAt)
+      return { 'claimed', id, raw, '0', '0' }
+    else
+      redis.call('ZREM', indexKey, id)
     end
   end
 end
-return { 'empty', '', '', nextCursor, tostring(changed) }
+return { 'empty', '', '', '1', '0' }
 `,
   heartbeat: `
 ${SERVER_TIME}
@@ -196,6 +310,7 @@ local leaseExpiresAt = nowMs() + tonumber(ARGV[3])
 item.leaseExpiresAt = leaseExpiresAt
 redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(item))
 redis.call('ZADD', KEYS[2], leaseExpiresAt, ARGV[1])
+addClaimed(KEYS[1], item, leaseExpiresAt)
 return 1
 `,
   releaseClaimed: `
@@ -209,7 +324,9 @@ local runAt = now + tonumber(ARGV[4])
 item.runAt = runAt
 item.runAtScore = runAt
 if ARGV[5] == '1' then item.deadAt = now end
+removeClaimed(KEYS[1], item)
 if ARGV[5] ~= '1' and coalesceReady(item, KEYS[1], KEYS[3], KEYS[6]) then
+  removeCommandIndexes(KEYS[1], item)
   redis.call('HDEL', KEYS[1], ARGV[1])
   redis.call('ZREM', KEYS[2], ARGV[1])
   redis.call('PUBLISH', KEYS[5], '1')
@@ -222,6 +339,7 @@ if ARGV[5] == '1' then
   redis.call('ZADD', KEYS[4], now, ARGV[1])
 else
   redis.call('ZADD', KEYS[3], runAt, ARGV[1])
+  addReady(KEYS[1], item, runAt)
   redis.call('PUBLISH', KEYS[5], '1')
 end
 return 1
@@ -231,53 +349,57 @@ ${SERVER_TIME}
 ${ROUTING}
 ${QUEUE_CLEANUP}
 ${COALESCE_READY}
-local scan = redis.call('ZSCAN', KEYS[3], ARGV[1], 'COUNT', ARGV[2])
-local nextCursor = scan[1]
-local entries = scan[2]
 local now = nowMs()
 local routing = cjson.decode(ARGV[3])
+local routes = selectedRoutes(KEYS[1], routing)
+local position = math.max(1, tonumber(ARGV[1]))
+local route = routes[position]
+if not route then return { '0', '0', '0' } end
+local indexKey = route .. ':claimed'
+local entries = redis.call('ZRANGEBYSCORE', indexKey, '-inf', now, 'LIMIT', 0, ARGV[2])
 local leaseError = cjson.decode(ARGV[5]).lastError
 local requeued = 0
-local changed = 0
-for index = 1, #entries, 2 do
-  local id = entries[index]
+for _, id in ipairs(entries) do
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then
+    redis.call('ZREM', indexKey, id)
     redis.call('ZREM', KEYS[3], id)
-    changed = changed + 1
   else
     local item = cjson.decode(raw)
     if orphaned(item, ARGV[6]) then
       deleteItem(id, item)
-      changed = changed + 1
-    elseif tonumber(entries[index + 1]) <= now then
-      if item.leaseExpiresAt and eligible(item.payload, routing) then
-        item.leaseToken = nil
-        item.leaseExpiresAt = nil
-        item.deliveryCount = item.deliveryCount + 1
-        if not item.lastError then item.lastError = leaseError end
-        redis.call('ZREM', KEYS[3], id)
-        changed = changed + 1
-        if item.deliveryCount >= tonumber(ARGV[4]) then
-          item.deadAt = now
-          redis.call('ZADD', KEYS[4], now, id)
+    elseif item.leaseExpiresAt and eligible(item.payload, routing) then
+      removeClaimed(KEYS[1], item)
+      item.leaseToken = nil
+      item.leaseExpiresAt = nil
+      item.deliveryCount = item.deliveryCount + 1
+      if not item.lastError then item.lastError = leaseError end
+      redis.call('ZREM', KEYS[3], id)
+      if item.deliveryCount >= tonumber(ARGV[4]) then
+        item.deadAt = now
+        redis.call('ZADD', KEYS[4], now, id)
+        redis.call('HSET', KEYS[1], id, cjson.encode(item))
+      else
+        item.runAt = nil
+        item.runAtScore = nil
+        if coalesceReady(item, KEYS[1], KEYS[2], KEYS[5]) then
+          removeCommandIndexes(KEYS[1], item)
+          redis.call('HDEL', KEYS[1], id)
         else
-          item.runAt = nil
-          item.runAtScore = nil
-          if coalesceReady(item, KEYS[1], KEYS[2], KEYS[5]) then
-            redis.call('HDEL', KEYS[1], id)
-          else
-            redis.call('ZADD', KEYS[2], now, id)
-            redis.call('HSET', KEYS[1], id, cjson.encode(item))
-          end
-          requeued = requeued + 1
+          redis.call('ZADD', KEYS[2], now, id)
+          addReady(KEYS[1], item, now)
+          redis.call('HSET', KEYS[1], id, cjson.encode(item))
         end
-        if item.deadAt then redis.call('HSET', KEYS[1], id, cjson.encode(item)) end
+        requeued = requeued + 1
       end
+    else
+      redis.call('ZREM', indexKey, id)
     end
   end
 end
-return { nextCursor, tostring(requeued), tostring(changed) }
+if #entries >= tonumber(ARGV[2]) then return { tostring(position), tostring(requeued), '0' } end
+if position < #routes then return { tostring(position + 1), tostring(requeued), '0' } end
+return { '0', tostring(requeued), '0' }
 `,
   pruneOrphans: `
 ${QUEUE_CLEANUP}
@@ -304,28 +426,25 @@ for index = 1, #entries, 2 do
 end
 return { nextCursor, tostring(deleted), tostring(changed) }
 `,
-  deleteUnclaimed: `
+  deleteForRuns: `
 ${QUEUE_CLEANUP}
-local scan = redis.call('ZSCAN', KEYS[2], ARGV[1], 'COUNT', ARGV[2])
+local indexKey = runCommands(KEYS[1], ARGV[3])
+local scan = redis.call('SSCAN', indexKey, ARGV[1], 'COUNT', ARGV[2])
 local nextCursor = scan[1]
-local entries = scan[2]
-local runIds = cjson.decode(ARGV[3])
-local targets = {}
-for _, runId in ipairs(runIds) do targets[runId] = true end
 local deleted = 0
 local changed = 0
-for index = 1, #entries, 2 do
-  local id = entries[index]
+for _, id in ipairs(scan[2]) do
   local raw = redis.call('HGET', KEYS[1], id)
   if not raw then
-    redis.call('ZREM', KEYS[2], id)
+    redis.call('SREM', indexKey, id)
     changed = changed + 1
   else
     local item = cjson.decode(raw)
-    if orphaned(item, ARGV[4]) then
-      deleteItem(id, item)
+    if item.payload.runId ~= ARGV[3] then
+      redis.call('SREM', indexKey, id)
       changed = changed + 1
-    elseif targets[item.payload.runId] and not item.leaseToken then
+    elseif orphaned(item, ARGV[4]) or ARGV[5] ~= '1' or
+      (not item.leaseToken and not item.deadAt and redis.call('ZSCORE', KEYS[2], id)) then
       deleteItem(id, item)
       deleted = deleted + 1
       changed = changed + 1
@@ -337,6 +456,8 @@ return { nextCursor, tostring(deleted), tostring(changed) }
   ack: `
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if raw then removeCommandIndexes(KEYS[1], cjson.decode(raw)) end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[3], ARGV[1])
@@ -350,7 +471,9 @@ return 1
 ${COALESCE_READY}
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
-if coalesceReady(cjson.decode(ARGV[3]), KEYS[1], KEYS[3], KEYS[4]) then
+local item = cjson.decode(ARGV[3])
+if coalesceReady(item, KEYS[1], KEYS[3], KEYS[4]) then
+  removeCommandIndexes(KEYS[1], item)
   redis.call('HDEL', KEYS[1], ARGV[1])
   redis.call('ZREM', KEYS[2], ARGV[1])
   return 1
@@ -358,6 +481,7 @@ end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZADD', KEYS[3], ARGV[4], ARGV[1])
+addReady(KEYS[1], item, ARGV[4])
 redis.call('HSET', KEYS[4], ARGV[5], ARGV[1])
 return 1
 `,
@@ -367,22 +491,11 @@ if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 return 1
 `,
-  delete: `
-if ARGV[2] ~= '' and (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then
-  return 0
-end
-redis.call('HDEL', KEYS[1], ARGV[1])
-redis.call('ZREM', KEYS[2], ARGV[1])
-redis.call('ZREM', KEYS[3], ARGV[1])
-redis.call('ZREM', KEYS[4], ARGV[1])
-if redis.call('HGET', KEYS[5], ARGV[3]) == ARGV[1] then
-  redis.call('HDEL', KEYS[5], ARGV[3])
-end
-return 1
-`,
   deleteIndexed: `
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
+local raw = redis.call('HGET', KEYS[1], ARGV[1])
+if raw then removeCommandIndexes(KEYS[1], cjson.decode(raw)) end
 redis.call('HDEL', KEYS[1], ARGV[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZREM', KEYS[3], ARGV[1])
@@ -461,7 +574,7 @@ export class RedisWorkflowScripts {
   }
 
   async #loadFromRedis(name: ScriptName): Promise<string> {
-    const sha = await this.#client.script('LOAD', SCRIPTS[name])
+    const sha = await this.#client.script('LOAD', QUEUE_INDEXES + SCRIPTS[name])
     if (typeof sha !== 'string') {
       throw new Error(`Redis returned an invalid SHA for script [${name}]`)
     }
