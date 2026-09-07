@@ -13,6 +13,7 @@ import type { RunCoordinationWorkerClaim } from '../../src/runtime/commands.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
 import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
 import { RedisWorkflowWakeEvents } from '../../src/adapters/redis/wake-events.ts'
+import { matchingKeys } from './helpers.ts'
 
 type ServiceTarget = {
   readonly name: string
@@ -782,17 +783,6 @@ async function waitForAsync(
 
 async function countMatchingKeys(client: Redis | Valkey, pattern: string) {
   return (await matchingKeys(client, pattern)).length
-}
-
-async function matchingKeys(client: Redis | Valkey, pattern: string) {
-  let cursor = '0'
-  const keys: string[] = []
-  do {
-    const result = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 1_000)
-    cursor = result[0]
-    for (const key of result[1]) keys.push(key)
-  } while (cursor !== '0')
-  return keys
 }
 
 async function deleteMatchingKeys(client: Redis | Valkey, pattern: string) {

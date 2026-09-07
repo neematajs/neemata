@@ -69,16 +69,20 @@ worker APIs still return `Date` objects. Application payloads are stored as
 opaque JSON so Lua transitions preserve empty arrays, numeric precision, and
 payload fields that happen to have timestamp names. Lease deadlines and
 retention use Redis server time to avoid disagreement between worker clocks.
-This storage format is incompatible with earlier experimental adapter data;
-finish existing work with that version before switching to a fresh `keyPrefix`.
+The timestamp format and queue indexes are incompatible with earlier experimental
+adapter data, including versions without route/run indexes. Finish existing work
+with that version before switching to a fresh `keyPrefix`; do not mix adapter
+versions in one namespace.
 
 Active run families never receive a TTL. Retention starts only when every run
 in the root family is terminal, then the complete family and its lookup keys
 expire together. This prevents a live child from losing its parent state while
 keeping historical runs from filling Redis memory.
-Lookup keys reused by a newer run retain that run's ownership. Queue scans and
-maintenance remove leftover commands whose run family has expired; keep workers
-or maintenance running to reclaim those shared queue records. The terminal-run
+Lookup keys reused by a newer run retain that run's ownership. Routed polling
+removes expired-family commands when they become due on a worker's routes.
+Retention maintenance also sweeps abandoned routes and commands with future
+schedules or leases; run `store.pruneTerminalRuns()` periodically, or configure
+worker retention, to reclaim those commands and their indexes. The terminal-run
 index expires after its latest retained entry.
 
 Delayed starts and retry backoff are supported. Recurring/cron schedules are
@@ -86,12 +90,13 @@ intentionally not part of the Redis runtime; use a Postgres runtime for durable
 scheduled and background work. A single application can register separate
 named Redis and Postgres runtimes and choose between them per workload.
 
-Ready queues are shared across routes within a runtime. Checking an empty route
-scans the ready backlog in bounded Redis batches, so polling cost grows with
-work queued for other routes. Manual retry also examines both command queues
-inside its atomic transition; large unrelated backlogs can delay other Redis
-operations while that transition runs. Use separate runtime namespaces for
-independent worker pools with large backlogs.
+Ready and claimed commands have route indexes, so polling and lease recovery
+inspect only the worker's workflows, activities, and tasks. Claims compare the
+oldest due command across the selected routes. Per-run indexes scope manual
+retry, cancellation, and family deletion to the affected runs. Lua maintains
+these indexes atomically with queue transitions. Manual retry still performs
+work proportional to the affected family and its own retained commands;
+retention maintenance scans shared queues in bounded batches.
 
 The caller owns the command client and must close it. `runtime.dispose()` closes
 only the duplicated Pub/Sub connection. Redis Cluster is not supported in this

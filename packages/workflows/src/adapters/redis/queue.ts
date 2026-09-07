@@ -158,15 +158,13 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   ): Promise<QueueClaim<T> | null> {
     const queue = this.#keys.queue(this.#kind)
     const leaseToken = randomUUID()
-    let cursor = '0'
-    let changedInPass = false
     while (true) {
       const result = queueScriptResult(
         await this.#scripts.runRaw(
           'claim',
           [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
           [
-            cursor,
+            '0',
             String(CLAIM_SCAN_COUNT),
             encodeRedisValue(selector),
             leaseToken,
@@ -184,11 +182,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
         const item = decodeRedisValue<RedisQueueItem<T>>(raw)
         return { id, command: item.payload, leaseToken }
       }
-      changedInPass ||= result[4] === '1'
-      cursor = result[3] ?? '0'
-      if (cursor !== '0') continue
-      if (!changedInPass) return null
-      changedInPass = false
+      if (result[3] === '0') return null
     }
   }
 
@@ -346,46 +340,51 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     return didRequeue
   }
 
-  async deleteUnclaimed(runIds: ReadonlySet<string>): Promise<number> {
-    if (runIds.size === 0) return 0
-    const queue = this.#keys.queue(this.#kind)
-    let cursor = '0'
-    let deleted = 0
-    let changedInPass = false
-    while (true) {
-      const result = queueScriptResult(
-        await this.#scripts.runRaw(
-          'deleteUnclaimed',
-          [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-          [
-            cursor,
-            String(CLAIM_SCAN_COUNT),
-            encodeRedisValue([...runIds]),
-            this.#keys.prefix,
-          ],
-        ),
-      )
-      deleted += Number(result[1] ?? 0)
-      changedInPass ||= result[2] !== '0'
-      cursor = result[0] ?? '0'
-      if (cursor !== '0') continue
-      if (!changedInPass) return deleted
-      changedInPass = false
-    }
+  deleteUnclaimed(runIds: ReadonlySet<string>): Promise<number> {
+    return this.#deleteForRuns(runIds, true)
   }
 
   async deleteForRuns(runIds: ReadonlySet<string>): Promise<void> {
+    await this.#deleteForRuns(runIds, false)
+  }
+
+  async #deleteForRuns(runIds: ReadonlySet<string>, unclaimedOnly: boolean) {
     const queue = this.#keys.queue(this.#kind)
-    const ids = await this.#client.hkeys(queue.items)
-    for (const id of ids) {
-      const item = await this.#loadItem(id)
-      if (!item || !runIds.has(item.payload.runId)) continue
-      await this.#deleteItem(item)
+    let deleted = 0
+    for (const runId of runIds) {
+      let cursor = '0'
+      let changedInPass = false
+      while (true) {
+        const result = queueScriptResult(
+          await this.#scripts.runRaw(
+            'deleteForRuns',
+            [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
+            [
+              cursor,
+              String(CLAIM_SCAN_COUNT),
+              runId,
+              this.#keys.prefix,
+              unclaimedOnly ? '1' : '0',
+            ],
+          ),
+        )
+        deleted += Number(result[1] ?? 0)
+        changedInPass ||= result[2] !== '0'
+        cursor = result[0] ?? '0'
+        if (cursor !== '0') continue
+        if (!changedInPass) break
+        changedInPass = false
+      }
     }
+    return deleted
   }
 
   async pruneDead(olderThan: Date): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
+    // Routed workers no longer visit abandoned routes; maintenance owns their
+    // expired-family cleanup, including delayed and still-leased commands.
+    await this.#pruneOrphans(queue.ready)
+    await this.#pruneOrphans(queue.claimed)
     await this.#pruneOrphans(queue.dead)
     const ids = await this.#client.zrangebyscore(
       queue.dead,
@@ -417,7 +416,6 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   async #reclaimExpired(selector: QueueClaimSelector) {
     const queue = this.#keys.queue(this.#kind)
     let cursor = '0'
-    let changedInPass = false
     while (true) {
       const result = queueScriptResult(
         await this.#scripts.runRaw(
@@ -433,11 +431,8 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
           ],
         ),
       )
-      changedInPass ||= result[2] !== '0'
       cursor = result[0] ?? '0'
-      if (cursor !== '0') continue
-      if (!changedInPass) return
-      changedInPass = false
+      if (cursor === '0') return
     }
   }
 
@@ -476,18 +471,6 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     )
     if (!value) return undefined
     return decodeRedisValue<RedisQueueItem<T>>(value)
-  }
-
-  async #deleteItem(item: RedisQueueItem<T>) {
-    const queue = this.#keys.queue(this.#kind)
-    const raw = await this.#client.hget(queue.items, item.id)
-    if (!raw) return
-    const current = decodeRedisValue<RedisQueueItem<T>>(raw)
-    await this.#scripts.run(
-      'delete',
-      [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-      [item.id, raw, this.#dedupKey(current.payload)],
-    )
   }
 
   #deleteIndexed(item: RedisQueueItem<T>, raw: string, requiredIndex: string) {

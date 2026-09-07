@@ -1,4 +1,5 @@
 import type { WorkflowRedisClient } from './client.ts'
+import { QUEUE_INDEXES } from './scripts.ts'
 
 // State-machine decisions stay inside Redis so correctness never depends on a
 // client-held lock surviving network stalls or process pauses.
@@ -56,6 +57,7 @@ end
 
 const SCRIPTS = {
   reopenFailedRun: `
+${QUEUE_INDEXES}
 ${FAMILY_HELPERS}
 ${RECORD_HELPERS}
 local expected = cjson.decode(ARGV[1])
@@ -89,12 +91,19 @@ end
 local queues = { 12, 17 }
 local queueRows = {}
 for _, base in ipairs(queues) do
-  local rows = redis.call('HGETALL', KEYS[base])
+  local rows = {}
   queueRows[base] = rows
-  for index = 1, #rows, 2 do
-    local item = cjson.decode(rows[index + 1])
-    if reopening[item.payload.runId] and not item.deadAt and item.leaseExpiresAt and item.leaseExpiresAt > now then
-      return { 'claimed', item.payload.runId }
+  for _, runId in ipairs(runIds) do
+    local ids = redis.call('SMEMBERS', runCommands(KEYS[base], runId))
+    for _, id in ipairs(ids) do
+      local raw = redis.call('HGET', KEYS[base], id)
+      if raw then
+        local item = cjson.decode(raw)
+        if not item.deadAt and item.leaseExpiresAt and item.leaseExpiresAt > now then
+          return { 'claimed', item.payload.runId }
+        end
+        table.insert(rows, item)
+      end
     end
   end
 end
@@ -148,14 +157,14 @@ for _, id in ipairs(familyIds) do
 end
 for _, base in ipairs(queues) do
   local rows = queueRows[base]
-  for index = 1, #rows, 2 do
-    local id = rows[index]
-    local item = cjson.decode(rows[index + 1])
+  for _, item in ipairs(rows) do
+    local id = item.id
     if reopening[item.payload.runId] then
       if item.deadAt then
         item.reapedAt = now
         redis.call('HSET', KEYS[base], id, cjson.encode(item))
       else
+        removeCommandIndexes(KEYS[base], item)
         redis.call('HDEL', KEYS[base], id)
         redis.call('ZREM', KEYS[base + 1], id)
         redis.call('ZREM', KEYS[base + 2], id)
@@ -191,6 +200,8 @@ item.createdAt = now
 item.createdAtScore = now
 redis.call('HSET', KEYS[base], item.id, cjson.encode(item))
 redis.call('ZADD', KEYS[base + 1], now, item.id)
+addReady(KEYS[base], item, now)
+indexRun(KEYS[base], item)
 redis.call('HSET', KEYS[base + 4], item.payload.attemptId or item.payload.runId, item.id)
 redis.call('PUBLISH', KEYS[22], '1')
 redis.call('PUBLISH', KEYS[23], '1')
