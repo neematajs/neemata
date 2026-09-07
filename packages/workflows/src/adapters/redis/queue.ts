@@ -384,11 +384,7 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     const queue = this.#keys.queue(this.#kind)
     // Routed workers no longer visit abandoned routes; maintenance owns their
     // expired-family cleanup, including delayed and still-leased commands.
-    await Promise.all([
-      this.#pruneOrphans(queue.ready),
-      this.#pruneOrphans(queue.claimed),
-      this.#pruneOrphans(queue.dead),
-    ])
+    await this.#pruneOrphans(queue.ready, queue.claimed, queue.dead)
     const ids = await this.#client.zrangebyscore(
       queue.dead,
       '-inf',
@@ -435,30 +431,32 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     } while (position !== 0)
   }
 
-  async #pruneOrphans(index: string) {
+  async #pruneOrphans(...indexes: string[]) {
     const queue = this.#keys.queue(this.#kind)
-    let indexPosition = 4
-    if (index === queue.ready) indexPosition = 2
-    if (index === queue.claimed) indexPosition = 3
-    let cursor = '0'
+    const keys = [
+      queue.items,
+      queue.ready,
+      queue.claimed,
+      queue.dead,
+      queue.dedup,
+      ...indexes,
+    ]
+    let cursors = indexes.map(() => '0')
     let changedInPass = false
     while (true) {
       const result = queueScriptResult(
-        await this.#scripts.runRaw(
-          'pruneOrphans',
-          [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-          [
-            cursor,
-            String(QUEUE_BATCH_SIZE),
-            this.#keys.prefix,
-            String(indexPosition),
-          ],
-        ),
+        await this.#scripts.runRaw('pruneOrphans', keys, [
+          String(QUEUE_BATCH_SIZE),
+          this.#keys.prefix,
+          ...cursors,
+        ]),
       )
-      changedInPass ||= result[1] !== '0'
-      cursor = result[0] ?? '0'
-      if (cursor !== '0') continue
+      changedInPass ||= result[0] === '1'
+      cursors = result.slice(1)
+      if (cursors.some((cursor) => cursor !== '')) continue
       if (!changedInPass) return
+      // Deleting entries while scanning can move buckets; finish a clean pass.
+      cursors.fill('0')
       changedInPass = false
     }
   }
