@@ -2,8 +2,16 @@ import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '../common/blob.ts'
-import type { BaseServerDecoder, BaseServerEncoder } from './format.ts'
+import type { BaseServerDecoder, BaseServerEncoder } from './codec.ts'
 import type { ProtocolVersionInterface } from './protocol.ts'
+
+/**
+ * Delivery verdict of a transport send. Only 'dropped' signals a lost frame
+ * the server must react to (credit revocation, stream aborts, connection
+ * close); 'unknown' means the runtime provides no delivery feedback and must
+ * never be treated as a drop.
+ */
+export type SendResult = 'delivered' | 'dropped' | 'unknown'
 
 export type MessageContext = {
   protocol: ProtocolVersionInterface
@@ -17,11 +25,11 @@ export type MessageContext = {
     callId: number
   }) => ProtocolBlobInterface
   transport: {
-    send?: (connectionId: string, buffer: ArrayBufferView) => boolean | null
+    send?: (connectionId: string, buffer: ArrayBufferView) => SendResult
   }
 }
 
-export type ResolveFormatParams = {
+export type ResolveCodecParams = {
   contentType?: string | null
   accept?: string | null
 }

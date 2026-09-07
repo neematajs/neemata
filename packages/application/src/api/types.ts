@@ -1,5 +1,5 @@
 import type { WireSchema } from '@nmtjs/common/schema'
-import type { TProcedureContract } from '@nmtjs/contract'
+import type { TProcedureContract, TStreamContract } from '@nmtjs/contract'
 import type { Container } from '@nmtjs/core'
 import type { GatewayConnection } from '@nmtjs/gateway'
 
@@ -12,12 +12,16 @@ export type ApiCallContext<Payload = unknown> = Readonly<{
   container: Container
   path: AnyRouter[]
   procedure: Procedure<
-    TProcedureContract<
-      WireSchema.Decode<any, Payload> | WireSchema.Codec | undefined,
-      WireSchema.Encode | WireSchema.Codec | undefined,
-      true | undefined,
-      string | undefined
-    >,
+    | TProcedureContract<
+        WireSchema.Decode<any, Payload> | WireSchema.Codec | undefined,
+        WireSchema.Encode | WireSchema.Codec | undefined,
+        string | undefined
+      >
+    | TStreamContract<
+        WireSchema.Decode<any, Payload> | WireSchema.Codec | undefined,
+        WireSchema.Encode | WireSchema.Codec | undefined,
+        string | undefined
+      >,
     any
   >
 }>

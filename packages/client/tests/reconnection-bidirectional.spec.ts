@@ -1,3 +1,6 @@
+import { c } from '@nmtjs/contract'
+import { ErrorCode, ServerMessageType } from '@nmtjs/protocol'
+import { t } from '@nmtjs/type'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { StaticClient } from '../src/clients/static.ts'
@@ -6,6 +9,15 @@ import {
   createBaseOptions,
   createMockBidirectionalTransport,
 } from './_helpers/transports.ts'
+
+const contract = c.router({
+  routes: {
+    echo: c.procedure({
+      input: t.object({ message: t.string() }),
+      output: t.object({ echoed: t.string() }),
+    }),
+  },
+})
 
 describe('reconnectPlugin (bidirectional)', () => {
   beforeEach(() => {
@@ -119,6 +131,59 @@ describe('reconnectPlugin (bidirectional)', () => {
 
     await vi.advanceTimersByTimeAsync(1000)
     expect(connectSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps RPC auto-connect within the active reconnect loop', async () => {
+    const transport = createMockBidirectionalTransport()
+    transport.setConnectFail(true, new Error('Connection failed'))
+    const connectSpy = vi.spyOn(transport.transport, 'connect')
+    const sendSpy = vi.spyOn(transport.transport, 'send')
+
+    const client = new StaticClient(
+      {
+        ...createBaseOptions({ contract, autoConnect: true }),
+        plugins: [reconnectPlugin({ initialTimeout: 1000 })],
+      },
+      transport.factory,
+      {},
+    )
+
+    ;(client.core.protocol as any).encodeMessage = vi.fn(
+      () => new Uint8Array([1]),
+    )
+    ;(client.core.protocol as any).decodeMessage = vi.fn(() => ({
+      type: ServerMessageType.RpcResponse,
+      callId: 1,
+      result: { echoed: 'during reconnect' },
+    }))
+
+    await expect(client.connect()).rejects.toThrow('Connection failed')
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+
+    await expect(
+      client.call.echo({ message: 'during backoff' }),
+    ).rejects.toMatchObject({
+      code: ErrorCode.ConnectionError,
+      message: 'Client is not connected',
+    })
+    expect(connectSpy).toHaveBeenCalledTimes(1)
+
+    transport.setConnectFail(false)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(connectSpy).toHaveBeenCalledTimes(2)
+    expect(client.state).toBe('connecting')
+
+    const callPromise = client.call.echo({ message: 'during reconnect' })
+    expect(connectSpy).toHaveBeenCalledTimes(2)
+
+    transport.simulateConnect()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sendSpy).toHaveBeenCalledTimes(1)
+    transport.emitMessage(new Uint8Array([1]))
+
+    await expect(callPromise).resolves.toEqual({ echoed: 'during reconnect' })
+
+    client.dispose()
   })
 
   it('uses exponential backoff and caps at configured max timeout', async () => {

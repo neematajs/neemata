@@ -55,8 +55,10 @@ describe('workflow implementation chain', () => {
       .content(async (_ctx, input) => ({ text: input.scenario }), {
         input: (ctx, _outputs, input) => {
           expectTypeOf(ctx.prefix).toEqualTypeOf<string>()
-          // @ts-expect-error workflow input mapper scope is typed
-          void input.missing
+          expectTypeOf(input).toEqualTypeOf<{
+            kind: 'normal' | 'fallback'
+            scenario: string
+          }>()
           return { scenario: `${ctx.prefix}:${input.scenario}` }
         },
       })
@@ -65,8 +67,7 @@ describe('workflow implementation chain', () => {
         cases: ({ activity, workflow }) => ({
           normal: activity(async (_ctx, input) => ({ text: input.text }), {
             input: (_ctx, { content }) => {
-              // @ts-expect-error branch case mapper scope is typed
-              void content.missing
+              expectTypeOf(content).toEqualTypeOf<{ text: string }>()
               return { text: content.text }
             },
           }),

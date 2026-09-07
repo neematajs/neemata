@@ -330,17 +330,15 @@ export function createNativeProxyOptions(
   config: NeemProxyConfig,
   runtimes: RuntimeProxyConfigs,
 ): NativeProxyOptions {
-  const applications = Object.entries(runtimes).flatMap(([name, runtime]) => {
-    const proxy = runtime?.proxy
-    if (!proxy) return []
-    return [
-      {
-        name,
-        routing: normalizeProxyRouting(name, proxy.routing),
-        sni: proxy.sni,
-      },
-    ]
-  })
+  const applications: NativeProxyOptions['applications'] = []
+  for (const name in runtimes) {
+    if (!Object.hasOwn(runtimes, name)) continue
+    const proxy = runtimes[name]?.proxy
+    if (!proxy) continue
+
+    const routing = normalizeProxyRouting(name, proxy.routing)
+    applications.push({ name, routing, sni: proxy.sni })
+  }
   assertSingleDefaultRoute(applications)
 
   return {
@@ -367,14 +365,13 @@ function normalizeProxyRouting(
 function assertSingleDefaultRoute(
   applications: NativeProxyOptions['applications'],
 ): void {
-  const defaults = applications.filter(
-    (application) => application.routing.type === 'default',
-  )
+  const defaults: string[] = []
+  for (const { name, routing } of applications) {
+    if (routing.type === 'default') defaults.push(name)
+  }
   if (defaults.length <= 1) return
   throw new Error(
-    `Multiple Neem proxy default routes configured: ${defaults
-      .map((application) => application.name)
-      .join(', ')}`,
+    `Multiple Neem proxy default routes configured: ${defaults.join(', ')}`,
   )
 }
 
@@ -382,11 +379,12 @@ function filterRuntimeUpstreams(
   upstreams: readonly RuntimeUpstreams[],
   runtimes: RuntimeProxyConfigs,
 ): readonly RuntimeUpstreams[] {
-  const proxied = new Set(
-    Object.entries(runtimes)
-      .filter(([, runtime]) => runtime?.proxy)
-      .map(([name]) => name),
-  )
+  const proxied = new Set<string>()
+  for (const name in runtimes) {
+    if (Object.hasOwn(runtimes, name) && runtimes[name]?.proxy) {
+      proxied.add(name)
+    }
+  }
   return upstreams.filter((runtime) => proxied.has(runtime.runtimeName))
 }
 

@@ -31,30 +31,29 @@ export async function dispatchActivityNode(
   if (declaration.kind !== 'activity') {
     throw new Error(`Workflow node [${input.node.name}] is not an activity`)
   }
-  const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}]`
-  const nodeInput = hasStoredNodeInput(existing)
-    ? existing.input
-    : input.node.input
-      ? (
-          await canonicalizeWorkflowUserSchemaInput(
-            declaration.input,
-            runWorkflowUserCallback(() =>
-              input.node.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            ),
-            inputLabel,
-          )
-        ).encoded
-      : await encodeWorkflowUserSchemaValue(
+  let nodeInput = existing.input
+  if (!hasStoredNodeInput(existing)) {
+    const rawInput = input.node.input
+      ? runWorkflowUserCallback(() =>
+          input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      : input.run.input
+    const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}]`
+    if (input.node.input) {
+      nodeInput = (
+        await canonicalizeWorkflowUserSchemaInput(
           declaration.input,
-          input.run.input,
+          rawInput,
           inputLabel,
         )
-
-  if (!hasStoredNodeInput(existing)) {
+      ).encoded
+    } else {
+      nodeInput = await encodeWorkflowUserSchemaValue(
+        declaration.input,
+        rawInput,
+        inputLabel,
+      )
+    }
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,
@@ -96,7 +95,7 @@ export async function dispatchActivityNode(
       })
       return {
         attempt: result.attempt,
-        commandInput: result.created ? nodeInput : result.attempt.input,
+        commandInput: result.attempt.input,
         created: result.created,
       }
     },

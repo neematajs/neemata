@@ -315,7 +315,7 @@ export function createFactoryInjectable<
   const injectable = {
     // freezing keeps the dependency graph acyclic by construction and makes
     // the effective scope safe to memoize
-    dependencies: Object.freeze({ ...(params.dependencies ?? {}) }) as D,
+    dependencies: Object.freeze({ ...params.dependencies }) as D,
     scope: (params.scope ?? Scope.Global) as S,
     create: params.create,
     dispose: params.dispose,

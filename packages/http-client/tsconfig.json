@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": ".",
-    "lib": ["ESNext", "DOM"]
-  },
-  "include": ["src/**/*", "tests/**/*"]
-}

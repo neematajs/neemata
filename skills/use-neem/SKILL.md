@@ -23,7 +23,7 @@ runtime workers, runtime planners, or host/worker `MessagePort` protocols, use
 - [Runtimes](references/runtimes.md) - `defineConfig`, runtime discovery,
   package runtime declaration files, config shape, env, proxy, plugins.
 - [CLI](references/cli.md) - `neem build`, `neem dev`, `neem start`,
-  runtime selection, output layout, dev reload behavior.
+  `dev --env-files`, runtime selection, output layout, dev reload behavior.
 - [Metrics](references/metrics.md) - metrics plugin, `/metrics` server,
   default metrics injection, Pushgateway, and lifecycle/health observations.
 - [Package Integration](references/package-integration.md) - package-owned

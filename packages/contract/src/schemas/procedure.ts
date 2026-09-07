@@ -8,7 +8,6 @@ import { createSchema } from '../utils.ts'
 export type TAnyProcedureContract = TProcedureContract<
   WireSchema.Decode | WireSchema.Codec | undefined,
   WireSchema.Encode | WireSchema.Codec | undefined,
-  true | undefined,
   string | undefined
 >
 
@@ -17,7 +16,6 @@ export const ProcedureKind = Symbol('NeemataProcedure')
 export interface TProcedureContract<
   Input extends WireSchema.Decode | WireSchema.Codec | undefined,
   Output extends WireSchema.Encode | WireSchema.Codec | undefined,
-  Stream extends true | undefined = undefined,
   Name extends string | undefined = undefined,
 > {
   readonly [Kind]: typeof ProcedureKind
@@ -25,7 +23,6 @@ export interface TProcedureContract<
   readonly name: Name
   readonly input: Input
   readonly output: Output
-  readonly stream: Stream
   readonly timeout?: number
 }
 
@@ -33,7 +30,6 @@ export const ProcedureContract = <
   const Options extends {
     input?: WireSchema.Decode | WireSchema.Codec
     output?: WireSchema.Encode | WireSchema.Codec
-    stream?: true | undefined
     timeout?: number
     schemaOptions?: ContractSchemaOptions
     name?: string
@@ -47,13 +43,11 @@ export const ProcedureContract = <
   Options['output'] extends WireSchema.Encode | WireSchema.Codec
     ? Options['output']
     : undefined,
-  Options['stream'] extends true ? true : undefined,
   Options['name'] extends string ? Options['name'] : undefined
 > => {
   const {
     input = undefined as any,
     output = undefined as any,
-    stream = undefined as any,
     name = undefined as any,
     timeout,
     schemaOptions = {},
@@ -72,7 +66,6 @@ export const ProcedureContract = <
     type: 'neemata:procedure',
     input,
     output,
-    stream,
     name,
     timeout,
   })
@@ -82,10 +75,4 @@ export function IsProcedureContract(
   contract: any,
 ): contract is TAnyProcedureContract {
   return Kind in contract && contract[Kind] === ProcedureKind
-}
-
-export function IsStreamProcedureContract(
-  contract: any,
-): contract is TAnyProcedureContract {
-  return IsProcedureContract(contract) && typeof contract.stream !== 'undefined'
 }

@@ -22,18 +22,6 @@
       "path": "./packages/gateway/tsconfig.build.json"
     },
     {
-      "path": "./packages/http-client/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/http-transport/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/json-format/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/msgpack-format/tsconfig.build.json"
-    },
-    {
       "path": "./packages/metrics/tsconfig.build.json"
     },
     {
@@ -52,7 +40,7 @@
       "path": "./packages/pubsub/tsconfig.build.json"
     },
     {
-      "path": "./packages/server/tsconfig.build.json"
+      "path": "./packages/transports/tsconfig.build.json"
     },
     {
       "path": "./packages/type/tsconfig.build.json"
@@ -65,12 +53,6 @@
     },
     {
       "path": "./packages/workflows/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/ws-client/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/ws-transport/tsconfig.build.json"
     }
   ],
   "include": []

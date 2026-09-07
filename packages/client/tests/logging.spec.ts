@@ -10,7 +10,7 @@ import { loggingPlugin } from '../src/plugins/logging.ts'
 import {
   createMockBidirectionalTransport,
   createMockUnidirectionalTransport,
-  mockFormat,
+  mockCodec,
 } from './_helpers/transports.ts'
 
 const testContract = c.router({
@@ -45,7 +45,7 @@ const testContract = c.router({
 const baseOptions: BaseClientOptions<typeof testContract> = {
   contract: testContract,
   protocol: 1,
-  format: mockFormat,
+  codec: mockCodec,
 }
 
 describe('loggingPlugin', () => {
@@ -290,7 +290,7 @@ describe('loggingPlugin', () => {
     await connectPromise
 
     ;(client.core.protocol as any).decodeMessage = () => ({
-      type: ServerMessageType.ServerStreamPush,
+      type: ServerMessageType.ServerBlobPush,
       streamId: 7,
       chunk: new Uint8Array([1, 2, 3]),
     })

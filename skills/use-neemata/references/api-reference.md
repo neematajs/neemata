@@ -11,8 +11,6 @@ import {
   blobType,
   c,
   ConnectionType,
-  contractProcedure,
-  contractRouter,
   CoreInjectables,
   envConfig,
   EnvConfigError,
@@ -25,7 +23,6 @@ import {
   guard,
   hook,
   host,
-  implementRouter,
   inject,
   lazy,
   logging,
@@ -36,12 +33,17 @@ import {
   optional,
   plugin,
   procedure,
+  contractProcedure,
+  stream,
+  contractStream,
+  router,
+  contractRouter,
+  rootRouter,
+  implementRouter,
   ProtocolBlob,
   ProxyableTransportType,
   PubSubInjectables,
   pubsubPlugin,
-  rootRouter,
-  router,
   Scope,
   t,
   transport,
@@ -55,9 +57,10 @@ import {
 - Use `nmtjs` for app definitions, procedures, routers, contracts via `c`,
   schemas via `t`, DI, built-in injectables via `inject`, pubsub
   plugins, protocol enums/classes exported above.
-- Use direct package subpaths for clients, transports, formats, adapters, and
-  runtime helpers: `@nmtjs/client`, `@nmtjs/http-transport/node`,
-  `@nmtjs/application/neem/runtime`, `@nmtjs/pubsub/redis`, etc.
+- Use direct packages for clients, server handlers, hosts, codecs, adapters,
+  and runtime helpers: `@nmtjs/client`, `@nmtjs/transports/neemata/http`,
+  `@nmtjs/transports/http-server/node`, `@nmtjs/application/neem/runtime`,
+  `@nmtjs/pubsub/redis`, etc.
 - Avoid direct `@nmtjs/core`, `@nmtjs/type`, `@nmtjs/contract`,
   `@nmtjs/config`, or `@nmtjs/pubsub` imports in end-user examples when
   `nmtjs` exposes the same symbol.
@@ -67,10 +70,15 @@ import {
 - `procedure(options | handler)` - define procedure and infer contract.
 - `contractProcedure(contract, options | handler)` - implement procedure
   contract.
-- `implementRouter(contract)` - callable contract implementation builder.
+- `stream(options)` - define a server-stream route (async-iterable output,
+  exposed on `client.stream.*`; optional `streamTimeout`).
+- `contractStream(contract, options | handler)` - implement stream contract;
+  options may include `streamTimeout`.
 - `router({ routes, guards?, middlewares?, meta?, timeout? })` - group routes.
 - `contractRouter(contract, { routes, ... })` - implement router contract.
-- `rootRouter([routerA, routerB], defaultProcedure?)` - compose root API.
+- `rootRouter([routerA, routerB])` - compose root API; duplicate top-level
+  route keys throw at composition time.
+- `implementRouter(contract)` - callable contract implementation builder.
 - `app({ router, guards?, middlewares?, filters?, plugins?, hooks?, meta? })` -
   pure application definition.
 - `host(application, { transports })` - bind app to serving surfaces.
@@ -79,7 +87,7 @@ import {
 ## Contracts And Types
 
 - `t` - schema builders with decode and encode modes.
-- `c.procedure(...)`, `c.router(...)`, `c.event(...)`,
+- `c.procedure(...)`, `c.stream(...)`, `c.router(...)`, `c.event(...)`,
   `c.subscription(...)` - public API contracts.
 - `blobType()` - protocol blob marker type for input/output schemas.
 - `ProtocolBlob`, `ConnectionType`, `ErrorCode` - protocol helpers.

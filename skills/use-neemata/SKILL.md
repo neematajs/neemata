@@ -11,9 +11,11 @@ the needed symbol is exported there.
 
 Exceptions:
 
-- Client code imports from `@nmtjs/client`, client transports, and formats.
-- Server transports import from `@nmtjs/http-transport`, `@nmtjs/ws-transport`,
-  and their `/node`, `/bun`, `/deno` subpaths.
+- Client code imports from `@nmtjs/client`, its transport subpaths, and protocol
+  codec subpaths.
+- Server handlers import from `@nmtjs/transports/neemata/http` and
+  `@nmtjs/transports/neemata/ws`; runtime hosts import from
+  `@nmtjs/transports/http-server/node`, `/bun`, or `/deno`.
 - Neem runtime helpers import from package `/neem` subpaths.
 - Adapters import from package adapter subpaths such as `@nmtjs/pubsub/redis`.
 
@@ -22,6 +24,8 @@ Exceptions:
 - [API Reference](references/api-reference.md) - umbrella exports and import rules.
 - [Application Setup](references/server-setup.md) - app, host, transports,
   Neemata runtime files.
+- [Transports](references/transports.md) - server host, native HTTP/WS
+  handlers, codecs, JSON-RPC and MCP projections.
 - [Contracts](references/contracts.md) - RPC, event, subscription, and blob
   public API shapes.
 - [RPC](references/rpc.md) - procedures, routers, execution pipeline,
@@ -37,4 +41,4 @@ Exceptions:
   retry/delete), inspector serialization, Neem integration.
 - [Type System](references/type-system.md) - `t.*` schemas and encode/decode.
 - [Client Usage](references/client-usage.md) - typed clients, transports,
-  streams, blobs, cancellation.
+  streams, blobs, flow control, cancellation.

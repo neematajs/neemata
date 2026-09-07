@@ -38,27 +38,13 @@ export function createNeemMetricsLifecycle(options: {
 
   function recordHealth() {
     const health = options.getHealth()
-    for (const runtime of health.runtimes) {
-      runtimeReady.set(
-        { runtime: runtime.name },
-        runtime.pool.state === 'ready' ? 1 : 0,
-      )
-      runtimePoolThreads.set(
-        { runtime: runtime.name, state: 'ready' },
-        runtime.pool.ready,
-      )
-      runtimePoolThreads.set(
-        { runtime: runtime.name, state: 'failed' },
-        runtime.pool.failed,
-      )
-      runtimePoolThreads.set(
-        { runtime: runtime.name, state: 'stopped' },
-        runtime.pool.stopped,
-      )
-      runtimePoolThreads.set(
-        { runtime: runtime.name, state: 'starting' },
-        runtime.pool.starting,
-      )
+    for (const { name: runtime, pool } of health.runtimes) {
+      const ready = pool.state === 'ready' ? 1 : 0
+      runtimeReady.set({ runtime }, ready)
+
+      for (const state of ['ready', 'failed', 'stopped', 'starting'] as const) {
+        runtimePoolThreads.set({ runtime, state }, pool[state])
+      }
     }
   }
 

@@ -1,3 +1,4 @@
+import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -11,11 +12,12 @@ import {
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  runExecutionWorker,
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
   it.each(['workflow', 'task'] as const)(
-    'decodes completed %s outputs on idempotent start and keeps retries stored',
+    'decodes completed %s outputs on idempotent start and keeps restart and retry inputs stored',
     async (kind) => {
       const options = {
         name: `client-coded-${kind}-boundaries`,
@@ -47,11 +49,43 @@ describe('workflow runtime client', () => {
       expect(joined.output).toStrictEqual(new Date(output))
       expect((await client.get(first.id))?.run).toMatchObject({ input, output })
 
-      const retried = await client.retry(first.id)
+      const retried = await client.restart(first.id)
       expect(retried.id).not.toBe(first.id)
       expect(retried.input).toBe(input)
       expect(retried.output).toBeUndefined()
       expect(retried).toStrictEqual((await client.get(retried.id))?.run)
+      if (definition.kind === 'task') {
+        await runExecutionWorker({
+          ...runtime,
+          workflows: [],
+          tasks: [
+            implementTask(definition, {
+              handler(_ctx, value) {
+                expect(value).toStrictEqual(new Date(input))
+                throw new Error('failed')
+              },
+            }),
+          ],
+          container: new Container({
+            logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+          }),
+          workerId: 'test',
+          reaping: false,
+        })
+      } else {
+        await runtime.store.failRun({
+          runId: retried.id,
+          error: new Error('failed'),
+        })
+      }
+      expect((await client.get(retried.id))?.run).toMatchObject({
+        status: 'failed',
+        error: { message: 'failed' },
+      })
+      const reopened = await client.retry(retried.id)
+      expect(reopened.id).toBe(retried.id)
+      expect(reopened.input).toBe(input)
+      expect((await client.get(reopened.id))?.run.input).toBe(input)
     },
   )
 
@@ -455,7 +489,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -497,7 +531,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -531,7 +565,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id, {
+    const retried = await client.restart(run.id, {
       tags: { tenantId: 'tenant-2' },
     })
 
@@ -562,7 +596,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id, {
+    const retried = await client.restart(run.id, {
       idempotencyKey: ['retry', 'alpha'],
     })
 
@@ -596,7 +630,7 @@ describe('workflow runtime client', () => {
       output: { id: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'task',
@@ -631,7 +665,7 @@ describe('workflow runtime client', () => {
     })
     const run = await client.start(workflow, { scenario: 'alpha' })
 
-    await expect(client.retry(run.id)).rejects.toThrow(
+    await expect(client.restart(run.id)).rejects.toThrow(
       `Run [${run.id}] is not terminal`,
     )
   })
@@ -640,7 +674,7 @@ describe('workflow runtime client', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
 
-    await expect(client.retry('missing-run-id')).rejects.toThrow(
+    await expect(client.restart('missing-run-id')).rejects.toThrow(
       'Run [missing-run-id] not found',
     )
   })
@@ -661,7 +695,7 @@ describe('workflow runtime client', () => {
     })
     await runtime.store.completeRun({ runId: child.id, output: { ok: true } })
 
-    await expect(client.retry(child.id)).rejects.toThrow(
+    await expect(client.restart(child.id)).rejects.toThrow(
       `Run [${child.id}] is not a root run`,
     )
   })
@@ -680,8 +714,8 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    await expect(client.retry(run.id)).rejects.toThrow(
-      `Cannot retry run [${run.id}]: no workflow definition [${workflow.name}] is known to this client`,
+    await expect(client.restart(run.id)).rejects.toThrow(
+      `Cannot restart run [${run.id}]: no workflow definition [${workflow.name}] is known to this client`,
     )
   })
 
@@ -706,7 +740,7 @@ describe('workflow runtime client', () => {
       output: { caseId: 'alpha' },
     })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'workflow',
@@ -732,7 +766,7 @@ describe('workflow runtime client', () => {
     const run = await client.start(task, { text: 'alpha' })
     await runtime.store.completeRun({ runId: run.id, output: { id: 'alpha' } })
 
-    const retried = await client.retry(run.id)
+    const retried = await client.restart(run.id)
 
     expect(retried).toMatchObject({
       kind: 'task',
@@ -850,6 +884,31 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('settles standalone task runs on cancel instead of enqueueing a continuation', async () => {
+    const task = defineTask({
+      name: 'client-cancelled-task',
+      input: t.object({ text: t.string() }),
+      output: t.object({ id: t.string() }),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, { text: 'alpha' })
+
+    const cancelled = await client.cancel(run.id)
+    const cancelledAgain = await client.cancel(run.id)
+    const snapshot = await client.get(run.id)
+
+    expect(cancelled?.status).toBe('cancelled')
+    expect(cancelledAgain?.status).toBe('cancelled')
+    expect(snapshot?.run.status).toBe('cancelled')
+    expect(snapshot?.nodes.map((node) => node.status)).toEqual(['cancelled'])
+    expect(snapshot?.attempts.map((attempt) => attempt.status)).toEqual([
+      'cancelled',
+    ])
+    expect(runtime.inspect().continueRunCommands).toStrictEqual([])
+    expect(runtime.inspect().taskCommands).toStrictEqual([])
   })
 
   it('returns terminal runs unchanged when cancellation is requested', async () => {

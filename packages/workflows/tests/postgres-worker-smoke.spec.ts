@@ -45,7 +45,6 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
     .workflow('primary', childWorkflow)
     .mapWorkflow('children', childWorkflow, {
       item: t.string(),
-      mode: 'wait-all',
     })
     .build()
 

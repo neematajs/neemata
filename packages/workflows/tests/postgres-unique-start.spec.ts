@@ -65,7 +65,7 @@ function hideFirstUniquePrecheck(
 }
 
 test('active scope rejects a duplicate while the holder is non-terminal', async () => {
-  const { connection, client } = await createHarness()
+  const { client } = await createHarness()
 
   const first = await client.start(
     workflow,
@@ -249,7 +249,7 @@ test('retry rehydrates the stored unique constraint', async () => {
   )
   await markTerminal(connection, first.id, 'failed')
 
-  const retried = await client.retry(first.id)
+  const retried = await client.restart(first.id)
   expect(retried.id).not.toBe(first.id)
   expect(retried.unique).toEqual({
     key: ['turn', 1],

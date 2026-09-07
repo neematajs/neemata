@@ -69,17 +69,15 @@ export async function loadAppViteConfig(
     root: options.root,
     base,
     clearScreen: false,
-    ...(options.command === 'serve'
-      ? { server: sanitizeServer(user.server, warnings) }
-      : { build: sanitizeBuild(user.build, warnings) }),
+  }
+  if (options.command === 'serve') {
+    config.server = sanitizeServer(user.server, warnings)
+  } else {
+    config.build = sanitizeBuild(user.build, warnings)
   }
 
-  return {
-    config,
-    base,
-    warnings,
-    dependencies: loaded?.dependencies ?? [],
-  }
+  const dependencies = loaded?.dependencies ?? []
+  return { config, base, warnings, dependencies }
 }
 
 function sanitizeServer(
@@ -113,12 +111,13 @@ function sanitizeServer(
     )
   }
 
+  const sanitizedHmr = sanitizeHmr(hmr, warnings)
   return {
     ...rest,
     host: '127.0.0.1',
     port: 0,
     strictPort: false,
-    hmr: sanitizeHmr(hmr, warnings),
+    hmr: sanitizedHmr,
   }
 }
 
@@ -166,12 +165,9 @@ function sanitizeBuild(
       'vite config build.watch is dropped: the app build runs once inside "neem build"',
     )
   }
-  return {
-    ...rest,
-    ...(rollupOptions
-      ? { rollupOptions: sanitizeRollupOptions(rollupOptions, warnings) }
-      : {}),
-  }
+  if (!rollupOptions) return rest
+  const sanitized = sanitizeRollupOptions(rollupOptions, warnings)
+  return { ...rest, rollupOptions: sanitized }
 }
 
 // Nested output targets would redirect the build outside the artifact even
@@ -184,13 +180,11 @@ function sanitizeRollupOptions(
   if (!output) return rollupOptions
 
   let stripped = false
-  const sanitizeOutput = <T extends { dir?: unknown; file?: unknown }>(
-    entry: T,
-  ): T => {
+  const sanitizeOutput = (entry: Vite.Rollup.OutputOptions) => {
     if (entry.dir === undefined && entry.file === undefined) return entry
     stripped = true
     const { dir: _dir, file: _file, ...restOutput } = entry
-    return restOutput as T
+    return restOutput
   }
   const sanitized = Array.isArray(output)
     ? output.map(sanitizeOutput)

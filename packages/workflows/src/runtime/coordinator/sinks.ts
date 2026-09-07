@@ -1,4 +1,5 @@
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { wakeParentRun } from '../wake.ts'
 import { cancelRunTree } from './cancel.ts'
@@ -42,13 +43,14 @@ export async function cancelRunAndWakeParent(input: {
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly runId: string
-}) {
+}): Promise<StoredRun | undefined> {
   const cancelled = await cancelRunTree(input)
   await wakeParentRun({
     store: input.store,
     runCoordinationExecutor: input.runCoordinationExecutor,
     run: cancelled,
   })
+  return cancelled
 }
 
 export async function failNodeAndRun(input: {

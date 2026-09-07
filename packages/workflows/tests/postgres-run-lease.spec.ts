@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto'
+
 import { PGlite } from '@electric-sql/pglite'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -37,5 +39,39 @@ describe('postgres run leases', () => {
       expect(current?.leaseToken).not.toBe(expired?.leaseToken)
       expect(busy).toBeUndefined()
     })
+  })
+  it('acquires or rejects a lease in one statement', async () => {
+    const database = new PGlite()
+    const connection = createPostgresWorkflowConnection(database)
+    try {
+      await installPostgresWorkflowSchemaForTesting(connection)
+      const runtime = createPostgresWorkflowRuntime({ connection })
+      const run = await runtime.store.createRun({
+        workflowName: 'grouped-lease',
+        input: {},
+      })
+      const query = vi.spyOn(connection, 'query')
+      const lease = await runtime.store.acquireRunLease({
+        runId: run.id,
+        leaseMs: 30_000,
+      })
+      expect(lease).toMatchObject({ runId: run.id, version: run.version })
+      expect(query).toHaveBeenCalledTimes(1)
+      query.mockClear()
+      expect(
+        await runtime.store.acquireRunLease({ runId: run.id, leaseMs: 30_000 }),
+      ).toBeUndefined()
+      expect(query).toHaveBeenCalledTimes(1)
+      query.mockClear()
+      expect(
+        await runtime.store.acquireRunLease({
+          runId: randomUUID(),
+          leaseMs: 30_000,
+        }),
+      ).toBeUndefined()
+      expect(query).toHaveBeenCalledTimes(1)
+    } finally {
+      await database.close()
+    }
   })
 })

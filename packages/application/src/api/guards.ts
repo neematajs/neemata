@@ -40,5 +40,5 @@ export function createGuard<Deps extends Dependencies = {}>(
     dependencies,
     handler,
     [kGuard]: true,
-  }) as Guard<Deps>
+  } satisfies Guard<Deps>)
 }

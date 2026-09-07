@@ -16,23 +16,21 @@ export function defineWorkflowsPlanner<
 >(factory: () => TConfig | Promise<TConfig>) {
   return defineRuntimePlanner<typeof factory, WorkflowsWorkerData>(async () => {
     const config = await resolveWorkflowsConfig(await factory())
+    const coordinator = createWorkerData(
+      'coordinator',
+      config.workers.coordinator,
+    )
+    const execution: WorkflowsWorkerData[] = []
+
+    for (const pool of config.workers.execution) {
+      const threads = normalizeThreadCount('execution', pool.threads)
+      for (let index = 0; index < threads; index++) {
+        execution.push({ role: 'execution', pool: pool.name })
+      }
+    }
 
     return {
-      workers: {
-        coordinator: createWorkerData(
-          'coordinator',
-          config.workers.coordinator,
-        ),
-        execution: config.workers.execution.flatMap((pool) =>
-          Array.from(
-            { length: normalizeThreadCount('execution', pool.threads) },
-            (): WorkflowsWorkerData => ({
-              role: 'execution',
-              pool: pool.name,
-            }),
-          ),
-        ),
-      },
+      workers: { coordinator, execution },
       options: factory,
     }
   })

@@ -1,4 +1,5 @@
 import type { Container } from '@nmtjs/core'
+import { createFuture } from '@nmtjs/common'
 import {
   ExecutionEnvironment,
   ExecutionEnvironmentLifecycleHook,
@@ -35,17 +36,12 @@ export function defineWorkflowsWorker<
       let workerLoop: Promise<void> | undefined
       let runtime: WorkflowRuntimeAdapter | undefined
       let execution: ExecutionEnvironment | undefined
-      let resolveFinished!: () => void
-      let rejectFinished!: (error: unknown) => void
-      const finished = new Promise<void>((resolve, reject) => {
-        resolveFinished = resolve
-        rejectFinished = reject
-      })
+      const finished = createFuture<void>()
       // Older hosts may not observe the lifecycle promise.
-      void finished.catch(() => {})
+      void finished.promise.catch(() => {})
 
       return {
-        finished,
+        finished: finished.promise,
         async start() {
           const config = await resolveWorkflowsConfig(ctx.definition)
           const executionPool =
@@ -83,13 +79,15 @@ export function defineWorkflowsWorker<
             container: execution.container,
             workerId: ctx.name,
             signal: abort.signal,
+            onError: (error) =>
+              ctx.logger.error({ err: error }, 'Neem workflows worker error'),
           })
-          workerLoop.then(resolveFinished, (error: unknown) => {
+          workerLoop.then(finished.resolve, (error: unknown) => {
             ctx.logger.error(
               { err: error },
               'Neem workflows worker loop failed',
             )
-            rejectFinished(error)
+            finished.reject(error)
           })
           await execution.lifecycleHooks.callHook(
             ExecutionEnvironmentLifecycleHook.Start,
@@ -151,6 +149,7 @@ async function runRoleLoop(input: {
   readonly container: Container
   readonly workerId: string
   readonly signal: AbortSignal
+  readonly onError: (error: unknown) => void
 }): Promise<void> {
   const role = input.data.role
   switch (role) {
@@ -166,6 +165,7 @@ async function runRoleLoop(input: {
         scheduling:
           input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
         signal: input.signal,
+        onError: input.onError,
       })
       return
 
@@ -185,6 +185,7 @@ async function runRoleLoop(input: {
         // across every named pool and thread.
         reaping: false,
         signal: input.signal,
+        onError: input.onError,
       })
       return
   }

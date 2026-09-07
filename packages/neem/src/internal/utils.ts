@@ -2,6 +2,7 @@ import type { TimerOptions } from 'node:timers'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { inspect } from 'node:util'
 
 import {
   MAX_SERIALIZED_ERROR_DEPTH,
@@ -41,10 +42,11 @@ export function serializeError(
   value: unknown,
   depth = MAX_SERIALIZED_ERROR_DEPTH,
 ): SerializedError {
-  // Non-Error values are normalized to an Error so name/stack are always present.
   return serializeErrorCore(value, {
     depth,
-    fallback: (candidate) => serializeErrorCore(normalizeError(candidate)),
+    // Anything can be thrown or rejected; `String(value)` would flatten an
+    // object to `[object Object]`, so render it the way a REPL would.
+    fallback: (candidate) => ({ name: 'Error', message: inspect(candidate) }),
   })
 }
 

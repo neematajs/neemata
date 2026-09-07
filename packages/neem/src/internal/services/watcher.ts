@@ -11,7 +11,6 @@ import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
 import type { BuildGraph, BuildTarget } from '../build/graph.ts'
 import type {
   WatcherEvent,
-  WatcherManifestChangeEvent,
   WatcherManifestIdentity,
   WatcherResult,
 } from './protocol.ts'
@@ -39,7 +38,6 @@ type WatcherManifestChangeInput =
 export class WatcherService {
   private readonly changes = new OperationQueue()
   private graphWatcher: GraphWatcher | undefined
-  private manifestFile: string | undefined
   private manifestRevision = 0
   private logger: Logger | undefined
   private stopped = false
@@ -129,8 +127,7 @@ export class WatcherService {
 
     const compiled = await graphWatcher.ready
     this.graphWatcher = graphWatcher
-    const manifest = await this.writeManifestSnapshot(compiled)
-    return manifest
+    return this.writeManifestSnapshot(compiled)
   }
 
   private async handleChange(change: TargetChange): Promise<void> {
@@ -155,7 +152,7 @@ export class WatcherService {
         },
         'Neem watcher rebuild',
       )
-      await this.emit(withManifestIdentity(event, manifest))
+      await this.emit({ ...event, ...manifest })
     } catch (error) {
       await this.emit({ type: 'error', error: serializeError(error) })
     }
@@ -175,15 +172,13 @@ export class WatcherService {
   private async writeManifestSnapshot(
     compiled: ReturnType<GraphWatcher['snapshot']>,
   ): Promise<WatcherManifestIdentity> {
-    this.manifestFile = await writeManifest(
+    const manifestFile = await writeManifest(
       this.options.outDir,
       createManifest(compiled),
     )
-    return {
-      manifestFile: this.manifestFile,
-      manifestRevision: ++this.manifestRevision,
-      manifestHash: await hashFile(this.manifestFile),
-    }
+    const manifestRevision = ++this.manifestRevision
+    const manifestHash = await hashFile(manifestFile)
+    return { manifestFile, manifestRevision, manifestHash }
   }
 }
 
@@ -211,26 +206,9 @@ function classifyChange(change: TargetChange): WatcherManifestChangeInput {
   }
 }
 
-function withManifestIdentity(
-  event: WatcherManifestChangeInput,
-  manifest: WatcherManifestIdentity,
-): WatcherManifestChangeEvent {
-  switch (event.type) {
-    case 'runtime-changed':
-      return { type: event.type, runtimeName: event.runtimeName, ...manifest }
-    case 'runtime-host-changed':
-      return { type: event.type, runtimeName: event.runtimeName, ...manifest }
-    case 'plugin-changed':
-      return { type: event.type, ...manifest }
-    case 'logger-changed':
-      return { type: event.type, ...manifest }
-  }
-}
-
 async function hashFile(file: string): Promise<string> {
-  return createHash('sha256')
-    .update(await readFile(file))
-    .digest('hex')
+  const contents = await readFile(file)
+  return createHash('sha256').update(contents).digest('hex')
 }
 
 function getRuntimeName(change: TargetChange): string {

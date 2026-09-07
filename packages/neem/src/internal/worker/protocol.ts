@@ -1,11 +1,13 @@
 import type { MessagePort } from 'node:worker_threads'
 
+import type { NeemWorkerErrorOrigin } from '../../shared/errors.ts'
 import type {
   NeemMode,
   NeemResolvedArtifact,
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
+import type { SerializedError } from '../utils.ts'
 
 export type RuntimeWorkerData = {
   mode: NeemMode
@@ -20,7 +22,7 @@ export type RuntimeWorkerData = {
 
 export type ParentMessage = { type: 'stop' }
 
-export type WorkerErrorOrigin = 'bootstrap' | 'start' | 'runtime'
+export type WorkerErrorOrigin = NeemWorkerErrorOrigin
 
 export type ReadyMessage = {
   type: 'ready'
@@ -29,12 +31,7 @@ export type ReadyMessage = {
 
 export type ErrorMessage = {
   type: 'error'
-  data: {
-    message: string
-    name?: string
-    stack?: string
-    origin: WorkerErrorOrigin
-  }
+  data: SerializedError & { origin: WorkerErrorOrigin }
 }
 
 export type StoppedMessage = { type: 'stopped' }

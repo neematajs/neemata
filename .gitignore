@@ -1,4 +1,7 @@
 .vitest-attachments/
+.benchmark/
+benchmark-results/
+packages/workflows/bench/.generated-types/
 __screenshots__/
 .neemata/
 .neem/

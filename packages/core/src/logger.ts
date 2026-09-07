@@ -62,25 +62,21 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
     ]
   }
 
-  const lowestLevelValue = destinations!.reduce(
-    (acc, destination) =>
-      Math.min(
-        acc,
-        'stream' in destination
-          ? levels.values[destination.level!]
-          : Number.POSITIVE_INFINITY,
-      ),
-    Number.POSITIVE_INFINITY,
-  )
-  const level = levels.labels[lowestLevelValue]
+  let minimum = Number.POSITIVE_INFINITY
+  for (const destination of destinations) {
+    if (!('stream' in destination)) continue
+    minimum = Math.min(minimum, levels.values[destination.level!])
+  }
+  const level = levels.labels[minimum]
   const serializers = {
-    headers: (value: any) => {
-      if (value instanceof Headers) {
-        const obj = {}
-        value.forEach((v, k) => (obj[k] = v))
-        return obj
-      }
-      return value
+    headers: (value: unknown) => {
+      if (value instanceof Headers === false) return value
+
+      const headers: Record<string, string> = {}
+      value.forEach((value, name) => {
+        headers[name] = value
+      })
+      return headers
     },
     ...pinoOptions?.serializers,
     err: errWithCause,
@@ -94,16 +90,16 @@ export const createLogger = (options: LoggingOptions = {}, $label: string) => {
       serializers,
       formatters: {
         log(object) {
-          const localStorageValue = loggerLocalStorage.getStore()
-          if (localStorageValue) {
-            return Object.assign(object, localStorageValue)
+          const bindings = loggerLocalStorage.getStore()
+          if (bindings) {
+            return Object.assign(object, bindings)
           }
           return object
         },
       },
       base: { $label, $threadId: threadId },
     },
-    multistream(destinations!),
+    multistream(destinations),
   )
 }
 
@@ -113,9 +109,9 @@ export const forkLogger = (
   options?: ChildLoggerOptions,
   bindings?: Bindings,
 ) => {
-  const _bindings = { ...bindings }
-  if (label !== undefined) _bindings.$label = label
-  return logger.child(_bindings, options)
+  const childBindings = { ...bindings }
+  if (label !== undefined) childBindings.$label = label
+  return logger.child(childBindings, options)
 }
 
 export type CreateConsolePrettyDestination = (

@@ -224,18 +224,7 @@ export type WorkflowParallelNode<
   readonly _types?: ActivityBinding<unknown, Output>
 }
 
-export type MapRunMode = 'start-only' | 'wait-all' | 'wait-settled'
-
-export type MapStartOnlyOutput<Item> = {
-  readonly items: Array<{
-    readonly item: Item
-    readonly index: number
-    readonly runId: string
-    readonly status: WorkflowStatus
-  }>
-}
-
-export type MapWaitAllOutput<Item, Output> = {
+export type MapNodeOutput<Item, Output> = {
   readonly items: Array<{
     readonly item: Item
     readonly index: number
@@ -244,43 +233,13 @@ export type MapWaitAllOutput<Item, Output> = {
   }>
 }
 
-export type MapWaitSettledOutput<Item, Output> = {
-  readonly items: Array<{
-    readonly item: Item
-    readonly index: number
-    readonly runId: string
-    readonly status: WorkflowStatus
-    readonly output?: Output
-    readonly error?: WorkflowSettledError
-  }>
-}
-
-export type WorkflowSettledError = {
-  readonly name?: string
-  readonly message: string
-  readonly stack?: string
-  readonly cause?: WorkflowSettledError
-}
-
-export type MapNodeOutput<
-  Mode extends MapRunMode,
-  Item,
-  Output,
-> = Mode extends 'start-only'
-  ? MapStartOnlyOutput<Item>
-  : Mode extends 'wait-all'
-    ? MapWaitAllOutput<Item, Output>
-    : MapWaitSettledOutput<Item, Output>
-
 export type WorkflowMapTaskNode<
   Name extends string = string,
   Task extends AnyTaskDefinition = AnyTaskDefinition,
   Item = unknown,
-  Mode extends MapRunMode = MapRunMode,
 > = WorkflowNodeBase<'mapTask', Name> & {
   readonly task: Task
   readonly item: Schema
-  readonly mode: Mode
   readonly concurrency?: number
   readonly retry?: RetryPolicy
   /** Overrides the target task's default timeout for every map task item. */
@@ -290,7 +249,7 @@ export type WorkflowMapTaskNode<
       readonly BoundaryInput<Item>[],
       readonly BoundaryOutput<Item>[]
     >,
-    MapNodeOutput<Mode, BoundaryOutput<Item>, TaskOutput<Task>>
+    MapNodeOutput<BoundaryOutput<Item>, TaskOutput<Task>>
   >
 }
 
@@ -298,11 +257,9 @@ export type WorkflowMapWorkflowNode<
   Name extends string = string,
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
   Item = unknown,
-  Mode extends MapRunMode = MapRunMode,
 > = WorkflowNodeBase<'mapWorkflow', Name> & {
   readonly workflow: Workflow
   readonly item: Schema
-  readonly mode: Mode
   readonly concurrency?: number
   readonly cancellation?: CancellationPolicy
   readonly _types?: ActivityBinding<
@@ -310,7 +267,7 @@ export type WorkflowMapWorkflowNode<
       readonly BoundaryInput<Item>[],
       readonly BoundaryOutput<Item>[]
     >,
-    MapNodeOutput<Mode, BoundaryOutput<Item>, WorkflowOutput<Workflow>>
+    MapNodeOutput<BoundaryOutput<Item>, WorkflowOutput<Workflow>>
   >
 }
 

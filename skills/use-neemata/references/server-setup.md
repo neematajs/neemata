@@ -7,7 +7,11 @@ runtime files.
 
 ```ts
 import { app, host, pubsubPlugin } from 'nmtjs'
-import { HttpTransport } from '@nmtjs/http-transport/node'
+import { neemataHttp } from '@nmtjs/transports/neemata/http'
+import { createServerTransport } from '@nmtjs/transports/http-server'
+import { createServerHost } from '@nmtjs/transports/http-server/node'
+import { JsonCodec } from '@nmtjs/protocol/json/server'
+import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 
 import { api } from './router.ts'
 
@@ -16,8 +20,17 @@ export const application = app({
   plugins: [pubsubPlugin({ adapter: createPubSubAdapter() })],
 })
 
+const Server = createServerTransport({
+  host: createServerHost,
+  handlers: {
+    api: neemataHttp({
+      codecs: new ProtocolCodecRegistry([new JsonCodec()]),
+    }),
+  },
+})
+
 export default host(application, {
-  transports: { http: HttpTransport },
+  transports: { server: Server },
 })
 ```
 
@@ -25,9 +38,14 @@ Rules:
 
 - `app(...)` defines router, guards, middleware, filters, hooks, plugins, and
   metadata. It should not own listen ports or runtime thread counts.
+- `createServerTransport({ host, handlers })` owns one runtime server and its
+  protocol handlers. Handler keys are application-defined and only correlate
+  each handler with its typed runtime options.
 - `host(app, { transports })` binds the app to transport factories.
-- Transport packages stay direct imports because they are separate runtime
-  dependencies.
+- Server hosts and handlers stay direct imports because they are separate
+  runtime dependencies. Handler construction options, per-mount options, and
+  the JSON-RPC/MCP projections are covered in
+  [Transports](transports.md).
 - App-level static metadata merges with router and procedure metadata.
 
 ## Neemata Runtime Files
@@ -55,7 +73,10 @@ import { defineNeemataPlanner } from '@nmtjs/application/neem/planner'
 export default defineNeemataPlanner(() => ({
   instances: 2,
   transports: {
-    http: { listen: { hostname: '127.0.0.1', port: 0 } },
+    server: {
+      listen: { hostname: '127.0.0.1', port: 0 },
+      handlers: { api: { path: '/' } },
+    },
   },
 }))
 ```

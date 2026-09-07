@@ -47,6 +47,13 @@ export type WorkerLoopOptions = {
   readonly scheduling?: WorkerSchedulingOptions
   readonly scheduler?: WorkflowScheduler
   readonly maintenance?: readonly WorkerMaintenanceHook[]
+  /**
+   * Observes a command execution or maintenance pass that threw. These are
+   * not fatal to the pool: the command was released with the error (and
+   * counts toward dead-lettering), so the loop keeps serving. Only claim
+   * failures, where the adapter itself is unusable, stop the pool.
+   */
+  readonly onError?: (error: unknown) => void
   readonly signal?: AbortSignal
 }
 
@@ -115,13 +122,14 @@ async function runWorkerPool<Claimed>(
     lifecycle.abort(error)
     wake.notify()
   }
+  const report = (error: unknown) => options.onError?.(error)
   const startExecution = (claimed: Claimed) => {
     const task = driver
       .execute(claimed, executions.signal)
       .then((didProcess) => {
         if (didProcess) processed += 1
       })
-      .catch(fail)
+      .catch(report)
       .finally(() => {
         active.delete(task)
         wake.notify()
@@ -130,9 +138,12 @@ async function runWorkerPool<Claimed>(
   }
   const periodic =
     mode === 'serve' && periodicTasks.length > 0
-      ? runPeriodicLoop(periodicTasks, lifecycle.signal, wake.notify).catch(
-          fail,
-        )
+      ? runPeriodicLoop(
+          periodicTasks,
+          lifecycle.signal,
+          wake.notify,
+          report,
+        ).catch(fail)
       : undefined
 
   let drainPeriodicPending = mode === 'drain' && periodicTasks.length > 0
@@ -179,12 +190,7 @@ async function runWorkerPool<Claimed>(
         if (mode === 'drain') {
           if (!drainPeriodicPending) break
           drainPeriodicPending = false
-          try {
-            await runDuePeriodicTasks(periodicTasks)
-          } catch (error) {
-            fail(error)
-            break
-          }
+          await runDuePeriodicTasks(periodicTasks, report)
           // Maintenance can enqueue immediately claimable work.
           continue
         }
@@ -262,9 +268,10 @@ async function runPeriodicLoop(
   tasks: PeriodicTask[],
   signal: AbortSignal,
   notify: () => void,
+  report: (error: unknown) => void,
 ): Promise<void> {
   while (!signal.aborted) {
-    await runDuePeriodicTasks(tasks)
+    await runDuePeriodicTasks(tasks, report)
     notify()
     const nextAt = Math.min(...tasks.map((task) => task.nextAt))
     // A zero interval remains useful for tests and eager maintenance, but a
@@ -277,12 +284,21 @@ async function runPeriodicLoop(
   }
 }
 
-async function runDuePeriodicTasks(tasks: PeriodicTask[]): Promise<void> {
+async function runDuePeriodicTasks(
+  tasks: PeriodicTask[],
+  report: (error: unknown) => void,
+): Promise<void> {
   for (const task of tasks) {
     const date = Date.now()
     if (date < task.nextAt) continue
     task.nextAt = date + task.everyMs
-    await task.run(new Date(date))
+    // A failed pass is retried on its next tick; one transient error must
+    // not take the whole worker down with it.
+    try {
+      await task.run(new Date(date))
+    } catch (error) {
+      report(error)
+    }
   }
 }
 

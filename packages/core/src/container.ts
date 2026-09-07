@@ -152,7 +152,7 @@ export class Container {
     // Let in-flight resolutions settle first, otherwise their instances get
     // registered after the cleanup below and are never disposed
     while (this.pending.size) {
-      await Promise.allSettled([...this.pending])
+      await Promise.allSettled(this.pending)
     }
 
     // Get proper disposal order using topological sort

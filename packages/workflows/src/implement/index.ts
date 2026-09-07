@@ -13,7 +13,6 @@ import type {
   BoundaryOutput,
   BranchCaseDefinition,
   IdempotencyKey,
-  MapRunMode,
   MaybePromise,
   RetryPolicy,
   TaskDecodedInput,
@@ -216,7 +215,6 @@ export type MapNodeImplementation = {
   readonly kind: 'mapTask' | 'mapWorkflow'
   readonly name: string
   readonly target: AnyTaskDefinition | AnyWorkflowDefinition
-  readonly mode: MapRunMode
   readonly concurrency?: number
   readonly items: (...args: any[]) => readonly unknown[]
   readonly input: StoredCallback
@@ -737,7 +735,6 @@ function createWorkflowChain(state: {
             kind: 'mapTask',
             name: node.name,
             target: task,
-            mode: node.mode,
             concurrency: node.concurrency,
             items: options.items,
             input: options.input,
@@ -761,7 +758,6 @@ function createWorkflowChain(state: {
             kind: 'mapWorkflow',
             name: node.name,
             target: workflow,
-            mode: node.mode,
             concurrency: node.concurrency,
             items: options.items,
             input: options.input,
@@ -861,11 +857,11 @@ function normalizeCases(
   node: WorkflowBranchNode | WorkflowParallelNode,
   cases: Record<string, unknown>,
 ): Record<string, WorkflowCaseImplementation> {
-  const expectedEntries = Object.entries(node.cases)
   const implementations: Record<string, WorkflowCaseImplementation> = {}
 
-  for (const [caseName, branchCase] of expectedEntries) {
-    if (!(caseName in cases)) {
+  for (const caseName in node.cases) {
+    if (Object.hasOwn(node.cases, caseName) === false) continue
+    if (caseName in cases === false) {
       throw new Error(
         `Missing workflow ${node.kind} case implementation [${node.name}.${caseName}]`,
       )
@@ -873,13 +869,13 @@ function normalizeCases(
 
     implementations[caseName] = normalizeCase(
       `${node.name}.${caseName}`,
-      branchCase as BranchCaseDefinition,
+      node.cases[caseName]!,
       cases[caseName],
     )
   }
 
   for (const caseName of Object.keys(cases)) {
-    if (!Object.hasOwn(node.cases, caseName)) {
+    if (Object.hasOwn(node.cases, caseName) === false) {
       throw new Error(
         `Unknown workflow ${node.kind} case implementation [${node.name}.${caseName}]`,
       )
@@ -923,7 +919,7 @@ function normalizeCase(
   return Object.freeze({
     kind: branchCase.kind,
     name,
-    target: target as AnyTaskDefinition | AnyWorkflowDefinition,
+    target,
     retry: 'retry' in branchCase ? branchCase.retry : undefined,
     input: descriptor?.options?.input,
     idempotency: descriptor?.options?.idempotency,
@@ -952,22 +948,22 @@ function createActivityImplementation(
 function isActivityImplementation(
   value: unknown,
 ): value is ActivityImplementation {
-  return Boolean(
-    value &&
+  return (
+    value !== null &&
     typeof value === 'object' &&
     'kind' in value &&
-    value.kind === 'activityImplementation',
+    value.kind === 'activityImplementation'
   )
 }
 
 function isActivityCaseDescriptor(
   value: unknown,
 ): value is ActivityCaseDescriptor<unknown, unknown, any> {
-  return Boolean(
-    value &&
+  return (
+    value !== null &&
     typeof value === 'object' &&
     'kind' in value &&
-    value.kind === 'activityCase',
+    value.kind === 'activityCase'
   )
 }
 
@@ -977,19 +973,17 @@ function isRunnableCaseDescriptor(
   AnyTaskDefinition | AnyWorkflowDefinition,
   unknown
 > {
-  return Boolean(
-    value &&
+  return (
+    value !== null &&
     typeof value === 'object' &&
     'kind' in value &&
-    value.kind === 'runnableCase',
+    value.kind === 'runnableCase'
   )
 }
 
-function assertSameRunnable(
-  expected: AnyTaskDefinition | AnyWorkflowDefinition,
-  actual: unknown,
-  label: string,
-) {
+function assertSameRunnable<
+  T extends AnyTaskDefinition | AnyWorkflowDefinition,
+>(expected: T, actual: unknown, label: string): asserts actual is T {
   if (actual === expected) return
 
   const actualName =

@@ -96,73 +96,57 @@ export function createBuildGraph(options: {
   config: NeemResolvedConfig
   runtimes?: readonly string[]
 }): BuildGraph {
-  const config = options.config
-  const selectedRuntimeNames = normalizeRuntimeNames(options.runtimes)
-  const availableRuntimeNames = Object.keys(config.runtimes)
-  assertRuntimeNamesExist(selectedRuntimeNames, availableRuntimeNames)
-  const selected = selectedRuntimeNames
-    ? new Set(selectedRuntimeNames)
-    : undefined
+  const { config, configFile, outDir } = options
+  const names = normalizeRuntimeNames(options.runtimes)
+  assertRuntimeNamesExist(names, Object.keys(config.runtimes))
+  const selected = names ? new Set(names) : undefined
   const rootRolldown = createRootBuildRolldownOptions(config.build)
-  const plugins = createPluginNodes(
-    options.configFile,
-    options.outDir,
-    config,
-    rootRolldown,
-  )
+  const plugins = createPluginNodes(configFile, outDir, config, rootRolldown)
   const pluginRolldown = mergePluginRolldownOptions(plugins)
-  const startEntry = createStartEntryTarget(options.outDir, rootRolldown)
-  const workerEntry = createWorkerEntryTarget(options.outDir, rootRolldown)
-  const hostRunnerEntry = createHostRunnerEntryTarget(
-    options.outDir,
-    rootRolldown,
-  )
-  const logger = createLoggerTarget(
-    options.configFile,
-    options.outDir,
-    config,
-    rootRolldown,
-  )
-  const runtimes = Object.entries(config.runtimes)
-    .filter(([name]) => !selected || selected.has(name))
-    .map(([name, runtime]) =>
+  const startEntry = createStartEntryTarget(outDir, rootRolldown)
+  const workerEntry = createWorkerEntryTarget(outDir, rootRolldown)
+  const hostRunnerEntry = createHostRunnerEntryTarget(outDir, rootRolldown)
+  const logger = createLoggerTarget(configFile, outDir, config, rootRolldown)
+  const runtimes: RuntimeBuildNode[] = []
+  for (const [name, runtime] of Object.entries(config.runtimes)) {
+    if (selected && !selected.has(name)) continue
+    runtimes.push(
       createRuntimeNode({
-        outDir: options.outDir,
+        outDir,
         name,
         runtime,
         pluginRolldown,
         rootRolldown,
       }),
     )
-  const targets = [
-    startEntry,
-    workerEntry,
-    hostRunnerEntry,
-    ...(logger ? [logger] : []),
-    ...runtimes.flatMap((runtime) =>
-      [runtime.worker, runtime.host, runtime.planner].filter(
-        (target): target is BuildTarget => Boolean(target),
-      ),
-    ),
-    ...plugins.flatMap((plugin) => (plugin.entry ? [plugin.entry] : [])),
-  ]
+  }
+
   const infraTargets = [startEntry, workerEntry, hostRunnerEntry] as const
+  const targets: BuildTarget[] = [...infraTargets]
+  if (logger) targets.push(logger)
+  for (const { worker, host, planner } of runtimes) {
+    if (worker) targets.push(worker)
+    targets.push(host, planner)
+  }
+  for (const { entry } of plugins) {
+    if (entry) targets.push(entry)
+  }
+
   const buildGroups: BuildGroup[] = [
     { key: 'runtime:infra', kind: 'infra', targets: infraTargets },
-    ...targets.slice(infraTargets.length).map(
-      (target) =>
-        ({
-          key: target.key,
-          kind: 'target',
-          target,
-          targets: [target],
-        }) satisfies BuildGroup,
-    ),
   ]
+  for (const target of targets.slice(infraTargets.length)) {
+    buildGroups.push({
+      key: target.key,
+      kind: 'target',
+      target,
+      targets: [target],
+    })
+  }
 
   return {
-    configFile: options.configFile,
-    outDir: options.outDir,
+    configFile,
+    outDir,
     config,
     startEntry,
     workerEntry,

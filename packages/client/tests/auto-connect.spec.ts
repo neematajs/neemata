@@ -8,7 +8,7 @@ import {
   createBaseOptions,
   createMockBidirectionalTransport,
   createMockUnidirectionalTransport,
-  mockFormat,
+  mockCodec,
 } from './_helpers/transports.ts'
 
 const contract = c.router({
@@ -220,7 +220,7 @@ describe('autoConnect', () => {
   it('connects on the first unidirectional call when autoConnect is enabled', async () => {
     const callSpy = vi.fn(async () => ({
       type: 'rpc' as const,
-      result: mockFormat.encode({ echoed: 'hello' }),
+      result: mockCodec.encode({ echoed: 'hello' }),
     }))
     const transport = createMockUnidirectionalTransport(callSpy)
 
@@ -243,7 +243,7 @@ describe('autoConnect', () => {
   it('blocks unidirectional calls after manual disconnect when autoConnect is enabled', async () => {
     const callSpy = vi.fn(async () => ({
       type: 'rpc' as const,
-      result: mockFormat.encode({ echoed: 'hello' }),
+      result: mockCodec.encode({ echoed: 'hello' }),
     }))
     const transport = createMockUnidirectionalTransport(callSpy)
 

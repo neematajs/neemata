@@ -41,11 +41,9 @@ describe('workflow orchestration nodes', () => {
     }))
     .mapWorkflow('caseRuns', childWorkflow, {
       item: t.object({ id: t.string(), text: t.string() }),
-      mode: 'start-only',
     })
     .mapTask('embeddings', embeddingTask, {
       item: t.object({ id: t.string(), text: t.string() }),
-      mode: 'wait-all',
     })
     .build()
 
@@ -75,8 +73,7 @@ describe('workflow orchestration nodes', () => {
         items: (_ctx, { load }) => load.scenarios,
         input: (_ctx, _outputs, item) => {
           const text: string = item.text
-          // @ts-expect-error map item mapper is inferred from item schema
-          void item.missing
+          expectTypeOf(item).toEqualTypeOf<{ id: string; text: string }>()
           return { scenario: text }
         },
       })
@@ -133,7 +130,7 @@ describe('workflow orchestration nodes', () => {
       })
         .mapTask('embeddings', embeddingTask, {
           item: t.string(),
-          mode: 'wait-all',
+
           concurrency: 0,
         })
         .build(),
@@ -146,7 +143,7 @@ describe('workflow orchestration nodes', () => {
       })
         .mapWorkflow('children', childWorkflow, {
           item: t.string(),
-          mode: 'wait-all',
+
           concurrency: Number.NaN,
         })
         .build(),

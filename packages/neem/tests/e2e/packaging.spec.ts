@@ -58,6 +58,15 @@ describe('Neem package consumer smoke', () => {
 
     await installConsumer(fixture.consumerDir)
 
+    // Exercise the installed bin through pnpm, where Node.js also parses command arguments.
+    await expect(
+      runPnpm(
+        ['exec', 'neem', 'dev', '--env-files=missing.env'],
+        fixture.consumerDir,
+        30_000,
+      ),
+    ).rejects.toThrow('MISSING_ENV_FILE')
+
     const installedPackageJson = JSON.parse(
       await readFile(
         resolve(fixture.consumerDir, 'node_modules/@nmtjs/neem/package.json'),

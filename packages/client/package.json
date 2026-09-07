@@ -17,6 +17,16 @@
       "types": "./src/clients/static.ts",
       "import": "./dist/clients/static.js",
       "module-sync": "./dist/clients/static.js"
+    },
+    "./http": {
+      "types": "./src/transports/http/index.ts",
+      "import": "./dist/transports/http/index.js",
+      "module-sync": "./dist/transports/http/index.js"
+    },
+    "./ws": {
+      "types": "./src/transports/ws/index.ts",
+      "import": "./dist/transports/ws/index.js",
+      "module-sync": "./dist/transports/ws/index.js"
     }
   },
   "publishConfig": {
@@ -35,6 +45,16 @@
         "types": "./dist/clients/static.d.ts",
         "import": "./dist/clients/static.js",
         "module-sync": "./dist/clients/static.js"
+      },
+      "./http": {
+        "types": "./dist/transports/http/index.d.ts",
+        "import": "./dist/transports/http/index.js",
+        "module-sync": "./dist/transports/http/index.js"
+      },
+      "./ws": {
+        "types": "./dist/transports/ws/index.d.ts",
+        "import": "./dist/transports/ws/index.js",
+        "module-sync": "./dist/transports/ws/index.js"
       }
     }
   },

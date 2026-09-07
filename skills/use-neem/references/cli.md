@@ -79,6 +79,34 @@ Reload behavior:
 
 `SIGINT` and `SIGTERM` stop watcher and runtime services.
 
+### Environment Files
+
+Use `--env-files` for development projects that need a local or monorepo-root
+environment file:
+
+```bash
+neem dev --env-files ../../.env
+neem dev --env-files .env.local,../../.env
+```
+
+- The option is plural: Node.js can consume `--env-file` before Neem or pnpm
+  handles it.
+- Pass multiple files as one comma-separated value, not repeated flags.
+- Paths resolve from the working directory, even when `--config` points elsewhere.
+- Dotenvx loads files into `process.env` before config evaluation and service
+  worker creation. Runtime workers inherit the values.
+- Existing process variables win, then the first file defining a variable.
+  Dotenvx supports variable expansion and encrypted values.
+- Empty paths, missing files, or decryption errors fail startup.
+- Loading is opt-in and happens once. Restart `neem dev` after editing env files;
+  ordinary config/runtime reloads do not reload them.
+- `build` and `start` do not support this option; provide their environment
+  externally.
+
+`NeemConfig.env` remains an inline string map baked into the manifest. Do not
+put file paths there or add an `envFiles` config property; env-file loading is
+a dev CLI option.
+
 ## Start
 
 `neem start` starts the built runtime server from `dist/neem.manifest.json`.

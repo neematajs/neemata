@@ -1,5 +1,5 @@
 import type {
-  TAnyProcedureContract,
+  TAnyCallableContract,
   TAnyRouterContract,
   TRouteContract,
 } from '@nmtjs/contract'
@@ -9,7 +9,11 @@ import {
   isWireSchemaCodec,
   validateSchema,
 } from '@nmtjs/common/schema'
-import { IsProcedureContract, IsRouterContract } from '@nmtjs/contract'
+import {
+  IsCallableContract,
+  IsRouterContract,
+  IsStreamContract,
+} from '@nmtjs/contract'
 
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
@@ -22,34 +26,43 @@ import type {
 } from '../types.ts'
 import { Client } from '../client.ts'
 
-export class RuntimeContractTransformer {
-  #procedures = new Map<string, TAnyProcedureContract>()
+const collectProcedures = (router: TAnyRouterContract) => {
+  const procedures = new Map<string, TAnyCallableContract>()
 
-  constructor(router: TAnyRouterContract) {
-    const registerProcedures = (route: TRouteContract, path: string[] = []) => {
-      if (IsRouterContract(route)) {
-        for (const [key, child] of Object.entries(route.routes)) {
-          registerProcedures(child, [...path, key])
-        }
-        return
+  const visit = (route: TRouteContract, path: string[] = []) => {
+    if (IsRouterContract(route)) {
+      for (const [key, child] of Object.entries(route.routes)) {
+        visit(child, [...path, key])
       }
-
-      if (IsProcedureContract(route)) {
-        if (route.input && !isWireSchemaCodec(route.input)) {
-          throw new Error(
-            `Runtime client procedure input must be a codec: ${path.join('/')}`,
-          )
-        }
-        if (route.output && !isWireSchemaCodec(route.output)) {
-          throw new Error(
-            `Runtime client procedure output must be a codec: ${path.join('/')}`,
-          )
-        }
-        this.#procedures.set(path.join('/'), route)
-      }
+      return
     }
 
-    registerProcedures(router)
+    if (IsCallableContract(route)) {
+      procedures.set(path.join('/'), route)
+    }
+  }
+
+  visit(router)
+  return procedures
+}
+
+export class RuntimeContractTransformer {
+  #procedures: Map<string, TAnyCallableContract>
+
+  constructor(router: TAnyRouterContract) {
+    this.#procedures = collectProcedures(router)
+    for (const [path, route] of this.#procedures) {
+      if (route.input && !isWireSchemaCodec(route.input)) {
+        throw new Error(
+          `Runtime client procedure input must be a codec: ${path}`,
+        )
+      }
+      if (route.output && !isWireSchemaCodec(route.output)) {
+        throw new Error(
+          `Runtime client procedure output must be a codec: ${path}`,
+        )
+      }
+    }
   }
 
   async encode(procedure: string, payload: any) {
@@ -86,42 +99,24 @@ const assignNested = (
   }
 }
 
-const buildRuntimeCallers = (
-  rpc: RpcLayerApi,
-  contract: TAnyRouterContract,
-) => {
-  const procedures = new Map<string, TAnyProcedureContract>()
-
-  const resolveProcedures = (
-    router: TAnyRouterContract,
-    path: string[] = [],
-  ) => {
-    for (const [key, route] of Object.entries(router.routes)) {
-      if (IsRouterContract(route)) {
-        resolveProcedures(route, [...path, key])
-      } else if (IsProcedureContract(route)) {
-        procedures.set([...path, key].join('/'), route)
-      }
-    }
-  }
-
-  resolveProcedures(contract)
-
+const buildCallers = (rpc: RpcLayerApi, contract: TAnyRouterContract) => {
+  const procedures = collectProcedures(contract)
   const callers: Record<string, any> = Object.create(null)
   const streams: Record<string, any> = Object.create(null)
 
   for (const [name, procedure] of procedures) {
+    const isStream = IsStreamContract(procedure)
     const invoke = (
       payload?: unknown,
       options?: Partial<ClientCallOptions>,
     ) => {
       return rpc.call(name, payload, {
         ...options,
-        _stream_response: !!procedure.stream,
+        _stream_response: isStream,
       })
     }
 
-    if (procedure.stream) {
+    if (isStream) {
       assignNested(streams, name, invoke)
     } else {
       assignNested(callers, name, invoke)
@@ -161,7 +156,7 @@ export class RuntimeClient<
       transport,
       transportOptions,
       new RuntimeContractTransformer(options.contract),
-      (rpc) => buildRuntimeCallers(rpc, options.contract),
+      (rpc) => buildCallers(rpc, options.contract),
     )
   }
 }

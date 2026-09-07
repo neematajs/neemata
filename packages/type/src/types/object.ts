@@ -21,36 +21,13 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['runtimeZodType'] }, core.$strip>
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
-    const encodeProperties = {} as {
-      [K in keyof T]: T[K]['encodeZodType']
-    }
-    const decodeProperties = {} as {
-      [K in keyof T]: T[K]['decodeZodType']
-    }
-    const runtimeProperties = {} as {
-      [K in keyof T]: T[K]['runtimeZodType']
-    }
-
-    for (const key in properties) {
-      encodeProperties[key] = properties[key].encodeZodType
-      decodeProperties[key] = properties[key].decodeZodType
-      runtimeProperties[key] = properties[key].runtimeZodType
-    }
+    const { encode, decode, runtime, wire } = createShapes(properties)
 
     return new ObjectType<T>({
-      encodeZodType: zodObject(encodeProperties),
-      decodeZodType: zodObject(decodeProperties),
-      runtimeZodType: zodObject(runtimeProperties),
-      wireZodTypes: mapWireZodTypes((side) =>
-        zodObject(
-          Object.fromEntries(
-            Object.entries(properties).map(([key, type]) => [
-              key,
-              type.wireZodTypes[side],
-            ]),
-          ),
-        ),
-      ),
+      encodeZodType: zodObject(encode),
+      decodeZodType: zodObject(decode),
+      runtimeZodType: zodObject(runtime),
+      wireZodTypes: mapWireZodTypes((side) => zodObject(wire[side])),
       props: { properties },
     })
   }
@@ -63,39 +40,37 @@ export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['runtimeZodType'] }, core.$loose>
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
-    const encodeProperties = {} as {
-      [K in keyof T]: T[K]['encodeZodType']
-    }
-    const decodeProperties = {} as {
-      [K in keyof T]: T[K]['decodeZodType']
-    }
-    const runtimeProperties = {} as {
-      [K in keyof T]: T[K]['runtimeZodType']
-    }
-
-    for (const key in properties) {
-      encodeProperties[key] = properties[key].encodeZodType
-      decodeProperties[key] = properties[key].decodeZodType
-      runtimeProperties[key] = properties[key].runtimeZodType
-    }
+    const { encode, decode, runtime, wire } = createShapes(properties)
 
     return new LooseObjectType<T>({
-      encodeZodType: zodLooseObject(encodeProperties),
-      decodeZodType: zodLooseObject(decodeProperties),
-      runtimeZodType: zodLooseObject(runtimeProperties),
-      wireZodTypes: mapWireZodTypes((side) =>
-        zodLooseObject(
-          Object.fromEntries(
-            Object.entries(properties).map(([key, type]) => [
-              key,
-              type.wireZodTypes[side],
-            ]),
-          ),
-        ),
-      ),
+      encodeZodType: zodLooseObject(encode),
+      decodeZodType: zodLooseObject(decode),
+      runtimeZodType: zodLooseObject(runtime),
+      wireZodTypes: mapWireZodTypes((side) => zodLooseObject(wire[side])),
       props: { properties },
     })
   }
+}
+
+function createShapes<T extends ObjectTypeProps>(properties: T) {
+  const encode = {} as { [K in keyof T]: T[K]['encodeZodType'] }
+  const decode = {} as { [K in keyof T]: T[K]['decodeZodType'] }
+  const runtime = {} as { [K in keyof T]: T[K]['runtimeZodType'] }
+
+  const wire: Record<
+    'input' | 'output',
+    Record<string, BaseTypeAny['wireZodTypes']['input']>
+  > = { input: {}, output: {} }
+  for (const key in properties) {
+    const property = properties[key]
+    encode[key] = property.encodeZodType
+    decode[key] = property.decodeZodType
+    runtime[key] = property.runtimeZodType
+    wire.input[key] = property.wireZodTypes.input
+    wire.output[key] = property.wireZodTypes.output
+  }
+
+  return { encode, decode, runtime, wire }
 }
 
 export type ObjectLikeType<T extends ObjectTypeProps> =
@@ -139,7 +114,11 @@ export type KeyofType<T extends AnyObjectLikeType> = EnumType<
 >
 
 export function keyof<T extends AnyObjectLikeType>(type: T): KeyofType<T> {
-  return EnumType.factory(Object.keys(type.props.properties) as any)
+  const keys = Object.keys(type.props.properties) as Extract<
+    keyof T['props']['properties'],
+    string
+  >[]
+  return EnumType.factory(keys)
 }
 
 export type PickObjectType<
@@ -159,7 +138,7 @@ export function pick<
   const properties = Object.fromEntries(
     Object.entries(source.props.properties).filter(([key]) => pick[key]),
   )
-  return ObjectType.factory(properties) as any
+  return ObjectType.factory(properties) as PickObjectType<T, P>
 }
 
 export type OmitObjectType<
@@ -177,7 +156,7 @@ export function omit<
   const properties = Object.fromEntries(
     Object.entries(source.props.properties).filter(([key]) => !omit[key]),
   )
-  return ObjectType.factory(properties) as any
+  return ObjectType.factory(properties) as OmitObjectType<T, P>
 }
 
 export type ExtendObjectType<
@@ -192,13 +171,13 @@ export type ExtendObjectType<
 }>
 
 export function extend<T extends AnyObjectLikeType, P extends ObjectTypeProps>(
-  object1: T,
+  source: T,
   properties: P,
 ): ExtendObjectType<T, P> {
   return ObjectType.factory({
-    ...object1.props.properties,
+    ...source.props.properties,
     ...properties,
-  }) as any
+  }) as ExtendObjectType<T, P>
 }
 
 export type MergeObjectTypes<
@@ -221,7 +200,7 @@ export function merge<
   return ObjectType.factory({
     ...object1.props.properties,
     ...object2.props.properties,
-  }) as any
+  }) as MergeObjectTypes<T1, T2>
 }
 
 export type PartialObjectType<T extends AnyObjectLikeType> = ObjectType<{
@@ -232,13 +211,13 @@ export type PartialObjectType<T extends AnyObjectLikeType> = ObjectType<{
 export function partial<T extends AnyObjectLikeType>(
   object: T,
 ): PartialObjectType<T> {
-  const properties = {} as any
+  const properties: ObjectTypeProps = {}
 
   for (const [key, value] of Object.entries(object.props.properties)) {
     properties[key] = value.optional()
   }
 
-  return ObjectType.factory(properties)
+  return ObjectType.factory(properties) as PartialObjectType<T>
 }
 
 export const object = ObjectType.factory

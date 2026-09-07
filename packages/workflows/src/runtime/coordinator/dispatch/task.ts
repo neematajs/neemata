@@ -53,21 +53,19 @@ export async function dispatchTaskNode(
         input.outputs,
         input.run.input,
       ),
-    resolveNodeInput: async () =>
-      hasStoredNodeInput(existing)
-        ? existing.input
-        : input.node.input
-          ? runWorkflowUserCallback(() =>
-              input.node.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            )
-          : await encodeWorkflowUserSchemaValue(
-              declaration.task.input,
-              input.run.input,
-              `task input [${input.workflow.workflow.name}.${input.node.name}]`,
-            ),
+    resolveNodeInput: async () => {
+      if (hasStoredNodeInput(existing)) return existing.input
+      if (!input.node.input) {
+        return await encodeWorkflowUserSchemaValue(
+          input.node.target.input,
+          input.run.input,
+          `task input [${input.workflow.workflow.name}.${input.node.name}]`,
+        )
+      }
+
+      return runWorkflowUserCallback(() =>
+        input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+      )
+    },
   })
 }

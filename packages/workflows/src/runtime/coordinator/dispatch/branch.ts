@@ -145,22 +145,20 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: async () =>
-        hasStoredNodeInput(existing)
-          ? existing.input
-          : selected.input
-            ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
-              )
-            : await encodeWorkflowUserSchemaValue(
-                selected.target.input,
-                input.run.input,
-                `workflow input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-              ),
+      resolveNodeInput: async () => {
+        if (hasStoredNodeInput(existing)) return existing.input
+        if (!selected.input) {
+          return await encodeWorkflowUserSchemaValue(
+            selected.target.input,
+            input.run.input,
+            `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          )
+        }
+
+        return runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      },
     })
   }
 
@@ -194,22 +192,20 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: async () =>
-        hasStoredNodeInput(existing)
-          ? existing.input
-          : selected.input
-            ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
-              )
-            : await encodeWorkflowUserSchemaValue(
-                taskTarget.input,
-                input.run.input,
-                `task input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-              ),
+      resolveNodeInput: async () => {
+        if (hasStoredNodeInput(existing)) return existing.input
+        if (!selected.input) {
+          return await encodeWorkflowUserSchemaValue(
+            selected.target.input,
+            input.run.input,
+            `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          )
+        }
+
+        return runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      },
     })
   }
 
@@ -228,30 +224,29 @@ export async function dispatchBranchNode(
   // Once the child has an attempt, its input is authoritative — never re-run
   // the user's input callback on re-entry.
   const hasAttempt = child.attemptCount > 0
-  const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`
-  const nodeInput = hasAttempt
-    ? undefined
-    : selected.input
-      ? (
-          await canonicalizeWorkflowUserSchemaInput(
-            selectedActivityDeclaration.input,
-            runWorkflowUserCallback(() =>
-              selected.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            ),
-            inputLabel,
-          )
-        ).encoded
-      : await encodeWorkflowUserSchemaValue(
+  let nodeInput: unknown
+  if (!hasAttempt) {
+    const rawInput = selected.input
+      ? runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      : input.run.input
+    const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`
+    if (selected.input) {
+      nodeInput = (
+        await canonicalizeWorkflowUserSchemaInput(
           selectedActivityDeclaration.input,
-          input.run.input,
+          rawInput,
           inputLabel,
         )
-
-  if (!hasAttempt) {
+      ).encoded
+    } else {
+      nodeInput = await encodeWorkflowUserSchemaValue(
+        selectedActivityDeclaration.input,
+        rawInput,
+        inputLabel,
+      )
+    }
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,
@@ -285,7 +280,7 @@ export async function dispatchBranchNode(
       })
       return {
         attempt: result.attempt,
-        commandInput: result.created ? nodeInput : result.attempt.input,
+        commandInput: result.attempt.input,
         created: result.created,
       }
     },

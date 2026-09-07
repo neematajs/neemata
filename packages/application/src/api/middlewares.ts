@@ -44,5 +44,5 @@ export function createMiddleware<Deps extends Dependencies = {}>(
     dependencies,
     handler,
     [kMiddleware]: true,
-  }) as Middleware<Deps>
+  } satisfies Middleware<Deps>)
 }

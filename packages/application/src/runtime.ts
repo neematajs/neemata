@@ -19,6 +19,8 @@ import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { ApplicationHooks } from './hooks.ts'
 
+const ROUTE_KEY_PATTERN = /^[a-zA-Z0-9-]+$/
+
 export interface NeemataApplicationOptions {
   logger: Logger
   container?: Container
@@ -153,8 +155,10 @@ export class NeemataApplication {
   protected registerApi(): void {
     const { router, filters, guards, middlewares } = this.appConfig
 
-    if (Array.from(this.routers.values()).some((r) => isRootRouter(r))) {
-      throw new Error('Root router already registered')
+    for (const registered of this.routers) {
+      if (isRootRouter(registered)) {
+        throw new Error('Root router already registered')
+      }
     }
 
     if (!isRootRouter(router)) {
@@ -194,25 +198,35 @@ export class NeemataApplication {
   }
 
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []): void {
-    for (const route of Object.values(router.routes)) {
+    for (const [key, route] of Object.entries(router.routes)) {
+      // route keys become public-name segments; the restricted charset keeps
+      // every projection's separator transform (native "/", JSON-RPC ".",
+      // MCP "_") bijective and collision-free
+      if (!ROUTE_KEY_PATTERN.test(key)) {
+        throw new Error(
+          `Invalid route key "${key}": route keys must match ${ROUTE_KEY_PATTERN}`,
+        )
+      }
       if (isRouter(route)) {
         const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')
-        for (const router of this.routers) {
-          if (router.contract.name === name) {
+        for (const registered of this.routers) {
+          if (registered.contract.name === name) {
             throw new Error(`Router ${String(name)} already registered`)
           }
         }
         this.routers.add(route)
         this.registerRouter(route, [...path, router])
-      } else if (isProcedure(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Procedures must have a name')
-        if (this.procedures.has(name)) {
-          throw new Error(`Procedure ${name} already registered`)
-        }
-        this.procedures.set(name, { procedure: route, path: [...path, router] })
+        continue
       }
+
+      if (!isProcedure(route)) continue
+      const name = route.contract.name
+      if (!name) throw new Error('Procedures must have a name')
+      if (this.procedures.has(name)) {
+        throw new Error(`Procedure ${name} already registered`)
+      }
+      this.procedures.set(name, { procedure: route, path: [...path, router] })
     }
   }
 }

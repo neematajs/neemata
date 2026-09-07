@@ -5,12 +5,11 @@
 export function anyAbortSignal(
   ...signals: (globalThis.AbortSignal | undefined | null)[]
 ): globalThis.AbortSignal {
-  const filtered = signals.filter(Boolean) as globalThis.AbortSignal[]
+  const filtered = signals.filter((signal) => !!signal)
   if (filtered.length === 0) {
     throw new Error('No AbortSignals provided')
-  } else if (filtered.length === 1) {
-    return filtered[0]
-  } else {
-    return globalThis.AbortSignal.any(filtered)
   }
+  if (filtered.length === 1) return filtered[0]
+
+  return globalThis.AbortSignal.any(filtered)
 }

@@ -102,15 +102,10 @@ describe('Injectable', () => {
 
     optional(lazyInjectable)
 
-    expect(() => {
-      // @ts-expect-error factory injectables have their own default resolution
-      optional(factoryInjectable)
-    }).toThrow('Optional dependencies can only wrap lazy injectables')
-
-    expect(() => {
-      // @ts-expect-error value injectables have their own default resolution
-      optional(valueInjectable)
-    }).toThrow('Optional dependencies can only wrap lazy injectables')
+    expectTypeOf(factoryInjectable).not.toExtend<
+      Parameters<typeof optional>[0]
+    >()
+    expectTypeOf(valueInjectable).not.toExtend<Parameters<typeof optional>[0]>()
   })
 
   it('should reject non-lazy injectables at runtime', () => {

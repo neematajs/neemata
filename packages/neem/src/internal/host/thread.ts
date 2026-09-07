@@ -16,6 +16,7 @@ import type {
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeWorkerData, WorkerMessage } from '../worker/protocol.ts'
+import { NeemWorkerError } from '../../shared/errors.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
 import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
@@ -115,9 +116,11 @@ export class ThreadController {
     if (this.state === 'ready') return
     if (this.worker) throw new Error(`Worker [${this.name}] already started`)
 
-    await this.callWorkerHook('worker:start')
-    this.state = 'starting'
     this.stopping = false
+    await this.callWorkerHook('worker:start')
+    // stop() may run while a startup hook is still pending.
+    if (this.stopping) return
+    this.state = 'starting'
     this.startedAt = Date.now()
     this.readyAt = undefined
     this.stoppedAt = undefined
@@ -172,13 +175,13 @@ export class ThreadController {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true
     const worker = this.worker
     if (!worker || this.state === 'stopped') {
       this.markStopped()
       return
     }
 
-    this.stopping = true
     this.state = 'stopping'
     this.ready?.reject(new Error(`Worker [${this.name}] stopped before ready`))
     this.logger.trace('Neem worker stopping')
@@ -218,7 +221,13 @@ export class ThreadController {
     }
 
     if (message.type === 'error') {
-      this.fail(deserializeError(message.data))
+      this.fail(
+        new NeemWorkerError({
+          worker: this.name,
+          origin: message.data.origin,
+          cause: deserializeError(message.data),
+        }),
+      )
       return
     }
 

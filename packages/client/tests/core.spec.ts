@@ -4,7 +4,7 @@ import type {
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
 import type {
-  BaseClientFormat,
+  BaseClientCodec,
   MessageContext,
   ProtocolClientBlobStream,
 } from '@nmtjs/protocol/client'
@@ -19,17 +19,17 @@ import { describe, expect, it, vi } from 'vitest'
 import type { TransportConnectParams } from '../src/transport.ts'
 import { ClientCore, ClientError } from '../src/core.ts'
 
-const format: BaseClientFormat = {
+const codec: BaseClientCodec = {
   contentType: 'application/json',
   encode: vi.fn((value) => new TextEncoder().encode(JSON.stringify(value))),
   decode: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
   encodeRPC: vi.fn((value) => new TextEncoder().encode(JSON.stringify(value))),
   decodeRPC: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
-} as BaseClientFormat
+} as BaseClientCodec
 
 const createMessageContext = (): MessageContext => ({
-  encoder: format,
-  decoder: format,
+  encoder: codec,
+  decoder: codec,
   transport: { send: vi.fn() },
   streamId: vi.fn(() => 1),
   addClientStream: vi.fn(() => ({}) as unknown as ProtocolClientBlobStream) as (
@@ -88,7 +88,7 @@ describe('ClientCore', () => {
   it('connects a bidirectional transport and emits lifecycle state changes', async () => {
     const transport = createBidirectionalTransportDouble()
     const core = new ClientCore(
-      { protocol: ProtocolVersion.v1, format, application: 'demo' },
+      { protocol: ProtocolVersion.v1, codec, application: 'demo' },
       transport.transport,
     )
 
@@ -132,7 +132,7 @@ describe('ClientCore', () => {
   it('falls back to disconnected state when transport disconnect resolves without callback', async () => {
     const transport = createBidirectionalTransportDouble()
     const core = new ClientCore(
-      { protocol: ProtocolVersion.v1, format },
+      { protocol: ProtocolVersion.v1, codec },
       transport.transport,
     )
 
@@ -164,7 +164,7 @@ describe('ClientCore', () => {
   it('decodes incoming transport messages and emits them on the message bus', async () => {
     const transport = createBidirectionalTransportDouble()
     const core = new ClientCore(
-      { protocol: ProtocolVersion.v1, format },
+      { protocol: ProtocolVersion.v1, codec },
       transport.transport,
     )
 
@@ -193,7 +193,7 @@ describe('ClientCore', () => {
   it('emits an error event when a server frame fails to decode', async () => {
     const transport = createBidirectionalTransportDouble()
     const core = new ClientCore(
-      { protocol: ProtocolVersion.v1, format },
+      { protocol: ProtocolVersion.v1, codec },
       transport.transport,
     )
 
@@ -228,7 +228,7 @@ describe('ClientCore', () => {
   it('survives a decode error emitted without any error listeners', async () => {
     const transport = createBidirectionalTransportDouble()
     const core = new ClientCore(
-      { protocol: ProtocolVersion.v1, format },
+      { protocol: ProtocolVersion.v1, codec },
       transport.transport,
     )
 
@@ -256,7 +256,7 @@ describe('ClientCore', () => {
     try {
       const transport = createBidirectionalTransportDouble()
       const core = new ClientCore(
-        { protocol: ProtocolVersion.v1, format },
+        { protocol: ProtocolVersion.v1, codec },
         transport.transport,
       )
 

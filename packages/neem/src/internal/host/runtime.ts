@@ -37,6 +37,7 @@ export class RuntimeController {
   private logger: Logger | undefined
   private threads: readonly ThreadController[] = []
   private stopped = true
+  private cleanupPromise: Promise<void> | undefined
   private recoveryPromise: Promise<void> | undefined
   private restartAttempts = 0
 
@@ -72,10 +73,13 @@ export class RuntimeController {
 
     try {
       await this.callRuntimeHook('runtime:start')
+      if (this.stopped) return
       const host = this.createHostRunner()
       this.host = host
       await host.start()
+      if (this.stopped) return
       const plan = await host.plan()
+      if (this.stopped) return
       const threadPlans = resolveThreadTopology({
         snapshot: this.options.snapshot,
         runtimeName: this.name,
@@ -105,8 +109,11 @@ export class RuntimeController {
       )
 
       await Promise.all(this.threads.map((thread) => thread.start()))
+      if (this.stopped) return
       await host.callStart(this.getThreadHandles())
+      if (this.stopped) return
       await this.callRuntimeHook('runtime:ready', this.getUpstreams())
+      if (this.stopped) return
       logger.debug('Neem runtime ready')
       logger.trace(
         { threads: this.threads.length, upstreams: this.getUpstreams().length },
@@ -115,7 +122,7 @@ export class RuntimeController {
     } catch (error) {
       const normalized = normalizeError(error)
       await this.callRuntimeFailHook(normalized)
-      await this.stop().catch((stopError) => {
+      await this.cleanup().catch((stopError) => {
         logger.warn(
           new Error(`Runtime [${this.name}] cleanup failed`, {
             cause: normalizeError(stopError),
@@ -128,6 +135,20 @@ export class RuntimeController {
 
   async stop(): Promise<void> {
     this.stopped = true
+    await this.cleanup()
+  }
+
+  // Failed startup cleanup must leave the remaining recovery attempts eligible.
+  private cleanup(): Promise<void> {
+    // Startup failure and recovery can reach cleanup together. Replacements
+    // must wait for the original workers to release their resources.
+    this.cleanupPromise ??= this.stopResources().finally(() => {
+      this.cleanupPromise = undefined
+    })
+    return this.cleanupPromise
+  }
+
+  private async stopResources(): Promise<void> {
     const host = this.host
     const threads = this.threads
     const logger = this.logger
@@ -172,10 +193,11 @@ export class RuntimeController {
   }
 
   private async handleFailure(error: Error, source: string): Promise<void> {
+    if (this.stopped) return
     this.logger?.warn({ err: error }, `Neem runtime ${source} failed`)
     await this.callRuntimeFailHook(error)
 
-    if (this.recoveryPromise) return
+    if (this.stopped || this.recoveryPromise) return
 
     const policy = createRecoveryPolicy(
       this.options.snapshot.mode,
@@ -193,6 +215,8 @@ export class RuntimeController {
   }
 
   private async recover(initialError: Error): Promise<void> {
+    // Cleanup clears the active logger between attempts.
+    const logger = this.logger
     const policy = createRecoveryPolicy(
       this.options.snapshot.mode,
       this.options.recovery,
@@ -200,10 +224,11 @@ export class RuntimeController {
     let lastError = initialError
 
     while (this.restartAttempts < policy.attempts) {
+      if (this.stopped) return
       const attempt = this.restartAttempts + 1
       this.restartAttempts = attempt
       const delayMs = getRecoveryDelay(policy, attempt)
-      this.logger?.warn(
+      logger?.warn(
         { err: lastError },
         `Restarting Neem runtime after failure (${attempt}/${policy.attempts})`,
       )
@@ -211,8 +236,10 @@ export class RuntimeController {
       if (this.stopped) return
 
       try {
-        await this.stop()
+        await this.cleanup()
+        if (this.stopped) return
         await this.start()
+        if (this.stopped) return
         await this.options.onRecovered?.(this)
         this.restartAttempts = 0
         return
@@ -221,7 +248,8 @@ export class RuntimeController {
       }
     }
 
-    this.logger?.error({ err: lastError }, 'Neem runtime recovery exhausted')
+    if (this.stopped) return
+    logger?.error({ err: lastError }, 'Neem runtime recovery exhausted')
     await this.options.onFailure?.(lastError, this)
   }
 
@@ -294,15 +322,26 @@ export class RuntimeController {
   }
 
   private getPoolHealth(): NeemWorkerPoolHealth {
-    const states = this.threads.map((thread) => thread.getState())
+    const counts: Record<NeemWorkerState, number> = {
+      idle: 0,
+      starting: 0,
+      ready: 0,
+      stopping: 0,
+      stopped: 0,
+      failed: 0,
+    }
+    for (const thread of this.threads) counts[thread.getState()]++
+
+    const size = this.threads.length
+    const state = getPoolState(counts, size)
     return {
       name: `runtime:${this.name}`,
-      state: getPoolState(states),
-      size: states.length,
-      ready: states.filter((state) => state === 'ready').length,
-      failed: states.filter((state) => state === 'failed').length,
-      stopped: states.filter((state) => state === 'stopped').length,
-      starting: states.filter((state) => state === 'starting').length,
+      state,
+      size,
+      ready: counts.ready,
+      failed: counts.failed,
+      stopped: counts.stopped,
+      starting: counts.starting,
     }
   }
 
@@ -349,7 +388,8 @@ export function resolveThreadTopology(options: {
   const workers = options.plan?.workers ?? []
   const plans = normalizePlannedWorkers(options.runtimeName, workers)
 
-  if (plans.length > 0 && !workerArtifact) {
+  if (plans.length === 0) return []
+  if (!workerArtifact) {
     throw new Error(
       `Runtime [${options.runtimeName}] planned workers but has no worker artifact`,
     )
@@ -357,7 +397,7 @@ export function resolveThreadTopology(options: {
 
   return plans.map((plan) => ({
     name: plan.name,
-    artifact: workerArtifact!,
+    artifact: workerArtifact,
     data: plan.data,
   }))
 }
@@ -411,14 +451,17 @@ function cloneWorkerData(
   }
 }
 
-function getPoolState(states: readonly NeemWorkerState[]): NeemWorkerPoolState {
-  if (states.length === 0) return 'ready'
-  if (states.every((state) => state === 'idle')) return 'idle'
-  if (states.some((state) => state === 'starting')) return 'starting'
-  if (states.some((state) => state === 'stopping')) return 'stopping'
-  if (states.every((state) => state === 'stopped')) return 'stopped'
-  if (states.every((state) => state === 'ready')) return 'ready'
-  if (states.some((state) => state === 'ready')) return 'degraded'
-  if (states.some((state) => state === 'failed')) return 'failed'
+function getPoolState(
+  counts: Record<NeemWorkerState, number>,
+  size: number,
+): NeemWorkerPoolState {
+  if (size === 0) return 'ready'
+  if (counts.idle === size) return 'idle'
+  if (counts.starting > 0) return 'starting'
+  if (counts.stopping > 0) return 'stopping'
+  if (counts.stopped === size) return 'stopped'
+  if (counts.ready === size) return 'ready'
+  if (counts.ready > 0) return 'degraded'
+  if (counts.failed > 0) return 'failed'
   return 'idle'
 }

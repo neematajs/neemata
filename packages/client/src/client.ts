@@ -78,13 +78,13 @@ export class Client<
     this.transformer = transformer
 
     const transport = this.transportFactory(
-      { protocol: this.options.protocol, format: this.options.format },
+      { protocol: this.options.protocol, codec: this.options.codec },
       this.transportOptions,
     )
 
     const coreOptions: ClientCoreOptions = {
       protocol: this.options.protocol,
-      format: this.options.format,
+      codec: this.options.codec,
       application: this.options.application,
       autoConnect: this.options.autoConnect,
     }
@@ -99,8 +99,8 @@ export class Client<
     this.pingLayer = createPingLayer(this.core)
 
     this.core.setMessageContextFactory(() => ({
-      encoder: this.core.format,
-      decoder: this.core.format,
+      encoder: this.core.codec,
+      decoder: this.core.codec,
       transport: {
         send: (buffer) => {
           this.core.send(buffer).catch(noopFn)

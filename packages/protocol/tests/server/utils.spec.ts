@@ -1,54 +1,60 @@
 import { describe, expect, it } from 'vitest'
 
-import { ProtocolFormats } from '../../src/server/format.ts'
+import { ProtocolCodecRegistry } from '../../src/server/codec.ts'
 import {
-  getFormat,
+  negotiateCodecs,
   UnsupportedAcceptTypeError,
   UnsupportedContentTypeError,
 } from '../../src/server/utils.ts'
-import { testFormat } from '../_utils.ts'
+import { testCodec } from '../_utils.ts'
 
-describe('getFormat', () => {
+describe('negotiateCodecs', () => {
   it('should resolve both encoder and decoder', () => {
-    const formats = new ProtocolFormats([testFormat()])
-    const { encoder, decoder } = getFormat(formats, {
-      contentType: 'test',
-      accept: 'test',
+    const codecs = new ProtocolCodecRegistry([testCodec()])
+    const { encoder, decoder } = negotiateCodecs(codecs, {
+      contentType: 'application/test',
+      accept: 'application/test',
     })
-    expect(encoder.contentType).toBe('test')
-    expect(decoder.accept).toContainEqual('test')
+    expect(encoder.contentType).toBe('application/test')
+    expect(decoder.accept).toContainEqual('application/test')
   })
 
   it('should resolve encoder from accept and decoder from content-type', () => {
-    const decoderFormat = testFormat()
-    decoderFormat.accept = ['application/decode']
-    decoderFormat.contentType = 'application/decode-response'
+    const decoderCodec = testCodec()
+    decoderCodec.accept = ['application/decode']
+    decoderCodec.contentType = 'application/decode-response'
 
-    const encoderFormat = testFormat()
-    encoderFormat.accept = ['application/encode-request']
-    encoderFormat.contentType = 'application/encode'
+    const encoderCodec = testCodec()
+    encoderCodec.accept = ['application/encode-request']
+    encoderCodec.contentType = 'application/encode'
 
-    const formats = new ProtocolFormats([decoderFormat, encoderFormat])
-    const { encoder, decoder } = getFormat(formats, {
+    const codecs = new ProtocolCodecRegistry([decoderCodec, encoderCodec])
+    const { encoder, decoder } = negotiateCodecs(codecs, {
       contentType: 'application/decode',
       accept: 'application/encode',
     })
 
-    expect(encoder).toBe(encoderFormat)
-    expect(decoder).toBe(decoderFormat)
+    expect(encoder).toBe(encoderCodec)
+    expect(decoder).toBe(decoderCodec)
   })
 
   it('should throw when encoder unsupported', () => {
-    const formats = new ProtocolFormats([testFormat()])
+    const codecs = new ProtocolCodecRegistry([testCodec()])
     expect(() =>
-      getFormat(formats, { contentType: 'test', accept: 'application/json' }),
+      negotiateCodecs(codecs, {
+        contentType: 'application/test',
+        accept: 'application/json',
+      }),
     ).toThrow(UnsupportedAcceptTypeError)
   })
 
   it('should throw when decoder unsupported', () => {
-    const formats = new ProtocolFormats([testFormat()])
+    const codecs = new ProtocolCodecRegistry([testCodec()])
     expect(() =>
-      getFormat(formats, { contentType: 'application/json', accept: 'test' }),
+      negotiateCodecs(codecs, {
+        contentType: 'application/json',
+        accept: 'application/test',
+      }),
     ).toThrow(UnsupportedContentTypeError)
   })
 })

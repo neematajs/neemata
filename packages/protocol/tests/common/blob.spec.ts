@@ -18,10 +18,11 @@ describe('ProtocolBlob', () => {
     })
 
     it('should infer type from a File source', () => {
-      const blob = ProtocolBlob.from(
-        new File(['{}'], 'data.json', { type: 'application/json' }),
-      )
-      expect(blob.metadata.type).toBe('application/json')
+      const source = new File(['{}'], 'data.json', {
+        type: 'application/json',
+      })
+      const blob = ProtocolBlob.from(source)
+      expect(blob.metadata.type).toBe(source.type)
       expect(blob.metadata.filename).toBe('data.json')
     })
 

@@ -8,7 +8,6 @@ import type {
   BranchCaseOutputs,
   CancellationPolicy,
   DurationString,
-  MapRunMode,
   RunIdempotencyBuilder,
   RunTagsBuilder,
   RunUniqueBuilder,
@@ -301,13 +300,11 @@ export type WorkflowBuilder<
     NodeName extends string,
     Task extends AnyTaskDefinition,
     ItemSchema extends Schema,
-    Mode extends MapRunMode,
   >(
     name: AvailableNodeName<NodeName>,
     task: Task,
     options: {
       item: ItemSchema
-      mode: Mode
       title?: string
       description?: string
       concurrency?: number
@@ -319,7 +316,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapTaskNode<NodeName, Task, InputSchemaSides<ItemSchema>, Mode>,
+      WorkflowMapTaskNode<NodeName, Task, InputSchemaSides<ItemSchema>>,
     ],
     DeclaredOutput
   >
@@ -328,13 +325,11 @@ export type WorkflowBuilder<
     NodeName extends string,
     Workflow extends AnyWorkflowDefinition,
     ItemSchema extends Schema,
-    Mode extends MapRunMode,
   >(
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
     options: {
       item: ItemSchema
-      mode: Mode
       title?: string
       description?: string
       concurrency?: number
@@ -345,12 +340,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapWorkflowNode<
-        NodeName,
-        Workflow,
-        InputSchemaSides<ItemSchema>,
-        Mode
-      >,
+      WorkflowMapWorkflowNode<NodeName, Workflow, InputSchemaSides<ItemSchema>>,
     ],
     DeclaredOutput
   >
@@ -453,11 +443,16 @@ function assertMapConcurrency(options: { readonly concurrency?: number }) {
 
 function createBranchCaseHelpers(): BranchCaseHelpers {
   return Object.freeze({
-    activity: (options: any) => Object.freeze({ kind: 'activity', ...options }),
-    task: (task: AnyTaskDefinition, options?: any) =>
-      Object.freeze({ kind: 'task', target: task, ...options }),
-    workflow: (workflow: AnyWorkflowDefinition, options?: any) =>
-      Object.freeze({ kind: 'workflow', target: workflow, ...options }),
+    activity: (options: Parameters<BranchCaseHelpers['activity']>[0]) =>
+      Object.freeze({ kind: 'activity', ...options }),
+    task: (
+      task: AnyTaskDefinition,
+      options?: Parameters<BranchCaseHelpers['task']>[1],
+    ) => Object.freeze({ kind: 'task', target: task, ...options }),
+    workflow: (
+      workflow: AnyWorkflowDefinition,
+      options?: Parameters<BranchCaseHelpers['workflow']>[1],
+    ) => Object.freeze({ kind: 'workflow', target: workflow, ...options }),
   }) as BranchCaseHelpers
 }
 
@@ -563,11 +558,11 @@ class WorkflowDraftBuilder<Name extends string> {
       tags: this.options.tags,
       idempotency: this.options.idempotency,
       unique: this.options.unique,
-    }) as any
+    })
   }
 
   private withNode(node: WorkflowNode) {
-    return new WorkflowDraftBuilder(this.options, [...this.nodes, node]) as any
+    return new WorkflowDraftBuilder(this.options, [...this.nodes, node])
   }
 }
 

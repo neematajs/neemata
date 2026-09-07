@@ -5,7 +5,6 @@ import type {
   Scope,
 } from '@nmtjs/core'
 import type { ProxyableTransportType, Transport } from '@nmtjs/gateway'
-import type { ConnectionType } from '@nmtjs/protocol'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
 import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
@@ -19,16 +18,14 @@ import { kApplicationConfig } from './constants.ts'
 export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
 
 export type ApplicationTransport<
-  Type extends ConnectionType = ConnectionType,
   TransportOptions = any,
   Injections extends {
     [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
   } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends ProxyableTransportType | undefined =
-    | ProxyableTransportType
+  Proxyable extends readonly ProxyableTransportType[] | undefined =
+    | readonly ProxyableTransportType[]
     | undefined,
 > = Transport<
-  Type,
   TransportOptions,
   Injections,
   Proxyable,
@@ -53,16 +50,16 @@ export interface ApplicationConfig<
 export function defineApplication<R extends AnyRootRouter>(
   options: Pick<ApplicationConfig<R>, 'router'> &
     Partial<Omit<ApplicationConfig<R>, 'router'>>,
-) {
+): ApplicationConfig<R> {
   const {
     router,
     guards = [],
     middlewares = [],
     meta = [],
     plugins = [],
-    api = {} as ApplicationConfig['api'],
-    filters = [] as ApplicationConfig['filters'],
-    hooks = [] as ApplicationConfig['hooks'],
+    api = {},
+    filters = [],
+    hooks = [],
     lifecycleHooks = {},
   } = options
 
@@ -79,7 +76,7 @@ export function defineApplication<R extends AnyRootRouter>(
     meta,
     hooks,
     lifecycleHooks,
-  } satisfies AnyApplicationConfig) as ApplicationConfig<R>
+  } satisfies ApplicationConfig<R>)
 }
 
 export function isApplicationConfig(value: any): value is ApplicationConfig {
