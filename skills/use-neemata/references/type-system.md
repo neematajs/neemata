@@ -217,9 +217,12 @@ throws when a boundary cannot be represented faithfully. Neemata runtime
 validation does not require JSON Schema support.
 
 Titles and descriptions are preserved on both directions, including nested
-transformed fields. Examples describe encoded wire values and are emitted on
-decode-input and encode-output JSON Schema projections. A custom
-`libraryOptions.json.override` runs after these metadata defaults.
+transformed fields. Both `.examples(...values)` and `.meta({ examples: values })`
+accept runtime values, validate and encode them once, and attach the results to
+the wire value schemas. Examples are emitted on decode-input and encode-output
+JSON Schema projections, including examples on entire objects and collections.
+Runtime projections retain titles and descriptions without wire examples.
+`libraryOptions.json.override` is passed directly to Zod's converter.
 
 Framework-neutral helpers and contracts are available from
 `@nmtjs/common/schema`:

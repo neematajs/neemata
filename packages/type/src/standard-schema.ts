@@ -21,7 +21,7 @@ export namespace standard {
   export function create<T extends ZodMiniType>(
     zodType: T,
     registry: MetadataRegistry,
-    wireIO: 'input' | 'output',
+    jsonTypes: { input?: ZodMiniType; output?: ZodMiniType } = {},
   ): Schema<T> {
     const schema = Object.assign(
       (value: unknown, context: core.ParseContext<core.$ZodIssue> = {}) =>
@@ -33,9 +33,9 @@ export namespace standard {
           validate: (value: unknown) => validate(zodType, value),
           jsonSchema: Object.freeze({
             input: (options) =>
-              toJSON(zodType, registry, wireIO, 'input', options),
+              toJSON(jsonTypes.input ?? zodType, registry, 'input', options),
             output: (options) =>
-              toJSON(zodType, registry, wireIO, 'output', options),
+              toJSON(jsonTypes.output ?? zodType, registry, 'output', options),
           }),
         } satisfies Props<T>),
       },
@@ -75,7 +75,6 @@ function toIssues(error: core.$ZodError): SchemaIssue[] {
 function toJSON<T extends ZodMiniType>(
   zodType: T,
   registry: MetadataRegistry,
-  wireIO: 'input' | 'output',
   io: 'input' | 'output',
   {
     target,
@@ -87,7 +86,7 @@ function toJSON<T extends ZodMiniType>(
   const { json = {} } = (libraryOptions ?? {}) as {
     json?: ToJSONSchemaParams
   }
-  const { cycles = 'throw', reused = 'inline', override, ...options } = json
+  const { cycles = 'throw', reused = 'inline', ...options } = json
   return toJSONSchema(zodType, {
     ...options,
     target,
@@ -95,14 +94,5 @@ function toJSON<T extends ZodMiniType>(
     cycles,
     reused,
     metadata: registry,
-    override: (context) => {
-      const examples = registry.get(context.zodSchema)?.examples
-      if (examples !== undefined) {
-        // Neemata examples are already encoded; Zod assumes transform examples are outputs.
-        if (io === wireIO) context.jsonSchema.examples = examples
-        else delete context.jsonSchema.examples
-      }
-      override?.(context)
-    },
   })
 }

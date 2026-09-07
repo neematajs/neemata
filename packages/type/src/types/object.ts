@@ -8,6 +8,7 @@ import {
 import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
+import { mapWireZodTypes } from './_metadata.ts'
 import { BaseType } from './base.ts'
 import { EnumType } from './enum.ts'
 
@@ -34,6 +35,16 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     return new ObjectType<T>({
       encodeZodType: zodObject(encodeProperties),
       decodeZodType: zodObject(decodeProperties),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodObject(
+          Object.fromEntries(
+            Object.entries(properties).map(([key, type]) => [
+              key,
+              type.wireZodTypes[side],
+            ]),
+          ),
+        ),
+      ),
       props: { properties },
     })
   }
@@ -60,6 +71,16 @@ export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
     return new LooseObjectType<T>({
       encodeZodType: zodLooseObject(encodeProperties),
       decodeZodType: zodLooseObject(decodeProperties),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodLooseObject(
+          Object.fromEntries(
+            Object.entries(properties).map(([key, type]) => [
+              key,
+              type.wireZodTypes[side],
+            ]),
+          ),
+        ),
+      ),
       props: { properties },
     })
   }
@@ -88,6 +109,12 @@ export class RecordType<
     return new RecordType<K, E>({
       encodeZodType: zodRecord(key.encodeZodType, element.encodeZodType),
       decodeZodType: zodRecord(key.decodeZodType, element.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodRecord(
+          key.wireZodTypes[side] as K['encodeZodType'],
+          element.wireZodTypes[side],
+        ),
+      ),
       props: { key, element },
     })
   }

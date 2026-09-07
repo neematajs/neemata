@@ -18,11 +18,11 @@ import type {
   ZodMiniType,
   ZodMiniUnion,
 } from 'zod/mini'
-import { core, nullable, optional, prefault } from 'zod/mini'
+import { core, input, nullable, optional, output, prefault } from 'zod/mini'
 
-import type { TypeMetadata } from './_metadata.ts'
+import type { TypeMetadata, WireZodTypes } from './_metadata.ts'
 import { standard } from '../standard-schema.ts'
-import { typesRegistry } from './_metadata.ts'
+import { mapWireZodTypes, typesRegistry } from './_metadata.ts'
 
 export type PrimitiveValueType = string | number | boolean | null
 
@@ -77,6 +77,8 @@ export abstract class BaseType<
 > {
   readonly encodeZodType: EncodeZodType
   readonly decodeZodType: DecodeZodType
+  readonly wireZodTypes: WireZodTypes
+  private metadata: TypeMetadata = {}
   readonly props: Props
   readonly params: TypeParams
   readonly encode: standard.Schema<EncodeZodType>
@@ -85,21 +87,33 @@ export abstract class BaseType<
   constructor({
     encodeZodType,
     decodeZodType = encodeZodType as unknown as DecodeZodType,
+    wireZodTypes,
     props = {} as Props,
     params = {} as Partial<TypeParams>,
   }: {
     encodeZodType: EncodeZodType
     decodeZodType?: DecodeZodType
+    wireZodTypes?: WireZodTypes
     props?: Props
     params?: Partial<TypeParams>
   }) {
     this.encodeZodType = encodeZodType
     this.decodeZodType = decodeZodType
 
+    // Caller-supplied schemas may be reused; each type must own its metadata.
+    this.wireZodTypes = wireZodTypes ?? {
+      input: input(decodeZodType).clone(),
+      output: output(encodeZodType).clone(),
+    }
+
     this.props = props
     this.params = Object.assign({ checks: [] }, params)
-    this.encode = standard.create(this.encodeZodType, typesRegistry, 'output')
-    this.decode = standard.create(this.decodeZodType, typesRegistry, 'input')
+    this.encode = standard.create(this.encodeZodType, typesRegistry, {
+      output: this.wireZodTypes.output,
+    })
+    this.decode = standard.create(this.decodeZodType, typesRegistry, {
+      input: this.wireZodTypes.input,
+    })
   }
 
   optional(): OptionalType<this> {
@@ -129,17 +143,26 @@ export abstract class BaseType<
   }
 
   examples(...examples: this['encodeZodType']['_zod']['input'][]): this {
-    return this.meta({
-      examples: examples.map((example) => this.encodeZodType.parse(example)),
-    })
+    return this.meta({ examples })
   }
 
-  meta(newMetadata: TypeMetadata): this {
-    const metadata = typesRegistry.get(this.encodeZodType) ?? {}
-    Object.assign(metadata, newMetadata)
-    typesRegistry.add(this.encodeZodType, metadata)
-    // Transformed types use separate schemas, but describe the same public field.
-    typesRegistry.add(this.decodeZodType, metadata)
+  meta(
+    newMetadata: TypeMetadata<this['encodeZodType']['_zod']['input']>,
+  ): this {
+    const { examples, ...shared } = newMetadata
+    // Both metadata entry points accept runtime values and encode them exactly once.
+    const encodedExamples = examples?.map((example) =>
+      this.encodeZodType.parse(example),
+    )
+    this.metadata = { ...this.metadata, ...shared }
+    if ('examples' in newMetadata) this.metadata.examples = encodedExamples
+    const annotations = { ...this.metadata }
+    delete annotations.examples
+    typesRegistry.add(this.encodeZodType, annotations)
+    typesRegistry.add(this.decodeZodType, annotations)
+    for (const schema of Object.values(this.wireZodTypes)) {
+      typesRegistry.add(schema, { ...this.metadata })
+    }
     return this
   }
 }
@@ -155,6 +178,9 @@ export class OptionalType<
     return new OptionalType<T>({
       encodeZodType: optional(type.encodeZodType),
       decodeZodType: optional(type.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        optional(type.wireZodTypes[side]),
+      ),
       props: { inner: type },
     })
   }
@@ -171,6 +197,9 @@ export class NullableType<
     return new NullableType<T>({
       encodeZodType: nullable(type.encodeZodType),
       decodeZodType: nullable(type.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        nullable(type.wireZodTypes[side]),
+      ),
       props: { inner: type },
     })
   }
@@ -194,6 +223,9 @@ export class DefaultType<
       decodeZodType: prefault(
         type.decodeZodType,
         encodedDefault as T['decodeZodType']['_zod']['input'],
+      ),
+      wireZodTypes: mapWireZodTypes((side) =>
+        prefault(type.wireZodTypes[side], encodedDefault),
       ),
       props: { inner: type },
     })

@@ -13,6 +13,7 @@ import {
 import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
+import { mapWireZodTypes } from './_metadata.ts'
 import { BaseType } from './base.ts'
 
 export class UnionType<
@@ -42,6 +43,9 @@ export class UnionType<
     return new UnionType<T>({
       encodeZodType: zodUnion(encode),
       decodeZodType: zodUnion(decode),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodUnion(options.map((type) => type.wireZodTypes[side])),
+      ),
       props: { options },
     })
   }
@@ -61,6 +65,9 @@ export class IntersactionType<
     return new IntersactionType<T>({
       encodeZodType: zodIntersection(first.encodeZodType, second.encodeZodType),
       decodeZodType: zodIntersection(first.decodeZodType, second.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodIntersection(first.wireZodTypes[side], second.wireZodTypes[side]),
+      ),
       props: { options },
     })
   }
@@ -103,6 +110,15 @@ export class DiscriminatedUnionType<
       encodeZodType: zodDiscriminatedUnion(key, encode),
       // @ts-expect-error
       decodeZodType: zodDiscriminatedUnion(key, decode),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodDiscriminatedUnion(
+          key,
+          options.map((type) => type.wireZodTypes[side]) as [
+            T[number]['encodeZodType'],
+            ...T[number]['encodeZodType'][],
+          ],
+        ),
+      ),
       props: { key, options },
     })
   }
