@@ -31,7 +31,6 @@ export const subscribeRoom = procedure({
   dependencies: { subscribe: inject.subscribe },
   input: t.object({ room: t.string() }),
   output: t.object({ event: t.string(), text: t.string() }),
-  stream: true,
   async *handler({ subscribe }, input) {
     const stream = await subscribe(
       rooms,

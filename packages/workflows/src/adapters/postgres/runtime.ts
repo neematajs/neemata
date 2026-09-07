@@ -116,7 +116,7 @@ export function createPostgresWorkflowRuntime(params: {
             childKey: SELF_CHILD_KEY,
             attemptId: result.attempt.id,
             leaseToken: result.attempt.leaseToken!,
-            input: result.created ? taskInput : result.attempt.input,
+            input: result.attempt.input,
             ...(result.attempt.idempotencyKey === undefined
               ? {}
               : { idempotencyKey: result.attempt.idempotencyKey }),

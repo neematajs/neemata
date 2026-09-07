@@ -150,12 +150,12 @@ export const createStoredRunWithState = async (
           id, kind, name, workflow_name, task_name, status, input,
           parent_run_id, parent_node_name, root_run_id, tags,
           idempotency_key, unique_key, unique_scope, unique_behavior,
-          version, created_at, updated_at
+          version, active_since, created_at, updated_at
         )
         VALUES (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
           $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14,
-          1, $15, $15
+          1, $15, $15, $15
         )
         ON CONFLICT DO NOTHING
         RETURNING *, NULL::text AS old_status
@@ -383,6 +383,7 @@ const runSummaryColumnsSql = (alias: string) => `
   ${alias}.tags,
   ${alias}.idempotency_key,
   ${alias}.version,
+  ${alias}.active_since,
   ${alias}.created_at,
   ${alias}.updated_at,
   ${runSummaryNodeCountsAlias(alias)}.nodes_total AS nodes_total,
@@ -422,6 +423,9 @@ const buildListRunsQueryParts = (
 
   if (filter.kind !== undefined) where.push(`r.kind = ${push(filter.kind)}`)
   if (filter.name !== undefined) where.push(`r.name = ${push(filter.name)}`)
+  if (filter.activeBefore !== undefined) {
+    where.push(`r.active_since < ${push(filter.activeBefore)}`)
+  }
   if (filter.createdBefore !== undefined) {
     where.push(`r.created_at < ${push(filter.createdBefore)}`)
   }
@@ -557,6 +561,7 @@ export const createPostgresWorkflowRunStore = (
     async listUnreapedDeadCommands(params) {
       await ready
       const limit = params?.limit
+      const commandId = params?.commandId
       const rows = await many(
         db,
         `
@@ -564,10 +569,14 @@ export const createPostgresWorkflowRunStore = (
         FROM workflow_commands
         WHERE dead_at IS NOT NULL
           AND reaped_at IS NULL
+          ${commandId === undefined ? '' : `AND id = $${limit === undefined ? 1 : 2}`}
         ORDER BY dead_at ASC, created_at ASC, id ASC
         ${limit === undefined ? '' : 'LIMIT $1'}
       `,
-        limit === undefined ? [] : [limit],
+        [
+          ...(limit === undefined ? [] : [limit]),
+          ...(commandId === undefined ? [] : [commandId]),
+        ],
       )
       return rows
         .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
@@ -588,46 +597,116 @@ export const createPostgresWorkflowRunStore = (
     },
     async requeueDeadCommand(commandId) {
       await ready
-      await db.query(
-        `
-        UPDATE workflow_commands
-        SET delivery_count = 0,
-            last_error = NULL,
-            dead_at = NULL,
-            reaped_at = NULL,
-            lease_owner = NULL,
-            lease_token = NULL,
-            lease_expires_at = NULL,
-            run_at = now()
-        WHERE id = $1
-          AND dead_at IS NOT NULL
-      `,
-        [commandId],
-      )
+      await db.transaction(async (tx) => {
+        const command = await one<{ kind: string }>(
+          tx,
+          `
+          SELECT kind
+          FROM workflow_commands
+          WHERE id = $1 AND dead_at IS NOT NULL
+          FOR UPDATE
+        `,
+          [commandId],
+        )
+        if (!command) return
+
+        if (command.kind !== 'continue') {
+          await tx.query(
+            `
+            UPDATE workflow_commands
+            SET delivery_count = 0,
+                last_error = NULL,
+                dead_at = NULL,
+                reaped_at = NULL,
+                lease_owner = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                run_at = now()
+            WHERE id = $1 AND dead_at IS NOT NULL
+          `,
+            [commandId],
+          )
+          return
+        }
+
+        // A dead continuation may share its run with a newer live wake-up.
+        // Keep the dead source outside the partial unique index until its
+        // requeued copy has inserted or coalesced, then consume the source.
+        await tx.query(
+          `
+          UPDATE workflow_commands
+          SET lease_token = COALESCE(lease_token, 'dead:' || id::text)
+          WHERE id = $1 AND dead_at IS NOT NULL
+        `,
+          [commandId],
+        )
+        await tx.query(
+          `
+          WITH coalesced AS (
+            INSERT INTO workflow_commands (
+              id,
+              kind,
+              run_id,
+              workflow_name,
+              payload,
+              run_at,
+              priority,
+              delivery_count,
+              last_error,
+              created_at
+            )
+            SELECT
+              $2,
+              kind,
+              run_id,
+              workflow_name,
+              payload,
+              now(),
+              priority,
+              0,
+              NULL,
+              created_at
+            FROM workflow_commands
+            WHERE id = $1 AND dead_at IS NOT NULL
+            ON CONFLICT (run_id)
+              WHERE kind = 'continue' AND lease_token IS NULL
+            DO UPDATE
+            SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+                delivery_count = GREATEST(
+                  workflow_commands.delivery_count,
+                  EXCLUDED.delivery_count
+                ),
+                last_error = CASE
+                  WHEN EXCLUDED.delivery_count > workflow_commands.delivery_count
+                    THEN EXCLUDED.last_error
+                  ELSE workflow_commands.last_error
+                END
+            RETURNING id
+          )
+          DELETE FROM workflow_commands
+          WHERE id = $1
+            AND dead_at IS NOT NULL
+            AND EXISTS (SELECT 1 FROM coalesced)
+        `,
+          [commandId, id()],
+        )
+      })
     },
     async acquireRunLease({ runId, leaseMs }) {
       await ready
       if (!isUuid(runId)) return undefined
-      const lock = await one<{ acquired: boolean }>(
-        db,
-        `
-        SELECT pg_try_advisory_xact_lock(hashtext('workflow_run_lease:' || $1::text)) AS acquired
-      `,
-        [runId],
-      )
-      if (!lock?.acquired) return undefined
-
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
-      if (!run) return undefined
-
-      const leaseToken = id()
+      // Gate the upsert on the advisory lock so a competing transaction skips
+      // the run instead of waiting for its uncommitted lease row.
       const lease = await one(
         db,
         `
+        WITH lock AS MATERIALIZED (
+          SELECT pg_try_advisory_xact_lock(hashtext('workflow_run_lease:' || $1::text)) AS acquired
+        )
         INSERT INTO workflow_run_leases (run_id, lease_token, version, expires_at)
-        VALUES ($1, $2, $3, now() + ($4::int * interval '1 millisecond'))
+        SELECT r.id, $2, r.version, now() + ($3::int * interval '1 millisecond')
+        FROM workflow_runs r CROSS JOIN lock
+        WHERE r.id = $1::uuid AND lock.acquired
         ON CONFLICT (run_id) DO UPDATE
         SET lease_token = EXCLUDED.lease_token,
             version = EXCLUDED.version,
@@ -635,7 +714,7 @@ export const createPostgresWorkflowRunStore = (
         WHERE workflow_run_leases.expires_at <= now()
         RETURNING *
       `,
-        [runId, leaseToken, run.version, leaseMs],
+        [runId, id(), leaseMs],
       )
       if (!lease) return undefined
       return {
@@ -741,7 +820,9 @@ export const createPostgresWorkflowRunStore = (
       )
 
       return {
-        run: mapRun(withDateColumns(run, ['created_at', 'updated_at'])),
+        run: mapRun(
+          withDateColumns(run, ['active_since', 'created_at', 'updated_at']),
+        ),
         nodes: nodes.map(mapNode),
         children: children.map(mapNodeChild),
         attempts: attempts.map(mapAttempt),
@@ -834,11 +915,18 @@ export const createPostgresWorkflowRunStore = (
         ]),
       )
       const childRuns = jsonRecordArrayColumn(detail.child_runs).map(
-        (childRun) => withDateColumns(childRun, ['created_at', 'updated_at']),
+        (childRun) =>
+          withDateColumns(childRun, [
+            'active_since',
+            'created_at',
+            'updated_at',
+          ]),
       )
 
       return {
-        run: mapRunSummary(withDateColumns(run, ['created_at', 'updated_at'])),
+        run: mapRunSummary(
+          withDateColumns(run, ['active_since', 'created_at', 'updated_at']),
+        ),
         nodes: nodes.map(mapNodeSummary),
         children: children.map(mapNodeChildSummary),
         attempts: attempts.map(mapAttemptSummary),

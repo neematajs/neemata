@@ -649,11 +649,9 @@ describe('workflow runtime interfaces', () => {
       .parallel('fanout', (helpers) => ({ child: helpers.workflow(child) }))
       .mapTask('embeddings', task, {
         item: t.object({ text: t.string() }),
-        mode: 'wait-all',
       })
       .mapWorkflow('children', child, {
         item: t.object({ text: t.string() }),
-        mode: 'wait-all',
       })
       .build()
     const parentImpl = implementWorkflow(parent)

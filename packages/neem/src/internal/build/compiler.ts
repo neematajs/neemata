@@ -374,8 +374,6 @@ function createRolldownOptions(
   return {
     input: input.input,
     platform: 'node',
-    // No treeshaking: runtime artifacts must keep import side effects intact.
-    treeshake: false,
     ...userOptions,
     experimental: {
       // Chunk optimization may regroup chunks between rebuilds; artifact file
@@ -427,8 +425,6 @@ function createGroupedRolldownOptions(
       inputs.map((input) => [input.input, input.entry]),
     ),
     platform: 'node',
-    // Same trade-offs as createRolldownOptions above.
-    treeshake: false,
     ...userOptions,
     experimental: { chunkOptimization: false, ...userOptions.experimental },
     external: createExternalMatcher(userOptions.external),

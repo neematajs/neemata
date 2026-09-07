@@ -153,6 +153,9 @@ export function createSchema(options?: CreateSchemaOptions) {
       uniqueScope: text('unique_scope'),
       uniqueBehavior: text('unique_behavior'),
       version: integer('version').notNull(),
+      activeSince: timestamp('active_since', { withTimezone: true })
+        .notNull()
+        .defaultNow(),
       createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },
@@ -276,6 +279,7 @@ export function createSchema(options?: CreateSchemaOptions) {
       workerId: text('worker_id'),
       leaseToken: text('lease_token'),
       attemptNumber: integer('attempt_number').notNull(),
+      retryAttemptNumber: integer('retry_attempt_number').notNull(),
       input: jsonb('input').notNull(),
       idempotencyKey: jsonb('idempotency_key'),
       output: jsonb('output'),

@@ -70,11 +70,11 @@ export type ServerMessageTypePayload = {
   [ServerMessageType.RpcStreamResponse]: { callId: number }
   [ServerMessageType.Pong]: { nonce: number }
   [ServerMessageType.Ping]: { nonce: number }
-  [ServerMessageType.ClientStreamAbort]: { streamId: number; reason?: string }
-  [ServerMessageType.ClientStreamPull]: { streamId: number; size: number }
-  [ServerMessageType.ServerStreamAbort]: { streamId: number; reason?: string }
-  [ServerMessageType.ServerStreamEnd]: { streamId: number }
-  [ServerMessageType.ServerStreamPush]: {
+  [ServerMessageType.ClientBlobAbort]: { streamId: number; reason?: string }
+  [ServerMessageType.ClientBlobPull]: { streamId: number; size: number }
+  [ServerMessageType.ServerBlobAbort]: { streamId: number; reason?: string }
+  [ServerMessageType.ServerBlobEnd]: { streamId: number }
+  [ServerMessageType.ServerBlobPush]: {
     streamId: number
     chunk: ArrayBufferView
   }
@@ -93,12 +93,12 @@ export type ClientMessageTypePayload = {
   [ClientMessageType.RpcStreamPull]: { callId: number; size: number }
   [ClientMessageType.Ping]: { nonce: number }
   [ClientMessageType.Pong]: { nonce: number }
-  [ClientMessageType.ClientStreamPush]: {
+  [ClientMessageType.ClientBlobPush]: {
     streamId: number
     chunk: ArrayBufferView
   }
-  [ClientMessageType.ClientStreamEnd]: { streamId: number }
-  [ClientMessageType.ClientStreamAbort]: { streamId: number; reason?: string }
-  [ClientMessageType.ServerStreamPull]: { streamId: number; size: number }
-  [ClientMessageType.ServerStreamAbort]: { streamId: number; reason?: string }
+  [ClientMessageType.ClientBlobEnd]: { streamId: number }
+  [ClientMessageType.ClientBlobAbort]: { streamId: number; reason?: string }
+  [ClientMessageType.ServerBlobPull]: { streamId: number; size: number }
+  [ClientMessageType.ServerBlobAbort]: { streamId: number; reason?: string }
 }

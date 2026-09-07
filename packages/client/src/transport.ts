@@ -3,7 +3,7 @@ import type {
   ProtocolBlobMetadata,
   ProtocolVersion,
 } from '@nmtjs/protocol'
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import type { BaseClientCodec } from '@nmtjs/protocol/client'
 
 export type ClientDisconnectReason = 'client' | 'server' | (string & {})
 
@@ -87,7 +87,7 @@ export type ClientTransport = BidirectionalTransport | UnidirectionalTransport
 
 export interface ClientTransportParams {
   protocol: ProtocolVersion
-  format: BaseClientFormat
+  codec: BaseClientCodec
 }
 
 export type ClientTransportFactory<

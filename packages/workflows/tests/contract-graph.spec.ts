@@ -160,13 +160,11 @@ describe('workflow contract graph', () => {
         title: 'Map task node',
         description: 'Map task node description',
         item: t.object({ text: t.string() }),
-        mode: 'wait-all',
       })
       .mapWorkflow('mapWorkflowNode', metadataWorkflow, {
         title: 'Map workflow node',
         description: 'Map workflow node description',
         item: t.object({ text: t.string() }),
-        mode: 'wait-settled',
       })
       .build()
 

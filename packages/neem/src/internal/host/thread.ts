@@ -16,6 +16,7 @@ import type {
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeWorkerData, WorkerMessage } from '../worker/protocol.ts'
+import { NeemWorkerError } from '../../shared/errors.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
 import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
@@ -218,7 +219,13 @@ export class ThreadController {
     }
 
     if (message.type === 'error') {
-      this.fail(deserializeError(message.data))
+      this.fail(
+        new NeemWorkerError({
+          worker: this.name,
+          origin: message.data.origin,
+          cause: deserializeError(message.data),
+        }),
+      )
       return
     }
 

@@ -1,4 +1,4 @@
-import type { TAnyProcedureContract, TAnyRouterContract } from '@nmtjs/contract'
+import type { TAnyCallableContract, TAnyRouterContract } from '@nmtjs/contract'
 import type {
   AfterDecodeMetaBinding,
   AnyMeta,
@@ -14,7 +14,7 @@ export type ApiMetaRouteContext = Readonly<{
 }>
 
 export type ApiMetaProcedureContext = Readonly<{
-  contract: TAnyProcedureContract
+  contract: TAnyCallableContract
   streamTimeout?: number
 }>
 

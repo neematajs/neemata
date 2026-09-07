@@ -128,16 +128,24 @@ export async function installPostgresWorkflowSchemaForTesting(
       unique_scope text,
       unique_behavior text,
       version integer NOT NULL,
+      active_since timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL,
       updated_at timestamptz NOT NULL
     )
   `)
   await db.query(`
     ALTER TABLE workflow_runs
+    ADD COLUMN IF NOT EXISTS active_since timestamptz,
     ADD COLUMN IF NOT EXISTS unique_key jsonb,
     ADD COLUMN IF NOT EXISTS unique_scope text,
     ADD COLUMN IF NOT EXISTS unique_behavior text
   `)
+  await db.query(
+    'UPDATE workflow_runs SET active_since = created_at WHERE active_since IS NULL',
+  )
+  await db.query(
+    'ALTER TABLE workflow_runs ALTER COLUMN active_since SET NOT NULL, ALTER COLUMN active_since SET DEFAULT now()',
+  )
   await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_idempotency_idx
     ON workflow_runs (idempotency_key)
@@ -202,6 +210,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       worker_id text,
       lease_token text,
       attempt_number integer NOT NULL,
+      retry_attempt_number integer NOT NULL,
       input jsonb NOT NULL,
       idempotency_key jsonb,
       output jsonb,
@@ -213,6 +222,15 @@ export async function installPostgresWorkflowSchemaForTesting(
         UNIQUE (run_id, node_name, child_key, attempt_number)
     )
   `)
+  await db.query(
+    'ALTER TABLE workflow_attempts ADD COLUMN IF NOT EXISTS retry_attempt_number integer',
+  )
+  await db.query(
+    'UPDATE workflow_attempts SET retry_attempt_number = attempt_number WHERE retry_attempt_number IS NULL',
+  )
+  await db.query(
+    'ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL',
+  )
   await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_node_children (
       run_id uuid NOT NULL,

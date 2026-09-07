@@ -96,7 +96,7 @@ export async function dispatchActivityNode(
       })
       return {
         attempt: result.attempt,
-        commandInput: result.created ? nodeInput : result.attempt.input,
+        commandInput: result.attempt.input,
         created: result.created,
       }
     },

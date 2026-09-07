@@ -175,6 +175,7 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
         },
       }),
   version: row.version as number,
+  activeSince: row.active_since as Date,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,
 })
@@ -196,6 +197,7 @@ export const mapRunSummary = (row: JsonRecord): RunSummary => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   version: row.version as number,
+  activeSince: row.active_since as Date,
   createdAt: row.created_at as Date,
   updatedAt: row.updated_at as Date,
   nodesTotal: Number(row.nodes_total ?? 0),
@@ -237,6 +239,7 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   ...optional('workerId', row.worker_id as string | undefined),
   ...optional('leaseToken', row.lease_token as string | undefined),
   attemptNumber: row.attempt_number as number,
+  retryAttemptNumber: row.retry_attempt_number as number,
   input: row.input,
   ...optional(
     'idempotencyKey',
@@ -258,6 +261,7 @@ export const mapAttemptSummary = (row: JsonRecord): AttemptSummary => ({
   ...optional('workerId', row.worker_id as string | undefined),
   ...optional('leaseToken', row.lease_token as string | undefined),
   attemptNumber: row.attempt_number as number,
+  retryAttemptNumber: row.retry_attempt_number as number,
   ...optional(
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,

@@ -1,5 +1,11 @@
 import type { Schema, WireSchema } from '@nmtjs/common/schema'
-import type { TAnyProcedureContract, TProcedureContract } from '@nmtjs/contract'
+import type {
+  TAnyCallableContract,
+  TAnyProcedureContract,
+  TAnyStreamContract,
+  TProcedureContract,
+  TStreamContract,
+} from '@nmtjs/contract'
 import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
 import { noopSchema } from '@nmtjs/common/schema'
 import { c } from '@nmtjs/contract'
@@ -25,7 +31,7 @@ export type ProcedureDecodedInput<
   : undefined
 
 export type ProcedureContractDecodedInput<
-  ProcedureContract extends TAnyProcedureContract,
+  ProcedureContract extends TAnyCallableContract,
 > = ProcedureDecodedInput<ProcedureContract['input']>
 
 export type ProcedureEncodedOutput<
@@ -35,7 +41,7 @@ export type ProcedureEncodedOutput<
   : undefined
 
 export interface BaseProcedure<
-  ProcedureContract extends TAnyProcedureContract,
+  ProcedureContract extends TAnyCallableContract,
   ProcedureDeps extends Dependencies,
 > extends Dependant<ProcedureDeps> {
   contract: ProcedureContract
@@ -55,12 +61,12 @@ export type ProcedureHandlerType<
 > = HandlerFn<Deps, [data: Input], Output>
 
 export interface Procedure<
-  ProcedureContract extends TAnyProcedureContract,
+  ProcedureContract extends TAnyCallableContract,
   ProcedureDeps extends Dependencies,
 > extends BaseProcedure<ProcedureContract, ProcedureDeps> {
   handler: ProcedureHandlerType<
     ProcedureContractDecodedInput<ProcedureContract>,
-    ProcedureContract['stream'] extends true
+    ProcedureContract extends TAnyStreamContract
       ? AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>
       : ProcedureEncodedOutput<ProcedureContract['output']>,
     ProcedureDeps
@@ -68,7 +74,7 @@ export interface Procedure<
 }
 
 export type AnyProcedure<
-  Contract extends TAnyProcedureContract = TAnyProcedureContract,
+  Contract extends TAnyCallableContract = TAnyCallableContract,
 > = BaseProcedure<Contract, Dependencies>
 
 export type CreateProcedureParams<
@@ -82,25 +88,44 @@ export type CreateProcedureParams<
       meta?: ProcedureMetaBinding<
         ProcedureContractDecodedInput<ProcedureContract>
       >[]
-      streamTimeout?: number
       handler: ProcedureHandlerType<
         ProcedureContractDecodedInput<ProcedureContract>,
-        ProcedureContract['stream'] extends undefined
-          ? ProcedureEncodedOutput<ProcedureContract['output']>
-          : AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>,
+        ProcedureEncodedOutput<ProcedureContract['output']>,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
       ProcedureContractDecodedInput<ProcedureContract>,
-      ProcedureContract['stream'] extends undefined
-        ? ProcedureEncodedOutput<ProcedureContract['output']>
-        : AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>,
+      ProcedureEncodedOutput<ProcedureContract['output']>,
       ProcedureDeps
     >
 
+export type CreateStreamParams<
+  StreamContract extends TAnyStreamContract,
+  StreamDeps extends Dependencies,
+> =
+  | {
+      dependencies?: StreamDeps
+      guards?: AnyGuard[]
+      middlewares?: AnyMiddleware[]
+      meta?: ProcedureMetaBinding<
+        ProcedureContractDecodedInput<StreamContract>
+      >[]
+      streamTimeout?: number
+      handler: ProcedureHandlerType<
+        ProcedureContractDecodedInput<StreamContract>,
+        AsyncIterable<ProcedureEncodedOutput<StreamContract['output']>>,
+        StreamDeps
+      >
+    }
+  | ProcedureHandlerType<
+      ProcedureContractDecodedInput<StreamContract>,
+      AsyncIterable<ProcedureEncodedOutput<StreamContract['output']>>,
+      StreamDeps
+    >
+
 export function _createBaseProcedure<
-  ProcedureContract extends TAnyProcedureContract,
+  ProcedureContract extends TAnyCallableContract,
   ProcedureDeps extends Dependencies,
 >(
   contract: ProcedureContract,
@@ -127,6 +152,88 @@ export function _createBaseProcedure<
   return { contract, dependencies, middlewares, guards, meta, streamTimeout }
 }
 
+interface CreateCallableOptions<
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
+  Deps extends Dependencies,
+  Output,
+> {
+  input?: TInput
+  output?: TOutput
+  dependencies?: Deps
+  guards?: AnyGuard[]
+  middlewares?: AnyMiddleware[]
+  meta?: ProcedureMetaBinding<ProcedureDecodedInput<TInput>>[]
+  timeout?: number
+  /** Short human-readable name, used for generated API documentation. */
+  title?: string
+  /** Human-readable description, used for generated API documentation. */
+  description?: string
+  handler: ProcedureHandlerType<ProcedureDecodedInput<TInput>, Output, Deps>
+}
+
+type CallableOutputType<
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
+  Return,
+> = TOutput extends WireSchema.Encode | WireSchema.Codec
+  ? WireSchema.EncodeInput<TOutput>
+  : Return
+
+type SynthesizedOutput<
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
+  Return,
+> = TOutput extends undefined ? Schema.WithJSONSchema<Return> : TOutput
+
+export function createProcedure<
+  Return,
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined = undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined = undefined,
+  Deps extends Dependencies = {},
+>(
+  paramsOrHandler:
+    | CreateCallableOptions<
+        TInput,
+        TOutput,
+        Deps,
+        CallableOutputType<TOutput, Return>
+      >
+    | ProcedureHandlerType<ProcedureDecodedInput<TInput>, Return, Deps>,
+): Procedure<
+  TProcedureContract<TInput, SynthesizedOutput<TOutput, Return>>,
+  Deps
+> {
+  const {
+    input = undefined as any,
+    output = noopSchema<Return>(),
+    dependencies = {} as Deps,
+    guards = [],
+    middlewares = [],
+    meta = [],
+    handler,
+    timeout,
+    title,
+    description,
+  } = typeof paramsOrHandler === 'function'
+    ? { handler: paramsOrHandler }
+    : paramsOrHandler
+
+  return createContractProcedure(
+    c.procedure({
+      input,
+      output,
+      timeout,
+      schemaOptions: { title, description },
+    }) as TProcedureContract<TInput, SynthesizedOutput<TOutput, Return>>,
+    {
+      dependencies,
+      handler: handler as any,
+      guards,
+      middlewares,
+      meta,
+    },
+  )
+}
+
 export function createContractProcedure<
   ProcedureContract extends TAnyProcedureContract,
   ProcedureDeps extends Dependencies,
@@ -145,77 +252,73 @@ export function createContractProcedure<
   }) as any
 }
 
-export function createProcedure<
+export function createStream<
   Return,
   TInput extends WireSchema.Decode | WireSchema.Codec | undefined = undefined,
   TOutput extends WireSchema.Encode | WireSchema.Codec | undefined = undefined,
-  TStream extends true | number | undefined = undefined,
   Deps extends Dependencies = {},
 >(
-  paramsOrHandler:
-    | {
-        input?: TInput
-        output?: TOutput
-        /**
-         * Whether the procedure is a stream procedure.
-         * If set to `true`, the procedure handler should return an `AsyncIterable` of output items.
-         * If set to a number, it specifies an explicit stream timeout in milliseconds.
-         */
-        stream?: TStream
-        dependencies?: Deps
-        guards?: AnyGuard[]
-        middlewares?: AnyMiddleware[]
-        meta?: ProcedureMetaBinding<ProcedureDecodedInput<TInput>>[]
-        timeout?: number
-        handler: ProcedureHandlerType<
-          ProcedureDecodedInput<TInput>,
-          TStream extends true | number
-            ? AsyncIterable<
-                TOutput extends WireSchema.Encode | WireSchema.Codec
-                  ? WireSchema.EncodeInput<TOutput>
-                  : Return
-              >
-            : TOutput extends WireSchema.Encode | WireSchema.Codec
-              ? WireSchema.EncodeInput<TOutput>
-              : Return,
-          Deps
-        >
-      }
-    | ProcedureHandlerType<ProcedureDecodedInput<TInput>, Return, Deps>,
-): Procedure<
-  TProcedureContract<
+  params: CreateCallableOptions<
     TInput,
-    TOutput extends undefined ? Schema.WithJSONSchema<Return> : TOutput,
-    TStream extends true | number ? true : undefined
-  >,
+    TOutput,
+    Deps,
+    AsyncIterable<CallableOutputType<TOutput, Return>>
+  > & {
+    /** Explicit stream timeout in milliseconds. */
+    streamTimeout?: number
+  },
+): Procedure<
+  TStreamContract<TInput, SynthesizedOutput<TOutput, Return>>,
   Deps
 > {
   const {
     input = undefined as any,
     output = noopSchema<Return>(),
-    stream = undefined as any,
     dependencies = {} as Deps,
     guards = [],
     middlewares = [],
     meta = [],
     handler,
     timeout,
-  } = typeof paramsOrHandler === 'function'
-    ? { handler: paramsOrHandler }
-    : paramsOrHandler
+    title,
+    description,
+    streamTimeout,
+  } = params
 
-  // @ts-expect-error
-  return createContractProcedure(
-    c.procedure({ input, output, stream, timeout }),
+  return createContractStream(
+    c.stream({
+      input,
+      output,
+      timeout,
+      schemaOptions: { title, description },
+    }) as TStreamContract<TInput, SynthesizedOutput<TOutput, Return>>,
     {
       dependencies,
       handler: handler as any,
       guards,
       middlewares,
       meta,
-      streamTimeout: typeof stream === 'number' ? stream : undefined,
+      streamTimeout,
     },
   )
+}
+
+export function createContractStream<
+  StreamContract extends TAnyStreamContract,
+  StreamDeps extends Dependencies,
+>(
+  contract: StreamContract,
+  paramsOrHandler: CreateStreamParams<StreamContract, StreamDeps>,
+): Procedure<StreamContract, StreamDeps> {
+  const { handler, ...params } =
+    typeof paramsOrHandler === 'function'
+      ? { handler: paramsOrHandler }
+      : paramsOrHandler
+
+  return Object.assign(_createBaseProcedure(contract, params), {
+    handler,
+    [kProcedure]: true,
+  }) as any
 }
 
 export const isProcedure = (value: any): value is AnyProcedure =>

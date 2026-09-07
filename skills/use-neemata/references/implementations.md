@@ -3,16 +3,20 @@
 Implementation APIs bind handlers to public contracts. Use them when route
 names must stay stable or client/server packages share API shape.
 
-## Direct Contract Procedures And Routers
+## Direct Contract Procedures, Streams, And Routers
 
 ```ts
-import { c, contractProcedure, contractRouter, t } from 'nmtjs'
+import { c, contractProcedure, contractStream, contractRouter, t } from 'nmtjs'
 
 const usersContract = c.router({
   routes: {
     get: c.procedure({
       input: t.object({ id: t.string() }),
       output: t.object({ name: t.string() }),
+    }),
+    watch: c.stream({
+      input: t.object({ organizationId: t.string() }),
+      output: t.object({ id: t.string() }),
     }),
   },
 })
@@ -22,6 +26,12 @@ export const usersRouter = contractRouter(usersContract, {
     get: contractProcedure(usersContract.routes.get, (_ctx, input) => {
       return { name: input.id }
     }),
+    watch: contractStream(usersContract.routes.watch, {
+      streamTimeout: 30_000,
+      async *handler(_ctx, input) {
+        yield { id: input.organizationId }
+      },
+    }),
   },
 })
 ```
@@ -30,6 +40,8 @@ Rules:
 
 - `contractProcedure(contract, handler | options)` binds one procedure
   contract to a handler.
+- `contractStream(contract, handler | options)` binds one stream contract to an
+  async-iterable handler. Only stream implementations accept `streamTimeout`.
 - `contractRouter(contract, { routes, ... })` binds one router contract to
   route implementations.
 - Route implementations must match the contract keys and nested contracts.
@@ -77,11 +89,13 @@ export const router = api({
 Rules:
 
 - `implementRouter(routerContract)` returns a root router implementer.
-- `implementRouter(procedureContract)` returns a procedure implementer.
+- `implementRouter(procedureContract)` returns a procedure implementer;
+  `implementRouter(streamContract)` returns a stream implementer.
 - Router builders validate missing, unknown, and mismatched route
   implementations.
-- Procedure builders accept either a handler or full options with
-  `dependencies`, `guards`, `middlewares`, `meta`, and `handler`.
+- Procedure and stream builders accept either a handler or full options with
+  `dependencies`, `guards`, `middlewares`, `meta`, and `handler`; stream
+  builders additionally accept `streamTimeout`.
 - Dependencies stay explicit. Request `inject.logger` when a handler needs a
   logger.
 

@@ -186,11 +186,11 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
 
   it('decodes client/server stream control messages', () => {
     const pullMessage = buildMessage(
-      ServerMessageType.ClientStreamPull,
+      ServerMessageType.ClientBlobPull,
       Buffer.concat([encodeUInt32(9), encodeUInt32(1024)]),
     )
     expect(version.decodeMessage(context, pullMessage)).toEqual({
-      type: ServerMessageType.ClientStreamPull,
+      type: ServerMessageType.ClientBlobPull,
       streamId: 9,
       size: 1024,
     })
@@ -198,10 +198,10 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     expect(
       version.decodeMessage(
         context,
-        buildMessage(ServerMessageType.ClientStreamAbort, encodeUInt32(10)),
+        buildMessage(ServerMessageType.ClientBlobAbort, encodeUInt32(10)),
       ),
     ).toEqual({
-      type: ServerMessageType.ClientStreamAbort,
+      type: ServerMessageType.ClientBlobAbort,
       streamId: 10,
       reason: undefined,
     })
@@ -211,12 +211,12 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
       version.decodeMessage(
         context,
         buildMessage(
-          ServerMessageType.ServerStreamPush,
+          ServerMessageType.ServerBlobPush,
           Buffer.concat([encodeUInt32(20), pushChunk]),
         ),
       ),
     ).toEqual({
-      type: ServerMessageType.ServerStreamPush,
+      type: ServerMessageType.ServerBlobPush,
       streamId: 20,
       chunk: pushChunk,
     })
@@ -224,10 +224,10 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     expect(
       version.decodeMessage(
         context,
-        buildMessage(ServerMessageType.ServerStreamEnd, encodeUInt32(21)),
+        buildMessage(ServerMessageType.ServerBlobEnd, encodeUInt32(21)),
       ),
     ).toEqual({
-      type: ServerMessageType.ServerStreamEnd,
+      type: ServerMessageType.ServerBlobEnd,
       streamId: 21,
       reason: undefined,
     })
@@ -235,10 +235,10 @@ describe('ProtocolVersion1 (client) - decodeMessage', () => {
     expect(
       version.decodeMessage(
         context,
-        buildMessage(ServerMessageType.ServerStreamAbort, encodeUInt32(22)),
+        buildMessage(ServerMessageType.ServerBlobAbort, encodeUInt32(22)),
       ),
     ).toEqual({
-      type: ServerMessageType.ServerStreamAbort,
+      type: ServerMessageType.ServerBlobAbort,
       streamId: 22,
       reason: undefined,
     })
@@ -333,49 +333,49 @@ describe('ProtocolVersion1 (client) - encodeMessage', () => {
 
   it('encodes client stream push/end/abort', () => {
     const pushBuffer = toBuffer(
-      version.encodeMessage(context, ClientMessageType.ClientStreamPush, {
+      version.encodeMessage(context, ClientMessageType.ClientBlobPush, {
         streamId: 5,
         chunk: Buffer.from('hello'),
       }),
     )
-    expect(pushBuffer[0]).toBe(ClientMessageType.ClientStreamPush)
+    expect(pushBuffer[0]).toBe(ClientMessageType.ClientBlobPush)
     expect(pushBuffer.readUInt32LE(1)).toBe(5)
     expect(pushBuffer.subarray(5).toString()).toBe('hello')
 
     const endBuffer = toBuffer(
-      version.encodeMessage(context, ClientMessageType.ClientStreamEnd, {
+      version.encodeMessage(context, ClientMessageType.ClientBlobEnd, {
         streamId: 6,
       }),
     )
-    expect(endBuffer[0]).toBe(ClientMessageType.ClientStreamEnd)
+    expect(endBuffer[0]).toBe(ClientMessageType.ClientBlobEnd)
     expect(endBuffer.readUInt32LE(1)).toBe(6)
 
     const abortBuffer = toBuffer(
-      version.encodeMessage(context, ClientMessageType.ClientStreamAbort, {
+      version.encodeMessage(context, ClientMessageType.ClientBlobAbort, {
         streamId: 7,
       }),
     )
-    expect(abortBuffer[0]).toBe(ClientMessageType.ClientStreamAbort)
+    expect(abortBuffer[0]).toBe(ClientMessageType.ClientBlobAbort)
     expect(abortBuffer.readUInt32LE(1)).toBe(7)
   })
 
   it('encodes server stream control messages', () => {
     const pullBuffer = toBuffer(
-      version.encodeMessage(context, ClientMessageType.ServerStreamPull, {
+      version.encodeMessage(context, ClientMessageType.ServerBlobPull, {
         streamId: 8,
         size: 2048,
       }),
     )
-    expect(pullBuffer[0]).toBe(ClientMessageType.ServerStreamPull)
+    expect(pullBuffer[0]).toBe(ClientMessageType.ServerBlobPull)
     expect(pullBuffer.readUInt32LE(1)).toBe(8)
     expect(pullBuffer.readUInt32LE(5)).toBe(2048)
 
     const abortBuffer = toBuffer(
-      version.encodeMessage(context, ClientMessageType.ServerStreamAbort, {
+      version.encodeMessage(context, ClientMessageType.ServerBlobAbort, {
         streamId: 9,
       }),
     )
-    expect(abortBuffer[0]).toBe(ClientMessageType.ServerStreamAbort)
+    expect(abortBuffer[0]).toBe(ClientMessageType.ServerBlobAbort)
     expect(abortBuffer.readUInt32LE(1)).toBe(9)
   })
 

@@ -1,6 +1,7 @@
 export * from './abort-signal.ts'
 export * from './constants.ts'
 export * from './error.ts'
+export * from './lifecycle.ts'
 export * from './operation-queue.ts'
 export * from './pool.ts'
 export * from './semaphore.ts'

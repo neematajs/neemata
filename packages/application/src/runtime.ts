@@ -19,6 +19,8 @@ import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
 import { ApplicationHooks } from './hooks.ts'
 
+const ROUTE_KEY_PATTERN = /^[a-zA-Z0-9-]+$/
+
 export interface NeemataApplicationOptions {
   logger: Logger
   container?: Container
@@ -194,7 +196,15 @@ export class NeemataApplication {
   }
 
   protected registerRouter(router: AnyRouter, path: AnyRouter[] = []): void {
-    for (const route of Object.values(router.routes)) {
+    for (const [key, route] of Object.entries(router.routes)) {
+      // route keys become public-name segments; the restricted charset keeps
+      // every projection's separator transform (native "/", JSON-RPC ".",
+      // MCP "_") bijective and collision-free
+      if (!ROUTE_KEY_PATTERN.test(key)) {
+        throw new Error(
+          `Invalid route key "${key}": route keys must match ${ROUTE_KEY_PATTERN}`,
+        )
+      }
       if (isRouter(route)) {
         const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')

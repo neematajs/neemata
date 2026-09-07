@@ -1,4 +1,4 @@
-import type { BaseClientFormat } from '@nmtjs/protocol/client'
+import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { ConnectionType, ServerMessageType } from '@nmtjs/protocol'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -23,13 +23,13 @@ class MockCore extends EventEmitter<{
     super()
   }
 
-  readonly format: BaseClientFormat = {
+  readonly codec: BaseClientCodec = {
     contentType: 'application/json',
     encode: vi.fn(encodeJson),
     decode: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
     encodeRPC: vi.fn(encodeJson),
     decodeRPC: vi.fn((chunk) => JSON.parse(new TextDecoder().decode(chunk))),
-  } as BaseClientFormat
+  } as BaseClientCodec
 
   readonly protocol = {
     encodeMessage: vi.fn((_context, type) => new Uint8Array([type])),

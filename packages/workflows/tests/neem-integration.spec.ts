@@ -573,7 +573,7 @@ describe('workflows Neem integration', () => {
       const snapshot = await runtimeAdapter.store.loadRunSnapshot(run.id)
 
       expect(stopElapsedMs).toBeLessThan(150)
-      expect(shutdownReason).toStrictEqual({ type: 'shutdown' })
+      expect(shutdownReason).toMatchObject({ type: 'shutdown' })
       expect(snapshot?.run.status).toBe('running')
       expect(snapshot?.attempts[0]?.status).toBe('started')
       expect(runtimeAdapter.inspect().taskCommands).toHaveLength(1)

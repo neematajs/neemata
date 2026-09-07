@@ -49,7 +49,7 @@
     "defu": "^6.1.7",
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.21.3",
-    "rolldown": "^1.2.2",
+    "rolldown": "^1.2.4",
     "zod": "catalog:"
   },
   "peerDependencies": {
@@ -62,13 +62,10 @@
   },
   "devDependencies": {
     "@nmtjs/gateway": "workspace:*",
-    "@nmtjs/http-transport": "workspace:*",
-    "@nmtjs/json-format": "workspace:*",
     "@nmtjs/metrics": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.7",
-    "@nmtjs/server-host": "workspace:*",
-    "@nmtjs/ws-transport": "workspace:*",
+    "@nmtjs/transports": "workspace:*",
     "@types/node": "^24.13.2",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
   },

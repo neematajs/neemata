@@ -37,6 +37,7 @@ import type {
 } from './worker.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import { decodeSchemaValue } from './coordinator/codec.ts'
+import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
@@ -50,7 +51,7 @@ export type WorkflowRuntimeStartOptions<Connection = never> = {
   readonly idempotencyKey?: readonly unknown[]
   /**
    * Overrides the definition-level `unique` builder. See RunUniqueConstraint;
-   * `retry()` re-applies the stored run's constraint unless overridden here.
+   * `restart()` re-applies the stored run's constraint unless overridden here.
    */
   readonly unique?: RunUniqueConstraint
   readonly startAt?: Date
@@ -114,7 +115,7 @@ export type CreateWorkflowRuntimeClientInput<Connection = never> =
   WorkflowRuntimeAdapter<Connection> & {
     /**
      * Implementations are consulted only to cross-check `start()` targets and
-     * to resolve `retry()` by name — enqueueing itself never executes them.
+     * to resolve `restart()` by name — enqueueing itself never executes them.
      * Omit them on enqueue-only surfaces so importing the client never drags
      * the implementation graph into the caller's import closure (an
      * implementation that enqueues would otherwise form a cycle).
@@ -122,7 +123,7 @@ export type CreateWorkflowRuntimeClientInput<Connection = never> =
     readonly workflows?: readonly RegisteredWorkflowImplementation[]
     readonly tasks?: readonly RegisteredTaskImplementation[]
     /**
-     * Name→definition source for `retry()` and future by-name operations.
+     * Name→definition source for `restart()` and future by-name operations.
      * Definitions live in leaf modules both sides can import, so management
      * surfaces resolve stored names without touching implementation code.
      */
@@ -144,7 +145,12 @@ export type WorkflowRuntimeClient<Connection = never> = {
   }
   readonly cancel: (runId: string) => Promise<StoredRun | undefined>
   readonly deleteRun: (runId: string) => Promise<DeleteRunResult>
+  /** Retries failed work in place; callers can fence stale UI requests with the observed version. */
   readonly retry: (
+    runId: string,
+    options?: { readonly expectedVersion?: number },
+  ) => Promise<StoredRun>
+  readonly restart: (
     runId: string,
     options?: WorkflowRuntimeStartOptions<Connection>,
   ) => Promise<StoredRun>
@@ -178,10 +184,10 @@ export type WorkflowRuntimeClient<Connection = never> = {
 }
 
 /**
- * Constructible from the adapter alone: every operation except `retry()` is
+ * Constructible from the adapter alone: every operation except `restart()` is
  * registry-free. `start()` reads everything it needs (input schema, `tags`,
  * `idempotency`, `unique`) off the definition it receives, and execution is
- * handled by workers that own the implementations. Only `retry()` resolves a
+ * handled by workers that own the implementations. Only `restart()` resolves a
  * stored run back to something startable by name, and accepts `definitions`
  * for that so enqueue/management surfaces never import implementation code.
  */
@@ -270,12 +276,32 @@ export function createWorkflowRuntimeClient<Connection = never>(
   return Object.freeze({
     start,
     deleteRun: (runId) => input.store.deleteRun(runId),
-    retry: (runId, options) =>
-      retryRun(input.store, definitions, startStored, runId, options),
+    restart: (runId, options) =>
+      restartRun(input.store, definitions, startStored, runId, options),
+    retry: async (runId, options) => {
+      const [run] = await input.store.loadRuns([runId])
+      if (!run) throw new Error(`Run [${runId}] not found`)
+      return await input.store.reopenFailedRun({
+        runId,
+        expectedVersion: options?.expectedVersion ?? run.version,
+      })
+    },
     cancel: async (runId) => {
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
       if (isTerminalRunStatus(run.status)) return run
+      if (run.kind === 'task') {
+        // No coordinator owns task runs: a continuation carries the task
+        // name, which no workflow worker claims, so the run would park in
+        // `cancelling` forever. Settle it here; a worker still holding the
+        // attempt observes the terminal status on its next heartbeat.
+        return await cancelRunAndWakeParent({
+          store: input.store,
+          attemptExecutor: input.attemptExecutor,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          runId: run.id,
+        })
+      }
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',
         runId: run.id,
@@ -433,9 +459,9 @@ async function pruneRuns(
 }
 
 /**
- * Name→definition maps backing `retry()`. Seeded from registered
+ * Name→definition maps backing `restart()`. Seeded from registered
  * implementations (their definitions ride along anyway) and extended by the
- * explicit `definitions` input, so retry works identically whether the client
+ * explicit `definitions` input, so restart works identically whether the client
  * was built for execution or as a registry-free enqueue/management surface.
  */
 type WorkflowDefinitionIndex = {
@@ -486,7 +512,7 @@ function createDefinitionIndex(
   return { workflows, tasks }
 }
 
-async function retryRun<Connection>(
+async function restartRun<Connection>(
   store: WorkflowStore,
   definitions: WorkflowDefinitionIndex,
   start: (
@@ -511,7 +537,7 @@ async function retryRun<Connection>(
       const workflow = definitions.workflows.get(run.workflowName)
       if (!workflow) {
         throw new Error(
-          `Cannot retry run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
+          `Cannot restart run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
         )
       }
       return await start(workflow, run.input, {
@@ -527,7 +553,7 @@ async function retryRun<Connection>(
       const task = definitions.tasks.get(taskName)
       if (!task) {
         throw new Error(
-          `Cannot retry run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
+          `Cannot restart run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
         )
       }
       return await start(task, run.input, {

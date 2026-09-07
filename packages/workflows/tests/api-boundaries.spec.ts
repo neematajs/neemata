@@ -224,7 +224,6 @@ describe('workflow API boundaries', () => {
       })
       .mapTask('dates', dateTask, {
         item: t.date(),
-        mode: 'wait-all',
       })
       .build()
 

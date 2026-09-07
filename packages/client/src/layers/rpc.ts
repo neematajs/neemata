@@ -6,7 +6,9 @@ import {
   ErrorCode,
   isBlobInterface,
   ProtocolBlob,
+  ReceiveCreditWindow,
   ServerMessageType,
+  STREAM_FLOW_CONTROL_VIOLATION_REASON,
 } from '@nmtjs/protocol'
 import { ProtocolError, ProtocolServerRPCStream } from '@nmtjs/protocol/client'
 
@@ -22,7 +24,6 @@ import { ServerStreams } from '../streams.ts'
 import { toReasonString } from './streams.ts'
 
 const DEFAULT_RPC_STREAM_WINDOW = 16
-
 const resolveRpcStreamWindow = (
   value: number | undefined = DEFAULT_RPC_STREAM_WINDOW,
 ) => {
@@ -200,6 +201,7 @@ export const createRpcLayer = (
 ): RpcLayerApi => {
   const calls = new Map<number, ProtocolClientCall>()
   const rpcStreams = new ServerStreams<ProtocolServerRPCStream>()
+  const rpcStreamCredits = new Map<number, ReceiveCreditWindow>()
   const defaultRpcStreamWindow = resolveRpcStreamWindow(options.rpcStreamWindow)
 
   let callId = 0
@@ -317,22 +319,16 @@ export const createRpcLayer = (
 
     const { procedure, signal, rpcStreamWindow } = call
     const rpcStreamRefill = Math.ceil(rpcStreamWindow / 2)
-    let initialCreditGrant = true
-    let pullsUntilRefill = rpcStreamRefill
+    const credits = new ReceiveCreditWindow({
+      capacity: rpcStreamWindow,
+      refill: rpcStreamRefill,
+    })
     const stream = new ProtocolServerRPCStream({
-      pull: () => {
+      pull: (_controller, consumed) => {
         if (!core.messageContext) return
 
-        let size: number
-        if (initialCreditGrant) {
-          initialCreditGrant = false
-          size = rpcStreamWindow
-        } else {
-          pullsUntilRefill--
-          if (pullsUntilRefill > 0) return
-          pullsUntilRefill = rpcStreamRefill
-          size = rpcStreamRefill
-        }
+        const size = credits.onDemand(consumed === undefined ? 0 : 1)
+        if (size === 0) return
 
         // Batch refills preserve a bounded producer lead without putting a
         // wire round trip on every consumer read.
@@ -349,7 +345,10 @@ export const createRpcLayer = (
           { callId: message.callId, size },
         )
 
-        core.send(buffer).catch(noopFn)
+        core.send(buffer).catch((error) => {
+          credits.revoke(size)
+          abortRpcStreamOnPushFailure(message.callId, error)
+        })
       },
       start: (controller) => {
         if (!signal) return
@@ -360,6 +359,7 @@ export const createRpcLayer = (
         }
 
         const onAbort = () => {
+          rpcStreamCredits.delete(message.callId)
           controller.error(signal.reason)
 
           if (rpcStreams.has(message.callId)) {
@@ -384,11 +384,12 @@ export const createRpcLayer = (
         }
       },
       transform: (chunk) =>
-        transformer.decode(procedure, core.format.decode(chunk)),
+        transformer.decode(procedure, core.codec.decode(chunk)),
       readableStrategy: { highWaterMark: 0 },
     })
 
     rpcStreams.add(message.callId, stream)
+    rpcStreamCredits.set(message.callId, credits)
     call.resolve(stream)
   }
 
@@ -405,7 +406,7 @@ export const createRpcLayer = (
     let error: ProtocolError
 
     try {
-      const decoded = core.format.decode(response.error) as {
+      const decoded = core.codec.decode(response.error) as {
         code?: string
         message?: string
         data?: unknown
@@ -482,7 +483,7 @@ export const createRpcLayer = (
           }
         },
         transform: (chunk) =>
-          transformer.decode(call.procedure, core.format.decode(chunk)),
+          transformer.decode(call.procedure, core.codec.decode(chunk)),
         readableStrategy: { highWaterMark: 0 },
       })
 
@@ -537,7 +538,7 @@ export const createRpcLayer = (
       const decodedPayload =
         response.result.byteLength === 0
           ? undefined
-          : core.format.decode(response.result)
+          : core.codec.decode(response.result)
 
       const transformed = await transformer.decode(
         call.procedure,
@@ -574,6 +575,7 @@ export const createRpcLayer = (
   const abortRpcStreamOnPushFailure = (callId: number, reason: unknown) => {
     if (!rpcStreams.has(callId)) return
 
+    rpcStreamCredits.delete(callId)
     calls.get(callId)?.cleanup?.()
     calls.delete(callId)
     void rpcStreams.abort(callId, reason).catch(noopFn)
@@ -606,6 +608,18 @@ export const createRpcLayer = (
         handleRPCStreamResponseMessage(message)
         break
       case ServerMessageType.RpcStreamChunk:
+        {
+          const credits = rpcStreamCredits.get(message.callId)
+          if (!credits) break
+          if (!credits.accept(1)) {
+            abortRpcStreamOnPushFailure(
+              message.callId,
+              STREAM_FLOW_CONTROL_VIOLATION_REASON,
+            )
+            break
+          }
+        }
+
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'rpc',
@@ -621,6 +635,7 @@ export const createRpcLayer = (
           .catch((error) => abortRpcStreamOnPushFailure(message.callId, error))
         break
       case ServerMessageType.RpcStreamEnd:
+        rpcStreamCredits.delete(message.callId)
         calls.get(message.callId)?.cleanup?.()
         core.emitStreamEvent({
           direction: 'incoming',
@@ -632,6 +647,7 @@ export const createRpcLayer = (
         calls.delete(message.callId)
         break
       case ServerMessageType.RpcStreamAbort: {
+        rpcStreamCredits.delete(message.callId)
         const call = calls.get(message.callId)
         call?.cleanup?.()
         // an abort may arrive before the stream response was processed;
@@ -667,6 +683,7 @@ export const createRpcLayer = (
       call.reject(error)
     }
     calls.clear()
+    rpcStreamCredits.clear()
     void rpcStreams.clear(error).catch(noopFn)
   })
 
@@ -774,13 +791,13 @@ export const createRpcLayer = (
             ? new Uint8Array(0)
             : transformedPayload === undefined
               ? new Uint8Array(0)
-              : core.format.encode(transformedPayload)
+              : core.codec.encode(transformedPayload)
 
           const response = await core.transportCall(
             {
               application: core.application,
               auth: core.auth,
-              contentType: core.format.contentType,
+              contentType: core.codec.contentType,
             },
             { callId: currentCallId, procedure, payload: encodedPayload, blob },
             {
@@ -809,6 +826,7 @@ export const createRpcLayer = (
         if (value instanceof ProtocolServerRPCStream) {
           const stream = createManagedAsyncIterable(value, {
             onDone: () => {
+              rpcStreamCredits.delete(currentCallId)
               call.cleanup?.()
             },
             onReturn: (reason) => {

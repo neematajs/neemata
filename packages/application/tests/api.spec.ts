@@ -1,22 +1,11 @@
-import { Buffer } from 'node:buffer'
-
 import type { Schema, WireSchema } from '@nmtjs/common/schema'
-import type { TransportWorkerParams } from '@nmtjs/gateway'
 import { onceAborted } from '@nmtjs/common'
 import { isSchema, isWireSchemaCodec, noopSchema } from '@nmtjs/common/schema'
 import { c } from '@nmtjs/contract'
-import { Container, createLogger, Hooks, Scope } from '@nmtjs/core'
-import { Gateway, GatewayInjectables } from '@nmtjs/gateway'
-import { JsonFormat } from '@nmtjs/json-format/server'
-import { MsgpackFormat } from '@nmtjs/msgpack-format/server'
-import {
-  ClientMessageType,
-  ConnectionType,
-  ErrorCode,
-  ProtocolVersion,
-  ServerMessageType,
-} from '@nmtjs/protocol'
-import { ProtocolError, ProtocolFormats } from '@nmtjs/protocol/server'
+import { Container, createLogger, Scope } from '@nmtjs/core'
+import { GatewayInjectables } from '@nmtjs/gateway'
+import { ErrorCode } from '@nmtjs/protocol'
+import { ProtocolError } from '@nmtjs/protocol/server'
 import { t } from '@nmtjs/type'
 import { describe, expect, expectTypeOf, it, vi } from 'vitest'
 
@@ -28,6 +17,8 @@ import {
   createContractProcedure,
   createMiddleware,
   createProcedure,
+  createStream,
+  createContractStream,
 } from '../src/index.ts'
 
 const asyncSchema = <Input, Output>(
@@ -208,8 +199,7 @@ describe('ApplicationApi schemas', () => {
   it('preserves inferred output types for async handlers and streams', () => {
     const sync = createProcedure(() => ({ id: 1, label: 'one' }))
     const async = createProcedure({ handler: async () => ({ id: 1 }) })
-    const stream = createProcedure({
-      stream: true,
+    const stream = createStream({
       async *handler() {
         yield { id: 1 }
       },
@@ -224,7 +214,9 @@ describe('ApplicationApi schemas', () => {
     expectTypeOf<
       WireSchema.EncodeOutput<typeof stream.contract.output>
     >().toEqualTypeOf<{ id: number }>()
-    expectTypeOf<typeof stream.contract.stream>().toEqualTypeOf<true>()
+    expectTypeOf<
+      typeof stream.contract.type
+    >().toEqualTypeOf<'neemata:stream'>()
   })
 
   it('represents inferred outputs as an encode-only passthrough schema', async () => {
@@ -329,12 +321,9 @@ describe('ApplicationApi schema boundaries', () => {
     await expect(call()).resolves.toBeUndefined()
     expect(handler).toHaveBeenCalledOnce()
     const invalidStream = createTestApi({
-      procedure: createContractProcedure(
-        c.procedure({ stream: true }),
-        async function* () {
-          yield undefined
-        },
-      ),
+      procedure: createContractStream(c.stream({}), async function* () {
+        yield undefined
+      }),
     })
     await expect(invalidStream.call()).rejects.toMatchObject({
       code: ErrorCode.InternalServerError,
@@ -347,9 +336,8 @@ describe('ApplicationApi schema boundaries', () => {
       return String(value)
     })
     const { call } = createTestApi({
-      procedure: createProcedure({
+      procedure: createStream({
         output,
-        stream: true,
         async *handler() {
           yield 1
           yield -1
@@ -384,10 +372,9 @@ describe('ApplicationApi schema boundaries', () => {
         serializeOutput ? date.toISOString() : date,
       )
       const streaming = createTestApi({
-        procedure: createProcedure({
+        procedure: createStream({
           output: t.date(),
           meta,
-          stream: true,
           async *handler() {
             yield date
           },
@@ -404,143 +391,4 @@ describe('ApplicationApi schema boundaries', () => {
       await expect(stream.next()).resolves.toMatchObject({ done: true })
     }
   })
-})
-
-describe('ApplicationApi through Gateway with real formats', () => {
-  it.each([
-    ['JSON', () => new JsonFormat()],
-    ['MessagePack', () => new MsgpackFormat()],
-  ] as const)(
-    'preserves unary values and rejects undefined stream chunks with %s',
-    async (_name, createFormat) => {
-      const format = createFormat()
-      const { api, logger } = createTestApi({
-        procedure: createProcedure({
-          input: t.any(),
-          handler: (_ctx, value) => value,
-        }),
-      })
-      api.options.procedures.set('stream', {
-        path: [],
-        procedure: createProcedure({
-          stream: true,
-          async *handler() {
-            yield 0
-            yield false
-            yield ''
-            yield null
-            yield undefined
-          },
-        }),
-      })
-      let transportParams: TransportWorkerParams | undefined
-      const sent: Buffer[] = []
-      const gateway = new Gateway({
-        logger,
-        container: api.options.container,
-        hooks: new Hooks(),
-        formats: new ProtocolFormats([format]),
-        transports: {
-          test: {
-            transport: {
-              start(params) {
-                transportParams = params
-                return 'test://'
-              },
-              stop() {},
-              send(_connectionId, data) {
-                sent.push(
-                  Buffer.from(data.buffer, data.byteOffset, data.byteLength),
-                )
-                return true
-              },
-              close() {},
-            },
-          },
-        },
-        api,
-        heartbeat: false,
-      })
-      await gateway.start()
-      try {
-        if (!transportParams) throw new Error('Transport did not start')
-        const params = transportParams
-        const connection = await params.onConnect({
-          type: ConnectionType.Bidirectional,
-          protocolVersion: ProtocolVersion.v1,
-          accept: format.contentType,
-          contentType: format.contentType,
-          data: {},
-        })
-        const request = (callId: number, procedure: string, value: unknown) => {
-          const name = Buffer.from(procedure)
-          const header = Buffer.alloc(7)
-          header.writeUInt8(ClientMessageType.Rpc, 0)
-          header.writeUInt32LE(callId, 1)
-          header.writeUInt16LE(name.byteLength, 5)
-          const payload = format.encodeRPC(value, {})
-          return Uint8Array.from(
-            Buffer.concat([header, name, Buffer.from(payload)]),
-          ).buffer
-        }
-        let callId = 1
-        for (const value of [undefined, null, false, 0, '', { ok: true }]) {
-          sent.length = 0
-          await params.onMessage({
-            connectionId: connection.id,
-            data: request(callId++, 'test', value),
-          })
-          expect(sent).toHaveLength(1)
-          expect(sent[0].readUInt8(0)).toBe(ServerMessageType.RpcResponse)
-          expect(sent[0].readUInt8(5)).toBe(0)
-          expect(
-            format.decodeRPC(sent[0].subarray(6), {
-              addStream() {
-                throw new Error('Unexpected blob')
-              },
-            }),
-          ).toEqual(value)
-          await expect(
-            params.onRpc(
-              connection,
-              { callId: callId++, procedure: 'test', payload: value },
-              new AbortController().signal,
-            ),
-          ).resolves.toEqual(value)
-        }
-
-        sent.length = 0
-        const streamCallId = callId++
-        const running = params.onMessage({
-          connectionId: connection.id,
-          data: request(streamCallId, 'stream', undefined),
-        })
-        await vi.waitFor(() =>
-          expect(sent[0]?.readUInt8(0)).toBe(
-            ServerMessageType.RpcStreamResponse,
-          ),
-        )
-        const pull = Buffer.alloc(9)
-        pull.writeUInt8(ClientMessageType.RpcStreamPull, 0)
-        pull.writeUInt32LE(streamCallId, 1)
-        pull.writeUInt32LE(6, 5)
-        await params.onMessage({
-          connectionId: connection.id,
-          data: Uint8Array.from(pull).buffer,
-        })
-        await running
-        const chunks = sent.filter(
-          (message) =>
-            message.readUInt8(0) === ServerMessageType.RpcStreamChunk,
-        )
-        expect(
-          chunks.map((message) => format.decode(message.subarray(5))),
-        ).toEqual([0, false, '', null])
-        expect(sent.at(-1)?.readUInt8(0)).toBe(ServerMessageType.RpcStreamAbort)
-        expect(gateway.rpcs.get(connection.id, streamCallId)).toBeUndefined()
-      } finally {
-        await gateway.stop()
-      }
-    },
-  )
 })

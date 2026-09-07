@@ -8,7 +8,6 @@ import type {
   BranchCaseOutputs,
   CancellationPolicy,
   DurationString,
-  MapRunMode,
   RunIdempotencyBuilder,
   RunTagsBuilder,
   RunUniqueBuilder,
@@ -301,13 +300,11 @@ export type WorkflowBuilder<
     NodeName extends string,
     Task extends AnyTaskDefinition,
     ItemSchema extends Schema,
-    Mode extends MapRunMode,
   >(
     name: AvailableNodeName<NodeName>,
     task: Task,
     options: {
       item: ItemSchema
-      mode: Mode
       title?: string
       description?: string
       concurrency?: number
@@ -319,7 +316,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapTaskNode<NodeName, Task, InputSchemaSides<ItemSchema>, Mode>,
+      WorkflowMapTaskNode<NodeName, Task, InputSchemaSides<ItemSchema>>,
     ],
     DeclaredOutput
   >
@@ -328,13 +325,11 @@ export type WorkflowBuilder<
     NodeName extends string,
     Workflow extends AnyWorkflowDefinition,
     ItemSchema extends Schema,
-    Mode extends MapRunMode,
   >(
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
     options: {
       item: ItemSchema
-      mode: Mode
       title?: string
       description?: string
       concurrency?: number
@@ -345,12 +340,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapWorkflowNode<
-        NodeName,
-        Workflow,
-        InputSchemaSides<ItemSchema>,
-        Mode
-      >,
+      WorkflowMapWorkflowNode<NodeName, Workflow, InputSchemaSides<ItemSchema>>,
     ],
     DeclaredOutput
   >

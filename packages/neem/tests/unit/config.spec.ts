@@ -96,21 +96,14 @@ describe('Neem public runtime API', () => {
     const defaultRoute = {
       routing: { type: 'default' },
     } satisfies NeemRuntimeProxyConfig
-    const missingRoutingType = {
-      // @ts-expect-error explicit routing config must declare a type.
-      routing: { name: 'api' },
-    } satisfies NeemRuntimeProxyConfig
-    const deprecatedDefaultFlag = {
-      routing: {
-        type: 'path',
-        // @ts-expect-error default route is now expressed as type: 'default'.
-        default: true,
-      },
-    } satisfies NeemRuntimeProxyConfig
 
     expect(defaultRoute.routing.type).toBe('default')
-    expect(missingRoutingType.routing.name).toBe('api')
-    expect(deprecatedDefaultFlag.routing.default).toBe(true)
+    expectTypeOf<NonNullable<NeemRuntimeProxyConfig['routing']>>().toExtend<{
+      type: string
+    }>()
+    expectTypeOf<
+      NonNullable<NeemRuntimeProxyConfig['routing']>
+    >().not.toHaveProperty('default')
   })
 
   it('types runtime planner helper by options and worker data', () => {
@@ -174,34 +167,12 @@ describe('Neem public runtime API', () => {
       '@runtime': './runtime.ts',
     })
 
-    const disallowedInput = {
-      // @ts-expect-error Neem owns artifact entries.
-      input: './entry.ts',
-    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
-    const disallowedOutput = {
-      // @ts-expect-error Neem owns output layout and chunk names.
-      output: { entryFileNames: 'entry.js' },
-    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
-    const disallowedCwd = {
-      // @ts-expect-error Neem owns build cwd normalization.
-      cwd: '/workspace/app',
-    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
-    const disallowedWatch = {
-      // @ts-expect-error Neem owns watch lifecycle.
-      watch: { buildDelay: 100 },
-    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
-    const disallowedExperimental = {
-      // @ts-expect-error Neem owns experimental bundler knobs.
-      experimental: { chunkOptimization: false },
-    } satisfies NonNullable<NeemRuntimeBuildConfig['rolldown']>
-
-    expect([
-      disallowedInput,
-      disallowedOutput,
-      disallowedCwd,
-      disallowedWatch,
-      disallowedExperimental,
-    ]).toHaveLength(5)
+    type RuntimeRolldownConfig = NonNullable<NeemRuntimeBuildConfig['rolldown']>
+    expectTypeOf<RuntimeRolldownConfig>().not.toHaveProperty('input')
+    expectTypeOf<RuntimeRolldownConfig>().not.toHaveProperty('output')
+    expectTypeOf<RuntimeRolldownConfig>().not.toHaveProperty('cwd')
+    expectTypeOf<RuntimeRolldownConfig>().not.toHaveProperty('watch')
+    expectTypeOf<RuntimeRolldownConfig>().not.toHaveProperty('experimental')
   })
 
   it('creates runtime factories with merged worker and host build options', () => {

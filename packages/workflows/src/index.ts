@@ -16,10 +16,6 @@ export type {
   DurationString,
   IdempotencyKey,
   MapNodeOutput,
-  MapRunMode,
-  MapStartOnlyOutput,
-  MapWaitAllOutput,
-  MapWaitSettledOutput,
   MaybePromise,
   RetryPolicy,
   RunnableDefinition,
@@ -63,12 +59,17 @@ export type {
   WorkflowOutput,
   WorkflowParallelNode,
   WorkflowRun,
-  WorkflowSettledError,
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types/index.ts'
 export { defineSchedule, defineTask, defineWorkflow } from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
-export { WorkflowAttemptTimeoutError } from './runtime/index.ts'
-export type { AttemptAbortReason } from './runtime/index.ts'
+export {
+  WorkflowAttemptAbortError,
+  WorkflowAttemptTimeoutError,
+} from './runtime/index.ts'
+export type {
+  AttemptAbortReason,
+  AttemptAbortReasonType,
+} from './runtime/index.ts'

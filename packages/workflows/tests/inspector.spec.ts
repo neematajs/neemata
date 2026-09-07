@@ -68,11 +68,9 @@ const workflow = defineWorkflow({
   }))
   .mapTask('scoreAll', scoreTask, {
     item: t.object({ text: t.string() }),
-    mode: 'wait-all',
   })
   .mapWorkflow('enrichAll', childWorkflow, {
     item: t.object({ text: t.string() }),
-    mode: 'wait-settled',
   })
   .build()
 
@@ -155,13 +153,11 @@ const metadataWorkflow = defineWorkflow({
     title: 'Score all',
     description: 'Scores every item',
     item: t.object({ text: t.string() }),
-    mode: 'wait-all',
   })
   .mapWorkflow('enrichAll', metadataChildWorkflow, {
     title: 'Enrich all',
     description: 'Enriches every item',
     item: t.object({ text: t.string() }),
-    mode: 'wait-settled',
   })
   .build()
 
@@ -213,13 +209,11 @@ describe('serializeWorkflowGraph', () => {
           name: 'scoreAll',
           kind: 'mapTask',
           target: { kind: 'task', name: 'score' },
-          mode: 'wait-all',
         },
         {
           name: 'enrichAll',
           kind: 'mapWorkflow',
           target: { kind: 'workflow', name: 'child' },
-          mode: 'wait-settled',
         },
       ],
     })
@@ -344,7 +338,6 @@ describe('serializeWorkflowGraph', () => {
             title: 'Metadata score task',
             description: 'Scores text for metadata graph',
           },
-          mode: 'wait-all',
         },
         {
           name: 'enrichAll',
@@ -357,7 +350,6 @@ describe('serializeWorkflowGraph', () => {
             title: 'Metadata child workflow',
             description: 'Enriches text for metadata graph',
           },
-          mode: 'wait-settled',
         },
       ],
     })
@@ -440,6 +432,7 @@ describe('snapshot DTO mappers', () => {
       workflowName: 'everything',
       status: 'running',
       input: { text: 'hi' },
+      activeSince: createdAt,
       rootRunId: 'run-1',
       tags: { env: 'test' },
       version: 3,
@@ -481,6 +474,7 @@ describe('snapshot DTO mappers', () => {
         childKey: '$self',
         status: 'completed',
         attemptNumber: 1,
+        retryAttemptNumber: 1,
         input: { text: 'hi' },
         output: { text: 'hi' },
         dispatchedAt: createdAt,
@@ -508,6 +502,7 @@ describe('snapshot DTO mappers', () => {
       childKey: '$self',
       status: 'started',
       attemptNumber: 1,
+      retryAttemptNumber: 1,
       input: { text: 'hi' },
       dispatchedAt: createdAt,
       heartbeatAt: updatedAt,
@@ -526,6 +521,7 @@ describe('snapshot DTO mappers', () => {
       childKey: '$self',
       status: 'failed',
       attemptNumber: 2,
+      retryAttemptNumber: 2,
       input: { text: 'hi' },
       error: {
         name: 'Error',
@@ -553,6 +549,7 @@ describe('read model inspector helpers', () => {
     name: id,
     workflowName: id,
     status: 'running',
+    activeSince: createdAt,
     rootRunId: 'run-1',
     tags: {},
     version: 1,
@@ -601,6 +598,7 @@ describe('read model inspector helpers', () => {
     childKey,
     status: 'completed',
     attemptNumber,
+    retryAttemptNumber: attemptNumber,
     dispatchedAt: createdAt,
     completedAt: updatedAt,
   })
@@ -689,6 +687,7 @@ describe('read model inspector helpers', () => {
       childKey: 'member:a',
       status: 'completed',
       attemptNumber: 1,
+      retryAttemptNumber: 1,
       input: { text: 'attempt-input' },
       output: { text: 'attempt-output' },
       dispatchedAt: createdAt,

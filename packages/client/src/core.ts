@@ -1,5 +1,5 @@
 import type {
-  BaseClientFormat,
+  BaseClientCodec,
   MessageContext,
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/client'
@@ -69,7 +69,7 @@ export class ClientCore extends EventEmitter<{
   error: [error: ClientError]
 }> {
   readonly protocol: ProtocolVersionInterface
-  readonly format: BaseClientFormat
+  readonly codec: BaseClientCodec
   readonly application?: string
   readonly autoConnect: boolean
 
@@ -99,7 +99,7 @@ export class ClientCore extends EventEmitter<{
     super()
 
     this.protocol = versions[options.protocol]
-    this.format = options.format
+    this.codec = options.codec
     this.application = options.application
     this.autoConnect = options.autoConnect ?? false
   }
@@ -129,6 +129,7 @@ export class ClientCore extends EventEmitter<{
       this.autoConnect &&
       !this.#disposed &&
       this.#lastDisconnectReason !== 'client' &&
+      (this.#state === 'connecting' || !this.#reconnectPromise) &&
       (this.#state === 'idle' ||
         this.#state === 'connecting' ||
         this.#state === 'disconnected')

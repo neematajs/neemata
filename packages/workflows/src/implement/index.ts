@@ -13,7 +13,6 @@ import type {
   BoundaryOutput,
   BranchCaseDefinition,
   IdempotencyKey,
-  MapRunMode,
   MaybePromise,
   RetryPolicy,
   TaskDecodedInput,
@@ -216,7 +215,6 @@ export type MapNodeImplementation = {
   readonly kind: 'mapTask' | 'mapWorkflow'
   readonly name: string
   readonly target: AnyTaskDefinition | AnyWorkflowDefinition
-  readonly mode: MapRunMode
   readonly concurrency?: number
   readonly items: (...args: any[]) => readonly unknown[]
   readonly input: StoredCallback
@@ -737,7 +735,6 @@ function createWorkflowChain(state: {
             kind: 'mapTask',
             name: node.name,
             target: task,
-            mode: node.mode,
             concurrency: node.concurrency,
             items: options.items,
             input: options.input,
@@ -761,7 +758,6 @@ function createWorkflowChain(state: {
             kind: 'mapWorkflow',
             name: node.name,
             target: workflow,
-            mode: node.mode,
             concurrency: node.concurrency,
             items: options.items,
             input: options.input,

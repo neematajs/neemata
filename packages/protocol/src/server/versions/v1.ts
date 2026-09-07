@@ -79,7 +79,7 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         const nonce = messagePayload.readUInt32LE(0)
         return { type: messageType, nonce }
       }
-      case ClientMessageType.ServerStreamAbort: {
+      case ClientMessageType.ServerBlobAbort: {
         const streamId = messagePayload.readUInt32LE(0)
         const reasonPayload = messagePayload.subarray(
           MessageByteLength.StreamId,
@@ -88,12 +88,12 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, streamId, reason }
       }
-      case ClientMessageType.ServerStreamPull: {
+      case ClientMessageType.ServerBlobPull: {
         const streamId = messagePayload.readUInt32LE(0)
         const size = messagePayload.readUInt32LE(MessageByteLength.StreamId)
         return { type: messageType, streamId, size }
       }
-      case ClientMessageType.ClientStreamAbort: {
+      case ClientMessageType.ClientBlobAbort: {
         const streamId = messagePayload.readUInt32LE(0)
         const reasonPayload = messagePayload.subarray(
           MessageByteLength.StreamId,
@@ -102,10 +102,10 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, streamId, reason }
       }
-      case ClientMessageType.ClientStreamEnd: {
+      case ClientMessageType.ClientBlobEnd: {
         return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
       }
-      case ClientMessageType.ClientStreamPush: {
+      case ClientMessageType.ClientBlobPush: {
         const streamId = messagePayload.readUInt32LE(0)
         const chunk = messagePayload.subarray(MessageByteLength.StreamId)
         return { type: messageType, streamId, chunk }
@@ -192,44 +192,44 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
           encodeNumber(nonce, 'Uint32'),
         )
       }
-      case ServerMessageType.ClientStreamPull: {
+      case ServerMessageType.ClientBlobPull: {
         const { size, streamId } =
-          payload as ServerMessageTypePayload[ServerMessageType.ClientStreamPull]
+          payload as ServerMessageTypePayload[ServerMessageType.ClientBlobPull]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
           encodeNumber(size, 'Uint32'),
         )
       }
-      case ServerMessageType.ClientStreamAbort: {
+      case ServerMessageType.ClientBlobAbort: {
         const { streamId, reason } =
-          payload as ServerMessageTypePayload[ServerMessageType.ClientStreamAbort]
+          payload as ServerMessageTypePayload[ServerMessageType.ClientBlobAbort]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
           reason ? encodeText(reason) : Buffer.alloc(0),
         )
       }
-      case ServerMessageType.ServerStreamPush: {
+      case ServerMessageType.ServerBlobPush: {
         const { streamId, chunk } =
-          payload as ServerMessageTypePayload[ServerMessageType.ServerStreamPush]
+          payload as ServerMessageTypePayload[ServerMessageType.ServerBlobPush]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
           chunk,
         )
       }
-      case ServerMessageType.ServerStreamEnd: {
+      case ServerMessageType.ServerBlobEnd: {
         const { streamId } =
-          payload as ServerMessageTypePayload[ServerMessageType.ServerStreamEnd]
+          payload as ServerMessageTypePayload[ServerMessageType.ServerBlobEnd]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),
         )
       }
-      case ServerMessageType.ServerStreamAbort: {
+      case ServerMessageType.ServerBlobAbort: {
         const { streamId, reason } =
-          payload as ServerMessageTypePayload[ServerMessageType.ServerStreamAbort]
+          payload as ServerMessageTypePayload[ServerMessageType.ServerBlobAbort]
         return this.encode(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(streamId, 'Uint32'),

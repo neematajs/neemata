@@ -105,24 +105,28 @@ export function tryCaptureStackTrace(
     holder.stack = new Error().stack?.split('\n').slice(1).join('\n')
   }
 
-  const traceLines = holder.stack?.split('\n')
-  if (!traceLines) return undefined
-  // skip the error header
-  for (const traceLine of traceLines.slice(1)) {
-    const trimmed = traceLine.trim()
-    if (!trimmed.startsWith('at ')) continue
+  const findLocation = (stack?: string) => {
+    const traceLines = stack?.split('\n')
+    if (!traceLines) return undefined
+    // skip the error header
+    for (const traceLine of traceLines.slice(1)) {
+      const trimmed = traceLine.trim()
+      if (!trimmed.startsWith('at ')) continue
 
-    // keep the whole eval frame: it carries the original location of code
-    // executed through eval-based dev runtimes
-    if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
-      return trimmed.slice(9, -1)
+      // keep the whole eval frame: it carries the original location of code
+      // executed through eval-based dev runtimes
+      if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
+        return trimmed.slice(9, -1)
+      }
+
+      // `at fn (file:line:col)` or `at file:line:col`
+      const parenthesized = trimmed.match(/\(([^()]*)\)$/)
+      return parenthesized ? parenthesized[1] : trimmed.slice(3)
     }
-
-    // `at fn (file:line:col)` or `at file:line:col`
-    const parenthesized = trimmed.match(/\(([^()]*)\)$/)
-    return parenthesized ? parenthesized[1] : trimmed.slice(3)
+    return undefined
   }
-  return undefined
+
+  return findLocation(holder.stack)
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {

@@ -7,6 +7,8 @@ import type {
 import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   TAnyProcedureContract,
+  TAnyCallableContract,
+  TAnyStreamContract,
   TAnyRouterContract,
   TRouteContract,
 } from '@nmtjs/contract'
@@ -17,7 +19,7 @@ import type {
   ProtocolVersion,
 } from '@nmtjs/protocol'
 import type {
-  BaseClientFormat,
+  BaseClientCodec,
   ProtocolClientBlobStream,
   ProtocolError,
   ProtocolServerBlobStream,
@@ -35,7 +37,7 @@ export interface ClientOptions<
 > {
   contract: RouterContract
   protocol: ProtocolVersion
-  format: BaseClientFormat
+  codec: BaseClientCodec
   application?: string
   autoConnect?: boolean
   timeout?: number
@@ -70,7 +72,7 @@ export type ConnectionState =
 
 export interface ClientCoreOptions {
   protocol: ProtocolVersion
-  format: BaseClientFormat
+  codec: BaseClientCodec
   application?: string
   autoConnect?: boolean
   plugins?: ClientPlugin[]
@@ -178,7 +180,7 @@ export type StreamSubscriptionOptions = Partial<StreamCallOptions>
 
 /** Runtime clients require both codec directions at every nesting level. */
 export type NonCodecSchemas<Route extends TRouteContract> =
-  Route extends TAnyProcedureContract
+  Route extends TAnyCallableContract
     ? Exclude<Route['input'] | Route['output'], WireSchema.Codec | undefined>
     : Route extends TAnyRouterContract
       ? NonCodecSchemas<Route['routes'][keyof Route['routes']]>
@@ -210,7 +212,7 @@ export interface RuntimeOutputContractTypeProvider extends TypeProvider {
 
 export type AnyResolvedContractProcedure = {
   [ResolvedType]: 'procedure'
-  contract: TAnyProcedureContract
+  contract: TAnyCallableContract
   stream: boolean
   input: any
   output: any
@@ -226,25 +228,31 @@ export type ResolveAPIRouterRoutes<
   InputTypeProvider extends TypeProvider = TypeProvider,
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > = { [ResolvedType]: 'router' } & {
-  [K in keyof T['routes']]: T['routes'][K] extends TAnyProcedureContract
+  [K in keyof T['routes']]: T['routes'][K] extends TAnyStreamContract
     ? {
         [ResolvedType]: 'procedure'
         contract: T['routes'][K]
-        stream: T['routes'][K]['stream'] extends true ? true : false
+        stream: true
         input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
-        output: T['routes'][K]['stream'] extends true
-          ? AsyncIterable<
-              CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-            >
-          : CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
-      }
-    : T['routes'][K] extends TAnyRouterContract
-      ? ResolveAPIRouterRoutes<
-          T['routes'][K],
-          InputTypeProvider,
-          OutputTypeProvider
+        output: AsyncIterable<
+          CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
         >
-      : never
+      }
+    : T['routes'][K] extends TAnyProcedureContract
+      ? {
+          [ResolvedType]: 'procedure'
+          contract: T['routes'][K]
+          stream: false
+          input: CallTypeProvider<InputTypeProvider, T['routes'][K]['input']>
+          output: CallTypeProvider<OutputTypeProvider, T['routes'][K]['output']>
+        }
+      : T['routes'][K] extends TAnyRouterContract
+        ? ResolveAPIRouterRoutes<
+            T['routes'][K],
+            InputTypeProvider,
+            OutputTypeProvider
+          >
+        : never
 }
 
 export type ResolveContract<

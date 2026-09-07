@@ -83,6 +83,8 @@ export function defineWorkflowsWorker<
             container: execution.container,
             workerId: ctx.name,
             signal: abort.signal,
+            onError: (error) =>
+              ctx.logger.error({ err: error }, 'Neem workflows worker error'),
           })
           workerLoop.then(resolveFinished, (error: unknown) => {
             ctx.logger.error(
@@ -151,6 +153,7 @@ async function runRoleLoop(input: {
   readonly container: Container
   readonly workerId: string
   readonly signal: AbortSignal
+  readonly onError: (error: unknown) => void
 }): Promise<void> {
   const role = input.data.role
   switch (role) {
@@ -166,6 +169,7 @@ async function runRoleLoop(input: {
         scheduling:
           input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
         signal: input.signal,
+        onError: input.onError,
       })
       return
 
@@ -185,6 +189,7 @@ async function runRoleLoop(input: {
         // across every named pool and thread.
         reaping: false,
         signal: input.signal,
+        onError: input.onError,
       })
       return
   }

@@ -11,7 +11,9 @@ describe('tryCaptureStackTrace', () => {
 
   it('should attribute to the anchor caller instead of the anchor itself', () => {
     function wrapper() {
-      return tryCaptureStackTrace(wrapper)
+      // Keep the anchor frame present on runtimes that implement proper tail calls.
+      const trace = tryCaptureStackTrace(wrapper)
+      return trace
     }
     function nested() {
       return wrapper()
@@ -22,5 +24,11 @@ describe('tryCaptureStackTrace', () => {
     expect(anchored).toContain('utils.spec.ts')
     expect(direct).toContain('utils.spec.ts')
     expect(anchored).not.toBe(direct)
+  })
+
+  it('should not invent a location when the anchor is absent', () => {
+    function absentAnchor() {}
+
+    expect(tryCaptureStackTrace(absentAnchor)).toBeUndefined()
   })
 })

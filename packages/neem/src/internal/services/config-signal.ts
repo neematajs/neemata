@@ -30,7 +30,6 @@ export async function watchConfigSignal({
     output: { minify: false, sourcemap: false },
     experimental: { chunkOptimization: false },
     optimization: { inlineConst: false, pifeForModuleWrappers: false },
-    treeshake: false,
     watch: {
       buildDelay: 100,
       clearScreen: false,
