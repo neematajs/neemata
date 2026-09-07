@@ -637,79 +637,95 @@ for (const target of targets) {
         await runtime.attemptExecutor.ack(redelivered!)
       })
 
-      it('maintenance removes commands and indexes for expired families on abandoned routes', async () => {
-        const { client, keyPrefix, keys, runtime } = createHarness({
-          maxDeliveries: 1,
-          terminalRetentionMs: 80,
-        })
-        const run = await runtime.store.createRun({
-          workflowName: 'retained-family',
-          input: null,
-        })
-        await runtime.runCoordinationExecutor.enqueue({
-          kind: 'continueRun',
-          runId: run.id,
-          workflowName: run.workflowName,
-        })
-        const claimed = await runtime.runCoordinationExecutor.claim({
-          workerId: 'claimed-worker',
-          workflowNames: [run.workflowName],
-          leaseMs: 60_000,
-        })
-        expect(claimed).not.toBeNull()
+      it.each([1, 300])(
+        'maintenance removes commands and indexes with %i ready attempts on abandoned routes',
+        async (readyCount) => {
+          const { client, keyPrefix, keys, runtime } = createHarness({
+            maxDeliveries: 1,
+            terminalRetentionMs: 80,
+          })
+          const run = await runtime.store.createRun({
+            workflowName: 'retained-family',
+            input: null,
+          })
+          await runtime.runCoordinationExecutor.enqueue({
+            kind: 'continueRun',
+            runId: run.id,
+            workflowName: run.workflowName,
+          })
+          const claimed = await runtime.runCoordinationExecutor.claim({
+            workerId: 'claimed-worker',
+            workflowNames: [run.workflowName],
+            leaseMs: 60_000,
+          })
+          expect(claimed).not.toBeNull()
 
-        const deadAttempt = activityCommand(run.id, run.workflowName, 'dead')
-        await runtime.attemptExecutor.dispatchActivity(deadAttempt)
-        const deadClaim = await runtime.attemptExecutor.claim({
-          workerId: 'dead-worker',
-          workflowNames: [run.workflowName],
-          activityNames: ['dead'],
-          taskNames: [],
-          leaseMs: 60_000,
-        })
-        await runtime.attemptExecutor.release(deadClaim!, {
-          error: new Error('dead delivery'),
-        })
+          const deadAttempt = activityCommand(run.id, run.workflowName, 'dead')
+          await runtime.attemptExecutor.dispatchActivity(deadAttempt)
+          const deadClaim = await runtime.attemptExecutor.claim({
+            workerId: 'dead-worker',
+            workflowNames: [run.workflowName],
+            activityNames: ['dead'],
+            taskNames: [],
+            leaseMs: 60_000,
+          })
+          await runtime.attemptExecutor.release(deadClaim!, {
+            error: new Error('dead delivery'),
+          })
 
-        const readyAttempt = activityCommand(run.id, run.workflowName, 'ready')
-        await runtime.attemptExecutor.dispatchActivity(readyAttempt)
-        await runtime.store.completeRun({ runId: run.id, output: null })
-        await waitUntil(
-          async () => (await client.exists(keys.family(run.id))) === 0,
-        )
+          await Promise.all(
+            Array.from({ length: readyCount }, (_, index) =>
+              runtime.attemptExecutor.dispatchActivity(
+                activityCommand(run.id, run.workflowName, `ready-${index}`),
+              ),
+            ),
+          )
+          await runtime.store.completeRun({ runId: run.id, output: null })
+          await waitUntil(
+            async () => (await client.exists(keys.family(run.id))) === 0,
+          )
 
-        await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual(
-          [],
-        )
-        await expect(
-          runtime.runCoordinationExecutor.claim({
-            workerId: 'orphan-cleaner',
-            workflowNames: ['unrelated'],
-            leaseMs: 1_000,
-          }),
-        ).resolves.toBeNull()
-        await expect(
-          runtime.attemptExecutor.claim({
-            workerId: 'attempt-orphan-cleaner',
-            workflowNames: ['unrelated'],
-            taskNames: ['unrelated'],
-            leaseMs: 1_000,
-          }),
-        ).resolves.toBeNull()
+          await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual(
+            [],
+          )
+          await expect(
+            runtime.runCoordinationExecutor.claim({
+              workerId: 'orphan-cleaner',
+              workflowNames: ['unrelated'],
+              leaseMs: 1_000,
+            }),
+          ).resolves.toBeNull()
+          await expect(
+            runtime.attemptExecutor.claim({
+              workerId: 'attempt-orphan-cleaner',
+              workflowNames: ['unrelated'],
+              taskNames: ['unrelated'],
+              leaseMs: 1_000,
+            }),
+          ).resolves.toBeNull()
 
-        await runtime.store.pruneTerminalRuns({ olderThan: new Date() })
+          const evalsha = vi.spyOn(client, 'evalsha')
+          await runtime.store.pruneTerminalRuns({ olderThan: new Date() })
 
-        for (const kind of ['continue', 'attempt'] as const) {
-          const queue = keys.queue(kind)
-          expect(await client.hlen(queue.items)).toBe(0)
-          expect(await client.zcard(queue.ready)).toBe(0)
-          expect(await client.zcard(queue.claimed)).toBe(0)
-          expect(await client.zcard(queue.dead)).toBe(0)
-          expect(await client.hlen(queue.dedup)).toBe(0)
-        }
-        const remaining = await matchingKeys(client, `${keyPrefix}queue:*`)
-        expect(remaining).toEqual([])
-      })
+          for (const kind of ['continue', 'attempt'] as const) {
+            const queue = keys.queue(kind)
+            // One round removes this small backlog, then a clean pass verifies it.
+            const cleanupCalls = evalsha.mock.calls.filter((args) =>
+              args.includes(queue.items),
+            )
+            if (readyCount === 1 || kind === 'continue') {
+              expect(cleanupCalls.length).toBeLessThanOrEqual(2)
+            }
+            expect(await client.hlen(queue.items)).toBe(0)
+            expect(await client.zcard(queue.ready)).toBe(0)
+            expect(await client.zcard(queue.claimed)).toBe(0)
+            expect(await client.zcard(queue.dead)).toBe(0)
+            expect(await client.hlen(queue.dedup)).toBe(0)
+          }
+          const remaining = await matchingKeys(client, `${keyPrefix}queue:*`)
+          expect(remaining).toEqual([])
+        },
+      )
 
       it('bounds a late start marker by the terminal family retention window', async () => {
         const { client, keys, runtime } = createHarness({

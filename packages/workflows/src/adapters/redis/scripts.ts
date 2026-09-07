@@ -401,26 +401,36 @@ return 0
 `,
   pruneOrphans: `
 ${QUEUE_CLEANUP}
-local indexKey = KEYS[tonumber(ARGV[4])]
-local scan = redis.call('ZSCAN', indexKey, ARGV[1], 'COUNT', ARGV[2])
-local nextCursor = scan[1]
-local entries = scan[2]
-local changed = 0
-for index = 1, #entries, 2 do
-  local id = entries[index]
-  local raw = redis.call('HGET', KEYS[1], id)
-  if not raw then
-    redis.call('ZREM', indexKey, id)
-    changed = changed + 1
+local result = { '0' }
+-- Each requested index contributes one page to this atomic cleanup round.
+for position = 6, #KEYS do
+  local indexKey = KEYS[position]
+  local cursor = ARGV[position - 3]
+  if cursor == '' then
+    table.insert(result, '')
   else
-    local item = cjson.decode(raw)
-    if orphaned(item, ARGV[3]) then
-      deleteItem(id, item)
-      changed = changed + 1
+    local scan = redis.call('ZSCAN', indexKey, cursor, 'COUNT', ARGV[1])
+    local entries = scan[2]
+    for index = 1, #entries, 2 do
+      local id = entries[index]
+      local raw = redis.call('HGET', KEYS[1], id)
+      if not raw then
+        redis.call('ZREM', indexKey, id)
+        result[1] = '1'
+      else
+        local item = cjson.decode(raw)
+        if orphaned(item, ARGV[2]) then
+          deleteItem(id, item)
+          result[1] = '1'
+        end
+      end
     end
+    -- Empty marks a completed scan so later rounds only visit unfinished indexes.
+    if scan[1] == '0' then table.insert(result, '')
+    else table.insert(result, scan[1]) end
   end
 end
-return { nextCursor, tostring(changed) }
+return result
 `,
   deleteForRuns: `
 ${QUEUE_CLEANUP}
