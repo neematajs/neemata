@@ -68,6 +68,12 @@ local function coalesceReady(item, items, ready, dedup)
     redis.call('HSET', items, currentId, cjson.encode(current))
     redis.call('ZADD', ready, incomingScore, currentId)
   end
+  -- Preserve the furthest retry progress so fresh wakes cannot reset poison work.
+  if item.deliveryCount > current.deliveryCount then
+    current.deliveryCount = item.deliveryCount
+    current.lastError = item.lastError
+    redis.call('HSET', items, currentId, cjson.encode(current))
+  end
   return true
 end
 `
@@ -298,6 +304,36 @@ for index = 1, #entries, 2 do
 end
 return { nextCursor, tostring(deleted), tostring(changed) }
 `,
+  deleteUnclaimed: `
+${QUEUE_CLEANUP}
+local scan = redis.call('ZSCAN', KEYS[2], ARGV[1], 'COUNT', ARGV[2])
+local nextCursor = scan[1]
+local entries = scan[2]
+local runIds = cjson.decode(ARGV[3])
+local targets = {}
+for _, runId in ipairs(runIds) do targets[runId] = true end
+local deleted = 0
+local changed = 0
+for index = 1, #entries, 2 do
+  local id = entries[index]
+  local raw = redis.call('HGET', KEYS[1], id)
+  if not raw then
+    redis.call('ZREM', KEYS[2], id)
+    changed = changed + 1
+  else
+    local item = cjson.decode(raw)
+    if orphaned(item, ARGV[4]) then
+      deleteItem(id, item)
+      changed = changed + 1
+    elseif targets[item.payload.runId] and not item.leaseToken then
+      deleteItem(id, item)
+      deleted = deleted + 1
+      changed = changed + 1
+    end
+  end
+end
+return { nextCursor, tostring(deleted), tostring(changed) }
+`,
   ack: `
 if (redis.call('HGET', KEYS[1], ARGV[1]) or '') ~= ARGV[2] then return 0 end
 if not redis.call('ZSCORE', KEYS[2], ARGV[1]) then return 0 end
@@ -322,6 +358,7 @@ end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[3])
 redis.call('ZREM', KEYS[2], ARGV[1])
 redis.call('ZADD', KEYS[3], ARGV[4], ARGV[1])
+redis.call('HSET', KEYS[4], ARGV[5], ARGV[1])
 return 1
 `,
   updateDead: `

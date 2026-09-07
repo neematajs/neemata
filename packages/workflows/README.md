@@ -86,6 +86,13 @@ intentionally not part of the Redis runtime; use a Postgres runtime for durable
 scheduled and background work. A single application can register separate
 named Redis and Postgres runtimes and choose between them per workload.
 
+Ready queues are shared across routes within a runtime. Checking an empty route
+scans the ready backlog in bounded Redis batches, so polling cost grows with
+work queued for other routes. Manual retry also examines both command queues
+inside its atomic transition; large unrelated backlogs can delay other Redis
+operations while that transition runs. Use separate runtime namespaces for
+independent worker pools with large backlogs.
+
 The caller owns the command client and must close it. `runtime.dispose()` closes
 only the duplicated Pub/Sub connection. Redis Cluster is not supported in this
 version because atomic operations span the runtime namespace; use a standalone

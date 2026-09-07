@@ -25,7 +25,7 @@ type ServiceTarget = {
     url?: string,
     commandTimeout?: number,
     maxRetriesPerRequest?: number,
-  ) => WorkflowRedisClient
+  ) => Redis | Valkey
 }
 
 const targets: readonly ServiceTarget[] = [
@@ -117,7 +117,7 @@ for (const target of targets) {
   describe.skipIf(!target.url)(
     `Redis workflow runtime against ${target.name}`,
     () => {
-      const clients: WorkflowRedisClient[] = []
+      const clients: Array<Redis | Valkey> = []
       const runtimes: ReturnType<typeof createRedisWorkflowRuntime>[] = []
 
       afterEach(async () => {
@@ -780,11 +780,11 @@ async function waitForAsync(
   throw new Error('Timed out waiting for asynchronous condition')
 }
 
-async function countMatchingKeys(client: WorkflowRedisClient, pattern: string) {
+async function countMatchingKeys(client: Redis | Valkey, pattern: string) {
   return (await matchingKeys(client, pattern)).length
 }
 
-async function matchingKeys(client: WorkflowRedisClient, pattern: string) {
+async function matchingKeys(client: Redis | Valkey, pattern: string) {
   let cursor = '0'
   const keys: string[] = []
   do {
@@ -795,17 +795,14 @@ async function matchingKeys(client: WorkflowRedisClient, pattern: string) {
   return keys
 }
 
-async function deleteMatchingKeys(
-  client: WorkflowRedisClient,
-  pattern: string,
-) {
+async function deleteMatchingKeys(client: Redis | Valkey, pattern: string) {
   const keys = await matchingKeys(client, pattern)
   for (let index = 0; index < keys.length; index += 100) {
     await client.del(...keys.slice(index, index + 100))
   }
 }
 
-async function redisConfigValue(client: WorkflowRedisClient, key: string) {
+async function redisConfigValue(client: Redis | Valkey, key: string) {
   const result = (await client.config('GET', key)) as unknown
   if (Array.isArray(result) && result.length >= 2) return String(result[1])
   if (result && typeof result === 'object' && key in result) {
@@ -902,7 +899,7 @@ async function restartService(target: ServiceTarget) {
   }, 20_000)
 }
 
-async function waitForRedis(client: WorkflowRedisClient) {
+async function waitForRedis(client: Redis | Valkey) {
   await waitForAsync(async () => {
     try {
       return (await client.ping()) === 'PONG'
@@ -916,7 +913,7 @@ type EvalshaCommand = (...arguments_: readonly unknown[]) => Promise<unknown>
 type HgetCommand = (...arguments_: readonly unknown[]) => Promise<string | null>
 
 function failOnceAfterEvalshaForKey(
-  client: WorkflowRedisClient,
+  client: Redis | Valkey,
   expectedFirstKey: string,
 ) {
   const mutableClient = client as unknown as { evalsha: EvalshaCommand }

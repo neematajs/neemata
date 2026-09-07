@@ -62,9 +62,7 @@ type Mutable<T> = { -readonly [Key in keyof T]: T[Key] }
 
 export type RedisWorkflowStoreDelegates = {
   listDeadCommands(runId?: string): Promise<readonly DeadWorkflowCommand[]>
-  listUnreapedDeadCommands(
-    limit?: number,
-  ): Promise<readonly DeadWorkflowCommand[]>
+  listUnreapedDeadCommands: WorkflowStore['listUnreapedDeadCommands']
   markDeadCommandReaped(id: string): Promise<void>
   requeueDeadCommand(id: string): Promise<void>
   deleteCommands(runIds: ReadonlySet<string>): Promise<void>
@@ -394,7 +392,7 @@ export class RedisWorkflowStoreRuntime {
       listDeadCommands: (params) =>
         this.#delegates.listDeadCommands(params?.runId),
       listUnreapedDeadCommands: (params) =>
-        this.#delegates.listUnreapedDeadCommands(params?.limit),
+        this.#delegates.listUnreapedDeadCommands(params),
       markDeadCommandReaped: (id) => this.#delegates.markDeadCommandReaped(id),
       requeueDeadCommand: (id) => this.#delegates.requeueDeadCommand(id),
       acquireRunLease: (params) => this.#acquireRunLease(params),
@@ -1386,10 +1384,13 @@ export class RedisWorkflowStoreRuntime {
     roots.sort(
       (left, right) => left.updatedAt.getTime() - right.updatedAt.getTime(),
     )
-    if (roots.length > batchSize) roots.length = batchSize
-    for (const root of roots) await this.#deleteFamily(root.id)
+    let deleted = 0
+    for (const root of roots) {
+      if (await this.#deleteFamily(root.id, params)) deleted += 1
+      if (deleted >= batchSize) break
+    }
     await this.#delegates.pruneDeadCommands(params.olderThan)
-    return { deleted: roots.length }
+    return { deleted }
   }
 
   async #deleteRun(runId: string) {
@@ -1405,24 +1406,22 @@ export class RedisWorkflowStoreRuntime {
       if (!candidate || isTerminalRunStatus(candidate.status)) continue
       throw new Error(`Run [${runId}] has non-terminal runs`)
     }
-    await this.#deleteFamily(run.rootRunId)
-    return { deleted: true }
+    return { deleted: await this.#deleteFamily(run.rootRunId) }
   }
 
-  async #deleteFamily(rootRunId: string) {
+  async #deleteFamily(rootRunId: string, prune?: PruneTerminalRunsParams) {
     const family = await this.#loadFamily(rootRunId)
-    if (!family) return
+    if (!family) return false
     const runIds = new Set<string>()
     for (const id in family.runs) {
       const run = family.runs[id]
       if (!run) continue
       if (!isTerminalRunStatus(run.status)) {
+        if (prune) return false
         throw new Error(`Run [${rootRunId}] has non-terminal runs`)
       }
       runIds.add(id)
     }
-    await this.#delegates.deleteCommands(runIds)
-
     const stateKeys = this.#keys.familyStateKeys(rootRunId)
     const result = scriptResult(
       await this.#scripts.run(
@@ -1434,13 +1433,23 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.terminalRuns(),
           ...stateKeys,
         ],
-        [],
+        prune
+          ? [
+              String(prune.olderThan.getTime()),
+              JSON.stringify(normalizePruneStatuses(prune.statuses)),
+            ]
+          : [],
       ),
     )
-    if (result[0] === 'missing') return
+    if (result[0] === 'missing' || result[0] === 'skipped') return false
     if (result[0] === 'active') {
+      if (prune) return false
       throw new Error(`Run [${rootRunId}] has non-terminal runs`)
     }
+    // Remove the family first so a successful concurrent retry cannot lose
+    // its new commands to cleanup based on an older terminal snapshot.
+    await this.#delegates.deleteCommands(runIds)
+    return true
   }
 }
 

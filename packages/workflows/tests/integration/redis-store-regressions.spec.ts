@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto'
 
+import { createFuture } from '@nmtjs/common'
 import { t } from '@nmtjs/type'
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { WorkflowRedisClient } from '../../src/adapters/redis.ts'
+import type { StoredRun } from '../../src/runtime/state.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
+import { RedisWorkflowStoreScripts } from '../../src/adapters/redis/store-scripts.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -16,6 +18,7 @@ import {
   createWorkflowRuntimeClient,
   runWorkflowWorker,
 } from '../../src/runtime/index.ts'
+import { reapDeadWorkflowCommands } from '../../src/runtime/worker.ts'
 import { createTestContainer } from './helpers.ts'
 
 const targets = [
@@ -44,8 +47,11 @@ for (const target of targets) {
         for (const dispose of cleanup.splice(0)) await dispose()
       })
 
-      const createHarness = (terminalRetentionMs = 5_000) => {
-        const client: WorkflowRedisClient = new target.Client(target.url!, {
+      const createHarness = (
+        terminalRetentionMs = 5_000,
+        maxDeliveries = 20,
+      ) => {
+        const client = new target.Client(target.url!, {
           maxRetriesPerRequest: 1,
           commandTimeout: 2_000,
         })
@@ -54,6 +60,7 @@ for (const target of targets) {
           client,
           keyPrefix,
           terminalRetentionMs,
+          maxDeliveries,
         })
         cleanup.push(async () => {
           await runtime.dispose?.()
@@ -73,6 +80,276 @@ for (const target of targets) {
         })
         return { client, keyPrefix, runtime }
       }
+
+      it('keeps Date identities distinct and replays Date inputs using their stored JSON form', async () => {
+        const { runtime } = createHarness()
+        const firstDate = new Date('2025-01-01T00:00:00.000Z')
+        const secondDate = new Date('2026-01-01T00:00:00.000Z')
+        const first = await runtime.store.createRun({
+          workflowName: 'date-identity',
+          input: { date: firstDate },
+          idempotencyKey: [firstDate],
+        })
+        const replay = await runtime.store.createRun({
+          workflowName: 'date-identity',
+          input: { date: firstDate },
+          idempotencyKey: [firstDate],
+        })
+        expect(replay.id).toBe(first.id)
+        const second = await runtime.store.createRun({
+          workflowName: 'date-identity',
+          input: { date: secondDate },
+          idempotencyKey: [secondDate],
+        })
+        expect(second.id).not.toBe(first.id)
+        for (const scope of ['active', 'all'] as const) {
+          const original = await runtime.store.createRun({
+            workflowName: 'date-unique',
+            input: null,
+            unique: { scope, key: [firstDate], behavior: 'reject' },
+          })
+          const distinct = await runtime.store.createRun({
+            workflowName: 'date-unique',
+            input: null,
+            unique: { scope, key: [secondDate], behavior: 'reject' },
+          })
+          expect(distinct.id).not.toBe(original.id)
+        }
+      })
+
+      it('expires state and lookups created after the family became terminal', async () => {
+        const { client, keyPrefix, runtime } = createHarness(500)
+        const run = await runtime.store.createRun({
+          workflowName: 'late-state',
+          input: null,
+        })
+        await runtime.store.completeRun({ runId: run.id, output: null })
+        await runtime.store.createNode({
+          runId: run.id,
+          name: 'late',
+          kind: 'activity',
+        })
+        await runtime.store.ensureNodeChildren({
+          runId: run.id,
+          nodeName: 'late',
+          children: [{ childKey: 'one', kind: 'activity' }],
+        })
+        const { attempt } = await runtime.store.ensureChildAttempt({
+          runId: run.id,
+          nodeName: 'late',
+          childKey: 'one',
+          input: null,
+        })
+        const keys = ['nodes', 'children', 'attempts', 'indexes'].map(
+          (part) => `${keyPrefix}family:${run.id}:${part}`,
+        )
+        keys.push(`${keyPrefix}attempt-root:${attempt.id}`)
+        for (const key of keys)
+          expect(await client.pttl(key)).toBeGreaterThan(0)
+        await expect
+          .poll(() => client.exists(...keys), { timeout: 2000 })
+          .toBe(0)
+      })
+
+      it('does not erase a successful retry while deleting its terminal family', async () => {
+        const { client, keyPrefix, runtime } = createHarness()
+        const run = await runtime.store.createRun({
+          workflowName: 'retry-delete',
+          input: null,
+        })
+        const failed = await runtime.store.failRun({
+          runId: run.id,
+          error: new Error('failed'),
+        })
+        const entered = createFuture<void>()
+        const release = createFuture<void>()
+        const hkeys = client.hkeys.bind(client)
+        let queues = 0
+        vi.spyOn(client, 'hkeys').mockImplementation(async (key) => {
+          if (String(key).startsWith(`${keyPrefix}queue:`)) {
+            queues += 1
+            if (queues === 2) entered.resolve()
+            await release.promise
+          }
+          return hkeys(key)
+        })
+        const deleting = runtime.store.deleteRun(run.id).then(
+          () => true,
+          () => false,
+        )
+        await entered.promise
+        let retried = false
+        try {
+          await runtime.store.reopenFailedRun({
+            runId: run.id,
+            expectedVersion: failed!.version,
+          })
+          retried = true
+        } catch {
+          // Either operation may win, but a successful retry must retain its work.
+        } finally {
+          release.resolve()
+        }
+        const deleted = await deleting
+        if (retried) {
+          expect(deleted).toBe(false)
+          expect(
+            await runtime.runCoordinationExecutor.claim({
+              workerId: 'retry-delete',
+              workflowNames: ['retry-delete'],
+              leaseMs: 1000,
+            }),
+          ).not.toBeNull()
+        } else {
+          expect(deleted).toBe(true)
+          expect(await runtime.store.loadRunSnapshot(run.id)).toBeUndefined()
+        }
+      })
+
+      it('does not reap a retired command when an unrelated dead command remains', async () => {
+        const { runtime } = createHarness(5000, 1)
+        const runs: StoredRun[] = []
+        for (const name of ['retired', 'unrelated']) {
+          const run = await runtime.store.createRun({
+            workflowName: name,
+            input: null,
+          })
+          runs.push(run)
+          await runtime.runCoordinationExecutor.enqueue({
+            kind: 'continueRun',
+            runId: run.id,
+            workflowName: name,
+          })
+          const claim = await runtime.runCoordinationExecutor.claim({
+            workerId: name,
+            workflowNames: [name],
+            leaseMs: 1000,
+          })
+          await runtime.runCoordinationExecutor.release(claim!, {
+            error: new Error('dead'),
+          })
+        }
+        const run = runs[0]!
+        await runtime.store.failRun({
+          runId: run.id,
+          error: new Error('failed'),
+        })
+        const dead = await runtime.store.listUnreapedDeadCommands()
+        const stale = dead.find((command) => command.runId === run.id)!
+        expect(
+          await runtime.store.listUnreapedDeadCommands({
+            commandId: 'missing',
+          }),
+        ).toEqual([])
+        expect(
+          await runtime.store.listUnreapedDeadCommands({ commandId: stale.id }),
+        ).toEqual([stale])
+        await createWorkflowRuntimeClient(runtime).retry(run.id)
+        const before = await runtime.store.loadRunSnapshot(run.id)
+        const store = runtime.store
+        await reapDeadWorkflowCommands({
+          ...runtime,
+          store: {
+            ...store,
+            listUnreapedDeadCommands: (params) => {
+              if (params?.commandId !== undefined)
+                return store.listUnreapedDeadCommands(params)
+              return Promise.resolve([stale])
+            },
+          },
+        })
+        expect(await store.loadRunSnapshot(run.id)).toEqual(before)
+        expect(
+          await store.listUnreapedDeadCommands({ commandId: stale.id }),
+        ).toEqual([])
+        const remaining = await store.listUnreapedDeadCommands()
+        expect(remaining).toHaveLength(1)
+        expect(remaining[0]?.runId).toBe(runs[1]!.id)
+      })
+
+      it('skips families with live children without consuming the pruning batch', async () => {
+        const { runtime } = createHarness()
+        const root = await runtime.store.createRun({
+          workflowName: 'live-family',
+          input: null,
+        })
+        await runtime.store.createNode({
+          runId: root.id,
+          name: 'child',
+          kind: 'workflow',
+        })
+        await runtime.store.ensureNodeChildren({
+          runId: root.id,
+          nodeName: 'child',
+          children: [{ childKey: 'only', kind: 'workflow' }],
+        })
+        const { childRun } = await runtime.store.ensureChildRun({
+          runId: root.id,
+          nodeName: 'child',
+          childKey: 'only',
+          childKind: 'workflow',
+          childName: 'child',
+          input: null,
+          rootRunId: root.id,
+        })
+        await runtime.store.completeRun({ runId: root.id, output: null })
+        const eligible = await runtime.store.createRun({
+          workflowName: 'eligible',
+          input: null,
+        })
+        await runtime.store.completeRun({ runId: eligible.id, output: null })
+        expect(
+          await runtime.store.pruneTerminalRuns({
+            olderThan: new Date(Date.now() + 1000),
+            batchSize: 1,
+          }),
+        ).toEqual({ deleted: 1 })
+        expect(await runtime.store.loadRunSnapshot(root.id)).toBeDefined()
+        expect(await runtime.store.loadRunSnapshot(childRun.id)).toBeDefined()
+        expect(await runtime.store.loadRunSnapshot(eligible.id)).toBeUndefined()
+      })
+
+      it('rechecks the pruning cutoff after a concurrent retry completes', async () => {
+        const { runtime } = createHarness()
+        const run = await runtime.store.createRun({
+          workflowName: 'prune-retry',
+          input: null,
+        })
+        const failed = await runtime.store.failRun({
+          runId: run.id,
+          error: new Error('retry'),
+        })
+        const olderThan = new Date(failed!.updatedAt.getTime() + 1)
+        await expect
+          .poll(() => Date.now())
+          .toBeGreaterThanOrEqual(olderThan.getTime())
+        // oxlint-disable-next-line typescript/unbound-method -- Rebound to the intercepted instance with call below.
+        const original = RedisWorkflowStoreScripts.prototype.run
+        let retried = false
+        vi.spyOn(RedisWorkflowStoreScripts.prototype, 'run').mockImplementation(
+          async function (this: RedisWorkflowStoreScripts, name, keys, args) {
+            if (name === 'deleteFamily' && !retried) {
+              retried = true
+              await runtime.store.reopenFailedRun({
+                runId: run.id,
+                expectedVersion: failed!.version,
+              })
+              await runtime.store.completeRun({
+                runId: run.id,
+                output: 'new result',
+              })
+            }
+            return original.call(this, name, keys, args)
+          },
+        )
+        expect(await runtime.store.pruneTerminalRuns({ olderThan })).toEqual({
+          deleted: 0,
+        })
+        expect(retried).toBe(true)
+        expect((await runtime.store.loadRunSnapshot(run.id))?.run.output).toBe(
+          'new result',
+        )
+      })
 
       it('preserves application JSON and stores metadata as Unix milliseconds', async () => {
         const { client, keyPrefix, runtime } = createHarness()

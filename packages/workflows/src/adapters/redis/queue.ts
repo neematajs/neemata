@@ -272,7 +272,16 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     return dead
   }
 
-  async listUnreaped(limit?: number): Promise<readonly DeadWorkflowCommand[]> {
+  async listUnreaped(
+    limit?: number,
+    commandId?: string,
+  ): Promise<readonly DeadWorkflowCommand[]> {
+    if (commandId !== undefined) {
+      const item = await this.#loadItem(commandId)
+      if (!item || !item.deadAt || item.reapedAt !== undefined) return []
+      return [this.#mapDead(item)]
+    }
+
     const queue = this.#keys.queue(this.#kind)
     await this.#pruneOrphans(queue.dead)
     const ids = await this.#client.zrange(queue.dead, '0', '-1')
@@ -319,7 +328,13 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
     const moved = await this.#scripts.run(
       'transitionDead',
       [queue.items, queue.dead, queue.ready, queue.dedup],
-      [id, raw, encodeRedisValue(requeued), String(readyScore(requeued))],
+      [
+        id,
+        raw,
+        encodeRedisValue(requeued),
+        String(readyScore(requeued)),
+        this.#dedupKey(requeued.payload),
+      ],
     )
     const didRequeue = moved === 1
     if (didRequeue) {
@@ -332,17 +347,31 @@ export class RedisWorkflowQueue<T extends AttemptCommand | ContinueRunCommand> {
   }
 
   async deleteUnclaimed(runIds: ReadonlySet<string>): Promise<number> {
+    if (runIds.size === 0) return 0
     const queue = this.#keys.queue(this.#kind)
-    const ids = await this.#client.zrange(queue.ready, '0', '-1')
+    let cursor = '0'
     let deleted = 0
-    for (const id of ids) {
-      const raw = await this.#client.hget(queue.items, id)
-      if (!raw) continue
-      const item = decodeRedisValue<RedisQueueItem<T>>(raw)
-      if (!runIds.has(item.payload.runId)) continue
-      deleted += await this.#deleteIndexed(item, raw, queue.ready)
+    let changedInPass = false
+    while (true) {
+      const result = queueScriptResult(
+        await this.#scripts.runRaw(
+          'deleteUnclaimed',
+          [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
+          [
+            cursor,
+            String(CLAIM_SCAN_COUNT),
+            encodeRedisValue([...runIds]),
+            this.#keys.prefix,
+          ],
+        ),
+      )
+      deleted += Number(result[1] ?? 0)
+      changedInPass ||= result[2] !== '0'
+      cursor = result[0] ?? '0'
+      if (cursor !== '0') continue
+      if (!changedInPass) return deleted
+      changedInPass = false
     }
-    return deleted
   }
 
   async deleteForRuns(runIds: ReadonlySet<string>): Promise<void> {
