@@ -82,6 +82,10 @@ export class RedisWorkflowKeys {
     return `${this.prefix}runs:active`
   }
 
+  orderedRuns() {
+    return `${this.prefix}runs:ordered`
+  }
+
   terminalRuns() {
     return `${this.prefix}runs:terminal`
   }

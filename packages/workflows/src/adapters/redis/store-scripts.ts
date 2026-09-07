@@ -150,10 +150,12 @@ local external = cjson.decode(redis.call('HGET', KEYS[1], 'externalKeys') or '[]
 for _, key in ipairs(external) do
   if redis.call('GET', key) == redis.call('HGET', KEYS[1], 'owner:' .. key) then redis.call('PERSIST', key) end
 end
+redis.call('PERSIST', ARGV[7] .. 'runs:ordered')
 local familyIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds'))
 for _, id in ipairs(familyIds) do
   redis.call('ZREM', KEYS[11], id)
   redis.call('ZADD', KEYS[10], redis.call('HGET', KEYS[7], id), id)
+  redis.call('ZADD', ARGV[7] .. 'runs:ordered', redis.call('HGET', KEYS[7], id), id)
 end
 for _, base in ipairs(queues) do
   local rows = queueRows[base]
@@ -245,6 +247,8 @@ trackExternal(KEYS[1], ARGV[3], run.rootRunId)
 trackExternal(KEYS[1], ARGV[4], '1')
 redis.call('SET', ARGV[3], run.rootRunId)
 redis.call('ZADD', KEYS[5], order, run.id)
+redis.call('ZADD', ARGV[8] .. 'runs:ordered', order, run.id)
+redis.call('PERSIST', ARGV[8] .. 'runs:ordered')
 if ARGV[5] ~= '' then
   redis.call('SET', ARGV[5], run.id)
   trackExternal(KEYS[1], ARGV[5], run.id)
@@ -298,6 +302,8 @@ else
   trackExternal(KEYS[1], ARGV[5], '1')
   redis.call('SET', ARGV[4], requested.rootRunId)
   redis.call('ZADD', KEYS[6], order, requested.id)
+  redis.call('ZADD', ARGV[8] .. 'runs:ordered', order, requested.id)
+  redis.call('PERSIST', ARGV[8] .. 'runs:ordered')
   if ARGV[6] ~= '' then
     redis.call('SET', ARGV[6], requested.id)
     trackExternal(KEYS[1], ARGV[6], requested.id)
@@ -512,7 +518,12 @@ if remaining == 0 then
     redis.call('ZADD', KEYS[4], expiresAt, runId)
   end
   local latest = redis.call('ZREVRANGE', KEYS[4], 0, 0, 'WITHSCORES')
-  if #latest > 0 then redis.call('PEXPIREAT', KEYS[4], latest[2]) end
+  if #latest > 0 then
+    redis.call('PEXPIREAT', KEYS[4], latest[2])
+    if redis.call('ZCARD', KEYS[3]) == 0 then
+      redis.call('PEXPIREAT', ARGV[7], latest[2])
+    end
+  end
 end
 redis.call('PUBLISH', KEYS[5], '1')
 return { 'updated', updated, tostring(remaining) }
@@ -629,15 +640,60 @@ end
 for _, runId in ipairs(runIds) do
   redis.call('ZREM', KEYS[3], runId)
   redis.call('ZREM', KEYS[4], runId)
+  redis.call('ZREM', KEYS[5], runId)
 end
-for index = 5, #KEYS do redis.call('DEL', KEYS[index]) end
+for index = 6, #KEYS do redis.call('DEL', KEYS[index]) end
 return { 'deleted', cjson.encode(runIds) }
 `,
 
-  pruneRunIndex: `
-local clock = redis.call('TIME')
-local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
-return redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', now)
+  summarizeRuns: `
+local runs = cjson.decode(ARGV[2])
+local position = tonumber(ARGV[3])
+local nodePosition = tonumber(ARGV[4])
+local budget = tonumber(ARGV[5])
+local result = { '', '' }
+while runs[position] and budget > 0 do
+  local run = runs[position]
+  local family = ARGV[1] .. 'family:' .. run.rootRunId
+  local fields = cjson.decode(redis.call('HGET', family .. ':indexes', 'nodes:' .. run.id) or '[]')
+  local total = 0
+  local completed = 0
+  budget = budget - 1
+  while fields[nodePosition] and budget > 0 do
+    local raw = redis.call('HGET', family .. ':nodes', fields[nodePosition])
+    if raw then
+      total = total + 1
+      if cjson.decode(raw).status == 'completed' then completed = completed + 1 end
+    end
+    nodePosition = nodePosition + 1
+    budget = budget - 1
+  end
+  table.insert(result, tostring(position))
+  table.insert(result, tostring(total))
+  table.insert(result, tostring(completed))
+  if not fields[nodePosition] then position = position + 1; nodePosition = 1 end
+end
+result[1] = runs[position] and tostring(position) or '0'
+result[2] = tostring(nodePosition)
+return result
+`,
+  listRuns: `
+local entries = redis.call('ZREVRANGEBYSCORE', KEYS[1], ARGV[1], '-inf', 'WITHSCORES', 'LIMIT', 0, ARGV[2])
+local result = { '' }
+for position = 1, #entries, 2 do
+  local id = entries[position]
+  result[1] = '(' .. entries[position + 1]
+  local root = redis.call('GET', ARGV[3] .. 'run-root:' .. id)
+  local raw = root and redis.call('HGET', ARGV[3] .. 'family:' .. root .. ':runs', id)
+  if raw then table.insert(result, raw)
+  else
+    redis.call('ZREM', KEYS[1], id)
+    redis.call('ZREM', KEYS[2], id)
+    redis.call('ZREM', KEYS[3], id)
+  end
+end
+if #entries < tonumber(ARGV[2]) * 2 then result[1] = '' end
+return result
 `,
 } as const
 

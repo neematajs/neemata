@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
 import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
 import { RedisWorkflowQueue } from '../../src/adapters/redis/queue.ts'
+import { encodeRedisValue } from '../../src/adapters/redis/state.ts'
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import { runWorkflowWorker } from '../../src/runtime/index.ts'
 import { createTestContainer, matchingKeys, wait } from './helpers.ts'
@@ -76,6 +77,156 @@ for (const target of targets) {
           runtime,
         }
       }
+
+      it('batches empty route recovery and returns heartbeat status in one call', async () => {
+        const { client, runtime } = createHarness()
+        const worker = {
+          workerId: 'batch',
+          workflowNames: Array.from(
+            { length: 300 },
+            (_, index) => `workflow-${index}`,
+          ),
+          leaseMs: 30_000,
+        }
+        const calls = vi.spyOn(client, 'evalsha')
+        expect(await runtime.runCoordinationExecutor.claim(worker)).toBeNull()
+        expect(calls).toHaveBeenCalledTimes(4)
+        const run = await runtime.store.createRun({
+          workflowName: worker.workflowNames[0]!,
+          input: null,
+        })
+        await runtime.attemptExecutor.dispatchActivity({
+          kind: 'activityAttempt',
+          runId: run.id,
+          workflowName: run.workflowName,
+          activityName: 'activity',
+          nodeName: 'activity',
+          childKey: 'one',
+          attemptId: 'attempt',
+          leaseToken: 'execution',
+          input: null,
+          idempotencyKey: [],
+        })
+        const claim = await runtime.attemptExecutor.claim({
+          ...worker,
+          taskNames: [],
+        })
+        expect(claim).not.toBeNull()
+        await runtime.store.completeRun({ runId: run.id, output: null })
+        calls.mockClear()
+        const reads = vi.spyOn(client, 'hget')
+        expect(await runtime.attemptExecutor.heartbeat(claim!)).toEqual({
+          runStatus: 'completed',
+        })
+        expect(calls).toHaveBeenCalledTimes(1)
+        expect(reads).not.toHaveBeenCalled()
+        await expect(
+          runtime.attemptExecutor.heartbeat({ ...claim!, leaseToken: 'stale' }),
+        ).rejects.toThrow('lease lost')
+      })
+
+      it('pages dead reads across reaped records and batches cutoff cleanup', async () => {
+        const { client, keys, runtime } = createHarness()
+        const queue = keys.queue('continue')
+        const seed = client.pipeline()
+        for (let index = 0; index < 300; index += 1) {
+          const id = `dead-${index}`
+          const item = {
+            id,
+            payload: { kind: 'continueRun', runId: id, workflowName: 'batch' },
+            deliveryCount: 3,
+            createdAt: new Date(1000),
+            createdAtScore: 1000,
+            deadAt: new Date(2000 + index),
+            ...(index < 250 ? { reapedAt: new Date(3000) } : {}),
+          }
+          seed
+            .hset(queue.items, id, encodeRedisValue(item))
+            .zadd(queue.dead, 2000 + index, id)
+            .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+        }
+        await seed.exec()
+        const calls = vi.spyOn(client, 'evalsha')
+        const reads = vi.spyOn(client, 'hget')
+        expect(
+          (await runtime.store.listUnreapedDeadCommands({ limit: 2 })).map(
+            (command) => command.id,
+          ),
+        ).toEqual(['dead-250', 'dead-251'])
+        expect(calls).toHaveBeenCalledTimes(3)
+        expect(reads).not.toHaveBeenCalled()
+        calls.mockClear()
+        expect(
+          await runtime.store.listDeadCommands({ runId: 'dead-299' }),
+        ).toHaveLength(1)
+        expect(calls.mock.calls.length).toBeLessThanOrEqual(4)
+        calls.mockClear()
+        await runtime.store.pruneTerminalRuns({
+          olderThan: new Date(2255),
+          batchSize: 0,
+        })
+        expect(calls.mock.calls.length).toBeLessThan(15)
+        expect(reads).not.toHaveBeenCalled()
+        expect(await client.zcard(queue.dead)).toBe(44)
+        expect(await client.hget(queue.items, 'dead-255')).toBeNull()
+        expect(await client.hget(queue.items, 'dead-256')).not.toBeNull()
+        expect(
+          await client.exists(`${keys.prefix}queue:continue:run:dead-255`),
+        ).toBe(0)
+      })
+
+      it('batches deletion across empty run indexes', async () => {
+        const { client, keys } = createHarness()
+        const queue = new RedisWorkflowQueue({
+          client,
+          keys,
+          kind: 'continue',
+          maxDeliveries: 3,
+          wakeKind: () => 'continue',
+          dedupKey: (command: {
+            runId: string
+            kind: 'continueRun'
+            workflowName: string
+          }) => command.runId,
+          deadKind: () => 'continue',
+        })
+        const calls = vi.spyOn(client, 'evalsha')
+        await queue.deleteForRuns(
+          new Set(Array.from({ length: 300 }, (_, index) => `empty-${index}`)),
+        )
+        expect(calls).toHaveBeenCalledTimes(3)
+        const seed = client.pipeline()
+        const index = keys.queue('continue')
+        for (let position = 0; position < 400; position += 1) {
+          const id = `dense-${position}`
+          seed
+            .hset(
+              index.items,
+              id,
+              encodeRedisValue({
+                id,
+                payload: {
+                  kind: 'continueRun',
+                  runId: 'dense',
+                  workflowName: 'batch',
+                },
+                deliveryCount: 0,
+                createdAt: new Date(),
+                createdAtScore: Date.now(),
+              }),
+            )
+            .zadd(index.ready, 0, id)
+            .sadd(`${keys.prefix}queue:continue:run:dense`, id)
+        }
+        await seed.exec()
+        expect(
+          await queue.deleteUnclaimed(new Set(['empty', 'dense', 'tail'])),
+        ).toBe(400)
+        expect(await client.hlen(index.items)).toBe(0)
+        expect(
+          await client.exists(`${keys.prefix}queue:continue:run:dense`),
+        ).toBe(0)
+      })
 
       it('preserves expired deliveries while coalescing the latest pending payload', async () => {
         const { runtime } = createHarness({ maxDeliveries: 2 })
@@ -710,8 +861,8 @@ for (const target of targets) {
           for (const kind of ['continue', 'attempt'] as const) {
             const queue = keys.queue(kind)
             // One round removes this small backlog, then a clean pass verifies it.
-            const cleanupCalls = evalsha.mock.calls.filter((args) =>
-              args.includes(queue.items),
+            const cleanupCalls = evalsha.mock.calls.filter(
+              (args) => args[1] === 8 && args.includes(queue.items),
             )
             if (readyCount === 1 || kind === 'continue') {
               expect(cleanupCalls.length).toBeLessThanOrEqual(2)
