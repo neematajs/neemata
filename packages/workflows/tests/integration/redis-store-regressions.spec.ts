@@ -8,8 +8,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { StoredRun } from '../../src/runtime/state.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
-import { RedisWorkflowScripts } from '../../src/adapters/redis/scripts.ts'
-import { RedisWorkflowStoreScripts } from '../../src/adapters/redis/store-scripts.ts'
+import { QueueScripts } from '../../src/adapters/redis/scripts.ts'
+import { StoreScripts } from '../../src/adapters/redis/store-scripts.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -257,10 +257,10 @@ for (const target of targets) {
         const entered = createFuture<void>()
         const release = createFuture<void>()
         // oxlint-disable-next-line typescript/unbound-method -- Rebound to the intercepted queue script instance below.
-        const runRaw = RedisWorkflowScripts.prototype.runRaw
+        const runRaw = QueueScripts.prototype.runRaw
         let queues = 0
-        vi.spyOn(RedisWorkflowScripts.prototype, 'runRaw').mockImplementation(
-          async function (this: RedisWorkflowScripts, name, keys, args) {
+        vi.spyOn(QueueScripts.prototype, 'runRaw').mockImplementation(
+          async function (this: QueueScripts, name, keys, args) {
             if (name === 'deleteForRuns') {
               queues += 1
               if (queues === 2) entered.resolve()
@@ -509,10 +509,10 @@ for (const target of targets) {
           .poll(() => Date.now())
           .toBeGreaterThanOrEqual(olderThan.getTime())
         // oxlint-disable-next-line typescript/unbound-method -- Rebound to the intercepted instance with call below.
-        const original = RedisWorkflowStoreScripts.prototype.run
+        const original = StoreScripts.prototype.run
         let retried = false
-        vi.spyOn(RedisWorkflowStoreScripts.prototype, 'run').mockImplementation(
-          async function (this: RedisWorkflowStoreScripts, name, keys, args) {
+        vi.spyOn(StoreScripts.prototype, 'run').mockImplementation(
+          async function (this: StoreScripts, name, keys, args) {
             if (name === 'deleteFamily' && !retried) {
               retried = true
               await runtime.store.reopenFailedRun({

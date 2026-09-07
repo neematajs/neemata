@@ -6,9 +6,9 @@ import { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
-import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
-import { RedisWorkflowQueue } from '../../src/adapters/redis/queue.ts'
-import { encodeRedisValue } from '../../src/adapters/redis/state.ts'
+import { Keys } from '../../src/adapters/redis/keys.ts'
+import { Queue } from '../../src/adapters/redis/queue.ts'
+import { encode } from '../../src/adapters/redis/state.ts'
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import { runWorkflowWorker } from '../../src/runtime/index.ts'
 import { createTestContainer, matchingKeys, wait } from './helpers.ts'
@@ -73,7 +73,7 @@ for (const target of targets) {
         return {
           client,
           keyPrefix,
-          keys: new RedisWorkflowKeys(keyPrefix),
+          keys: new Keys(keyPrefix),
           runtime,
         }
       }
@@ -141,7 +141,7 @@ for (const target of targets) {
             ...(index < 250 ? { reapedAt: new Date(3000) } : {}),
           }
           seed
-            .hset(queue.items, id, encodeRedisValue(item))
+            .hset(queue.items, id, encode(item))
             .zadd(queue.dead, 2000 + index, id)
             .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
         }
@@ -177,18 +177,16 @@ for (const target of targets) {
 
       it('batches deletion across empty run indexes', async () => {
         const { client, keys } = createHarness()
-        const queue = new RedisWorkflowQueue({
+        const queue = new Queue({
           client,
           keys,
           kind: 'continue',
           maxDeliveries: 3,
-          wakeKind: () => 'continue',
           dedupKey: (command: {
             runId: string
             kind: 'continueRun'
             workflowName: string
           }) => command.runId,
-          deadKind: () => 'continue',
         })
         const calls = vi.spyOn(client, 'evalsha')
         await queue.deleteForRuns(
@@ -203,7 +201,7 @@ for (const target of targets) {
             .hset(
               index.items,
               id,
-              encodeRedisValue({
+              encode({
                 id,
                 payload: {
                   kind: 'continueRun',
@@ -891,14 +889,12 @@ for (const target of targets) {
         await runtime.store.completeRun({ runId: run.id, output: null })
         await wait(40)
 
-        const queue = new RedisWorkflowQueue({
+        const queue = new Queue({
           client,
           keys,
           kind: 'continue',
           maxDeliveries: 3,
-          wakeKind: () => 'continue',
           dedupKey: (command) => command.runId,
-          deadKind: () => 'continue',
         })
         const command = {
           kind: 'continueRun' as const,

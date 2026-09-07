@@ -697,18 +697,18 @@ return result
 `,
 } as const
 
-export type RedisStoreScriptName = keyof typeof SCRIPTS
+export type ScriptName = keyof typeof SCRIPTS
 
-export class RedisWorkflowStoreScripts {
+export class StoreScripts {
   readonly #client: WorkflowRedisClient
-  readonly #shas = new Map<RedisStoreScriptName, Promise<string>>()
+  readonly #shas = new Map<ScriptName, Promise<string>>()
 
   constructor(client: WorkflowRedisClient) {
     this.#client = client
   }
 
   async run(
-    name: RedisStoreScriptName,
+    name: ScriptName,
     keys: readonly string[],
     arguments_: readonly string[],
   ): Promise<unknown> {
@@ -735,7 +735,7 @@ export class RedisWorkflowStoreScripts {
     }
   }
 
-  #load(name: RedisStoreScriptName): Promise<string> {
+  #load(name: ScriptName): Promise<string> {
     const existing = this.#shas.get(name)
     if (existing) return existing
     const loading = this.#loadFromRedis(name)
@@ -746,7 +746,7 @@ export class RedisWorkflowStoreScripts {
     return loading
   }
 
-  async #loadFromRedis(name: RedisStoreScriptName): Promise<string> {
+  async #loadFromRedis(name: ScriptName): Promise<string> {
     const sha = await this.#client.script('LOAD', SCRIPTS[name])
     if (typeof sha !== 'string') {
       throw new Error(`Redis returned an invalid SHA for script [${name}]`)

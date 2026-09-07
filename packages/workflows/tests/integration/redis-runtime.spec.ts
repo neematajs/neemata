@@ -11,8 +11,8 @@ import type {
 } from '../../src/adapters/redis.ts'
 import type { RunCoordinationWorkerClaim } from '../../src/runtime/commands.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
-import { RedisWorkflowKeys } from '../../src/adapters/redis/keys.ts'
-import { RedisWorkflowWakeEvents } from '../../src/adapters/redis/wake-events.ts'
+import { Keys } from '../../src/adapters/redis/keys.ts'
+import { WakeEvents } from '../../src/adapters/redis/wake-events.ts'
 import { matchingKeys } from './helpers.ts'
 
 type ServiceTarget = {
@@ -86,9 +86,9 @@ describe('Redis workflow wake subscriptions', () => {
     const client = {
       duplicate: () => subscriber,
     } as unknown as WorkflowRedisClient
-    const events = new RedisWorkflowWakeEvents(
+    const events = new WakeEvents(
       client,
-      new RedisWorkflowKeys(`nmtjs:test:wakes:${randomUUID()}:`),
+      new Keys(`nmtjs:test:wakes:${randomUUID()}:`),
     )
 
     const unsubscribe = events.onCommand('continue', () => {})

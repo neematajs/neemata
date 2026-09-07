@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto'
 
-import { redisValueKey } from './state.ts'
+import { valueKey } from './state.ts'
 
 const digest = (value: unknown) =>
-  createHash('sha256').update(redisValueKey(value)).digest('base64url')
+  createHash('sha256').update(valueKey(value)).digest('base64url')
 
-export class RedisWorkflowKeys {
+export class Keys {
   constructor(readonly prefix: string) {}
 
   family(rootRunId: string) {

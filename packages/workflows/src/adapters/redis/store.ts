@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  ContinueRunCommand,
+  TaskAttemptCommand,
+} from '../../runtime/commands.ts'
+import type {
   RunSnapshot,
   StoredAttempt,
   StoredNode,
@@ -28,7 +32,7 @@ import type {
   WorkflowStore,
 } from '../../runtime/store.ts'
 import type { WorkflowRedisClient } from './client.ts'
-import type { RedisWorkflowKeys } from './keys.ts'
+import type { Keys } from './keys.ts'
 import {
   WorkflowRunConflictError,
   toStoredError,
@@ -37,19 +41,19 @@ import { isTerminalRunStatus } from '../../runtime/status.ts'
 import { validateFailedRunRetry } from '../../runtime/store.ts'
 import {
   RUN_TRANSITIONS,
-  transitionSources as runtimeTransitionSources,
+  transitionSources,
 } from '../../runtime/transitions.ts'
 import {
-  createRedisId,
-  decodeRedisValue,
-  encodeRedisValue,
-  redisChildKey,
-  redisNodeKey,
-  redisRunSignature,
-  sameRedisValue,
-  type RedisWorkflowFamily,
+  decode,
+  encode,
+  childKey as encodeChildKey,
+  nodeKey,
+  runSignature,
+  sameValue,
+  type Family,
+  type StoredLease,
 } from './state.ts'
-import { RedisWorkflowStoreScripts } from './store-scripts.ts'
+import { StoreScripts } from './store-scripts.ts'
 
 const READ_BATCH_SIZE = 128
 const DEFAULT_PRUNE_BATCH_SIZE = 100
@@ -61,7 +65,7 @@ const DEFAULT_PRUNE_STATUSES = [
 
 type Mutable<T> = { -readonly [Key in keyof T]: T[Key] }
 
-export type RedisWorkflowStoreDelegates = {
+export type StoreDelegates = {
   listDeadCommands(runId?: string): Promise<readonly DeadWorkflowCommand[]>
   listUnreapedDeadCommands: WorkflowStore['listUnreapedDeadCommands']
   markDeadCommandReaped(id: string): Promise<void>
@@ -70,31 +74,31 @@ export type RedisWorkflowStoreDelegates = {
   pruneDeadCommands(olderThan: Date): Promise<void>
 }
 
-export type RedisWorkflowStoreOptions = {
+export type StoreOptions = {
   readonly client: WorkflowRedisClient
-  readonly keys: RedisWorkflowKeys
+  readonly keys: Keys
   readonly terminalRetentionMs: number
-  readonly delegates: RedisWorkflowStoreDelegates
+  readonly delegates: StoreDelegates
 }
 
-export class RedisWorkflowStoreRuntime {
+export class StoreRuntime {
   readonly store: WorkflowStore
   readonly #client: WorkflowRedisClient
-  readonly #keys: RedisWorkflowKeys
+  readonly #keys: Keys
   readonly #terminalRetentionMs: number
-  readonly #delegates: RedisWorkflowStoreDelegates
-  readonly #scripts: RedisWorkflowStoreScripts
+  readonly #delegates: StoreDelegates
+  readonly #scripts: StoreScripts
 
-  constructor(options: RedisWorkflowStoreOptions) {
+  constructor(options: StoreOptions) {
     this.#client = options.client
     this.#keys = options.keys
     this.#terminalRetentionMs = options.terminalRetentionMs
     this.#delegates = options.delegates
-    this.#scripts = new RedisWorkflowStoreScripts(options.client)
+    this.#scripts = new StoreScripts(options.client)
     this.store = this.#createStore()
   }
 
-  async createRunWithState(
+  async createRun(
     input: CreateRunInput,
     startAt?: Date,
   ): Promise<{
@@ -102,8 +106,8 @@ export class RedisWorkflowStoreRuntime {
     readonly created: boolean
     readonly startAt: Date | undefined
   }> {
-    const normalizedInput = await this.#normalizeCreateInput(input)
-    const run = this.#createRunRecord(normalizedInput)
+    const normalized = await this.#normalizeRun(input)
+    const run = this.#buildRun(normalized)
     const rootRunId = run.rootRunId
     let idempotencyKey = ''
     if (run.idempotencyKey) {
@@ -130,8 +134,8 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.runWake(rootRunId),
         ],
         [
-          encodeRedisValue(run),
-          redisRunSignature(normalizedInput),
+          encode(run),
+          runSignature(normalized),
           this.#keys.runRoot(run.id),
           this.#keys.startDispatch(run.id),
           idempotencyKey,
@@ -155,7 +159,7 @@ export class RedisWorkflowStoreRuntime {
       return { run: stored, created: true, startAt: storedStartAt }
     }
     if (result[0] === 'idempotent') {
-      if (runMatchesCreateInput(stored, normalizedInput)) {
+      if (runMatchesCreateInput(stored, normalized)) {
         return { run: stored, created: false, startAt: storedStartAt }
       }
       throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
@@ -184,20 +188,21 @@ export class RedisWorkflowStoreRuntime {
       this.#client.hgetall(stateKeys[4]),
     ])
     const runs = decodeRecord<StoredRun>(expected[0]!)
-    const nodes = decodeRecord<StoredNode>(expected[1]!)
-    const children = decodeRecord<StoredNodeChild>(expected[2]!)
-    const attempts = decodeRecord<StoredAttempt>(expected[3]!)
+    const nodes = Object.values(decodeRecord<StoredNode>(expected[1]!))
+    const childrenByKey = decodeRecord<StoredNodeChild>(expected[2]!)
+    const children = Object.values(childrenByKey)
+    const attempts = Object.values(decodeRecord<StoredAttempt>(expected[3]!))
     const snapshots: RunSnapshot[] = []
     for (const run of Object.values(runs)) {
+      const runNodes = nodes.filter((node) => node.runId === run.id)
+      const runChildren = children.filter((child) => child.runId === run.id)
+      runChildren.sort(compareChildrenForDetail)
+      const runAttempts = attempts.filter((attempt) => attempt.runId === run.id)
       snapshots.push({
         run,
-        nodes: Object.values(nodes).filter((node) => node.runId === run.id),
-        children: Object.values(children)
-          .filter((child) => child.runId === run.id)
-          .sort(compareChildrenForDetail),
-        attempts: Object.values(attempts).filter(
-          (attempt) => attempt.runId === run.id,
-        ),
+        nodes: runNodes,
+        children: runChildren,
+        attempts: runAttempts,
       })
     }
     const reopening = validateFailedRunRetry(snapshots, params)
@@ -215,28 +220,29 @@ export class RedisWorkflowStoreRuntime {
     const root = runs[params.runId]!
     const date = new Date()
     let attempt: StoredAttempt | undefined
-    let command: unknown = {
+    let command: ContinueRunCommand | TaskAttemptCommand = {
       kind: 'continueRun',
       runId: root.id,
       workflowName: root.workflowName,
     }
     let wakeKind: 'continue' | 'task' = 'continue'
     if (root.kind === 'task') {
-      const child = children[redisChildKey(root.id, '$task', '$self')]!
-      const previous = Object.values(attempts).find(
+      const child = childrenByKey[encodeChildKey(root.id, '$task', '$self')]!
+      const previous = attempts.find(
         (entry) =>
           entry.runId === root.id &&
           entry.nodeName === child.nodeName &&
           entry.childKey === child.childKey &&
           entry.attemptNumber === child.attemptCount,
       )!
+      const leaseToken = randomUUID()
       attempt = {
-        id: createRedisId(),
+        id: randomUUID(),
         runId: root.id,
         nodeName: '$task',
         childKey: '$self',
         status: 'started',
-        leaseToken: createRedisId(),
+        leaseToken,
         attemptNumber: child.attemptCount + 1,
         retryAttemptNumber: 1,
         input: previous.input,
@@ -251,7 +257,7 @@ export class RedisWorkflowStoreRuntime {
         nodeName: '$task',
         childKey: '$self',
         attemptId: attempt.id,
-        leaseToken: attempt.leaseToken,
+        leaseToken,
         input: attempt.input,
         idempotencyKey: attempt.idempotencyKey,
       }
@@ -285,9 +291,9 @@ export class RedisWorkflowStoreRuntime {
           JSON.stringify(expected),
           JSON.stringify(runIds),
           JSON.stringify(guards),
-          encodeRedisValue(attempt ?? null),
-          encodeRedisValue({
-            id: createRedisId(),
+          encode(attempt ?? null),
+          encode({
+            id: randomUUID(),
             payload: command,
             rootRunId,
             deliveryCount: 0,
@@ -316,7 +322,7 @@ export class RedisWorkflowStoreRuntime {
     return decodeScriptValue<StoredRun>(result[1])
   }
 
-  async #normalizeCreateInput(input: CreateRunInput): Promise<CreateRunInput> {
+  async #normalizeRun(input: CreateRunInput): Promise<CreateRunInput> {
     if (input.rootRunId !== undefined || input.parentRunId === undefined) {
       return input
     }
@@ -330,10 +336,10 @@ export class RedisWorkflowStoreRuntime {
     if (!rootRunId) return undefined
     const raw = await this.#client.hget(this.#keys.familyRuns(rootRunId), runId)
     if (!raw) return undefined
-    return decodeRedisValue<StoredRun>(raw)
+    return decode<StoredRun>(raw)
   }
 
-  #createRunRecord(input: CreateRunInput): StoredRun {
+  #buildRun(input: CreateRunInput): StoredRun {
     const date = new Date()
     const id = randomUUID()
     const run: Mutable<StoredRun> = {
@@ -366,7 +372,7 @@ export class RedisWorkflowStoreRuntime {
     return {
       reopenFailedRun: (params) => this.#reopenFailedRun(params),
       createRun: async (input) => {
-        const result = await this.createRunWithState(input)
+        const result = await this.createRun(input)
         return result.run
       },
       listRuns: (filter = {}) => this.#listRuns(filter),
@@ -432,45 +438,28 @@ export class RedisWorkflowStoreRuntime {
           error: toStoredError(params.error),
         }),
       completeNodeChild: (params) =>
-        this.#updateChildRecord(
-          params.runId,
-          params.nodeName,
-          params.childKey,
-          { status: 'completed', output: params.output },
-        ),
+        this.#updateChild(params.runId, params.nodeName, params.childKey, {
+          status: 'completed',
+          output: params.output,
+        }),
       failNodeChild: (params) =>
-        this.#updateChildRecord(
-          params.runId,
-          params.nodeName,
-          params.childKey,
-          { status: 'failed', error: toStoredError(params.error) },
-        ),
+        this.#updateChild(params.runId, params.nodeName, params.childKey, {
+          status: 'failed',
+          error: toStoredError(params.error),
+        }),
       loadNodeChildren: async (params) => {
         const family = await this.#loadFamilyByRun(params.runId)
         if (!family) return { children: [], attempts: [] }
-        const children: StoredNodeChild[] = []
-        for (const key in family.children) {
-          const child = family.children[key]
-          if (!child) continue
-          if (
-            child.runId === params.runId &&
-            child.nodeName === params.nodeName
-          ) {
-            children.push(child)
-          }
-        }
+        const children = Object.values(family.children).filter(
+          (child) =>
+            child.runId === params.runId && child.nodeName === params.nodeName,
+        )
         children.sort(compareChildren)
-        const attempts: StoredAttempt[] = []
-        for (const key in family.attempts) {
-          const attempt = family.attempts[key]
-          if (!attempt) continue
-          if (
+        const attempts = Object.values(family.attempts).filter(
+          (attempt) =>
             attempt.runId === params.runId &&
-            attempt.nodeName === params.nodeName
-          ) {
-            attempts.push(attempt)
-          }
-        }
+            attempt.nodeName === params.nodeName,
+        )
         attempts.sort(compareAttempts)
         return {
           children,
@@ -478,27 +467,17 @@ export class RedisWorkflowStoreRuntime {
         }
       },
       completeNode: (params) =>
-        this.#updateNodeRecord(
-          params.runId,
-          params.nodeName,
-          'nodeTransition',
-          {
-            status: 'completed',
-            output: params.output,
-          },
-        ),
+        this.#updateNode(params.runId, params.nodeName, 'nodeTransition', {
+          status: 'completed',
+          output: params.output,
+        }),
       failNode: (params) =>
-        this.#updateNodeRecord(
-          params.runId,
-          params.nodeName,
-          'nodeTransition',
-          {
-            status: 'failed',
-            error: toStoredError(params.error),
-          },
-        ),
+        this.#updateNode(params.runId, params.nodeName, 'nodeTransition', {
+          status: 'failed',
+          error: toStoredError(params.error),
+        }),
       waitNode: (params) =>
-        this.#updateNodeRecord(params.runId, params.nodeName, 'nodeWait', {
+        this.#updateNode(params.runId, params.nodeName, 'nodeWait', {
           status: 'waiting',
         }),
       markRunRunning: ({ runId }) => this.#transitionRun(runId, 'running'),
@@ -514,7 +493,7 @@ export class RedisWorkflowStoreRuntime {
       cancelRun: ({ runId }) =>
         this.#terminalRun(runId, { status: 'cancelled' }),
       cancelNode: ({ runId, nodeName }) =>
-        this.#updateNodeRecord(runId, nodeName, 'nodeTransition', {
+        this.#updateNode(runId, nodeName, 'nodeTransition', {
           status: 'cancelled',
         }),
       cancelNonTerminalRunNodes: ({ runId }) =>
@@ -554,7 +533,7 @@ export class RedisWorkflowStoreRuntime {
       )
       cursor = result[0]!
       for (const raw of result.slice(1)) {
-        const run = decodeRedisValue<StoredRun>(raw)
+        const run = decode<StoredRun>(raw)
         if (!runMatchesFilter(run, filter)) continue
         if (matched++ < offset) continue
         if (page.length === limit)
@@ -616,19 +595,16 @@ export class RedisWorkflowStoreRuntime {
   }
 
   async #loadFamily(rootRunId: string) {
-    const [meta, runs, nodes, children, attempts, leases, orders, indexes] =
-      await Promise.all([
-        this.#client.hgetall(this.#keys.family(rootRunId)),
-        this.#client.hgetall(this.#keys.familyRuns(rootRunId)),
-        this.#client.hgetall(this.#keys.familyNodes(rootRunId)),
-        this.#client.hgetall(this.#keys.familyChildren(rootRunId)),
-        this.#client.hgetall(this.#keys.familyAttempts(rootRunId)),
-        this.#client.hgetall(this.#keys.familyLeases(rootRunId)),
-        this.#client.hgetall(this.#keys.familyOrders(rootRunId)),
-        this.#client.hgetall(this.#keys.familyIndexes(rootRunId)),
-      ])
+    const [meta, runs, nodes, children, attempts, indexes] = await Promise.all([
+      this.#client.hgetall(this.#keys.family(rootRunId)),
+      this.#client.hgetall(this.#keys.familyRuns(rootRunId)),
+      this.#client.hgetall(this.#keys.familyNodes(rootRunId)),
+      this.#client.hgetall(this.#keys.familyChildren(rootRunId)),
+      this.#client.hgetall(this.#keys.familyAttempts(rootRunId)),
+      this.#client.hgetall(this.#keys.familyIndexes(rootRunId)),
+    ])
     if (!meta.rootRunId) return undefined
-    const runIds = decodeRedisValue<string[]>(meta.runIds ?? '[]')
+    const runIds = decode<string[]>(meta.runIds ?? '[]')
     const nodeFields: string[] = []
     const childFields: string[] = []
     const attemptFields: string[] = []
@@ -645,10 +621,7 @@ export class RedisWorkflowStoreRuntime {
       nodes: decodeOrderedRecord<StoredNode>(nodes, nodeFields),
       children: decodeOrderedRecord<StoredNodeChild>(children, childFields),
       attempts: decodeOrderedRecord<StoredAttempt>(attempts, attemptFields),
-      runLeases: decodeRecord<RedisWorkflowFamily['runLeases'][string]>(leases),
-      runOrder: numberRecord(orders),
-      externalKeys: decodeRedisValue<string[]>(meta.externalKeys ?? '[]'),
-    } satisfies RedisWorkflowFamily
+    } satisfies Family
   }
 
   async #loadRunSnapshot(runId: string): Promise<RunSnapshot | undefined> {
@@ -656,24 +629,15 @@ export class RedisWorkflowStoreRuntime {
     if (!family) return undefined
     const run = family.runs[runId]
     if (!run) return undefined
-    const nodes: StoredNode[] = []
-    for (const key in family.nodes) {
-      const node = family.nodes[key]
-      if (!node) continue
-      if (node.runId === runId) nodes.push(node)
-    }
-    const children: StoredNodeChild[] = []
-    for (const key in family.children) {
-      const child = family.children[key]
-      if (!child) continue
-      if (child.runId === runId) children.push(child)
-    }
-    const attempts: StoredAttempt[] = []
-    for (const key in family.attempts) {
-      const attempt = family.attempts[key]
-      if (!attempt) continue
-      if (attempt.runId === runId) attempts.push(attempt)
-    }
+    const nodes = Object.values(family.nodes).filter(
+      (node) => node.runId === runId,
+    )
+    const children = Object.values(family.children).filter(
+      (child) => child.runId === runId,
+    )
+    const attempts = Object.values(family.attempts).filter(
+      (attempt) => attempt.runId === runId,
+    )
     return {
       run,
       nodes,
@@ -689,57 +653,32 @@ export class RedisWorkflowStoreRuntime {
     if (!run) return undefined
     const children: StoredNodeChild[] = []
     const childRunIds = new Set<string>()
-    for (const key in family.children) {
-      const child = family.children[key]
-      if (!child) continue
+    for (const child of Object.values(family.children)) {
       if (child.runId !== runId) continue
       children.push(child)
       if (child.childRunId) childRunIds.add(child.childRunId)
     }
     children.sort(compareChildrenForDetail)
     const nodes: NodeSummary[] = []
-    for (const key in family.nodes) {
-      const node = family.nodes[key]
-      if (!node) continue
+    for (const node of Object.values(family.nodes)) {
       if (node.runId === runId) nodes.push(nodeSummary(node))
     }
-    const childSummaries: NodeChildSummary[] = []
-    childSummaries.length = children.length
-    let childIndex = 0
-    for (const child of children) {
-      childSummaries[childIndex] = childSummary(child)
-      childIndex += 1
-    }
-    const attempts: StoredAttempt[] = []
-    for (const key in family.attempts) {
-      const attempt = family.attempts[key]
-      if (!attempt) continue
-      if (attempt.runId === runId) attempts.push(attempt)
-    }
+    const childSummaries = children.map(childSummary)
+    const attempts = Object.values(family.attempts).filter(
+      (attempt) => attempt.runId === runId,
+    )
     attempts.sort(compareAttempts)
-    const attemptSummaries: AttemptSummary[] = []
-    attemptSummaries.length = attempts.length
-    let attemptIndex = 0
-    for (const attempt of attempts) {
-      attemptSummaries[attemptIndex] = attemptSummary(attempt)
-      attemptIndex += 1
-    }
-    const childRuns: StoredRun[] = []
-    for (const id in family.runs) {
-      const candidate = family.runs[id]
-      if (!candidate) continue
-      if (childRunIds.has(candidate.id)) childRuns.push(candidate)
-    }
+    const attemptSummaries = attempts.map(attemptSummary)
+    const childRuns = Object.values(family.runs).filter((run) =>
+      childRunIds.has(run.id),
+    )
     childRuns.sort(compareRunsOldest)
-    const childRunSummaries: RunSummary[] = []
-    childRunSummaries.length = childRuns.length
-    let childRunIndex = 0
-    for (const childRun of childRuns) {
-      childRunSummaries[childRunIndex] = runSummary(family, childRun)
-      childRunIndex += 1
-    }
+    const childRunSummaries = childRuns.map((child) =>
+      runSummary(family, child),
+    )
+    const summary = runSummary(family, run)
     return {
-      run: runSummary(family, run),
+      run: summary,
       nodes,
       children: childSummaries,
       attempts: attemptSummaries,
@@ -750,25 +689,15 @@ export class RedisWorkflowStoreRuntime {
   async #loadNodeSnapshot(runId: string, nodeName: string) {
     const family = await this.#loadFamilyByRun(runId)
     if (!family) return undefined
-    const node = family.nodes[redisNodeKey(runId, nodeName)]
+    const node = family.nodes[nodeKey(runId, nodeName)]
     if (!node) return undefined
-    const children: StoredNodeChild[] = []
-    for (const key in family.children) {
-      const child = family.children[key]
-      if (!child) continue
-      if (child.runId === runId && child.nodeName === nodeName) {
-        children.push(child)
-      }
-    }
+    const children = Object.values(family.children).filter(
+      (child) => child.runId === runId && child.nodeName === nodeName,
+    )
     children.sort(compareChildren)
-    const attempts: StoredAttempt[] = []
-    for (const key in family.attempts) {
-      const attempt = family.attempts[key]
-      if (!attempt) continue
-      if (attempt.runId === runId && attempt.nodeName === nodeName) {
-        attempts.push(attempt)
-      }
-    }
+    const attempts = Object.values(family.attempts).filter(
+      (attempt) => attempt.runId === runId && attempt.nodeName === nodeName,
+    )
     attempts.sort(compareAttempts)
     return {
       node,
@@ -781,9 +710,7 @@ export class RedisWorkflowStoreRuntime {
     const family = await this.#loadFamilyByRun(runId)
     if (!family || !family.runs[runId]) return []
     const origins = new Map<string, { nodeName: string; childKey: string }>()
-    for (const key in family.children) {
-      const child = family.children[key]
-      if (!child) continue
+    for (const child of Object.values(family.children)) {
       if (child.childRunId && !origins.has(child.childRunId)) {
         origins.set(child.childRunId, {
           nodeName: child.nodeName,
@@ -791,23 +718,13 @@ export class RedisWorkflowStoreRuntime {
         })
       }
     }
-    const runs: StoredRun[] = []
-    for (const id in family.runs) {
-      const run = family.runs[id]
-      if (run) runs.push(run)
-    }
+    const runs = Object.values(family.runs)
     runs.sort(compareRunsOldest)
-    const entries: RunFamilyEntry[] = []
-    entries.length = runs.length
-    let index = 0
-    for (const run of runs) {
+    return runs.map((run) => {
       const origin = origins.get(run.id)
       const summary = runSummary(family, run)
-      if (origin) entries[index] = { run: summary, origin }
-      else entries[index] = { run: summary }
-      index += 1
-    }
-    return entries
+      return origin ? { run: summary, origin } : { run: summary }
+    })
   }
 
   async #createNode(input: CreateNodeInput) {
@@ -831,11 +748,7 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.runWake(rootRunId),
           this.#keys.familyRuns(rootRunId),
         ],
-        [
-          redisNodeKey(input.runId, input.name),
-          encodeRedisValue(node),
-          input.runId,
-        ],
+        [nodeKey(input.runId, input.name), encode(node), input.runId],
       ),
     )
     if (result[0] === 'missing-run') {
@@ -844,7 +757,7 @@ export class RedisWorkflowStoreRuntime {
     return decodeScriptValue<StoredNode>(result[1])
   }
 
-  async #updateNodeRecord(
+  async #updateNode(
     runId: string,
     nodeName: string,
     mode: string,
@@ -855,7 +768,7 @@ export class RedisWorkflowStoreRuntime {
     const result = await this.#updateRecord<StoredNode>(
       this.#keys.familyNodes(rootRunId),
       this.#keys.runWake(rootRunId),
-      redisNodeKey(runId, nodeName),
+      nodeKey(runId, nodeName),
       mode,
       changes,
     )
@@ -870,7 +783,7 @@ export class RedisWorkflowStoreRuntime {
     readonly nodeName: string
     readonly input: unknown
   }) {
-    const node = await this.#updateNodeRecord(
+    const node = await this.#updateNode(
       params.runId,
       params.nodeName,
       'nodeInput',
@@ -881,14 +794,14 @@ export class RedisWorkflowStoreRuntime {
   }
 
   #selectNodeCase(runId: string, nodeName: string, caseKey: string) {
-    return this.#updateNodeRecord(runId, nodeName, 'nodeCase', {
+    return this.#updateNode(runId, nodeName, 'nodeCase', {
       selectedCase: caseKey,
     })
   }
 
   async #ensureNodeChildren(params: EnsureNodeChildrenParams) {
     const rootRunId = await this.#requireRootRunId(params.runId)
-    const nodeField = redisNodeKey(params.runId, params.nodeName)
+    const nodeField = nodeKey(params.runId, params.nodeName)
     const indexField = `children:${nodeField}`
     const date = new Date()
     const created: StoredNodeChild[] = []
@@ -910,8 +823,8 @@ export class RedisWorkflowStoreRuntime {
       if (input.item !== undefined) child.item = input.item
       created.push(child)
       rows.push({
-        field: redisChildKey(params.runId, params.nodeName, input.childKey),
-        raw: encodeRedisValue(child),
+        field: encodeChildKey(params.runId, params.nodeName, input.childKey),
+        raw: encode(child),
       })
     }
     const result = scriptResult(
@@ -923,7 +836,7 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.familyIndexes(rootRunId),
           this.#keys.runWake(rootRunId),
         ],
-        [nodeField, indexField, encodeRedisValue(rows)],
+        [nodeField, indexField, encode(rows)],
       ),
     )
     if (result[0] === 'missing-node') {
@@ -941,7 +854,7 @@ export class RedisWorkflowStoreRuntime {
         ...fields,
       )
       for (const raw of raws) {
-        if (raw) existing.push(decodeRedisValue<StoredNodeChild>(raw))
+        if (raw) existing.push(decode<StoredNodeChild>(raw))
       }
     }
     if (!nodeChildrenMatch(existing, params)) {
@@ -969,7 +882,7 @@ export class RedisWorkflowStoreRuntime {
     if (params.idempotencyKey !== undefined) {
       input.idempotencyKey = params.idempotencyKey
     }
-    const childRun = this.#createRunRecord(input)
+    const childRun = this.#buildRun(input)
     let idempotencyKey = ''
     if (params.idempotencyKey) {
       idempotencyKey = this.#keys.idempotency(params.idempotencyKey)
@@ -988,9 +901,9 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.runWake(rootRunId),
         ],
         [
-          redisChildKey(params.runId, params.nodeName, params.childKey),
-          encodeRedisValue(childRun),
-          redisRunSignature(input),
+          encodeChildKey(params.runId, params.nodeName, params.childKey),
+          encode(childRun),
+          runSignature(input),
           this.#keys.runRoot(childRun.id),
           this.#keys.startDispatch(childRun.id),
           idempotencyKey,
@@ -1036,19 +949,19 @@ export class RedisWorkflowStoreRuntime {
     ensure: boolean,
   ) {
     const rootRunId = await this.#requireRootRunId(input.runId)
-    const childField = redisChildKey(
+    const childField = encodeChildKey(
       input.runId,
       input.nodeName,
       input.childKey,
     )
-    const nodeField = redisNodeKey(input.runId, input.nodeName)
+    const nodeField = nodeKey(input.runId, input.nodeName)
     const attempt: Mutable<StoredAttempt> = {
-      id: createRedisId(),
+      id: randomUUID(),
       runId: input.runId,
       nodeName: input.nodeName,
       childKey: input.childKey,
       status: 'started',
-      leaseToken: createRedisId(),
+      leaseToken: randomUUID(),
       attemptNumber: 0,
       retryAttemptNumber: 1,
       input: input.input,
@@ -1057,8 +970,6 @@ export class RedisWorkflowStoreRuntime {
     if (input.idempotencyKey !== undefined) {
       attempt.idempotencyKey = input.idempotencyKey
     }
-    let ensureFlag = '0'
-    if (ensure) ensureFlag = '1'
     const result = scriptResult(
       await this.#scripts.run(
         'createAttempt',
@@ -1073,12 +984,12 @@ export class RedisWorkflowStoreRuntime {
         [
           childField,
           nodeField,
-          encodeRedisValue(attempt),
+          encode(attempt),
           attempt.id,
           this.#keys.attemptRoot(attempt.id),
           rootRunId,
           `attempts:${nodeField}`,
-          ensureFlag,
+          ensure ? '1' : '0',
           String(Date.now()),
         ],
       ),
@@ -1138,14 +1049,12 @@ export class RedisWorkflowStoreRuntime {
       attemptId,
     )
     if (!raw) return undefined
-    const attempt = decodeRedisValue<StoredAttempt>(raw)
-    const childField = redisChildKey(
+    const attempt = decode<StoredAttempt>(raw)
+    const childField = encodeChildKey(
       attempt.runId,
       attempt.nodeName,
       attempt.childKey,
     )
-    let completeChildFlag = '0'
-    if (completeChild) completeChildFlag = '1'
     const result = scriptResult(
       await this.#scripts.run(
         'settleAttempt',
@@ -1158,9 +1067,9 @@ export class RedisWorkflowStoreRuntime {
           attemptId,
           leaseToken,
           childField,
-          encodeRedisValue(settled),
+          encode(settled),
           String(Date.now()),
-          completeChildFlag,
+          completeChild ? '1' : '0',
         ],
       ),
     )
@@ -1168,7 +1077,7 @@ export class RedisWorkflowStoreRuntime {
     return decodeScriptValue<StoredAttempt>(result[1])
   }
 
-  async #updateChildRecord(
+  async #updateChild(
     runId: string,
     nodeName: string,
     childKey: string,
@@ -1179,7 +1088,7 @@ export class RedisWorkflowStoreRuntime {
     const result = await this.#updateRecord<StoredNodeChild>(
       this.#keys.familyChildren(rootRunId),
       this.#keys.runWake(rootRunId),
-      redisChildKey(runId, nodeName, childKey),
+      encodeChildKey(runId, nodeName, childKey),
       'childTransition',
       changes,
     )
@@ -1195,7 +1104,7 @@ export class RedisWorkflowStoreRuntime {
       runId,
       'runTransition',
       { status },
-      transitionSources(status),
+      transitionSources(RUN_TRANSITIONS, status),
     )
     return result.value
   }
@@ -1224,7 +1133,7 @@ export class RedisWorkflowStoreRuntime {
         ],
         [
           runId,
-          encodeRedisValue(terminal),
+          encode(terminal),
           String(Date.now()),
           '',
           String(this.#terminalRetentionMs),
@@ -1267,7 +1176,7 @@ export class RedisWorkflowStoreRuntime {
       [runId, String(Date.now())],
     )
     if (typeof result !== 'string') return []
-    return decodeRedisValue<StoredNode[]>(result)
+    return decode<StoredNode[]>(result)
   }
 
   async #acquireRunLease(params: { runId: string; leaseMs: number }) {
@@ -1275,7 +1184,7 @@ export class RedisWorkflowStoreRuntime {
     if (!rootRunId) return undefined
     const lease = {
       runId: params.runId,
-      leaseToken: createRedisId(),
+      leaseToken: randomUUID(),
       version: 0,
     }
     const result = scriptResult(
@@ -1286,17 +1195,11 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.familyLeases(rootRunId),
           this.#keys.runWake(rootRunId),
         ],
-        [
-          'acquire',
-          params.runId,
-          '',
-          String(params.leaseMs),
-          encodeRedisValue(lease),
-        ],
+        ['acquire', params.runId, '', String(params.leaseMs), encode(lease)],
       ),
     )
     if (result[0] !== 'updated') return undefined
-    return decodeScriptValue<RunLease & { expiresAt: Date }>(result[1])
+    return decodeScriptValue<StoredLease>(result[1])
   }
 
   async #renewRunLease(lease: RunLease, leaseMs: number) {
@@ -1314,7 +1217,7 @@ export class RedisWorkflowStoreRuntime {
       ),
     )
     if (result[0] !== 'updated') return undefined
-    return decodeScriptValue<RunLease & { expiresAt: Date }>(result[1])
+    return decodeScriptValue<StoredLease>(result[1])
   }
 
   async #releaseRunLease(lease: RunLease) {
@@ -1346,9 +1249,9 @@ export class RedisWorkflowStoreRuntime {
         [
           field,
           mode,
-          encodeRedisValue(changes),
+          encode(changes),
           String(Date.now()),
-          encodeRedisValue(allowedSources),
+          encode(allowedSources),
         ],
       ),
     )
@@ -1408,7 +1311,8 @@ export class RedisWorkflowStoreRuntime {
       if (!candidate || isTerminalRunStatus(candidate.status)) continue
       throw new Error(`Run [${runId}] has non-terminal runs`)
     }
-    return { deleted: await this.#deleteFamily(run.rootRunId) }
+    const deleted = await this.#deleteFamily(run.rootRunId)
+    return { deleted }
   }
 
   async #deleteFamily(rootRunId: string, prune?: PruneTerminalRunsParams) {
@@ -1425,6 +1329,12 @@ export class RedisWorkflowStoreRuntime {
       runIds.add(id)
     }
     const stateKeys = this.#keys.familyStateKeys(rootRunId)
+    const args = prune
+      ? [
+          String(prune.olderThan.getTime()),
+          JSON.stringify(normalizePruneStatuses(prune.statuses)),
+        ]
+      : []
     const result = scriptResult(
       await this.#scripts.run(
         'deleteFamily',
@@ -1436,12 +1346,7 @@ export class RedisWorkflowStoreRuntime {
           this.#keys.orderedRuns(),
           ...stateKeys,
         ],
-        prune
-          ? [
-              String(prune.olderThan.getTime()),
-              JSON.stringify(normalizePruneStatuses(prune.statuses)),
-            ]
-          : [],
+        args,
       ),
     )
     if (result[0] === 'missing' || result[0] === 'skipped') return false
@@ -1467,7 +1372,7 @@ const runMatchesCreateInput = (run: StoredRun, input: CreateRunInput) =>
   run.parentRunId === input.parentRunId &&
   run.parentNodeName === input.parentNodeName &&
   run.rootRunId === (input.rootRunId ?? run.id) &&
-  sameRedisValue(run.input, input.input)
+  sameValue(run.input, input.input)
 
 const compareRunsOldest = (left: StoredRun, right: StoredRun) =>
   left.createdAt.getTime() - right.createdAt.getTime() ||
@@ -1488,16 +1393,11 @@ const compareChildrenForDetail = (
 const compareChildren = (left: StoredNodeChild, right: StoredNodeChild) =>
   left.ordinal - right.ordinal || left.childKey.localeCompare(right.childKey)
 
-const runSummary = (
-  family: RedisWorkflowFamily,
-  run: StoredRun,
-): RunSummary => {
+const runSummary = (family: Family, run: StoredRun): RunSummary => {
   const { input: _input, output: _output, ...summary } = run
   let nodesTotal = 0
   let nodesCompleted = 0
-  for (const key in family.nodes) {
-    const node = family.nodes[key]
-    if (!node) continue
+  for (const node of Object.values(family.nodes)) {
     if (node.runId !== run.id) continue
     nodesTotal += 1
     if (node.status === 'completed') nodesCompleted += 1
@@ -1530,8 +1430,8 @@ const jsonContains = (target: unknown, expected: unknown): boolean => {
     if (!Array.isArray(target)) return false
     for (const expectedItem of expected) {
       let found = false
-      for (const targetItem of target) {
-        if (!jsonContains(targetItem, expectedItem)) continue
+      for (const item of target) {
+        if (!jsonContains(item, expectedItem)) continue
         found = true
         break
       }
@@ -1542,16 +1442,10 @@ const jsonContains = (target: unknown, expected: unknown): boolean => {
   if (expected && typeof expected === 'object') {
     if (!target || typeof target !== 'object' || Array.isArray(target))
       return false
-    for (const key in expected) {
-      if (!Object.hasOwn(expected, key)) continue
-      if (
-        !jsonContains(
-          (target as Record<string, unknown>)[key],
-          (expected as Record<string, unknown>)[key],
-        )
-      ) {
-        return false
-      }
+    const actual = target as Record<string, unknown>
+    const fields = expected as Record<string, unknown>
+    for (const key of Object.keys(fields)) {
+      if (!jsonContains(actual[key], fields[key])) return false
     }
     return true
   }
@@ -1609,14 +1503,14 @@ const decodeScriptValue = <T>(value: string | undefined): T => {
   if (value === undefined) {
     throw new Error('Redis workflow script omitted its result value')
   }
-  return decodeRedisValue<T>(value)
+  return decode<T>(value)
 }
 
 const decodeRecord = <T>(values: Record<string, string>) => {
   const decoded: Record<string, T> = {}
   for (const key in values) {
     const raw = values[key]
-    if (raw !== undefined) decoded[key] = decodeRedisValue<T>(raw)
+    if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
   return decoded
 }
@@ -1628,29 +1522,20 @@ const decodeOrderedRecord = <T>(
   const decoded: Record<string, T> = {}
   for (const key of orderedKeys) {
     const raw = values[key]
-    if (raw !== undefined) decoded[key] = decodeRedisValue<T>(raw)
+    if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
   for (const key in values) {
     if (Object.hasOwn(decoded, key)) continue
     const raw = values[key]
-    if (raw !== undefined) decoded[key] = decodeRedisValue<T>(raw)
+    if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
   return decoded
 }
 
 const appendEncodedFields = (encoded: string | undefined, target: string[]) => {
   if (!encoded) return
-  const fields = decodeRedisValue<string[]>(encoded)
+  const fields = decode<string[]>(encoded)
   for (const field of fields) target.push(field)
-}
-
-const numberRecord = (values: Record<string, string>) => {
-  const decoded: Record<string, number> = {}
-  for (const key in values) {
-    const raw = values[key]
-    if (raw !== undefined) decoded[key] = Number(raw)
-  }
-  return decoded
 }
 
 const nodeChildrenMatch = (
@@ -1659,27 +1544,19 @@ const nodeChildrenMatch = (
 ) => {
   if (existing.length !== params.children.length) return false
   for (const input of params.children) {
-    let matched: StoredNodeChild | undefined
-    for (const child of existing) {
-      if (child.childKey !== input.childKey) continue
-      matched = child
-      break
-    }
+    const matched = existing.find((child) => child.childKey === input.childKey)
     if (
       !matched ||
       matched.kind !== input.kind ||
       matched.ordinal !== (input.ordinal ?? 0) ||
       matched.itemKey !== input.itemKey ||
-      !sameRedisValue(matched.item, input.item)
+      !sameValue(matched.item, input.item)
     ) {
       return false
     }
   }
   return true
 }
-
-const transitionSources = (status: 'running' | 'waiting') =>
-  runtimeTransitionSources(RUN_TRANSITIONS, status)
 
 const normalizePruneBatchSize = (batchSize: number | undefined) => {
   if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
@@ -1690,16 +1567,9 @@ const normalizePruneBatchSize = (batchSize: number | undefined) => {
 const normalizePruneStatuses = (
   statuses: PruneTerminalRunsParams['statuses'],
 ): readonly TerminalRunStatus[] => {
-  const normalized: TerminalRunStatus[] = []
+  const selected = new Set<TerminalRunStatus>()
   for (const status of statuses ?? DEFAULT_PRUNE_STATUSES) {
-    if (!DEFAULT_PRUNE_STATUSES.includes(status)) continue
-    let duplicate = false
-    for (const existing of normalized) {
-      if (existing !== status) continue
-      duplicate = true
-      break
-    }
-    if (!duplicate) normalized.push(status)
+    if (DEFAULT_PRUNE_STATUSES.includes(status)) selected.add(status)
   }
-  return normalized
+  return Array.from(selected)
 }
