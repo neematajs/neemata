@@ -186,7 +186,7 @@ export class McpHandler {
             ? {}
             : { annotations: config.annotations }),
         },
-        async (args: unknown, extra: any): Promise<CallToolResult> => {
+        async (args: unknown, extra): Promise<CallToolResult> => {
           try {
             const result = await this.params.onRpc(
               state.connection,
@@ -194,7 +194,7 @@ export class McpHandler {
                 payload: input.kind === 'none' ? undefined : args,
                 procedure: config.procedure,
               },
-              extra?.signal ?? new AbortController().signal,
+              extra.mcpReq.signal,
             )
 
             const structured =

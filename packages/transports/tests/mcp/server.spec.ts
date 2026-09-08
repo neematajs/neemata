@@ -1,6 +1,16 @@
 import type { AuthInfo } from '@modelcontextprotocol/server'
-import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server'
+import type { TransportWorkerParams } from '@nmtjs/gateway'
+import {
+  CLIENT_CAPABILITIES_META_KEY,
+  CLIENT_INFO_META_KEY,
+  OAuthError,
+  OAuthErrorCode,
+  PROTOCOL_VERSION_META_KEY,
+  SdkError,
+  SdkErrorCode,
+} from '@modelcontextprotocol/server'
 import { BaseServerCodec } from '@nmtjs/protocol/server'
+import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { McpToolConfig } from '../../src/mcp/types.ts'
@@ -54,7 +64,7 @@ function createServer(overrides: Overrides = {}) {
   const params = {
     onConnect,
     resolve: vi.fn(),
-    onRpc: vi.fn(),
+    onRpc: vi.fn<TransportWorkerParams['onRpc']>(),
     onDisconnect: async () => {},
   }
 
@@ -65,7 +75,7 @@ function createServer(overrides: Overrides = {}) {
     auth: overrides.auth,
   })
 
-  return { server, connection, onConnect }
+  return { server, connection, onConnect, params }
 }
 
 const verifier = {
@@ -78,6 +88,71 @@ const verifier = {
 }
 
 describe('McpHandler', () => {
+  it('aborts the in-flight RPC when the HTTP request is cancelled', async () => {
+    const { server, connection, params } = createServer()
+    params.resolve.mockResolvedValue({
+      stream: false,
+      procedure: {
+        contract: {
+          input: t.object({ name: t.string() }),
+          description: 'Create a user',
+        },
+      },
+    })
+    const started = Promise.withResolvers<AbortSignal>()
+    const completed = Promise.withResolvers<void>()
+    params.onRpc.mockImplementation(async (_connection, _rpc, signal) => {
+      started.resolve(signal)
+      await completed.promise
+      return { id: 42 }
+    })
+
+    const controller = new AbortController()
+    const response = server.handle(
+      new Request('http://localhost/mcp', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'mcp-method': 'tools/call',
+          'mcp-name': 'users_create',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'tools/call',
+          params: {
+            name: 'users_create',
+            arguments: { name: 'den' },
+            _meta: {
+              [PROTOCOL_VERSION_META_KEY]: '2026-07-28',
+              [CLIENT_INFO_META_KEY]: { name: 'test', version: '1.0.0' },
+              [CLIENT_CAPABILITIES_META_KEY]: {},
+            },
+          },
+        }),
+      }),
+    )
+    try {
+      const signal = await started.promise
+      expect(params.onRpc).toHaveBeenCalledExactlyOnceWith(
+        connection,
+        { procedure: 'users/create', payload: { name: 'den' } },
+        signal,
+      )
+      expect(signal.aborted).toBe(false)
+      controller.abort()
+      expect(signal.aborted).toBe(true)
+      expect(signal.reason).toBeInstanceOf(SdkError)
+      expect(signal.reason.code).toBe(SdkErrorCode.ConnectionClosed)
+    } finally {
+      controller.abort()
+      completed.resolve()
+      expect((await response).status).toBe(499)
+    }
+    expect(connection[Symbol.asyncDispose]).toHaveBeenCalledOnce()
+  })
+
   describe('construction', () => {
     it('derives tool names and rejects duplicates', () => {
       expect(() =>
