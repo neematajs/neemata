@@ -331,13 +331,14 @@ export function createInMemoryWorkflowRuntime(
     const { input: omittedInput, output: omittedOutput, ...summary } = run
     void omittedInput
     void omittedOutput
-    const runNodes = [...nodes.values()].filter((node) => node.runId === run.id)
-    return {
-      ...summary,
-      nodesTotal: runNodes.length,
-      nodesCompleted: runNodes.filter((node) => node.status === 'completed')
-        .length,
+    let nodesTotal = 0
+    let nodesCompleted = 0
+    for (const node of nodes.values()) {
+      if (node.runId !== run.id) continue
+      nodesTotal++
+      if (node.status === 'completed') nodesCompleted++
     }
+    return { ...summary, nodesTotal, nodesCompleted }
   }
   const nodeSummary = (node: StoredNode): NodeSummary => {
     const { input: omittedInput, output: omittedOutput, ...summary } = node
@@ -1338,18 +1339,27 @@ export function createInMemoryWorkflowRuntime(
       }
 
       if (child.attemptCount > 0) {
-        const current =
-          (child.currentAttemptId !== undefined
-            ? attempts.get(child.currentAttemptId)
-            : undefined) ??
-          [...attempts.values()]
-            .filter(
-              (attempt) =>
-                attempt.runId === child.runId &&
-                attempt.nodeName === child.nodeName &&
-                attempt.childKey === child.childKey,
-            )
-            .sort((left, right) => right.attemptNumber - left.attemptNumber)[0]
+        let current =
+          child.currentAttemptId === undefined
+            ? undefined
+            : attempts.get(child.currentAttemptId)
+        if (current === undefined) {
+          for (const attempt of attempts.values()) {
+            if (
+              attempt.runId !== child.runId ||
+              attempt.nodeName !== child.nodeName ||
+              attempt.childKey !== child.childKey
+            ) {
+              continue
+            }
+            if (
+              current === undefined ||
+              attempt.attemptNumber > current.attemptNumber
+            ) {
+              current = attempt
+            }
+          }
+        }
         if (!current) {
           throw new Error(
             `Missing node child attempt [${childRef(params.runId, params.nodeName, params.childKey)}]`,
@@ -1539,13 +1549,13 @@ export function createInMemoryWorkflowRuntime(
   }
   const normalizePruneStatuses = (
     statuses: PruneTerminalRunsParams['statuses'],
-  ): readonly TerminalRunStatus[] => [
-    ...new Set(
-      (statuses ?? DEFAULT_PRUNE_STATUSES).filter((status) =>
-        DEFAULT_PRUNE_STATUSES.includes(status),
-      ),
-    ),
-  ]
+  ): readonly TerminalRunStatus[] => {
+    const unique = new Set<TerminalRunStatus>()
+    for (const status of statuses ?? DEFAULT_PRUNE_STATUSES) {
+      if (DEFAULT_PRUNE_STATUSES.includes(status)) unique.add(status)
+    }
+    return Array.from(unique)
+  }
   const collectRunTreeIds = (rootIds: readonly string[]) => {
     const treeIds = new Set(rootIds)
     let checkedSize = -1

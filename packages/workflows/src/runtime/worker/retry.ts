@@ -11,28 +11,29 @@ type RetryAttemptInput = {
 }
 
 export async function retryActivityAttempt(
-  input: RetryAttemptInput,
+  runtime: RetryAttemptInput,
   params: {
     readonly command: ActivityAttemptCommand
     readonly failedAttempt: StoredAttempt
     readonly retry?: RetryPolicy
   },
 ): Promise<boolean> {
-  return retryAttemptCore(input, params, async (retryAttempt, options) => {
-    await input.attemptExecutor.dispatchActivity(
+  const { command } = params
+  return retryAttempt(runtime, params, async (attempt, options) => {
+    const { workflowName, activityName, runId, nodeName, childKey } = command
+    const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
+    await runtime.attemptExecutor.dispatchActivity(
       {
         kind: 'activityAttempt',
-        workflowName: params.command.workflowName,
-        activityName: params.command.activityName,
-        runId: params.command.runId,
-        nodeName: params.command.nodeName,
-        childKey: params.command.childKey,
-        attemptId: retryAttempt.id,
-        leaseToken: retryAttempt.leaseToken!,
-        input: retryAttempt.input,
-        ...(retryAttempt.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: retryAttempt.idempotencyKey }),
+        workflowName,
+        activityName,
+        runId,
+        nodeName,
+        childKey,
+        attemptId,
+        leaseToken: leaseToken!,
+        input,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       },
       options,
     )
@@ -40,92 +41,87 @@ export async function retryActivityAttempt(
 }
 
 export async function retryTaskAttempt(
-  input: RetryAttemptInput,
+  runtime: RetryAttemptInput,
   params: {
     readonly command: TaskAttemptCommand
     readonly failedAttempt: StoredAttempt
     readonly retry?: RetryPolicy
   },
 ): Promise<boolean> {
-  return retryAttemptCore(input, params, async (retryAttempt, options) => {
-    await input.attemptExecutor.dispatchTask(
+  const { command } = params
+  return retryAttempt(runtime, params, async (attempt, options) => {
+    const { workflowName, taskName, runId, nodeName, childKey, timeout } =
+      command
+    const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
+    await runtime.attemptExecutor.dispatchTask(
       {
         kind: 'taskAttempt',
-        workflowName: params.command.workflowName,
-        taskName: params.command.taskName,
-        runId: params.command.runId,
-        nodeName: params.command.nodeName,
-        childKey: params.command.childKey,
-        attemptId: retryAttempt.id,
-        leaseToken: retryAttempt.leaseToken!,
-        input: retryAttempt.input,
-        ...(retryAttempt.idempotencyKey === undefined
-          ? {}
-          : { idempotencyKey: retryAttempt.idempotencyKey }),
-        ...(params.command.timeout === undefined
-          ? {}
-          : { timeout: params.command.timeout }),
+        workflowName,
+        taskName,
+        runId,
+        nodeName,
+        childKey,
+        attemptId,
+        leaseToken: leaseToken!,
+        input,
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(timeout === undefined ? {} : { timeout }),
       },
       options,
     )
   })
 }
 
-async function retryAttemptCore(
-  input: RetryAttemptInput,
+async function retryAttempt(
+  runtime: RetryAttemptInput,
   params: {
     readonly command: ActivityAttemptCommand | TaskAttemptCommand
     readonly failedAttempt: StoredAttempt
     readonly retry?: RetryPolicy
   },
   dispatch: (
-    retryAttempt: StoredAttempt,
+    attempt: StoredAttempt,
     options: { readonly runAt?: Date } | undefined,
   ) => Promise<void>,
 ): Promise<boolean> {
-  if (!shouldRetryAttempt(params.failedAttempt, params.retry)) return false
+  const { command, failedAttempt: failed, retry } = params
+  if (!shouldRetry(failed, retry)) return false
 
-  const retryAttempt = await input.store.createAttempt({
-    runId: params.command.runId,
-    nodeName: params.command.nodeName,
-    childKey: params.command.childKey,
-    input: params.failedAttempt.input,
-    idempotencyKey: params.failedAttempt.idempotencyKey,
+  const attempt = await runtime.store.createAttempt({
+    runId: command.runId,
+    nodeName: command.nodeName,
+    childKey: command.childKey,
+    input: failed.input,
+    idempotencyKey: failed.idempotencyKey,
   })
-  await dispatch(
-    retryAttempt,
-    retryDispatchOptions(params.retry, params.failedAttempt.retryAttemptNumber),
-  )
+  const options = dispatchOptions(retry, failed.retryAttemptNumber)
+  await dispatch(attempt, options)
   return true
 }
 
-function shouldRetryAttempt(
-  failedAttempt: StoredAttempt,
+function shouldRetry(
+  attempt: StoredAttempt,
   retry: RetryPolicy | undefined,
 ): retry is RetryPolicy {
   return (
     retry !== undefined &&
-    (failedAttempt.status === 'failed' ||
-      failedAttempt.status === 'timedOut') &&
-    failedAttempt.retryAttemptNumber < retry.attempts
+    (attempt.status === 'failed' || attempt.status === 'timedOut') &&
+    attempt.retryAttemptNumber < retry.attempts
   )
 }
 
-function retryDispatchOptions(
-  retry: RetryPolicy | undefined,
-  failedAttemptNumber: number,
+function dispatchOptions(
+  retry: RetryPolicy,
+  attemptNumber: number,
 ): { readonly runAt?: Date } | undefined {
-  const delayMs = retryDelayMs(retry, failedAttemptNumber)
+  const delayMs = retryDelayMs(retry, attemptNumber)
   return delayMs > 0 ? { runAt: new Date(Date.now() + delayMs) } : undefined
 }
 
-function retryDelayMs(
-  retry: RetryPolicy | undefined,
-  failedAttemptNumber: number,
-): number {
-  const base = parseDurationMs(retry?.delay) ?? 0
+function retryDelayMs(retry: RetryPolicy, attemptNumber: number): number {
+  const base = parseDurationMs(retry.delay) ?? 0
   if (base === 0) return 0
-  return retry?.backoff === 'exponential'
-    ? base * 2 ** Math.max(0, failedAttemptNumber - 1)
+  return retry.backoff === 'exponential'
+    ? base * 2 ** Math.max(0, attemptNumber - 1)
     : base
 }

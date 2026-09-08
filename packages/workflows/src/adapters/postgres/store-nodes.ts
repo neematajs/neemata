@@ -57,7 +57,7 @@ type PostgresWorkflowNodeStore = Pick<
   | 'cancelNonTerminalRunNodes'
 >
 
-type AttemptRow = {
+type AttemptRow = JsonRecord & {
   readonly run_id: string
   readonly node_name: string
   readonly child_key: string
@@ -73,7 +73,7 @@ export const createPostgresWorkflowNodeStore = (
    * child record still points at it and the child is non-terminal.
    */
   const loadFencedAttempt = async (attemptId: string, leaseToken: string) => {
-    const attempt = await one(
+    const attempt = await one<AttemptRow>(
       db,
       'SELECT * FROM workflow_attempts WHERE id = $1',
       [attemptId],
@@ -85,7 +85,7 @@ export const createPostgresWorkflowNodeStore = (
     ) {
       return undefined
     }
-    const row = attempt as AttemptRow
+    const { run_id, node_name, child_key } = attempt
     const child = await one(
       db,
       `
@@ -93,7 +93,7 @@ export const createPostgresWorkflowNodeStore = (
       FROM workflow_node_children
       WHERE run_id = $1 AND node_name = $2 AND child_key = $3
     `,
-      [row.run_id, row.node_name, row.child_key],
+      [run_id, node_name, child_key],
     )
     if (
       !child ||
@@ -284,7 +284,7 @@ export const createPostgresWorkflowNodeStore = (
       await ready
       const attempt = await loadFencedAttempt(attemptId, leaseToken)
       if (!attempt) return undefined
-      const { run_id, node_name, child_key } = attempt as AttemptRow
+      const { run_id, node_name, child_key } = attempt
 
       // The pre-check above is only a fast path; the fence must hold at write
       // time, so the child update re-checks it and a miss rolls back the

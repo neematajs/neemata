@@ -30,17 +30,6 @@ const normalizeIndexPredicate = (value: unknown) =>
 export async function verifyPostgresWorkflowSchema(
   db: WorkflowPostgresConnection,
 ) {
-  const expectedColumns = Object.entries(
-    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.columns,
-  ).flatMap(([table, columns]) =>
-    Object.entries(columns).map(([column, definition]) => ({
-      key: `${table}.${column}`,
-      table,
-      column,
-      type: definition.type,
-      nullable: definition.nullable,
-    })),
-  )
   const [
     enums,
     enumLabels,
@@ -243,14 +232,16 @@ export async function verifyPostgresWorkflowSchema(
     values.push(row.enum_label)
     labelsByEnum.set(row.enum_name, values)
   }
-  const invalidEnums = Object.entries(
+  const invalidEnums: string[] = []
+  for (const [name, values] of Object.entries(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.enumValues,
-  )
-    .filter(
-      ([name, values]) =>
-        JSON.stringify(labelsByEnum.get(name) ?? []) !== JSON.stringify(values),
-    )
-    .map(([name]) => name)
+  )) {
+    if (
+      JSON.stringify(labelsByEnum.get(name) ?? []) !== JSON.stringify(values)
+    ) {
+      invalidEnums.push(name)
+    }
+  }
 
   if (invalidEnums.length > 0) {
     throw new Error(
@@ -258,22 +249,23 @@ export async function verifyPostgresWorkflowSchema(
     )
   }
 
-  const constraintDefinitionsByName = new Map(
+  const constraintsByName = new Map(
     constraintDefinitions.map((definition) => [definition.name, definition]),
   )
-  const invalidConstraints = Object.entries(
+  const invalidConstraints: string[] = []
+  for (const [name, expected] of Object.entries(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraintDefinitions,
-  )
-    .filter(([name, expected]) => {
-      const actual = constraintDefinitionsByName.get(name)
-      return (
-        !actual ||
-        actual.table_name !== expected.table ||
-        actual.type !== expected.type ||
-        !sameStringArray(actual.columns, expected.columns)
-      )
-    })
-    .map(([name]) => name)
+  )) {
+    const actual = constraintsByName.get(name)
+    if (
+      !actual ||
+      actual.table_name !== expected.table ||
+      actual.type !== expected.type ||
+      !sameStringArray(actual.columns, expected.columns)
+    ) {
+      invalidConstraints.push(name)
+    }
+  }
 
   if (invalidConstraints.length > 0) {
     throw new Error(
@@ -281,37 +273,37 @@ export async function verifyPostgresWorkflowSchema(
     )
   }
 
-  const indexDefinitionsByName = new Map(
+  const indexesByName = new Map(
     indexDefinitions.map((definition) => [definition.name, definition]),
   )
   const optionalIndexes = new Set<string>(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.optionalIndexes,
   )
-  const invalidIndexes = Object.entries(
+  const invalidIndexes: string[] = []
+  for (const [name, expected] of Object.entries(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexDefinitions,
-  )
-    .filter(([name, expected]) => {
-      const actual = indexDefinitionsByName.get(name)
-      // optional indexes may be absent, but when present must match
-      if (!actual && optionalIndexes.has(name)) return false
-      return (
-        !actual ||
-        actual.table_name !== expected.table ||
-        actual.unique !== expected.unique ||
-        !sameStringArray(actual.columns, expected.columns) ||
-        !sameStringArray(
-          actual.directions,
-          'directions' in expected
-            ? expected.directions
-            : expected.columns.map(() => 'ASC'),
-        ) ||
-        normalizeIndexPredicate(actual.predicate) !==
-          normalizeIndexPredicate(
-            'predicate' in expected ? expected.predicate : undefined,
-          )
-      )
-    })
-    .map(([name]) => name)
+  )) {
+    const actual = indexesByName.get(name)
+    // Optional indexes may be absent, but when present must match.
+    if (!actual && optionalIndexes.has(name)) continue
+    const directions =
+      'directions' in expected
+        ? expected.directions
+        : expected.columns.map(() => 'ASC')
+    const predicate = normalizeIndexPredicate(
+      'predicate' in expected ? expected.predicate : undefined,
+    )
+    if (
+      !actual ||
+      actual.table_name !== expected.table ||
+      actual.unique !== expected.unique ||
+      !sameStringArray(actual.columns, expected.columns) ||
+      !sameStringArray(actual.directions, directions) ||
+      normalizeIndexPredicate(actual.predicate) !== predicate
+    ) {
+      invalidIndexes.push(name)
+    }
+  }
 
   if (invalidIndexes.length > 0) {
     throw new Error(
@@ -325,16 +317,22 @@ export async function verifyPostgresWorkflowSchema(
       column,
     ]),
   )
-  const invalidColumns = expectedColumns
-    .filter((expected) => {
-      const column = columnsByKey.get(expected.key)
-      return (
+  const invalidColumns: string[] = []
+  for (const [table, columns] of Object.entries(
+    WORKFLOW_POSTGRES_SCHEMA_MANIFEST.columns,
+  )) {
+    for (const [name, expected] of Object.entries(columns)) {
+      const key = `${table}.${name}`
+      const column = columnsByKey.get(key)
+      if (
         !column ||
         column.udt_name !== expected.type ||
         (column.is_nullable === 'YES') !== expected.nullable
-      )
-    })
-    .map((expected) => expected.key)
+      ) {
+        invalidColumns.push(key)
+      }
+    }
+  }
 
   if (invalidColumns.length > 0) {
     throw new Error(

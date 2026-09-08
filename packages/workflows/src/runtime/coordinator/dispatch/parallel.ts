@@ -11,6 +11,7 @@ import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { memberChildKey } from '../../child-key.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt, dispatchActivityAttempt } from '../attempt.ts'
+import { loadChildRuns } from '../children.ts'
 import {
   decodeWorkflowUserSchemaValue,
   getWorkflowNodeDeclaration,
@@ -62,20 +63,10 @@ export async function dispatchParallelNode(
       kind: member.kind,
     })),
   })
-  const childByKey = new Map(
+  const byKey = new Map(
     ensured.children.map((child) => [child.childKey, child]),
   )
-  // Per-member snapshot loads cost one round-trip each, so load all child
-  // run rows in one query instead.
-  const childRuns = new Map(
-    (
-      await input.store.loadRuns(
-        ensured.children
-          .map((child) => child.childRunId)
-          .filter((runId): runId is string => runId !== undefined),
-      )
-    ).map((run) => [run.id, run]),
-  )
+  const childRuns = await loadChildRuns(input.store, ensured.children)
 
   const outputs: Record<string, unknown> = {}
   let hasLocalWork = false
@@ -95,7 +86,7 @@ export async function dispatchParallelNode(
 
   for (const [memberKey, member] of Object.entries(input.node.cases)) {
     const childKey = memberChildKey(memberKey)
-    const child = childByKey.get(childKey)
+    const child = byKey.get(childKey)
     if (!child) {
       throw new Error(
         `Missing parallel member child [${input.node.name}.${memberKey}]`,
@@ -243,35 +234,31 @@ export async function dispatchParallelNode(
           `Parallel member [${input.node.name}.${memberKey}] is not an activity`,
         )
       }
-      const activityMemberDeclaration =
-        memberDeclaration as BranchCaseDefinition<'activity'>
+      const activity = memberDeclaration as BranchCaseDefinition<'activity'>
 
       // Once the member has an attempt, its input is authoritative — never
       // re-run the user's input callback on re-entry.
       const hasAttempt = child.attemptCount > 0
-      const nodeInput = hasAttempt
-        ? undefined
-        : decodeWorkflowUserSchemaValue(
-            activityMemberDeclaration.input,
-            member.input
-              ? runWorkflowUserCallback(() =>
-                  member.input!(
-                    input.workflowCtx,
-                    input.outputs,
-                    input.run.input,
-                  ),
-                )
-              : input.run.input,
-            `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-          )
-      const idempotencyKey = hasAttempt
-        ? undefined
-        : resolveIdempotency(
-            member.idempotency,
-            input.workflowCtx,
-            input.outputs,
-            input.run.input,
-          )
+      let nodeInput: unknown
+      let idempotencyKey: readonly unknown[] | undefined
+      if (!hasAttempt) {
+        const value = member.input
+          ? runWorkflowUserCallback(() =>
+              member.input!(input.workflowCtx, input.outputs, input.run.input),
+            )
+          : input.run.input
+        nodeInput = decodeWorkflowUserSchemaValue(
+          activity.input,
+          value,
+          `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
+        )
+        idempotencyKey = resolveIdempotency(
+          member.idempotency,
+          input.workflowCtx,
+          input.outputs,
+          input.run.input,
+        )
+      }
 
       await dispatchActivityAttempt({
         store: input.store,
@@ -305,10 +292,8 @@ export async function dispatchParallelNode(
   }
 
   const expectedCount = Object.keys(input.node.cases).length
-  if (
-    failedChildren > 0 &&
-    Object.keys(outputs).length + failedChildren === expectedCount
-  ) {
+  const completedCount = Object.keys(outputs).length
+  if (failedChildren > 0 && completedCount + failedChildren === expectedCount) {
     await failNodeAndRun({
       ...input,
       runId: input.run.id,
@@ -317,7 +302,7 @@ export async function dispatchParallelNode(
     })
     return 'terminal'
   }
-  if (Object.keys(outputs).length === expectedCount) {
+  if (completedCount === expectedCount) {
     await input.store.completeNode({
       runId: input.run.id,
       nodeName: input.node.name,

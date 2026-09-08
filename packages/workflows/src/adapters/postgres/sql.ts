@@ -98,24 +98,23 @@ export const normalizePruneBatchSize = (batchSize: number | undefined) => {
 }
 export const normalizePruneStatuses = (
   statuses: PruneTerminalRunsParams['statuses'],
-): readonly TerminalRunStatus[] => [
-  ...new Set(
-    (statuses ?? DEFAULT_PRUNE_STATUSES).filter((status) =>
-      DEFAULT_PRUNE_STATUSES.includes(status),
-    ),
-  ),
-]
-export const isUniqueViolation = (error: unknown) =>
-  (typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === '23505') ||
-  (typeof error === 'object' &&
-    error !== null &&
+): readonly TerminalRunStatus[] => {
+  const selected = new Set<TerminalRunStatus>()
+  for (const status of statuses ?? DEFAULT_PRUNE_STATUSES) {
+    if (DEFAULT_PRUNE_STATUSES.includes(status)) selected.add(status)
+  }
+  return Array.from(selected)
+}
+export const isUniqueViolation = (error: unknown) => {
+  if (typeof error !== 'object' || error === null) return false
+  if ('code' in error && error.code === '23505') return true
+  return (
     'message' in error &&
     String(error.message).includes(
       'duplicate key value violates unique constraint',
-    ))
+    )
+  )
+}
 
 // Statuses are static enum literals, so inlining them into SQL is safe.
 export const runStatusSourcesSql = (to: RuntimeRunStatus) =>
@@ -381,12 +380,13 @@ export const jsonRecordArrayColumn = (value: unknown): JsonRecord[] => {
   return Array.isArray(parsed) ? parsed.filter(isRecord) : []
 }
 
-export const dateColumn = (value: unknown): unknown =>
-  value instanceof Date
-    ? value
-    : typeof value === 'string' || typeof value === 'number'
-      ? new Date(value)
-      : value
+export const dateColumn = (value: unknown): unknown => {
+  if (value instanceof Date) return value
+  if (typeof value === 'string' || typeof value === 'number') {
+    return new Date(value)
+  }
+  return value
+}
 
 export const withDateColumns = (
   row: JsonRecord,

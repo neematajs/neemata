@@ -1,4 +1,6 @@
 import type { DurationString, Schema } from '../../types/index.ts'
+import type { StoredNodeChild } from '../state.ts'
+import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
@@ -8,6 +10,20 @@ import {
   failMissingChildRun,
   failNodeAndRun,
 } from './sinks.ts'
+
+export async function loadChildRuns(
+  store: WorkflowStore,
+  children: readonly StoredNodeChild[],
+) {
+  const ids: string[] = []
+  for (const { childRunId } of children) {
+    if (childRunId !== undefined) ids.push(childRunId)
+  }
+
+  // Fan-out coordination needs one snapshot of all child runs per pass.
+  const runs = await store.loadRuns(ids)
+  return new Map(runs.map((run) => [run.id, run]))
+}
 
 export async function dispatchChildTaskRun(
   input: AdvanceCtx & {

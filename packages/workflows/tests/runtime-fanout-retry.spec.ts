@@ -261,9 +261,6 @@ describe('workflow fan-out retry state model', () => {
       .workflow('child', childWorkflow)
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow)
-      .inner(async (_ctx, input) => ({ text: `inner:${input.scenario}` }))
-      .finish((_ctx, { inner }) => inner)
     const parentImplementation = implementWorkflow(parentWorkflow)
       .child(childWorkflow)
       .finish((_ctx, { child }) => child)

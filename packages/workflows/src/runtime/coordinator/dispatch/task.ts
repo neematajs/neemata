@@ -51,17 +51,13 @@ export async function dispatchTaskNode(
         input.outputs,
         input.run.input,
       ),
-    resolveNodeInput: () =>
-      hasStoredNodeInput(existing)
-        ? existing.input
-        : input.node.input
-          ? runWorkflowUserCallback(() =>
-              input.node.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            )
-          : input.run.input,
+    resolveNodeInput: () => {
+      if (hasStoredNodeInput(existing)) return existing.input
+      if (!input.node.input) return input.run.input
+
+      return runWorkflowUserCallback(() =>
+        input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+      )
+    },
   })
 }

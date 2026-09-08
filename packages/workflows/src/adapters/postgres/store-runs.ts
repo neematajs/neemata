@@ -753,7 +753,11 @@ export const createPostgresWorkflowRunStore = (
     },
     async loadRuns(runIds) {
       await ready
-      const ids = [...new Set(runIds)].filter(isUuid)
+      const unique = new Set<string>()
+      for (const runId of runIds) {
+        if (isUuid(runId)) unique.add(runId)
+      }
+      const ids = Array.from(unique)
       if (ids.length === 0) return []
       const rows = await many(
         db,
@@ -762,11 +766,17 @@ export const createPostgresWorkflowRunStore = (
       )
       // ANY() returns rows in unspecified order; reorder to keep the
       // first-occurrence contract shared with the in-memory store.
-      const runs = new Map(rows.map(mapRun).map((run) => [run.id, run]))
-      return ids.flatMap((runId) => {
-        const run = runs.get(runId)
-        return run ? [run] : []
-      })
+      const byId = new Map<string, StoredRun>()
+      for (const row of rows) {
+        const run = mapRun(row)
+        byId.set(run.id, run)
+      }
+      const runs: StoredRun[] = []
+      for (const runId of ids) {
+        const run = byId.get(runId)
+        if (run) runs.push(run)
+      }
+      return runs
     },
     async loadRunSnapshot(runId) {
       await ready

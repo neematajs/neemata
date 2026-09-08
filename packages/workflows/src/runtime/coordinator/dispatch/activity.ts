@@ -30,23 +30,18 @@ export async function dispatchActivityNode(
   if (declaration.kind !== 'activity') {
     throw new Error(`Workflow node [${input.node.name}] is not an activity`)
   }
-  const nodeInput = hasStoredNodeInput(existing)
-    ? existing.input
-    : decodeWorkflowUserSchemaValue(
-        declaration.input,
-        input.node.input
-          ? runWorkflowUserCallback(() =>
-              input.node.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            )
-          : input.run.input,
-        `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
-      )
-
+  let nodeInput = existing.input
   if (!hasStoredNodeInput(existing)) {
+    const rawInput = input.node.input
+      ? runWorkflowUserCallback(() =>
+          input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      : input.run.input
+    nodeInput = decodeWorkflowUserSchemaValue(
+      declaration.input,
+      rawInput,
+      `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
+    )
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,
