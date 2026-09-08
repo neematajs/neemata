@@ -232,9 +232,11 @@ export class WsSessionEngine {
         break
       }
       case ClientMessageType.Pong: {
-        const pending = session.heartbeat?.pending.get(message.nonce)
+        const heartbeat = session.heartbeat
+        if (!heartbeat) break
+        const pending = heartbeat.pending.get(message.nonce)
         if (pending) {
-          session.heartbeat!.pending.delete(message.nonce)
+          heartbeat.pending.delete(message.nonce)
           pending.resolve()
         }
         break
@@ -434,9 +436,7 @@ export class WsSessionEngine {
           }
           signal.throwIfAborted()
 
-          iterator = (response as AsyncIterable<unknown>)[
-            Symbol.asyncIterator
-          ]()
+          iterator = response[Symbol.asyncIterator]()
 
           while (true) {
             // The credit wait comes BEFORE next(): a consumer that never
@@ -468,10 +468,7 @@ export class WsSessionEngine {
               }
               signal.throwIfAborted()
             }
-            const result = (await Promise.race([
-              iterator.next(),
-              flow.promise,
-            ])) as IteratorResult<unknown>
+            const result = await Promise.race([iterator.next(), flow.promise])
             // the last credit is answered by End instead of a chunk: the
             // consumer's final read resolves done
             if (result.done) break

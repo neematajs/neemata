@@ -6,6 +6,7 @@ import type {
   DecodeRPCContext,
   EncodeRPCStreams,
   ProtocolBlobInterface,
+  ProtocolBlobMetadata,
 } from '../common/index.ts'
 import { ProtocolBlob } from '../common/blob.ts'
 import { BaseServerCodec } from '../server/codec.ts'
@@ -15,11 +16,7 @@ import { decodeStreamExt, encodeStreamExt, extensionCodec } from './common.ts'
 class StreamIdMarker {
   constructor(
     public readonly streamId: number,
-    public readonly metadata: {
-      type: string
-      size?: number
-      filename?: string
-    },
+    public readonly metadata: ProtocolBlobMetadata,
   ) {}
 }
 
@@ -57,7 +54,7 @@ export class MsgpackCodec extends BaseServerCodec {
               return encodeStreamExt(object.streamId, object.metadata)
             }
             if (object instanceof ProtocolBlob && object.encode) {
-              const marker = object.encode(object.metadata) as StreamIdMarker
+              const marker = object.encode(object.metadata)
               if (marker instanceof StreamIdMarker) {
                 return encodeStreamExt(marker.streamId, marker.metadata)
               }

@@ -120,7 +120,7 @@ export class JsonRpcHandler {
       if (body.byteLength === 0) throw new Error('Empty body')
       envelope = JSON.parse(body.toString('utf-8'))
     } catch {
-      return this.respond(connection, {
+      return this.respond({
         jsonrpc: '2.0',
         id: null,
         error: { code: JsonRpcErrorCode.ParseError, message: 'Parse error' },
@@ -129,11 +129,10 @@ export class JsonRpcHandler {
 
     if (Array.isArray(envelope)) {
       if (envelope.length === 0) {
-        return this.respond(connection, invalidRequest(null, 'Empty batch'))
+        return this.respond(invalidRequest(null, 'Empty batch'))
       }
       if (envelope.length > this.#maxBatchSize) {
         return this.respond(
-          connection,
           invalidRequest(
             null,
             `Batch size exceeds the limit of ${this.#maxBatchSize}`,
@@ -150,12 +149,12 @@ export class JsonRpcHandler {
       )
       // A batch of nothing but notifications gets no response body
       if (responses.length === 0) return new Response(null, { status: 204 })
-      return this.respond(connection, responses)
+      return this.respond(responses)
     }
 
     const response = await this.runEntry(connection, envelope, signal)
     if (response === undefined) return new Response(null, { status: 204 })
-    return this.respond(connection, response)
+    return this.respond(response)
   }
 
   private async runEntry(
@@ -224,7 +223,7 @@ export class JsonRpcHandler {
     return name
   }
 
-  private respond(_connection: GatewayConnection, payload: unknown): Response {
+  private respond(payload: unknown): Response {
     return new Response(JSON.stringify(payload), {
       status: 200,
       headers: { 'Content-Type': JSON_CONTENT_TYPE },
@@ -265,30 +264,25 @@ export function validateEntry(entry: unknown): ValidatedEntry {
   if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
     return { error: invalidRequest(null) }
   }
-  const { jsonrpc, method, params } = entry as Record<string, unknown>
+  const request = entry as Record<string, unknown>
+  const { jsonrpc, method, params } = request
   const notification = !('id' in entry)
-  const rawId = notification ? null : (entry as Record<string, unknown>).id
+  const id = notification ? null : request.id
 
-  if (
-    rawId !== null &&
-    typeof rawId !== 'string' &&
-    typeof rawId !== 'number'
-  ) {
+  if (id !== null && typeof id !== 'string' && typeof id !== 'number') {
     return { error: invalidRequest(null, 'Invalid id') }
   }
-  const id = rawId as JsonRpcId
-
   if (jsonrpc !== '2.0') {
-    return { error: invalidRequest(notification ? null : id) }
+    return { error: invalidRequest(id) }
   }
   if (typeof method !== 'string') {
-    return { error: invalidRequest(notification ? null : id) }
+    return { error: invalidRequest(id) }
   }
   if (params !== undefined && (typeof params !== 'object' || params === null)) {
     return {
       error: {
         jsonrpc: '2.0',
-        id: notification ? null : id,
+        id,
         error: {
           code: JsonRpcErrorCode.InvalidParams,
           message: 'Params must be a structured value',
@@ -312,14 +306,12 @@ export function mapError(error: unknown): JsonRpcErrorObject {
   if (error instanceof ProtocolError) {
     const code =
       ProtocolToJsonRpcCode[error.code] ?? JsonRpcErrorCode.InternalError
-    return {
-      code,
-      message: error.message || error.code,
-      data:
-        error.data === undefined
-          ? { code: error.code }
-          : { code: error.code, data: error.data },
-    }
+    const message = error.message || error.code
+    const data =
+      error.data === undefined
+        ? { code: error.code }
+        : { code: error.code, data: error.data }
+    return { code, message, data }
   }
   console.error(error)
   return {
@@ -349,7 +341,7 @@ async function runWithConcurrency<T, R>(
   limit: number,
   task: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
-  const results = new Array<R>(items.length)
+  const results: R[] = []
   let cursor = 0
   const workers = Array.from(
     { length: Math.min(limit, items.length) },

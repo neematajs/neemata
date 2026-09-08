@@ -28,11 +28,8 @@ export class JsonCodec extends BaseServerCodec {
     const buffers: (ArrayBufferView | ArrayBuffer)[] = []
     const hasStreams = Object.keys(streams).length > 0
     if (hasStreams) {
-      const encodedStreams = this.encode(streams)
-      buffers.push(
-        encodeNumber(encodedStreams.byteLength, 'Uint32'),
-        encodedStreams,
-      )
+      const metadata = this.encode(streams)
+      buffers.push(encodeNumber(metadata.byteLength, 'Uint32'), metadata)
     } else {
       buffers.push(encodeNumber(0, 'Uint32'))
     }
@@ -49,25 +46,25 @@ export class JsonCodec extends BaseServerCodec {
   }
 
   decodeRPC(buffer: Buffer, context: DecodeRPCContext<ProtocolBlobInterface>) {
-    const streamsLength = Number(decodeNumber(buffer, 'Uint32'))
+    const streamsLength = decodeNumber(buffer, 'Uint32')
     const hasStreams = streamsLength > 0
-    const payloadBuffer = buffer.subarray(
-      Uint32Array.BYTES_PER_ELEMENT + streamsLength,
-    )
-    const hasPayload = payloadBuffer.byteLength > 0
+    const payloadOffset = Uint32Array.BYTES_PER_ELEMENT + streamsLength
+    const payload = buffer.subarray(payloadOffset)
 
     let streams: EncodeRPCStreams = {}
 
     if (hasStreams) {
-      streams = this.decode(
-        buffer.subarray(
-          Uint32Array.BYTES_PER_ELEMENT,
-          Uint32Array.BYTES_PER_ELEMENT + streamsLength,
-        ),
+      const metadata = buffer.subarray(
+        Uint32Array.BYTES_PER_ELEMENT,
+        payloadOffset,
       )
+      streams = this.decode(metadata)
     }
 
-    const replacer = (_key: string, value: any) => {
+    if (payload.byteLength === 0) return undefined
+    if (!hasStreams) return this.decode(payload)
+
+    const reviver = (_key: string, value: unknown) => {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
         const metadata = streams[id]
@@ -76,8 +73,6 @@ export class JsonCodec extends BaseServerCodec {
       return value
     }
 
-    if (!hasPayload) return undefined
-    else if (hasStreams) return this.decode(payloadBuffer, replacer)
-    else return this.decode(payloadBuffer)
+    return this.decode(payload, reviver)
   }
 }

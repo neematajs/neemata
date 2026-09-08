@@ -52,11 +52,11 @@ export class ClientStreams {
 
   async clear(reason?: any) {
     if (reason) {
-      const abortPromises = [...this.#collection.values()].map((stream) =>
+      const pending = Array.from(this.#collection.values()).map((stream) =>
         stream.abort(reason),
       )
       // allSettled: one rejecting cancel() must not stop clearing the rest
-      await Promise.allSettled(abortPromises)
+      await Promise.allSettled(pending)
     }
     this.#collection.clear()
   }
@@ -97,16 +97,17 @@ export class ServerStreams<
   }
 
   async abort(streamId: number, reason?: unknown) {
-    if (this.has(streamId)) {
-      // a write parked on backpressure would block abort() from settling
-      this.#collection.get(streamId)?.releaseParkedWrites()
-      const writer = this.#writers.get(streamId)
-      if (writer) {
-        await writer.abort(reason)
-        writer.releaseLock()
-      }
-      this.remove(streamId)
+    const stream = this.#collection.get(streamId)
+    if (!stream) return
+
+    // a write parked on backpressure would block abort() from settling
+    stream.releaseParkedWrites()
+    const writer = this.#writers.get(streamId)
+    if (writer) {
+      await writer.abort(reason)
+      writer.releaseLock()
     }
+    this.remove(streamId)
   }
 
   async push(streamId: number, chunk: ArrayBufferView) {
@@ -133,10 +134,10 @@ export class ServerStreams<
       for (const stream of this.#collection.values()) {
         stream.releaseParkedWrites()
       }
-      const abortPromises = [...this.#writers.values()].map((writer) =>
+      const pending = Array.from(this.#writers.values()).map((writer) =>
         writer.abort(reason).finally(() => writer.releaseLock()),
       )
-      await Promise.allSettled(abortPromises)
+      await Promise.allSettled(pending)
     }
     this.#collection.clear()
     this.#writers.clear()

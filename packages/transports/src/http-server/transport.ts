@@ -162,9 +162,11 @@ export function createServerTransport<
 function collectProxyableTypes(
   handlers: Record<string, AnyServerHandler>,
 ): readonly ProxyableTransportType[] {
-  return [
-    ...new Set(Object.values(handlers).flatMap(({ proxyable }) => proxyable)),
-  ]
+  const types = new Set<ProxyableTransportType>()
+  for (const { proxyable } of Object.values(handlers)) {
+    for (const type of proxyable) types.add(type)
+  }
+  return Array.from(types)
 }
 
 /**

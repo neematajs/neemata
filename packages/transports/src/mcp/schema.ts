@@ -1,4 +1,5 @@
 import type { BaseTypeAny } from '@nmtjs/type'
+import type { core } from 'zod/mini'
 import { toJSONSchema } from 'zod/mini'
 
 /**
@@ -9,17 +10,17 @@ import { toJSONSchema } from 'zod/mini'
  * agent actually sends, which is exactly what an MCP `inputSchema` must be.
  */
 
-export type ToolInputSchema =
-  | { kind: 'object'; schema: Record<string, any> }
+export type InputSchema =
+  | { kind: 'object'; schema: core.JSONSchema.JSONSchema }
   // procedure takes no input — tools/call sends {} and dispatch passes nothing
-  | { kind: 'none'; schema: Record<string, any> }
+  | { kind: 'none'; schema: core.JSONSchema.JSONSchema }
 
-export function emitToolInputSchema(type: BaseTypeAny): ToolInputSchema {
+export function emitInputSchema(type: BaseTypeAny): InputSchema {
   const schema = toJSONSchema(type.encodeZodType, {
     target: 'draft-2020-12',
     io: 'input',
     unrepresentable: 'throw',
-  }) as Record<string, any>
+  })
 
   if (schema.type === 'object') return { kind: 'object', schema }
 
@@ -37,7 +38,7 @@ export function emitToolInputSchema(type: BaseTypeAny): ToolInputSchema {
   )
 }
 
-function isNeverSchema(schema: Record<string, any>): boolean {
+function isNeverSchema(schema: core.JSONSchema.JSONSchema): boolean {
   return (
     'not' in schema &&
     typeof schema.not === 'object' &&

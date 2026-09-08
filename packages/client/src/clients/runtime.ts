@@ -19,24 +19,31 @@ import type {
 } from '../types.ts'
 import { Client } from '../client.ts'
 
-export class RuntimeContractTransformer {
-  #procedures = new Map<string, TAnyCallableContract>()
+const collectProcedures = (router: TAnyRouterContract) => {
+  const procedures = new Map<string, TAnyCallableContract>()
 
-  constructor(router: TAnyRouterContract) {
-    const registerProcedures = (route: TRouteContract, path: string[] = []) => {
-      if (IsRouterContract(route)) {
-        for (const [key, child] of Object.entries(route.routes)) {
-          registerProcedures(child, [...path, key])
-        }
-        return
+  const visit = (route: TRouteContract, path: string[] = []) => {
+    if (IsRouterContract(route)) {
+      for (const [key, child] of Object.entries(route.routes)) {
+        visit(child, [...path, key])
       }
-
-      if (IsCallableContract(route)) {
-        this.#procedures.set(path.join('/'), route)
-      }
+      return
     }
 
-    registerProcedures(router)
+    if (IsCallableContract(route)) {
+      procedures.set(path.join('/'), route)
+    }
+  }
+
+  visit(router)
+  return procedures
+}
+
+export class RuntimeContractTransformer {
+  #procedures: Map<string, TAnyCallableContract>
+
+  constructor(router: TAnyRouterContract) {
+    this.#procedures = collectProcedures(router)
   }
 
   encode(procedure: string, payload: any) {
@@ -71,27 +78,8 @@ const assignNested = (
   }
 }
 
-const buildRuntimeCallers = (
-  rpc: RpcLayerApi,
-  contract: TAnyRouterContract,
-) => {
-  const procedures = new Map<string, TAnyCallableContract>()
-
-  const resolveProcedures = (
-    router: TAnyRouterContract,
-    path: string[] = [],
-  ) => {
-    for (const [key, route] of Object.entries(router.routes)) {
-      if (IsRouterContract(route)) {
-        resolveProcedures(route, [...path, key])
-      } else if (IsCallableContract(route)) {
-        procedures.set([...path, key].join('/'), route)
-      }
-    }
-  }
-
-  resolveProcedures(contract)
-
+const buildCallers = (rpc: RpcLayerApi, contract: TAnyRouterContract) => {
+  const procedures = collectProcedures(contract)
   const callers: Record<string, any> = Object.create(null)
   const streams: Record<string, any> = Object.create(null)
 
@@ -146,7 +134,7 @@ export class RuntimeClient<
       transport,
       transportOptions,
       new RuntimeContractTransformer(options.contract),
-      (rpc) => buildRuntimeCallers(rpc, options.contract),
+      (rpc) => buildCallers(rpc, options.contract),
     )
   }
 }

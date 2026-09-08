@@ -1,6 +1,7 @@
 import type {
   AuthInfo,
   CallToolResult,
+  JsonSchemaType,
   McpHttpHandler,
   McpRequestContext,
 } from '@modelcontextprotocol/server'
@@ -21,9 +22,9 @@ import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ProtocolError } from '@nmtjs/protocol/server'
 
 import type { ServerHandler } from '../http-server/transport.ts'
-import type { ToolInputSchema } from './schema.ts'
+import type { InputSchema } from './schema.ts'
 import type { McpHandlerOptions, McpToolConfig } from './types.ts'
-import { emitToolInputSchema } from './schema.ts'
+import { emitInputSchema } from './schema.ts'
 
 const JSON_CONTENT_TYPE = 'application/json'
 const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
@@ -175,28 +176,30 @@ export class McpHandler {
         name,
         config,
       )
+      // Zod and the SDK disagree on $vocabulary's type; Zod emits valid JSON Schema.
+      const inputSchema = fromJsonSchema(input.schema as JsonSchemaType)
 
       server.registerTool(
         name,
         {
           description,
           ...(title === undefined ? {} : { title }),
-          inputSchema: fromJsonSchema(input.schema as any),
+          inputSchema,
           ...(config.annotations === undefined
             ? {}
             : { annotations: config.annotations }),
         },
         async (args: unknown, extra: any): Promise<CallToolResult> => {
           try {
+            const payload = input.kind === 'none' ? undefined : args
+            const signal = extra?.signal ?? new AbortController().signal
             const result = await this.params.onRpc(
               state.connection,
-              {
-                payload: input.kind === 'none' ? undefined : args,
-                procedure: config.procedure,
-              },
-              extra?.signal ?? new AbortController().signal,
+              { payload, procedure: config.procedure },
+              signal,
             )
 
+            const text = JSON.stringify(result ?? null)
             const structured =
               result !== null &&
               typeof result === 'object' &&
@@ -204,7 +207,7 @@ export class McpHandler {
                 ? (result as Record<string, unknown>)
                 : undefined
             return {
-              content: [{ type: 'text', text: JSON.stringify(result ?? null) }],
+              content: [{ type: 'text', text }],
               ...(structured === undefined
                 ? {}
                 : { structuredContent: structured }),
@@ -258,19 +261,16 @@ export class McpHandler {
           'config or the procedure contract)',
       )
     }
-    let input: ToolInputSchema
+    let input: InputSchema
     try {
-      input = emitToolInputSchema(contract.input)
+      input = emitInputSchema(contract.input)
     } catch (cause) {
       throw new McpConfigError(
         `MCP tool "${name}": cannot derive an input schema for "${config.procedure}"`,
         { cause },
       )
     }
-    return {
-      input,
-      description,
-      title: config.title ?? contract.title,
-    }
+    const title = config.title ?? contract.title
+    return { input, description, title }
   }
 }
