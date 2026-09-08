@@ -1,9 +1,4 @@
-import type { ClientPlugin } from './types.ts'
-
-export interface ReconnectPluginOptions {
-  initialTimeout?: number
-  maxTimeout?: number
-}
+import type { ClientPlugin, ReconnectPluginOptions } from './types.ts'
 
 export const reconnectPlugin = (
   options: ReconnectPluginOptions = {},

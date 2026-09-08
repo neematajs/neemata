@@ -136,6 +136,32 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
       )
     })
 
+    it('stores encoded schedule input while deriving tags from the decoded value', async () => {
+      const workflow = defineWorkflow({
+        name: `${name}-coded-input-workflow`,
+        input: t.date(),
+        output: t.date(),
+        tags: (input) => ({ year: String(input.getUTCFullYear()) }),
+      }).build()
+      const runtime = await createRuntime()
+      const schedule = defineSchedule({
+        name: `${name}-coded-input-schedule`,
+        runnable: workflow,
+        input: '2026-09-01T00:00:00.000Z',
+        every: '1m',
+      })
+
+      await runtime.scheduler!.reconcile([schedule])
+
+      await expect(runtime.scheduler!.list()).resolves.toMatchObject([
+        {
+          name: schedule.name,
+          input: '2026-09-01T00:00:00.000Z',
+          tags: { year: '2026' },
+        },
+      ])
+    })
+
     it('computes every and cron next occurrences from reconcile time', async () => {
       const workflow = defineWorkflow({
         name: `${name}-next-run-workflow`,

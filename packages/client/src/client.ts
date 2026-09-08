@@ -3,74 +3,27 @@ import type { TAnyRouterContract } from '@nmtjs/contract'
 import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
-  ProtocolVersion,
 } from '@nmtjs/protocol'
-import type {
-  BaseClientCodec,
-  ProtocolServerBlobStream,
-} from '@nmtjs/protocol/client'
+import type { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
 import { noopFn } from '@nmtjs/common'
 import { ProtocolBlob } from '@nmtjs/protocol'
 
-import type { ClientCoreOptions, ConnectionState } from './core.ts'
-import type { PingLayerApi } from './layers/ping.ts'
-import type { RpcLayerApi } from './layers/rpc.ts'
-import type { StreamLayerApi } from './layers/streams.ts'
-import type { ClientPlugin } from './plugins/types.ts'
 import type { BaseClientTransformer } from './transformers.ts'
 import type { ClientTransportFactory } from './transport.ts'
 import type {
-  AnyResolvedContractRouter,
-  ClientBackpressureOptions,
+  ClientOptions,
+  ClientCoreOptions,
+  ConnectionState,
+  PingLayerApi,
+  RpcLayerApi,
+  StreamLayerApi,
   ClientCallers,
-  ResolveAPIRouterRoutes,
+  ResolveContract,
 } from './types.ts'
 import { ClientCore } from './core.ts'
 import { createPingLayer } from './layers/ping.ts'
 import { createRpcLayer } from './layers/rpc.ts'
 import { createStreamLayer } from './layers/streams.ts'
-
-export interface ClientOptions<
-  RouterContract extends TAnyRouterContract = TAnyRouterContract,
-  SafeCall extends boolean = false,
-> {
-  contract: RouterContract
-  protocol: ProtocolVersion
-  codec: BaseClientCodec
-  application?: string
-  autoConnect?: boolean
-  timeout?: number
-  /**
-   * Backpressure defaults for streaming responses; individual calls override
-   * them.
-   */
-  backpressure?: ClientBackpressureOptions
-  plugins?: ClientPlugin[]
-  safe?: SafeCall
-}
-
-export type BaseClientOptions<
-  RouterContract extends TAnyRouterContract = TAnyRouterContract,
-  SafeCall extends boolean = false,
-> = ClientOptions<RouterContract, SafeCall>
-
-export interface ClientCallersFactory<
-  Routes extends AnyResolvedContractRouter,
-  SafeCall extends boolean,
-> {
-  call: ClientCallers<Routes, SafeCall, false>
-  stream: ClientCallers<Routes, SafeCall, true>
-}
-
-type ClientRoutes<
-  RouterContract extends TAnyRouterContract,
-  InputTypeProvider extends TypeProvider,
-  OutputTypeProvider extends TypeProvider,
-> = ResolveAPIRouterRoutes<
-  RouterContract,
-  InputTypeProvider,
-  OutputTypeProvider
->
 
 export class Client<
   TransportFactory extends ClientTransportFactory<any, any> =
@@ -81,7 +34,7 @@ export class Client<
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > {
   _!: {
-    routes: ResolveAPIRouterRoutes<
+    routes: ResolveContract<
       RouterContract,
       InputTypeProvider,
       OutputTypeProvider
@@ -96,12 +49,12 @@ export class Client<
   protected readonly transformer: BaseClientTransformer
 
   readonly call: ClientCallers<
-    ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+    ResolveContract<RouterContract, InputTypeProvider, OutputTypeProvider>,
     SafeCall,
     false
   >
   readonly stream: ClientCallers<
-    ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+    ResolveContract<RouterContract, InputTypeProvider, OutputTypeProvider>,
     SafeCall,
     true
   >
@@ -166,12 +119,12 @@ export class Client<
 
     const callers = buildCallers(this.rpcLayer)
     this.call = callers.call as ClientCallers<
-      ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+      ResolveContract<RouterContract, InputTypeProvider, OutputTypeProvider>,
       SafeCall,
       false
     >
     this.stream = callers.stream as ClientCallers<
-      ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+      ResolveContract<RouterContract, InputTypeProvider, OutputTypeProvider>,
       SafeCall,
       true
     >

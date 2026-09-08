@@ -26,7 +26,8 @@ export const users = c.router({
 
 Rules:
 
-- `c.procedure(...)` defaults missing `input` and `output` to `t.never()`.
+- `c.procedure(...)` and `c.stream(...)` keep missing `input` and `output` as `undefined`.
+- Inputs accept decode schemas or full codecs; outputs accept encode schemas or full codecs.
 - `c.stream(...)` declares a stream route contract (server-to-client async
   iterable). Stream timeouts are implementation behavior, not public contract
   shape.
@@ -53,7 +54,7 @@ subscribe/consume boundaries.
 ```ts
 export const userEvents = c.subscription({
   namespace: 'users',
-  params: t.object({ organizationId: t.string() }),
+  params: t.object({ organizationId: t.string() }).decode,
   key: ({ organizationId }) => organizationId,
   events: {
     created: c.event({ payload: t.object({ id: t.string() }) }),
@@ -68,7 +69,11 @@ Rules:
 
 - `namespace` names the logical stream/channel family.
 - `params` identifies one concrete stream/channel instance. If `params` is
-  present, `key(params)` is required and returns adapter key string.
+  present, it is a one-way Standard Schema and `key(params)` is required. Calls
+  accept the schema input and the key function receives its output. A `t.*`
+  codec should therefore pass its `.decode` direction.
+- Event payloads require full codecs because publish and subscribe execute
+  opposite directions.
 - `events` becomes a typed event map. Each event gets its event name and parent
   subscription attached by `c.subscription(...)`.
 - The same subscription contract powers pubsub delivery.

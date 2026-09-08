@@ -1,5 +1,5 @@
-import type { AnyCompatibleType, BaseType, BaseTypeAny, t } from '@nmtjs/type'
-import { t as types } from '@nmtjs/type'
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
+import { isSchema } from '@nmtjs/common/schema'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
@@ -8,14 +8,17 @@ import { createSchema } from '../utils.ts'
 
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
-export type SubscriptionParamsType = AnyCompatibleType<
+export type SubscriptionParamsType = Schema<
+  unknown,
   Record<string, string | number | boolean | null>
 >
 
-export type SubscriptionKey<Params extends BaseType> =
-  Params extends t.NeverType
+export type SubscriptionKey<Params extends Schema | undefined> =
+  Params extends undefined
     ? undefined
-    : (params: t.infer.decode.output<Params>) => string
+    : Params extends Schema
+      ? (params: Schema.Output<Params>) => string
+      : never
 
 export type TAnySubscriptionContract = TSubscriptionContract<
   any,
@@ -24,19 +27,25 @@ export type TAnySubscriptionContract = TSubscriptionContract<
 >
 
 export type TAnySubscriptionEventContract = TSubscriptionEventContract<
-  BaseTypeAny,
+  WireSchema.Codec | undefined,
   string,
   TAnySubscriptionContract
 >
 
 export type SubscriptionParams<Contract extends TAnySubscriptionContract> =
-  t.infer.decode.output<Contract['params']>
+  Contract['params'] extends Schema
+    ? Schema.Input<Contract['params']>
+    : undefined
 
 export type SubscriptionEventMessage<E extends TAnySubscriptionEventContract> =
-  { event: E['event']; payload: t.infer.decode.output<E['payload']> }
+  E['payload'] extends WireSchema.Codec
+    ? { event: E['event']; payload: WireSchema.DecodeOutput<E['payload']> }
+    : { event: E['event']; payload: undefined }
 
 export type SubscriptionPublishInput<E extends TAnySubscriptionEventContract> =
-  t.infer.encode.input<E['payload']>
+  E['payload'] extends WireSchema.Codec
+    ? WireSchema.EncodeInput<E['payload']>
+    : undefined
 
 export type SubscriptionEventUnion<
   Events extends Record<string, TAnySubscriptionEventContract>,
@@ -56,7 +65,7 @@ export type SubscriptionSelectedEventUnion<
     }[keyof Events]
 
 export interface TSubscriptionEventContract<
-  Payload extends BaseType = BaseTypeAny,
+  Payload extends WireSchema.Codec | undefined = WireSchema.Codec | undefined,
   Event extends string = string,
   Subscription = TAnySubscriptionContract,
 > extends TEventContract<Payload> {
@@ -65,7 +74,7 @@ export interface TSubscriptionEventContract<
 }
 
 export interface TSubscriptionContract<
-  Params extends BaseType = t.NeverType,
+  Params extends Schema | undefined = undefined,
   Events extends Record<string, unknown> = {},
   Namespace extends string = string,
 > {
@@ -108,7 +117,7 @@ type SubscriptionContractWithParamsOptions<
   Events extends Record<string, TAnyEventContract>,
 > = SubscriptionContractBaseOptions<Namespace, Events> & {
   params: Params
-  key: (params: t.infer.decode.output<Params>) => string
+  key: (params: Schema.Output<Params>) => string
 }
 
 export function SubscriptionContract<
@@ -116,7 +125,7 @@ export function SubscriptionContract<
   const Events extends Record<string, TAnyEventContract>,
 >(
   options: SubscriptionContractNoParamsOptions<Namespace, Events>,
-): TSubscriptionContract<t.NeverType, Events, Namespace>
+): TSubscriptionContract<undefined, Events, Namespace>
 export function SubscriptionContract<
   const Namespace extends string,
   const Params extends SubscriptionParamsType,
@@ -127,12 +136,15 @@ export function SubscriptionContract<
 export function SubscriptionContract(options: {
   namespace: string
   events: Record<string, TAnyEventContract>
-  params?: BaseType
+  params?: Schema
   key?: (params: any) => string
   schemaOptions?: ContractSchemaOptions
 }) {
   const { schemaOptions = {} } = options
-  const params = options.params ?? types.never()
+  const params = options.params
+  if (params !== undefined && !isSchema(params)) {
+    throw new TypeError('Subscription params must be a Standard Schema')
+  }
   const events = {} as Record<string, TAnySubscriptionEventContract>
   const subscription = createSchema<any>({
     ...schemaOptions,

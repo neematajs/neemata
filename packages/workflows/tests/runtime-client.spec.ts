@@ -1,3 +1,4 @@
+import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -11,9 +12,96 @@ import {
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  runExecutionWorker,
 } from '../src/runtime/index.ts'
 
 describe('workflow runtime client', () => {
+  it.each(['workflow', 'task'] as const)(
+    'decodes completed %s outputs on idempotent start and keeps restart and retry inputs stored',
+    async (kind) => {
+      const options = {
+        name: `client-coded-${kind}-boundaries`,
+        input: t.date(),
+        output: t.date(),
+      }
+      const definition =
+        kind === 'workflow'
+          ? defineWorkflow(options).build()
+          : defineTask(options)
+      const runtime = createInMemoryWorkflowRuntime()
+      const client = createWorkflowRuntimeClient({
+        ...runtime,
+        definitions: [definition],
+      })
+      const input = '2026-09-01T00:00:00.000Z'
+      const output = '2026-09-02T00:00:00.000Z'
+      const start = () =>
+        definition.kind === 'workflow'
+          ? client.start(definition, input, { idempotencyKey: ['same'] })
+          : client.start(definition, input, { idempotencyKey: ['same'] })
+      const first = await start()
+      await runtime.store.completeRun({ runId: first.id, output })
+
+      const joined = await start()
+      expect(joined.id).toBe(first.id)
+      expect(joined.status).toBe('completed')
+      expect(joined.input).toStrictEqual(new Date(input))
+      expect(joined.output).toStrictEqual(new Date(output))
+      expect((await client.get(first.id))?.run).toMatchObject({ input, output })
+
+      const retried = await client.restart(first.id)
+      expect(retried.id).not.toBe(first.id)
+      expect(retried.input).toBe(input)
+      expect(retried.output).toBeUndefined()
+      expect(retried).toStrictEqual((await client.get(retried.id))?.run)
+      if (definition.kind === 'task') {
+        await runExecutionWorker({
+          ...runtime,
+          workflows: [],
+          tasks: [
+            implementTask(definition, {
+              handler(_ctx, value) {
+                expect(value).toStrictEqual(new Date(input))
+                throw new Error('failed')
+              },
+            }),
+          ],
+          container: new Container({
+            logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
+          }),
+          workerId: 'test',
+          reaping: false,
+        })
+      } else {
+        await runtime.store.failRun({
+          runId: retried.id,
+          error: new Error('failed'),
+        })
+      }
+      expect((await client.get(retried.id))?.run).toMatchObject({
+        status: 'failed',
+        error: { message: 'failed' },
+      })
+      const reopened = await client.retry(retried.id)
+      expect(reopened.id).toBe(retried.id)
+      expect(reopened.input).toBe(input)
+      expect((await client.get(reopened.id))?.run.input).toBe(input)
+    },
+  )
+
+  it('rejects directional schemas at durable boundaries', async () => {
+    const workflow = defineWorkflow({
+      name: 'directional-schema-workflow',
+      input: t.string().decode as any,
+      output: t.string(),
+    }).build()
+    const client = createWorkflowRuntimeClient(createInMemoryWorkflowRuntime())
+
+    await expect(client.start(workflow, 'input')).rejects.toThrow(
+      'schema must be a WireSchema.Codec',
+    )
+  })
+
   it('starts workflows and reads their snapshots', async () => {
     const workflow = defineWorkflow({
       name: 'client-started-workflow',
@@ -54,6 +142,24 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('stores canonical workflow input while returning the decoded value', async () => {
+    const workflow = defineWorkflow({
+      name: 'client-coded-workflow',
+      input: t.date(),
+      output: t.date(),
+      tags: (input) => ({ year: String(input.getUTCFullYear()) }),
+    }).build()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(workflow, '2026-09-01T00:00:00.000Z')
+    const snapshot = await client.get(run.id)
+
+    expect(run.input).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(run.tags).toStrictEqual({ year: '2026' })
+    expect(snapshot?.run.input).toBe('2026-09-01T00:00:00.000Z')
   })
 
   it('starts workflows at a delayed time while exposing the run immediately', async () => {
@@ -193,6 +299,25 @@ describe('workflow runtime client', () => {
         },
       },
     ])
+  })
+
+  it('stores and dispatches canonical task input while returning the decoded value', async () => {
+    const task = defineTask({
+      name: 'client-coded-task',
+      input: t.date(),
+      output: t.date(),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+
+    const run = await client.start(task, '2026-09-01T00:00:00.000Z')
+    const snapshot = await client.get(run.id)
+
+    expect(run.input).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(snapshot?.run.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(runtime.inspect().taskCommands[0]?.payload.input).toBe(
+      '2026-09-01T00:00:00.000Z',
+    )
   })
 
   it('starts tasks at a delayed time while exposing the run immediately', async () => {

@@ -9,6 +9,7 @@ import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
+import { decodeSchemaValue, decodeWorkflowNodeOutput } from './codec.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
 
 class StaleRunLeaseError extends Error {
@@ -113,10 +114,23 @@ export async function continueWorkflowRun(
           implementation.dependencies,
         )
         const outputs = Object.fromEntries(
-          snapshot.nodes
-            .filter((node) => node.status === 'completed')
-            .map((node) => [node.name, node.output]),
+          await Promise.all(
+            snapshot.nodes
+              .filter((node) => node.status === 'completed')
+              .map(async (node) => [
+                node.name,
+                await decodeWorkflowNodeOutput(implementation, node),
+              ]),
+          ),
         )
+        const run = {
+          ...snapshot.run,
+          input: await decodeSchemaValue(
+            implementation.workflow.input,
+            snapshot.run.input,
+            `workflow input [${implementation.workflow.name}]`,
+          ),
+        }
 
         // The run has coordination work from here on; queued/waiting → running
         // before dispatching so status filters see live runs as such.
@@ -128,7 +142,8 @@ export async function continueWorkflowRun(
           runCoordinationExecutor: input.runCoordinationExecutor,
           workflow: implementation,
           workflowCtx: workflowCtx as DependencyContext<any>,
-          run: snapshot.run,
+          run,
+          encodedRunInput: snapshot.run.input,
           outputs,
           advance: advanceWorkflowRun,
         })

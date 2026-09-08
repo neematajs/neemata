@@ -4,12 +4,12 @@ import type {
   McpHttpHandler,
   McpRequestContext,
 } from '@modelcontextprotocol/server'
+import type { WireSchema } from '@nmtjs/common/schema'
 import type {
   GatewayConnection,
   GatewayResolvedProcedure,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import type { BaseTypeAny } from '@nmtjs/type'
 import {
   createMcpHandler,
   fromJsonSchema,
@@ -43,7 +43,11 @@ class McpConfigError extends Error {}
 
 export interface McpResolvedProcedure extends GatewayResolvedProcedure {
   readonly procedure: Readonly<{
-    contract: { input: BaseTypeAny; description?: string; title?: string }
+    contract: {
+      input: WireSchema.Decode | WireSchema.Codec | undefined
+      description?: string
+      title?: string
+    }
   }>
 }
 

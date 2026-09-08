@@ -13,6 +13,7 @@ import {
 import type { BaseTypeAny } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
+import { mapWireZodTypes } from './_metadata.ts'
 import { BaseType } from './base.ts'
 
 export class UnionType<
@@ -23,7 +24,8 @@ export class UnionType<
 > extends BaseType<
   ZodMiniUnion<ArrayMap<T, 'encodeZodType'>>,
   ZodMiniUnion<ArrayMap<T, 'decodeZodType'>>,
-  { options: T }
+  { options: T },
+  ZodMiniUnion<ArrayMap<T, 'runtimeZodType'>>
 > {
   static factory<
     T extends readonly [BaseType, ...BaseType[]] = readonly [
@@ -40,8 +42,17 @@ export class UnionType<
       'decodeZodType'
     >
     return new UnionType<T>({
+      runtimeZodType: zodUnion(
+        options.map((type) => type.runtimeZodType) as ArrayMap<
+          T,
+          'runtimeZodType'
+        >,
+      ),
       encodeZodType: zodUnion(encode),
       decodeZodType: zodUnion(decode),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodUnion(options.map((type) => type.wireZodTypes[side])),
+      ),
       props: { options },
     })
   }
@@ -52,15 +63,23 @@ export class IntersactionType<
 > extends BaseType<
   ZodMiniIntersection<T[0]['encodeZodType'], T[1]['encodeZodType']>,
   ZodMiniIntersection<T[0]['decodeZodType'], T[1]['decodeZodType']>,
-  { options: T }
+  { options: T },
+  ZodMiniIntersection<T[0]['runtimeZodType'], T[1]['runtimeZodType']>
 > {
   static factory<
     T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
   >(...options: T) {
     const [first, second] = options
     return new IntersactionType<T>({
+      runtimeZodType: zodIntersection(
+        first.runtimeZodType,
+        second.runtimeZodType,
+      ),
       encodeZodType: zodIntersection(first.encodeZodType, second.encodeZodType),
       decodeZodType: zodIntersection(first.decodeZodType, second.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodIntersection(first.wireZodTypes[side], second.wireZodTypes[side]),
+      ),
       props: { options },
     })
   }
@@ -83,7 +102,8 @@ export class DiscriminatedUnionType<
 > extends BaseType<
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'encodeZodType'>>,
   ZodMiniDiscriminatedUnion<ArrayMap<T, 'decodeZodType'>>,
-  { key: K; options: T }
+  { key: K; options: T },
+  ZodMiniDiscriminatedUnion<ArrayMap<T, 'runtimeZodType'>>
 > {
   static factory<
     K extends string = string,
@@ -103,6 +123,23 @@ export class DiscriminatedUnionType<
       encodeZodType: zodDiscriminatedUnion(key, encode),
       // @ts-expect-error
       decodeZodType: zodDiscriminatedUnion(key, decode),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodDiscriminatedUnion(
+          key,
+          options.map((type) => type.wireZodTypes[side]) as [
+            T[number]['encodeZodType'],
+            ...T[number]['encodeZodType'][],
+          ],
+        ),
+      ),
+      runtimeZodType: zodDiscriminatedUnion(
+        key,
+        options.map((type) => type.runtimeZodType) as ArrayMap<
+          T,
+          'runtimeZodType'
+        > &
+          [T[number]['runtimeZodType'], ...T[number]['runtimeZodType'][]],
+      ),
       props: { key, options },
     })
   }

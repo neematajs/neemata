@@ -17,6 +17,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
+import { decodeSchemaValue, encodeSchemaValue } from '../coordinator/codec.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -63,18 +64,6 @@ export type RunActivityAttemptInput = {
   readonly signal?: AbortSignal
   readonly wakeEvents?: WorkflowWakeEvents
   readonly container: Pick<Container, 'createContext'>
-}
-
-export function decodeSchemaValue(
-  schema: Schema,
-  value: unknown,
-  label: string,
-): unknown {
-  try {
-    return schema.decode(value as never)
-  } catch (error) {
-    throw new Error(`Invalid ${label}`, { cause: error })
-  }
 }
 
 export async function runActivityAttempt(
@@ -144,6 +133,11 @@ export async function runActivityAttempt(
   let output: unknown
   try {
     const timeoutMs = resolveActivityAttemptTimeoutMs(workflow, command)
+    const commandInput = await decodeSchemaValue(
+      resolveActivityAttemptInputSchema(workflow, command),
+      command.input,
+      `activity input [${workflow.workflow.name}.${command.nodeName}]`,
+    )
     output = await runWithAttemptHeartbeat(
       input,
       async (lifecycle) => {
@@ -152,7 +146,7 @@ export async function runActivityAttempt(
         )
         return await node.activity.handler(
           ctx as DependencyContext<any>,
-          command.input,
+          commandInput,
           lifecycle,
         )
       },
@@ -171,7 +165,7 @@ export async function runActivityAttempt(
     )
     const outputSchema = resolveActivityAttemptOutputSchema(workflow, command)
     if (outputSchema) {
-      output = decodeSchemaValue(
+      output = await encodeSchemaValue(
         outputSchema.schema,
         output,
         outputSchema.label,
@@ -265,6 +259,24 @@ export async function runActivityAttempt(
     await scoped.attemptExecutor.ack(scoped.claimed)
     return { status: 'processed' }
   })
+}
+
+function resolveActivityAttemptInputSchema(
+  workflow: WorkflowImplementation,
+  command: ActivityAttemptCommand,
+): Schema {
+  const declaration = workflow.workflow.nodes.find(
+    (candidate) => candidate.name === command.nodeName,
+  )
+  if (declaration?.kind === 'activity') return declaration.input
+  const caseDeclaration = resolveActivityAttemptCaseDeclaration(
+    workflow,
+    command,
+  )
+  if (caseDeclaration) return caseDeclaration.input
+  throw new Error(
+    `Missing activity input schema [${workflow.workflow.name}.${command.nodeName}.${command.childKey}]`,
+  )
 }
 
 /**

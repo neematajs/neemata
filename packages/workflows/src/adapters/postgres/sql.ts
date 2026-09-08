@@ -368,8 +368,16 @@ export const emitStatusChangeNotifySql = (
   ${notifyRunStatusEventSql(cteName)}
 `
 
-export const parseJsonColumn = (value: unknown): unknown =>
-  typeof value === 'string' ? JSON.parse(value) : value
+export const parseJsonColumn = (value: unknown): unknown => {
+  if (typeof value !== 'string') return value
+  const trimmed = value.trimStart()
+  // Some adapters return JSON objects/arrays as text while already unwrapping
+  // JSON string scalars. Parsing every string would corrupt wire values such
+  // as ISO timestamps that are valid workflow payloads in their own right.
+  return trimmed.startsWith('{') || trimmed.startsWith('[')
+    ? JSON.parse(value)
+    : value
+}
 
 export const jsonRecordColumn = (value: unknown): JsonRecord | undefined => {
   const parsed = parseJsonColumn(value)

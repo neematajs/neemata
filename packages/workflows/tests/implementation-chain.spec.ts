@@ -256,22 +256,24 @@ describe('workflow implementation chain', () => {
   })
 
   it('infers branch output union when no common output is declared', () => {
+    const outpatientOutput = t.object({
+      kind: t.literal('outpatient'),
+      text: t.string(),
+    })
     const outpatientWorkflow = defineWorkflow({
       name: 'outpatient-content',
       input: t.object({ scenario: t.string() }),
-      output: t.object({
-        kind: t.literal('outpatient'),
-        text: t.string(),
-      }),
+      output: outpatientOutput,
     }).build()
 
+    const obstetricsOutput = t.object({
+      kind: t.literal('obstetrics'),
+      obstetricsData: t.string(),
+    })
     const obstetricsWorkflow = defineWorkflow({
       name: 'obstetrics-content',
       input: t.object({ scenario: t.string() }),
-      output: t.object({
-        kind: t.literal('obstetrics'),
-        obstetricsData: t.string(),
-      }),
+      output: obstetricsOutput,
     }).build()
 
     const branchingWorkflow = defineWorkflow({
@@ -280,7 +282,7 @@ describe('workflow implementation chain', () => {
         kind: t.union(t.literal('outpatient'), t.literal('obstetrics')),
         scenario: t.string(),
       }),
-      output: t.union(outpatientWorkflow.output!, obstetricsWorkflow.output!),
+      output: t.union(outpatientOutput, obstetricsOutput),
     })
       .branch('content', {
         cases: (helpers) => ({

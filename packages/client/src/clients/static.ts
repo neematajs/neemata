@@ -1,9 +1,9 @@
 import type { TAnyRouterContract } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../client.ts'
-import type { RpcLayerApi } from '../layers/rpc.ts'
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
+  BaseClientOptions,
+  RpcLayerApi,
   ClientCallOptions,
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider,

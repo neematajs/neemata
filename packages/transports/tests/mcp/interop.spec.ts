@@ -40,7 +40,7 @@ const CONTRACTS: Record<string, { input: any; description?: string }> = {
     description: 'Create a user account',
   },
   'system/health': {
-    input: t.never(),
+    input: undefined,
     description: 'Health check',
   },
 }

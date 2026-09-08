@@ -7,6 +7,7 @@ import { dispatchChildTaskRun } from '../children.ts'
 import {
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
+  encodeWorkflowUserSchemaValue,
   resolveIdempotency,
 } from '../codec.ts'
 import { runWorkflowUserCallback } from '../context.ts'
@@ -43,6 +44,7 @@ export async function dispatchTaskNode(
     taskName: input.node.target.name,
     timeout: declaration.timeout ?? declaration.task.timeout,
     inputSchema: (input.node.target as AnyTaskDefinition).input,
+    outputSchema: (input.node.target as AnyTaskDefinition).output,
     inputLabel: `task input [${input.workflow.workflow.name}.${input.node.name}]`,
     resolveIdempotencyKey: () =>
       resolveIdempotency(
@@ -51,7 +53,7 @@ export async function dispatchTaskNode(
         input.outputs,
         input.run.input,
       ),
-    resolveNodeInput: () =>
+    resolveNodeInput: async () =>
       hasStoredNodeInput(existing)
         ? existing.input
         : input.node.input
@@ -62,6 +64,10 @@ export async function dispatchTaskNode(
                 input.run.input,
               ),
             )
-          : input.run.input,
+          : await encodeWorkflowUserSchemaValue(
+              declaration.task.input,
+              input.run.input,
+              `task input [${input.workflow.workflow.name}.${input.node.name}]`,
+            ),
   })
 }

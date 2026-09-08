@@ -1,17 +1,23 @@
-import { describe, expect, it } from 'vitest'
-import { number as zodNumber, string as zodString } from 'zod/mini'
+import { describe, expect, expectTypeOf, it, vi } from 'vitest'
+import {
+  minimum,
+  number as zodNumber,
+  regex,
+  string as zodString,
+} from 'zod/mini'
 
 import { t } from '../../src/index.ts'
 
 describe('CustomType - codec engine', () => {
   const numericString = t.custom({
-    type: zodString(),
-    decodedType: zodNumber(),
-    decode: (value) => {
-      if (value === 'explode') throw new Error('conversion failed')
-      return Number(value)
+    decode: {
+      type: zodNumber(),
+      transform: (value) => {
+        if (value === 'explode') throw new Error('conversion failed')
+        return Number(value)
+      },
     },
-    encode: (value) => String(value),
+    encode: { type: zodString(), transform: (value) => String(value) },
   })
 
   it('validates the decoded and encoded endpoints', () => {
@@ -25,6 +31,41 @@ describe('CustomType - codec engine', () => {
 
   it('turns conversion exceptions into structured issues', () => {
     expect(() => numericString.decode('explode')).toThrow(t.NeemataTypeError)
+  })
+
+  it('infers transform inputs and checks both sides of each conversion', () => {
+    const decode = vi.fn((value: string) => Number(value))
+    const encode = vi.fn((value: number) => String(value))
+    const schema = t.custom({
+      decode: {
+        type: zodNumber().check(minimum(0)),
+        transform(value) {
+          expectTypeOf(value).toEqualTypeOf<string>()
+          return decode(value)
+        },
+      },
+      encode: {
+        type: zodString().check(regex(/^-?\d+$/)),
+        transform(value) {
+          expectTypeOf(value).toEqualTypeOf<number>()
+          return encode(value)
+        },
+      },
+    })
+    expectTypeOf(schema.decode('42')).toEqualTypeOf<number>()
+    expectTypeOf(schema.encode(42)).toEqualTypeOf<string>()
+    decode.mockClear()
+    encode.mockClear()
+
+    expect(() => schema.decode('invalid')).toThrow(t.NeemataTypeError)
+    expect(decode).not.toHaveBeenCalled()
+    expect(() => schema.decode('-1')).toThrow(t.NeemataTypeError)
+    expect(decode).toHaveBeenCalledWith('-1')
+    expect(() => schema.encode(-1)).toThrow(t.NeemataTypeError)
+    expect(encode).not.toHaveBeenCalled()
+    expect(() => schema.encode(1.5)).toThrow(t.NeemataTypeError)
+    expect(encode).toHaveBeenCalledWith(1.5)
+    expect(schema.parse(1.5)).toBe(1.5)
   })
 })
 

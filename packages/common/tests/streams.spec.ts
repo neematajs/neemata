@@ -67,6 +67,24 @@ describe('DuplexStream', () => {
     expect(chunks).toEqual([5, 2])
   })
 
+  it('should await asynchronous transforms in write order', async () => {
+    const stream = new DuplexStream<number, string>({
+      transform: async (chunk) => {
+        await tick()
+        return chunk.length
+      },
+    })
+
+    const consuming = (async () => {
+      const chunks: number[] = []
+      for await (const chunk of stream.readable) chunks.push(chunk)
+      return chunks
+    })()
+    await writeAndClose(stream.writable, ['hello', 'hi'])
+
+    await expect(consuming).resolves.toEqual([5, 2])
+  })
+
   it('should call start callback', async () => {
     const start = vi.fn()
     const stream = new DuplexStream({ start })
@@ -299,6 +317,22 @@ describe('DuplexStream', () => {
       const writer = stream.writable.getWriter()
       await expect(writer.write('x')).rejects.toThrow('bad chunk')
       await expect(pending).rejects.toThrow('bad chunk')
+    })
+
+    it('propagates asynchronous transform rejections to both sides', async () => {
+      const stream = new DuplexStream<number, string>({
+        transform: async () => {
+          await tick()
+          throw new Error('bad async chunk')
+        },
+      })
+
+      const reader = stream.readable.getReader()
+      const pending = reader.read()
+
+      const writer = stream.writable.getWriter()
+      await expect(writer.write('x')).rejects.toThrow('bad async chunk')
+      await expect(pending).rejects.toThrow('bad async chunk')
     })
   })
 })

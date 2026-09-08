@@ -1,4 +1,4 @@
-import { decodeWorkflowUserSchemaValue } from './codec.ts'
+import { encodeWorkflowUserSchemaValue } from './codec.ts'
 import {
   isWorkflowUserCallbackError,
   type AdvanceCtx,
@@ -33,7 +33,7 @@ export async function advanceWorkflowRun(
         input.run.input,
       )
       if (input.workflow.workflow.output) {
-        output = decodeWorkflowUserSchemaValue(
+        output = await encodeWorkflowUserSchemaValue(
           input.workflow.workflow.output,
           output,
           `workflow output [${input.workflow.workflow.name}]`,

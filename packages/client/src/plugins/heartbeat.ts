@@ -1,6 +1,6 @@
 import { ConnectionType } from '@nmtjs/protocol'
 
-import type { ClientPlugin } from './types.ts'
+import type { ClientPlugin, HeartbeatPluginOptions } from './types.ts'
 
 const DEFAULT_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_HEARTBEAT_TIMEOUT = 5000
@@ -30,11 +30,6 @@ const isPaused = () => {
     if (globalThis.document.visibilityState === 'hidden') return true
   }
   return false
-}
-
-export interface HeartbeatPluginOptions {
-  interval?: number
-  timeout?: number
 }
 
 export const heartbeatPlugin = (

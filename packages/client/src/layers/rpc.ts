@@ -1,4 +1,3 @@
-import type { Future } from '@nmtjs/common'
 import type { ServerMessageTypePayload } from '@nmtjs/protocol/client'
 import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
 import {
@@ -15,27 +14,14 @@ import { ProtocolError, ProtocolServerRPCStream } from '@nmtjs/protocol/client'
 
 import type { ClientCore } from '../core.ts'
 import type { BaseClientTransformer } from '../transformers.ts'
-import type { ClientCallOptions } from '../types.ts'
-import type { StreamLayerApi } from './streams.ts'
+import type {
+  ClientCallOptions,
+  ProtocolClientCall,
+  RpcLayerApi,
+  StreamLayerApi,
+} from '../types.ts'
 import { ServerStreams } from '../streams.ts'
 import { toReasonString } from './streams.ts'
-
-export type ProtocolClientCall = Future<any> & {
-  procedure: string
-  signal?: AbortSignal
-  rpcStreamWindow: number
-  cleanup?: () => void
-}
-
-export interface RpcLayerApi {
-  call(
-    procedure: string,
-    payload: any,
-    options?: ClientCallOptions,
-  ): Promise<any>
-  readonly pendingCallCount: number
-  readonly activeStreamCount: number
-}
 
 const DEFAULT_RPC_STREAM_WINDOW = 16
 const resolveRpcStreamWindow = (
@@ -156,6 +142,11 @@ async function* reconnectingAsyncIterable<T>(
   }
 }
 
+const isPromiseLike = (value: unknown): value is PromiseLike<unknown> =>
+  ((typeof value === 'object' && value !== null) ||
+    typeof value === 'function') &&
+  typeof (value as { then?: unknown }).then === 'function'
+
 const createManagedAsyncIterable = <T>(
   iterable: AsyncIterable<T>,
   options: {
@@ -223,7 +214,7 @@ export const createRpcLayer = (
     return callId++
   }
 
-  const handleRPCResponseMessage = (
+  const handleRPCResponseMessage = async (
     message: ServerMessageTypePayload[ServerMessageType.RpcResponse],
   ) => {
     const call = calls.get(message.callId)
@@ -249,7 +240,10 @@ export const createRpcLayer = (
     }
 
     try {
-      const transformed = transformer.decode(call.procedure, message.result)
+      const transformed = await transformer.decode(
+        call.procedure,
+        message.result,
+      )
       core.emitClientEvent({
         kind: 'rpc_response',
         timestamp: Date.now(),
@@ -389,9 +383,8 @@ export const createRpcLayer = (
           signal.removeEventListener('abort', onAbort)
         }
       },
-      transform: (chunk) => {
-        return transformer.decode(procedure, core.codec.decode(chunk))
-      },
+      transform: (chunk) =>
+        transformer.decode(procedure, core.codec.decode(chunk)),
       readableStrategy: { highWaterMark: 0 },
     })
 
@@ -444,7 +437,7 @@ export const createRpcLayer = (
     call.reject(error)
   }
 
-  const handleCallResponse = (
+  const handleCallResponse = async (
     currentCallId: number,
     response: Awaited<ReturnType<ClientCore['transportCall']>>,
   ) => {
@@ -489,9 +482,8 @@ export const createRpcLayer = (
             signal.addEventListener('abort', onAbort, { once: true })
           }
         },
-        transform: (chunk) => {
-          return transformer.decode(call.procedure, core.codec.decode(chunk))
-        },
+        transform: (chunk) =>
+          transformer.decode(call.procedure, core.codec.decode(chunk)),
         readableStrategy: { highWaterMark: 0 },
       })
 
@@ -548,7 +540,10 @@ export const createRpcLayer = (
           ? undefined
           : core.codec.decode(response.result)
 
-      const transformed = transformer.decode(call.procedure, decodedPayload)
+      const transformed = await transformer.decode(
+        call.procedure,
+        decodedPayload,
+      )
       core.emitClientEvent({
         kind: 'rpc_response',
         timestamp: Date.now(),
@@ -607,7 +602,7 @@ export const createRpcLayer = (
   core.on('message', (message: any) => {
     switch (message.type) {
       case ServerMessageType.RpcResponse:
-        handleRPCResponseMessage(message)
+        void handleRPCResponseMessage(message)
         break
       case ServerMessageType.RpcStreamResponse:
         handleRPCStreamResponseMessage(message)
@@ -760,7 +755,13 @@ export const createRpcLayer = (
           { once: true },
         )
 
-        const transformedPayload = transformer.encode(procedure, payload)
+        const encodedPayload = transformer.encode(procedure, payload)
+        // Cancellation/disconnection must settle the call even if encoding never finishes.
+        const transformedPayload = isPromiseLike(encodedPayload)
+          ? await Promise.race([encodedPayload, call.promise])
+          : encodedPayload
+
+        if (signal?.aborted) throw toAbortError(signal)
 
         if (core.transportType === ConnectionType.Bidirectional) {
           if (!core.messageContext) {
@@ -806,7 +807,7 @@ export const createRpcLayer = (
             },
           )
 
-          handleCallResponse(currentCallId, response)
+          void handleCallResponse(currentCallId, response)
         }
       } catch (error) {
         core.emitClientEvent({
@@ -835,7 +836,6 @@ export const createRpcLayer = (
               controller.abort(error)
             },
           })
-
           if (callOptions.autoReconnect) {
             return reconnectingAsyncIterable(
               core,

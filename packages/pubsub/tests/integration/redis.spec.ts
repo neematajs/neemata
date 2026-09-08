@@ -35,7 +35,7 @@ for (const target of serviceTargets) {
         const channelName = createTestName('pubsub')
         const channel = SubscriptionContract({
           namespace: channelName,
-          params: t.object({ id: t.string() }),
+          params: t.object({ id: t.string() }).decode,
           events: {
             message: EventContract({ payload: t.object({ text: t.string() }) }),
           },
@@ -105,7 +105,7 @@ for (const target of serviceTargets) {
         const channelName = createTestName('pubsub-filter')
         const channel = SubscriptionContract({
           namespace: channelName,
-          params: t.object({ id: t.string() }),
+          params: t.object({ id: t.string() }).decode,
           events: {
             message: EventContract({ payload: t.object({ text: t.string() }) }),
             typing: EventContract({
@@ -174,7 +174,7 @@ for (const target of serviceTargets) {
         const channelName = createTestName('pubsub-noise')
         const channel = SubscriptionContract({
           namespace: channelName,
-          params: t.object({ id: t.string() }),
+          params: t.object({ id: t.string() }).decode,
           events: {
             message: EventContract({ payload: t.object({ text: t.string() }) }),
           },

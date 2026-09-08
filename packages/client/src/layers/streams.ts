@@ -3,7 +3,6 @@ import type {
   ProtocolBlobInterface,
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
-import type { ProtocolClientBlobStream } from '@nmtjs/protocol/client'
 import { MAX_UINT32, noopFn } from '@nmtjs/common'
 import {
   ClientMessageType,
@@ -20,6 +19,7 @@ import {
 import { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
 
 import type { ClientCore } from '../core.ts'
+import type { StreamLayerApi } from '../types.ts'
 import { ClientStreams, ServerStreams } from '../streams.ts'
 
 type ClientBlobUploadState = {
@@ -45,35 +45,6 @@ export const toReasonString = (reason: unknown) => {
     return reason.toString()
   }
   return Object.prototype.toString.call(reason)
-}
-
-export interface StreamLayerApi {
-  readonly clientStreams: ClientStreams
-  readonly serverStreams: ServerStreams
-  getStreamId: () => number
-  addClientStream: (blob: ProtocolBlob) => ProtocolClientBlobStream
-  createServerBlob: (
-    streamId: number,
-    metadata: ProtocolBlobMetadata,
-  ) => ProtocolBlobInterface
-  addServerBlobStream: (
-    metadata: ProtocolBlobMetadata,
-    options?: {
-      source?: ReadableStream<ArrayBufferView>
-      start?: (
-        stream: ProtocolServerBlobStream,
-        options?: { signal?: AbortSignal },
-      ) => void
-    },
-  ) => {
-    blob: ProtocolBlobInterface
-    streamId: number
-    stream: ProtocolServerBlobStream
-  }
-  consumeServerBlob: (
-    blob: ProtocolBlobInterface,
-    options?: { signal?: AbortSignal },
-  ) => ProtocolServerBlobStream
 }
 
 export const createStreamLayer = (core: ClientCore): StreamLayerApi => {

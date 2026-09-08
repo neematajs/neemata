@@ -1,6 +1,12 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import {
+  compile,
+  number as zodNumber,
+  string as zodString,
+  union as zodUnion,
+} from 'zod/mini'
 
-import { t } from '../src/index.ts'
+import { t, typeToString } from '../src/index.ts'
 
 describe('Simple type', () => {
   const schema = t.object({
@@ -45,6 +51,49 @@ describe('Simple type', () => {
     }
 
     schema.encode(value)
+  })
+})
+
+describe('Zod compilation', () => {
+  const schema = t.object({
+    id: t.bigInt(),
+    createdAt: t.date(),
+    items: t.array(
+      t.object({
+        kind: t.enum(['a', 'b'] as const),
+        value: t.number(),
+      }),
+    ),
+  })
+
+  const decodedInput = {
+    id: '42',
+    createdAt: '2026-08-30T00:00:00.000Z',
+    items: [{ kind: 'a' as const, value: 1 }],
+  }
+
+  it('strictly compiles both schema directions', () => {
+    const compiledDecode = compile(schema.decodeZodType, { strict: true })
+    const compiledEncode = compile(schema.encodeZodType, { strict: true })
+
+    expect(compiledDecode).not.toBe(schema.decodeZodType)
+    expect(compiledEncode).not.toBe(schema.encodeZodType)
+
+    const decoded = schema.decode(decodedInput)
+    expect(compiledDecode.parse(decodedInput)).toEqual(decoded)
+    expect(compiledEncode.parse(decoded)).toEqual(schema.encode(decoded))
+  })
+})
+
+describe('Type string conversion', () => {
+  it('renders custom schemas with multiple JSON types as a union', () => {
+    const zodType = zodUnion([zodString(), zodNumber()])
+    const schema = t.custom({
+      decode: { type: zodType, transform: (value) => value },
+      encode: { type: zodType, transform: (value) => value },
+    })
+
+    expect(typeToString(schema)).toBe('string | number')
   })
 })
 

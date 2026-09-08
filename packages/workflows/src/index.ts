@@ -33,6 +33,8 @@ export type {
   ScheduleDefinition,
   Schema,
   SchemaBoundary,
+  SchemaEncodeInput,
+  SchemaEncodeOutput,
   SchemaInput,
   SchemaOutput,
   TaskDecodedInput,

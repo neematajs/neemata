@@ -91,8 +91,7 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "crossws": "0.4.6",
-    "zod": "catalog:"
+    "crossws": "0.4.6"
   },
   "devDependencies": {
     "@modelcontextprotocol/client": "^2.0.0",
@@ -105,7 +104,8 @@
     "@nmtjs/type": "workspace:*",
     "jayson": "^4.3.0",
     "json-rpc-2.0": "^1.7.1",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0",
+    "zod": "catalog:"
   },
   "peerDependencies": {
     "@nmtjs/application": "workspace:*",

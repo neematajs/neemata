@@ -10,6 +10,11 @@ import type {
 } from '@nmtjs/contract'
 import type { Logger } from '@nmtjs/core'
 import { isAbortError } from '@nmtjs/common'
+import {
+  getDecodeSchema,
+  getEncodeSchema,
+  validateSchema,
+} from '@nmtjs/common/schema'
 import { forkLogger } from '@nmtjs/core'
 
 import type { PubSubAdapter, PubSubMessage } from './adapter.ts'
@@ -58,7 +63,7 @@ export class PubSubManager {
     events?: Events,
     signal?: AbortSignal,
   ): Promise<PubSubStream<PubSubSelectedEventUnion<Channel, Events>>> {
-    const channelName = resolvePubSubChannel(channel, params)
+    const channelName = await resolvePubSubChannel(channel, params)
 
     const selectedEvents = new Map<string, TAnySubscriptionEventContract>()
 
@@ -84,8 +89,13 @@ export class PubSubManager {
     params: PubSubEventParams<Event>,
     payload: PubSubPublishInput<Event>,
   ): Promise<boolean> {
-    const channel = resolvePubSubChannel(assertEventChannel(event), params)
-    const encodedPayload = event.payload.encode(payload)
+    const channel = await resolvePubSubChannel(
+      assertEventChannel(event),
+      params,
+    )
+    const encodedPayload = event.payload
+      ? await validateSchema(getEncodeSchema(event.payload), payload)
+      : undefined
     return await this._publish(channel, {
       event: event.event,
       payload: encodedPayload,
@@ -183,7 +193,15 @@ export class PubSubManager {
             }
             let decoded: unknown
             try {
-              decoded = { event, payload: contract.payload.decode(payload) }
+              decoded = {
+                event,
+                payload: contract.payload
+                  ? await validateSchema(
+                      getDecodeSchema(contract.payload),
+                      payload,
+                    )
+                  : undefined,
+              }
             } catch (error) {
               logger.error({ error }, 'Unable to decode event payload')
               continue

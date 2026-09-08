@@ -5,7 +5,8 @@ import { BaseType } from './base.ts'
 
 export class AnyType extends BaseType<ZodMiniAny> {
   static factory() {
-    return new AnyType({ encodeZodType: zodAny() })
+    const schema = zodAny()
+    return new AnyType({ encodeZodType: schema, runtimeZodType: schema })
   }
 }
 

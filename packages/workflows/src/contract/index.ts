@@ -17,6 +17,7 @@ import type {
   ScheduleDefinition,
   Schema,
   SchemaBoundary,
+  SchemaEncodeInput,
   SchemaInput,
   SchemaOutput,
   TaskDefinition,
@@ -81,8 +82,13 @@ type OutputMatches<
   ? unknown
   : OutputMismatch<Message, Expected, Received>
 
-type SchemaSides<T extends Schema> = SchemaBoundary<
+type InputSchemaSides<T extends Schema> = SchemaBoundary<
   SchemaInput<T>,
+  SchemaOutput<T>
+>
+
+type OutputSchemaSides<T extends Schema> = SchemaBoundary<
+  SchemaEncodeInput<T>,
   SchemaOutput<T>
 >
 
@@ -99,8 +105,8 @@ export type BranchCaseHelpers = {
     timeout?: DurationString
   }): BranchCaseDefinition<
     'activity',
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    InputSchemaSides<InputSchema>,
+    OutputSchemaSides<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task,
@@ -131,8 +137,8 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
     options: BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema>,
   ): BranchCaseDefinition<
     'activity',
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    InputSchemaSides<InputSchema>,
+    OutputSchemaSides<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task &
@@ -200,8 +206,8 @@ export type WorkflowBuilder<
       ...Nodes,
       WorkflowActivityNode<
         NodeName,
-        SchemaSides<InputSchema>,
-        SchemaSides<OutputSchema>
+        InputSchemaSides<InputSchema>,
+        OutputSchemaSides<OutputSchema>
       >,
     ],
     DeclaredOutput
@@ -308,7 +314,10 @@ export type WorkflowBuilder<
   ): WorkflowBuilder<
     Name,
     Input,
-    [...Nodes, WorkflowMapTaskNode<NodeName, Task, SchemaSides<ItemSchema>>],
+    [
+      ...Nodes,
+      WorkflowMapTaskNode<NodeName, Task, InputSchemaSides<ItemSchema>>,
+    ],
     DeclaredOutput
   >
 
@@ -331,7 +340,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapWorkflowNode<NodeName, Workflow, SchemaSides<ItemSchema>>,
+      WorkflowMapWorkflowNode<NodeName, Workflow, InputSchemaSides<ItemSchema>>,
     ],
     DeclaredOutput
   >
@@ -356,9 +365,9 @@ export type TaskOptions<
   output: OutputSchema
   retry?: RetryPolicy
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
+  tags?: RunTagsBuilder<InputSchemaSides<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<InputSchemaSides<InputSchema>>
+  unique?: RunUniqueBuilder<InputSchemaSides<InputSchema>>
 }
 
 export function defineTask<
@@ -367,11 +376,15 @@ export function defineTask<
   OutputSchema extends Schema,
 >(
   options: TaskOptions<Name, InputSchema, OutputSchema>,
-): TaskDefinition<Name, SchemaSides<InputSchema>, SchemaSides<OutputSchema>> {
+): TaskDefinition<
+  Name,
+  InputSchemaSides<InputSchema>,
+  OutputSchemaSides<OutputSchema>
+> {
   return Object.freeze({ kind: 'task', ...options }) as TaskDefinition<
     Name,
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    InputSchemaSides<InputSchema>,
+    OutputSchemaSides<OutputSchema>
   >
 }
 
@@ -388,9 +401,9 @@ export type WorkflowOptions<
   retention?: DurationString
   /** Backstop: fail the run (and cancel its children) when it exceeds this age. */
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
+  tags?: RunTagsBuilder<InputSchemaSides<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<InputSchemaSides<InputSchema>>
+  unique?: RunUniqueBuilder<InputSchemaSides<InputSchema>>
 }
 
 export type ScheduleOptions<
@@ -556,9 +569,11 @@ export function defineWorkflow<
   options: WorkflowOptions<Name, InputSchema, OutputSchema>,
 ): WorkflowBuilder<
   Name,
-  SchemaSides<InputSchema>,
+  InputSchemaSides<InputSchema>,
   [],
-  OutputSchema extends Schema ? SchemaSides<OutputSchema> : NoDeclaredOutput
+  OutputSchema extends Schema
+    ? OutputSchemaSides<OutputSchema>
+    : NoDeclaredOutput
 > {
   return new WorkflowDraftBuilder(options) as any
 }

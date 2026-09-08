@@ -2,13 +2,13 @@ import type { TAnyRouterContract } from '@nmtjs/contract'
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
-import type { BaseClientOptions } from '../../src/client.ts'
 import type {
   TransportCallContext,
   TransportCallOptions,
   TransportConnectParams,
   TransportRpcParams,
 } from '../../src/transport.ts'
+import type { BaseClientOptions } from '../../src/types.ts'
 
 export interface MockBidirectionalTransportControl {
   transport: {

@@ -1,3 +1,4 @@
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
 import type {
   TAnyCallableContract,
   TAnyProcedureContract,
@@ -6,16 +7,13 @@ import type {
   TStreamContract,
 } from '@nmtjs/contract'
 import type { Dependant, Dependencies, HandlerFn } from '@nmtjs/core'
-import type { BaseType } from '@nmtjs/type'
-import type * as zod from 'zod/mini'
+import { noopSchema } from '@nmtjs/common/schema'
 import { c } from '@nmtjs/contract'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
 
 import type { AnyGuard } from './guards.ts'
 import type { AnyCompatibleMetaBinding, CompatibleMetaBinding } from './meta.ts'
 import type { AnyMiddleware } from './middlewares.ts'
-import type { JsonPrimitive } from './types.ts'
 import { kProcedure } from './constants.ts'
 
 export type {
@@ -26,12 +24,21 @@ export type {
 export type ProcedureMetaBinding<Input> = CompatibleMetaBinding<Input>
 export type AnyProcedureMetaBinding = AnyCompatibleMetaBinding
 
-export type ProcedureDecodedInput<Input extends BaseType | undefined> =
-  Input extends BaseType ? t.infer.decode.output<Input> : never
+export type ProcedureDecodedInput<
+  Input extends WireSchema.Decode | WireSchema.Codec | undefined,
+> = Input extends WireSchema.Decode | WireSchema.Codec
+  ? WireSchema.DecodeOutput<Input>
+  : undefined
 
 export type ProcedureContractDecodedInput<
   ProcedureContract extends TAnyCallableContract,
-> = t.infer.decode.output<ProcedureContract['input']>
+> = ProcedureDecodedInput<ProcedureContract['input']>
+
+export type ProcedureEncodedOutput<
+  Output extends WireSchema.Encode | WireSchema.Codec | undefined,
+> = Output extends WireSchema.Encode | WireSchema.Codec
+  ? WireSchema.EncodeInput<Output>
+  : undefined
 
 export interface BaseProcedure<
   ProcedureContract extends TAnyCallableContract,
@@ -60,8 +67,8 @@ export interface Procedure<
   handler: ProcedureHandlerType<
     ProcedureContractDecodedInput<ProcedureContract>,
     ProcedureContract extends TAnyStreamContract
-      ? AsyncIterable<t.infer.encode.input<ProcedureContract['output']>>
-      : t.infer.encode.input<ProcedureContract['output']>,
+      ? AsyncIterable<ProcedureEncodedOutput<ProcedureContract['output']>>
+      : ProcedureEncodedOutput<ProcedureContract['output']>,
     ProcedureDeps
   >
 }
@@ -83,13 +90,13 @@ export type CreateProcedureParams<
       >[]
       handler: ProcedureHandlerType<
         ProcedureContractDecodedInput<ProcedureContract>,
-        t.infer.encode.input<ProcedureContract['output']>,
+        ProcedureEncodedOutput<ProcedureContract['output']>,
         ProcedureDeps
       >
     }
   | ProcedureHandlerType<
       ProcedureContractDecodedInput<ProcedureContract>,
-      t.infer.encode.input<ProcedureContract['output']>,
+      ProcedureEncodedOutput<ProcedureContract['output']>,
       ProcedureDeps
     >
 
@@ -107,13 +114,13 @@ export type CreateStreamParams<
       streamTimeout?: number
       handler: ProcedureHandlerType<
         ProcedureContractDecodedInput<StreamContract>,
-        AsyncIterable<t.infer.encode.input<StreamContract['output']>>,
+        AsyncIterable<ProcedureEncodedOutput<StreamContract['output']>>,
         StreamDeps
       >
     }
   | ProcedureHandlerType<
       ProcedureContractDecodedInput<StreamContract>,
-      AsyncIterable<t.infer.encode.input<StreamContract['output']>>,
+      AsyncIterable<ProcedureEncodedOutput<StreamContract['output']>>,
       StreamDeps
     >
 
@@ -146,8 +153,8 @@ export function _createBaseProcedure<
 }
 
 interface CreateCallableOptions<
-  TInput extends BaseType | undefined,
-  TOutput extends BaseType | undefined,
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
   Deps extends Dependencies,
   Output,
 > {
@@ -166,24 +173,21 @@ interface CreateCallableOptions<
 }
 
 type CallableOutputType<
-  TOutput extends BaseType | undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
   Return,
-> = TOutput extends BaseType ? t.infer.encode.input<TOutput> : Return
+> = TOutput extends WireSchema.Encode | WireSchema.Codec
+  ? WireSchema.EncodeInput<TOutput>
+  : Return
 
 type SynthesizedOutput<
-  TOutput extends BaseType | undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined,
   Return,
-> = TOutput extends undefined
-  ? t.CustomType<
-      JsonPrimitive<Return>,
-      zod.ZodMiniCustom<JsonPrimitive<Return>, JsonPrimitive<Return>>
-    >
-  : TOutput
+> = TOutput extends undefined ? Schema.WithJSONSchema<Return> : TOutput
 
 export function createProcedure<
   Return,
-  TInput extends BaseType | undefined = undefined,
-  TOutput extends BaseType | undefined = undefined,
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined = undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined = undefined,
   Deps extends Dependencies = {},
 >(
   paramsOrHandler:
@@ -195,15 +199,12 @@ export function createProcedure<
       >
     | ProcedureHandlerType<ProcedureDecodedInput<TInput>, Return, Deps>,
 ): Procedure<
-  TProcedureContract<
-    TInput extends undefined ? t.NeverType : TInput,
-    SynthesizedOutput<TOutput, Return>
-  >,
+  TProcedureContract<TInput, SynthesizedOutput<TOutput, Return>>,
   Deps
 > {
   const {
-    input = t.never() as any,
-    output = t.any() as any,
+    input = undefined as any,
+    output = noopSchema<Return>(),
     dependencies = {} as Deps,
     guards = [],
     middlewares = [],
@@ -222,7 +223,7 @@ export function createProcedure<
       output,
       timeout,
       schemaOptions: { title, description },
-    }),
+    }) as TProcedureContract<TInput, SynthesizedOutput<TOutput, Return>>,
     {
       dependencies,
       handler: handler as any,
@@ -253,8 +254,8 @@ export function createContractProcedure<
 
 export function createStream<
   Return,
-  TInput extends BaseType | undefined = undefined,
-  TOutput extends BaseType | undefined = undefined,
+  TInput extends WireSchema.Decode | WireSchema.Codec | undefined = undefined,
+  TOutput extends WireSchema.Encode | WireSchema.Codec | undefined = undefined,
   Deps extends Dependencies = {},
 >(
   params: CreateCallableOptions<
@@ -267,15 +268,12 @@ export function createStream<
     streamTimeout?: number
   },
 ): Procedure<
-  TStreamContract<
-    TInput extends undefined ? t.NeverType : TInput,
-    SynthesizedOutput<TOutput, Return>
-  >,
+  TStreamContract<TInput, SynthesizedOutput<TOutput, Return>>,
   Deps
 > {
   const {
-    input = t.never() as any,
-    output = t.any() as any,
+    input = undefined as any,
+    output = noopSchema<Return>(),
     dependencies = {} as Deps,
     guards = [],
     middlewares = [],
@@ -293,7 +291,7 @@ export function createStream<
       output,
       timeout,
       schemaOptions: { title, description },
-    }),
+    }) as TStreamContract<TInput, SynthesizedOutput<TOutput, Return>>,
     {
       dependencies,
       handler: handler as any,
