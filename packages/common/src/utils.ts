@@ -94,8 +94,9 @@ export function tryCaptureStackTrace(
   anchor: StackTraceAnchor = tryCaptureStackTrace,
 ) {
   // V8-only API, absent from the platform-neutral Error typings
-  const captureStackTrace: (holder: object, anchor?: StackTraceAnchor) => void =
-    (Error as any).captureStackTrace
+  const { captureStackTrace } = Error as ErrorConstructor & {
+    captureStackTrace?: (holder: object, anchor?: StackTraceAnchor) => void
+  }
   const holder: { stack?: string } = {}
   if (typeof captureStackTrace === 'function') {
     captureStackTrace(holder, anchor)
@@ -105,28 +106,24 @@ export function tryCaptureStackTrace(
     holder.stack = new Error().stack?.split('\n').slice(1).join('\n')
   }
 
-  const findLocation = (stack?: string) => {
-    const traceLines = stack?.split('\n')
-    if (!traceLines) return undefined
-    // skip the error header
-    for (const traceLine of traceLines.slice(1)) {
-      const trimmed = traceLine.trim()
-      if (!trimmed.startsWith('at ')) continue
+  const lines = holder.stack?.split('\n')
+  if (!lines) return undefined
+  // skip the error header
+  for (const line of lines.slice(1)) {
+    const frame = line.trim()
+    if (!frame.startsWith('at ')) continue
 
-      // keep the whole eval frame: it carries the original location of code
-      // executed through eval-based dev runtimes
-      if (trimmed.startsWith('at eval (') && trimmed.endsWith(')')) {
-        return trimmed.slice(9, -1)
-      }
-
-      // `at fn (file:line:col)` or `at file:line:col`
-      const parenthesized = trimmed.match(/\(([^()]*)\)$/)
-      return parenthesized ? parenthesized[1] : trimmed.slice(3)
+    // keep the whole eval frame: it carries the original location of code
+    // executed through eval-based dev runtimes
+    if (frame.startsWith('at eval (') && frame.endsWith(')')) {
+      return frame.slice(9, -1)
     }
-    return undefined
-  }
 
-  return findLocation(holder.stack)
+    // `at fn (file:line:col)` or `at file:line:col`
+    const parenthesized = frame.match(/\(([^()]*)\)$/)
+    return parenthesized ? parenthesized[1] : frame.slice(3)
+  }
+  return undefined
 }
 
 export function isGeneratorFunction(value: any): value is GeneratorFunction {
@@ -176,23 +173,19 @@ export function isAbortError(error: any): error is Error {
  * Very simple pattern matching function.
  */
 export function match(value: string, pattern: Pattern) {
-  if (typeof pattern === 'function') {
-    return pattern(value)
-  } else if (typeof pattern === 'string') {
-    if (pattern === '*' || pattern === '**') {
-      return true
-    } else if (pattern.at(0) === '*' && pattern.at(-1) === '*') {
-      return value.includes(pattern.slice(1, -1))
-    } else if (pattern.at(-1) === '*') {
-      return value.startsWith(pattern.slice(0, -1))
-    } else if (pattern.at(0) === '*') {
-      return value.endsWith(pattern.slice(1))
-    } else {
-      return value === pattern
-    }
-  } else {
-    return pattern.test(value)
+  if (typeof pattern === 'function') return pattern(value)
+  if (typeof pattern !== 'string') return pattern.test(value)
+  if (pattern === '*' || pattern === '**') return true
+
+  const leadingWildcard = pattern.at(0) === '*'
+  const trailingWildcard = pattern.at(-1) === '*'
+
+  if (leadingWildcard && trailingWildcard) {
+    return value.includes(pattern.slice(1, -1))
   }
+  if (trailingWildcard) return value.startsWith(pattern.slice(0, -1))
+  if (leadingWildcard) return value.endsWith(pattern.slice(1))
+  return value === pattern
 }
 
 export const isError = (value: any): value is Error => {

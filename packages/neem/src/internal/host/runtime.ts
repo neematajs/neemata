@@ -294,15 +294,26 @@ export class RuntimeController {
   }
 
   private getPoolHealth(): NeemWorkerPoolHealth {
-    const states = this.threads.map((thread) => thread.getState())
+    const counts: Record<NeemWorkerState, number> = {
+      idle: 0,
+      starting: 0,
+      ready: 0,
+      stopping: 0,
+      stopped: 0,
+      failed: 0,
+    }
+    for (const thread of this.threads) counts[thread.getState()]++
+
+    const size = this.threads.length
+    const state = getPoolState(counts, size)
     return {
       name: `runtime:${this.name}`,
-      state: getPoolState(states),
-      size: states.length,
-      ready: states.filter((state) => state === 'ready').length,
-      failed: states.filter((state) => state === 'failed').length,
-      stopped: states.filter((state) => state === 'stopped').length,
-      starting: states.filter((state) => state === 'starting').length,
+      state,
+      size,
+      ready: counts.ready,
+      failed: counts.failed,
+      stopped: counts.stopped,
+      starting: counts.starting,
     }
   }
 
@@ -349,7 +360,8 @@ export function resolveThreadTopology(options: {
   const workers = options.plan?.workers ?? []
   const plans = normalizePlannedWorkers(options.runtimeName, workers)
 
-  if (plans.length > 0 && !workerArtifact) {
+  if (plans.length === 0) return []
+  if (!workerArtifact) {
     throw new Error(
       `Runtime [${options.runtimeName}] planned workers but has no worker artifact`,
     )
@@ -357,7 +369,7 @@ export function resolveThreadTopology(options: {
 
   return plans.map((plan) => ({
     name: plan.name,
-    artifact: workerArtifact!,
+    artifact: workerArtifact,
     data: plan.data,
   }))
 }
@@ -411,14 +423,17 @@ function cloneWorkerData(
   }
 }
 
-function getPoolState(states: readonly NeemWorkerState[]): NeemWorkerPoolState {
-  if (states.length === 0) return 'ready'
-  if (states.every((state) => state === 'idle')) return 'idle'
-  if (states.some((state) => state === 'starting')) return 'starting'
-  if (states.some((state) => state === 'stopping')) return 'stopping'
-  if (states.every((state) => state === 'stopped')) return 'stopped'
-  if (states.every((state) => state === 'ready')) return 'ready'
-  if (states.some((state) => state === 'ready')) return 'degraded'
-  if (states.some((state) => state === 'failed')) return 'failed'
+function getPoolState(
+  counts: Record<NeemWorkerState, number>,
+  size: number,
+): NeemWorkerPoolState {
+  if (size === 0) return 'ready'
+  if (counts.idle === size) return 'idle'
+  if (counts.starting > 0) return 'starting'
+  if (counts.stopping > 0) return 'stopping'
+  if (counts.stopped === size) return 'stopped'
+  if (counts.ready === size) return 'ready'
+  if (counts.ready > 0) return 'degraded'
+  if (counts.failed > 0) return 'failed'
   return 'idle'
 }

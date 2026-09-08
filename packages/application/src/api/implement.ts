@@ -17,6 +17,7 @@ import type {
   Procedure,
 } from './procedure.ts'
 import type {
+  AnyRouterRoutes,
   CreateContractRouterParams,
   RootRouter,
   Router,
@@ -110,10 +111,7 @@ function createImplementer(
     params: ImplementRouterParams<any> = {},
   ) => {
     validateRoutes(contract, routes)
-    const router = createContractRouter(
-      contract as any,
-      { ...params, routes } as any,
-    )
+    const router = createContractRouter<any>(contract, { ...params, routes })
     return isRoot ? createRootRouter(router) : router
   }
 
@@ -138,10 +136,7 @@ function createRootRouter<Contract extends TAnyRouterContract>(
   }) as Router<Contract> & RootRouter<any>
 }
 
-function validateRoutes(
-  contract: TAnyRouterContract,
-  routes: Record<string, any>,
-) {
+function validateRoutes(contract: TAnyRouterContract, routes: AnyRouterRoutes) {
   const expectedKeys = new Set(Object.keys(contract.routes))
 
   for (const routeName of expectedKeys) {

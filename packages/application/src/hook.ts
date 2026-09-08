@@ -28,7 +28,7 @@ export function createHook<
   handler: Hook<Types, Name, Deps>['handler']
 }): Hook<Types, Name, Deps> {
   const { name, handler, dependencies = {} as Deps } = params
-  return Object.freeze({ [kHook]: true, name, handler, dependencies }) as any
+  return Object.freeze({ [kHook]: true, name, handler, dependencies })
 }
 
 export function createApplicationHookFactory<Types extends HookTypes>() {

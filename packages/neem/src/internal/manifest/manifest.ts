@@ -12,6 +12,7 @@ import type {
   NeemRuntimeProxyConfig,
 } from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
+import type { BuildTargetKind } from '../build/graph.ts'
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
@@ -73,32 +74,38 @@ export type Manifest = {
 }
 
 export function createManifest(compiled: CompiledGraph): Manifest {
-  const outDir = compiled.graph.outDir
+  const { outDir } = compiled.graph
+  const start = toManifestArtifact(
+    outDir,
+    getRequiredArtifact(compiled, 'start-entry'),
+  )
+  const worker = toManifestArtifact(
+    outDir,
+    getRequiredArtifact(compiled, 'worker-entry'),
+  )
+  const plugins = createPlugins(compiled, outDir)
+  const config = createConfig(compiled)
   const manifest: Manifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     runtime: {
       entry: 'start.js',
-      start: toManifestArtifact(
-        outDir,
-        getRequiredArtifact(compiled, 'start-entry'),
-      ),
-      worker: toManifestArtifact(outDir, getWorkerEntryArtifact(compiled)),
+      start,
+      worker,
     },
-    plugins: createManifestPlugins(compiled, outDir),
-    config: createManifestConfig(compiled),
+    plugins,
+    config,
     runtimes: {},
   }
 
   for (const runtime of compiled.runtimes) {
-    manifest.runtimes[runtime.name] = {
-      name: runtime.name,
-      env: copyEnv(runtime.node.declaration.declaration.env),
-      worker: runtime.worker
-        ? toManifestArtifact(outDir, runtime.worker.artifact)
-        : undefined,
-      host: toManifestArtifact(outDir, runtime.host.artifact),
-      planner: toManifestArtifact(outDir, runtime.planner.artifact),
-    }
+    const { name, node } = runtime
+    const env = copyEnv(node.declaration.declaration.env)
+    const worker = runtime.worker
+      ? toManifestArtifact(outDir, runtime.worker.artifact)
+      : undefined
+    const host = toManifestArtifact(outDir, runtime.host.artifact)
+    const planner = toManifestArtifact(outDir, runtime.planner.artifact)
+    manifest.runtimes[name] = { name, env, worker, host, planner }
   }
 
   validateManifest(manifest)
@@ -106,7 +113,8 @@ export function createManifest(compiled: CompiledGraph): Manifest {
 }
 
 export async function readManifest(manifestFile: string): Promise<Manifest> {
-  return parseManifest(JSON.parse(await readFile(manifestFile, 'utf8')))
+  const content = await readFile(manifestFile, 'utf8')
+  return parseManifest(JSON.parse(content))
 }
 
 export async function writeManifest(
@@ -156,13 +164,10 @@ export function toManifestArtifact(
   manifestDir: string,
   artifact: NeemResolvedArtifact,
 ): ManifestArtifact {
-  return {
-    id: artifact.id,
-    kind: artifact.kind,
-    owner: artifact.owner,
-    file: toManifestPath(manifestDir, artifact.file),
-    outDir: toManifestPath(manifestDir, artifact.outDir),
-  }
+  const { id, kind, owner } = artifact
+  const file = toManifestPath(manifestDir, artifact.file)
+  const outDir = toManifestPath(manifestDir, artifact.outDir)
+  return { id, kind, owner, file, outDir }
 }
 
 export function validateManifest(
@@ -264,36 +269,34 @@ function toImportSpecifier(fromDir: string, target: string): string {
   return specifier.startsWith('.') ? specifier : `./${specifier}`
 }
 
-function getWorkerEntryArtifact(compiled: CompiledGraph): NeemResolvedArtifact {
-  return getRequiredArtifact(compiled, 'worker-entry')
-}
-
 function getRequiredArtifact(
   compiled: CompiledGraph,
-  kind: string,
+  kind: BuildTargetKind,
 ): NeemResolvedArtifact {
   const target = compiled.targets.find((target) => target.target.kind === kind)
   if (!target) throw new Error(`Compiled Neem ${kind} artifact is missing`)
   return target.artifact
 }
 
-function createManifestConfig(compiled: CompiledGraph): ManifestConfig {
-  const config = compiled.graph.config
+function createConfig(compiled: CompiledGraph): ManifestConfig {
+  const { proxy, health } = compiled.graph.config
+  const logger = createLogger(compiled)
+  const env = copyEnv(compiled.graph.config.env)
+  const runtimes = new Map<string, ManifestRuntimeConfig>()
+  for (const { name, node } of compiled.runtimes) {
+    runtimes.set(name, createRuntimeConfig(node.declaration.declaration))
+  }
+
   return {
-    logger: createManifestLogger(compiled),
-    env: copyEnv(config.env),
-    proxy: config.proxy,
-    health: config.health,
-    runtimes: Object.fromEntries(
-      compiled.runtimes.map((runtime) => [
-        runtime.name,
-        createManifestRuntimeConfig(runtime.node.declaration.declaration),
-      ]),
-    ),
+    logger,
+    env,
+    proxy,
+    health,
+    runtimes: Object.fromEntries(runtimes),
   }
 }
 
-function createManifestRuntimeConfig(declaration: {
+function createRuntimeConfig(declaration: {
   proxy?: NeemRuntimeProxyConfig
 }): ManifestRuntimeConfig {
   return declaration.proxy ? { proxy: copyRuntimeProxy(declaration.proxy) } : {}
@@ -313,35 +316,28 @@ function copyRuntimeProxy(
   }
 }
 
-function createManifestLogger(
-  compiled: CompiledGraph,
-): ManifestLogger | undefined {
+function createLogger(compiled: CompiledGraph): ManifestLogger | undefined {
   const logger = compiled.graph.config.logger
   if (!logger) return undefined
   if (typeof logger === 'string' || logger instanceof URL) {
-    const target = compiled.targets.find(
-      (target) => target.target.kind === 'logger',
-    )
-    if (!target) throw new Error('Compiled Neem logger artifact is missing')
-    return {
-      type: 'module',
-      file: toManifestPath(compiled.graph.outDir, target.artifact.file),
-    }
+    const artifact = getRequiredArtifact(compiled, 'logger')
+    const file = toManifestPath(compiled.graph.outDir, artifact.file)
+    return { type: 'module', file }
   }
   return { type: 'options', options: logger }
 }
 
-function createManifestPlugins(
+function createPlugins(
   compiled: CompiledGraph,
   outDir: string,
 ): Manifest['plugins'] {
   if (compiled.plugins.length === 0) return undefined
 
-  return compiled.plugins.map((plugin) => ({
-    name: plugin.node.name,
-    entry: plugin.entry
+  return compiled.plugins.map((plugin) => {
+    const { name, options } = plugin.node
+    const entry = plugin.entry
       ? { file: toManifestPath(outDir, plugin.entry.artifact.file) }
-      : undefined,
-    options: plugin.node.options,
-  }))
+      : undefined
+    return { name, entry, options }
+  })
 }

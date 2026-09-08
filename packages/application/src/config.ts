@@ -50,16 +50,16 @@ export interface ApplicationConfig<
 export function defineApplication<R extends AnyRootRouter>(
   options: Pick<ApplicationConfig<R>, 'router'> &
     Partial<Omit<ApplicationConfig<R>, 'router'>>,
-) {
+): ApplicationConfig<R> {
   const {
     router,
     guards = [],
     middlewares = [],
     meta = [],
     plugins = [],
-    api = {} as ApplicationConfig['api'],
-    filters = [] as ApplicationConfig['filters'],
-    hooks = [] as ApplicationConfig['hooks'],
+    api = {},
+    filters = [],
+    hooks = [],
     lifecycleHooks = {},
   } = options
 
@@ -76,7 +76,7 @@ export function defineApplication<R extends AnyRootRouter>(
     meta,
     hooks,
     lifecycleHooks,
-  } satisfies AnyApplicationConfig) as ApplicationConfig<R>
+  } satisfies ApplicationConfig<R>)
 }
 
 export function isApplicationConfig(value: any): value is ApplicationConfig {

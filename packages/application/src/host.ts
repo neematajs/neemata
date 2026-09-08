@@ -195,8 +195,9 @@ export class ApplicationHost<
     for (const key in this.options.transports) {
       const config = this.options.transports[key]
       const options = await this.application.container.resolve(config.options)
+      const transport = await config.transport.factory(options)
       transports[key] = {
-        transport: await config.transport.factory(options),
+        transport,
         proxyable: config.transport.proxyable,
       }
     }

@@ -341,32 +341,32 @@ export const gatewayLoggerOptions: ChildLoggerOptions = {
     chunk: (chunk) =>
       isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,
     payload: (payload) => {
-      function traverseObject(obj: any): any {
-        if (Array.isArray(obj)) {
-          return obj.map(traverseObject)
-        } else if (isTypedArray(obj)) {
-          return `<${obj.constructor.name} length=${obj.byteLength}>`
-        } else if (isBlobInterface(obj)) {
-          // must run before the generic object branch, blobs are objects too
-          return `<ClientBlobStream metadata=${JSON.stringify(obj.metadata)}>`
-        } else if (typeof obj === 'object' && obj !== null) {
-          const result: Record<string, any> = {}
-          for (const [key, value] of Object.entries(obj)) {
-            result[key] = traverseObject(value)
-          }
-          return result
+      function serialize(value: unknown): unknown {
+        if (Array.isArray(value)) return value.map(serialize)
+        if (isTypedArray(value)) {
+          return `<${value.constructor.name} length=${value.byteLength}>`
         }
-        return obj
+        if (isBlobInterface(value)) {
+          // must run before the generic object branch, blobs are objects too
+          return `<ClientBlobStream metadata=${JSON.stringify(value.metadata)}>`
+        }
+        if (typeof value !== 'object' || value === null) return value
+
+        const fields: Record<string, unknown> = {}
+        for (const [key, field] of Object.entries(value)) {
+          fields[key] = serialize(field)
+        }
+        return fields
       }
-      return traverseObject(payload)
+      return serialize(payload)
     },
     headers: (value) => {
       if (value instanceof Headers) {
-        const obj: Record<string, any> = {}
-        value.forEach((v, k) => {
-          obj[k] = v
+        const headers: Record<string, string> = {}
+        value.forEach((value, name) => {
+          headers[name] = value
         })
-        return obj
+        return headers
       }
       return value
     },
