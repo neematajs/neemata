@@ -1,6 +1,7 @@
 import * as module from 'node:module'
 import { resolve } from 'node:path'
 
+import { config } from '@dotenvx/dotenvx'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 import { defineCommand } from 'citty'
 
@@ -158,8 +159,21 @@ export const devCommand = defineCommand({
       type: 'string',
       description: 'Directory for Node.js compile cache',
     },
+    'env-files': {
+      type: 'string',
+      description:
+        'Comma-separated env files relative to cwd. Existing variables and earlier files take precedence.',
+    },
   },
   async run({ args }) {
+    if (args['env-files'] !== undefined) {
+      const paths = args['env-files'].split(',').map((path) => path.trim())
+      if (paths.some((path) => !path)) {
+        throw new Error('--env-files requires non-empty file paths')
+      }
+      // Load before spawning services so config evaluation and runtime workers inherit the values.
+      config({ path: paths, quiet: true, strict: true })
+    }
     if (args.cache && 'enableCompileCache' in module) {
       const result = module.enableCompileCache({ directory: args.cacheDir })
       if (result && typeof result === 'object') {

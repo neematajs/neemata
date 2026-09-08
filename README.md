@@ -257,6 +257,10 @@ uses the same manifest shape as `start`, restarts app workers after successful
 config/app rebuilds, reloads plugin hooks after plugin entry rebuilds, and keeps
 existing workers alive on rebuild errors.
 
+Use `neem dev --env-files ../../.env` to load environment variables before config
+evaluation and worker startup. See [development environment files](packages/neem/README.md)
+for precedence and multiple-file usage.
+
 ## Service integration tests
 
 Service-backed package integration tests live beside package owners under
