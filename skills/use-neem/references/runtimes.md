@@ -49,6 +49,9 @@ Rules:
 - Plugins such as `@nmtjs/metrics/neem` extend the Neem controller and are
   built into plugin artifacts; they do not appear in `runtimes`.
 - Production `start` reads built manifest/artifacts, not source config.
+- `env` is an inline string map included in the manifest, not an env-file list.
+  For development env files loaded before config evaluation, use
+  [`neem dev --env-files`](cli.md#environment-files).
 
 ## Runtime Declaration Files
 

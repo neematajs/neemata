@@ -41,6 +41,7 @@
     }
   },
   "dependencies": {
+    "@dotenvx/dotenvx": "^2.23.0",
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
     "@nmtjs/unplugin-labels": "workspace:*",
