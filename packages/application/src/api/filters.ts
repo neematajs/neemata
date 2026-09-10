@@ -31,5 +31,5 @@ export function createFilter<
     dependencies,
     handler,
     [kFilter]: true,
-  }) as Filter<FilterError, Deps>
+  } satisfies Filter<FilterError, Deps>)
 }

@@ -23,7 +23,7 @@ const intFromString = schema<number>((value) => {
   const parsed = Number(value)
   return Number.isInteger(parsed)
     ? { value: parsed }
-    : { issues: [{ message: `expected integer, received ${value}` }] }
+    : { issues: [{ message: `expected integer, received ${String(value)}` }] }
 })
 
 describe('resolveEnvConfig', () => {

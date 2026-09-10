@@ -118,27 +118,30 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   async resolve(
     options: GatewayResolveOptions,
   ): Promise<ApplicationResolvedProcedure> {
-    const { procedure, path } = this.find(options.procedure)
+    const { procedure, path: routers } = this.find(options.procedure)
 
-    const metaBindings = this.resolveMetaBindings(path, procedure)
+    const bindings = this.resolveMetaBindings(routers, procedure)
     const stream = IsStreamContract(procedure.contract)
     const name = procedure.contract.name ?? options.procedure
+    const meta = createGatewayStaticMetaView(bindings.static)
+    const descriptor = Object.freeze({
+      name,
+      contract: procedure.contract,
+      stream,
+      streamTimeout: procedure.streamTimeout,
+    })
+    const path = Object.freeze(
+      routers.map(({ contract, timeout }) =>
+        Object.freeze({ contract, timeout }),
+      ),
+    )
 
     return Object.freeze({
       name,
       stream,
-      meta: createGatewayStaticMetaView(metaBindings.static),
-      procedure: Object.freeze({
-        name,
-        contract: procedure.contract,
-        stream,
-        streamTimeout: procedure.streamTimeout,
-      }),
-      path: Object.freeze(
-        path.map((router) =>
-          Object.freeze({ contract: router.contract, timeout: router.timeout }),
-        ),
-      ),
+      meta,
+      procedure: descriptor,
+      path,
     }) satisfies ApplicationResolvedProcedure
   }
 
@@ -221,7 +224,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       procedure,
     })
 
-    const isIterableProcedure = IsStreamContract(procedure.contract)
+    const stream = IsStreamContract(procedure.contract)
 
     this.applyStaticMetaBindings(container, metaBindings.static)
 
@@ -233,34 +236,29 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
         const next = (...args: any[]) =>
           handleProcedure(args.length === 0 ? payload : args[0])
         return middleware.handler(middleware.ctx, callCtx, next, payload)
-      } else {
-        await this.applyFactoryMetaBindings(
-          container,
-          metaBindings.beforeDecode,
-          callCtx,
-          payload,
-        )
-        const input = this.handleInput(procedure, payload)
-        await this.applyFactoryMetaBindings(
-          container,
-          metaBindings.afterDecode,
-          callCtx,
-          input,
-        )
-        await this.handleGuards(callOptions, callCtx, input)
-        const { dependencies, handler } = procedure
-        const context = await container.createContext(dependencies)
-        const result = await handler(context, input)
-        if (isIterableProcedure) {
-          return this.handleIterableOutput(
-            procedure,
-            result,
-            metaBindings.config,
-          )
-        } else {
-          return this.handleOutput(procedure, result, metaBindings.config)
-        }
       }
+
+      await this.applyFactoryMetaBindings(
+        container,
+        metaBindings.beforeDecode,
+        callCtx,
+        payload,
+      )
+      const input = this.handleInput(procedure, payload)
+      await this.applyFactoryMetaBindings(
+        container,
+        metaBindings.afterDecode,
+        callCtx,
+        input,
+      )
+      await this.handleGuards(callOptions, callCtx, input)
+      const { dependencies, handler } = procedure
+      const context = await container.createContext(dependencies)
+      const result = await handler(context, input)
+      if (stream) {
+        return this.handleIterableOutput(procedure, result, metaBindings.config)
+      }
+      return this.handleOutput(procedure, result, metaBindings.config)
     }
 
     return handleProcedure
@@ -375,35 +373,33 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   }
 
   private async handleFilters({ container }: ApiCallOptions, error: any) {
-    if (this.options.filters.size) {
-      for (const filter of this.options.filters) {
-        if (error instanceof filter.errorClass) {
-          const ctx = await container.createContext(filter.dependencies)
-          // accept any Error, as the Filter type promises; non-ProtocolError
-          // results are sanitized on the way out by call()
-          const handledError = await filter.handler(ctx, error)
-          if (!handledError || handledError instanceof Error === false) continue
-          return handledError
-        }
-      }
+    for (const filter of this.options.filters) {
+      if (!(error instanceof filter.errorClass)) continue
+
+      const ctx = await container.createContext(filter.dependencies)
+      // accept any Error, as the Filter type promises; non-ProtocolError
+      // results are sanitized on the way out by call()
+      const handled = await filter.handler(ctx, error)
+      if (handled instanceof Error) return handled
     }
     return error
   }
 
   private handleInput(procedure: AnyProcedure, payload: any) {
-    if (procedure.contract.input instanceof type.NeverType === false) {
-      const type = procedure.contract.input
-      try {
-        return type.decode(payload)
-      } catch (error) {
-        if (error instanceof NeemataTypeError)
-          throw new ApiError(
-            ErrorCode.ValidationError,
-            `Input validation error: \n${prettifyError(error)}`,
-            error.issues,
-          )
-        throw error
+    const { input } = procedure.contract
+    if (input instanceof type.NeverType) return
+
+    try {
+      return input.decode(payload)
+    } catch (error) {
+      if (error instanceof NeemataTypeError) {
+        throw new ApiError(
+          ErrorCode.ValidationError,
+          `Input validation error: \n${prettifyError(error)}`,
+          error.issues,
+        )
       }
+      throw error
     }
   }
 
@@ -440,11 +436,9 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     response: any,
     runtimeConfig: Required<RuntimeConfig>,
   ) {
-    if (procedure.contract.output instanceof type.NeverType === false) {
-      if (runtimeConfig.serializeOutput === false) return response
-      const type = procedure.contract.output
-      return type.encode(response)
-    }
-    return undefined
+    const { output } = procedure.contract
+    if (output instanceof type.NeverType) return undefined
+    if (runtimeConfig.serializeOutput === false) return response
+    return output.encode(response)
   }
 }

@@ -95,7 +95,8 @@ export async function compileTarget(
   const metadata: ArtifactBuildMetadata = { watch: false }
   await mkdir(target.outDir, { recursive: true })
   const bundle = await rolldown.build(createRolldownOptions(target, metadata))
-  return { target, artifact: createResolvedArtifact(target, bundle, metadata) }
+  const artifact = createResolvedArtifact(target, bundle, metadata)
+  return { target, artifact }
 }
 
 async function compileTargetGroup(
@@ -109,10 +110,7 @@ async function compileTargetGroup(
   const bundle = await rolldown.build(
     createGroupedRolldownOptions(targets, metadata),
   )
-  return targets.map((target) => ({
-    target,
-    artifact: createResolvedArtifact(target, bundle, metadata),
-  }))
+  return createResolvedTargets(targets, bundle, metadata)
 }
 
 export async function watchGraph(
@@ -367,9 +365,24 @@ function createRolldownOptions(
   const userOptions = mergeRolldownOptions(target.artifact.rolldown) ?? {}
   const userOutput =
     typeof userOptions.output === 'object' && userOptions.output
-      ? (userOptions.output as Record<string, unknown>)
+      ? userOptions.output
       : {}
   const input = createArtifactInput(target)
+  const output: OutputOptions = Object.assign(
+    {
+      sourcemap: true,
+      minify: false,
+      dir: target.outDir,
+      format: 'esm' as const,
+      entryFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
+      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
+      assetFileNames: metadata.watch
+        ? createStableWatchAssetFileName
+        : '[name]-[hash][extname]',
+    },
+    userOutput,
+    { codeSplitting: resolveCodeSplitting(target.artifact.chunks) },
+  )
 
   return {
     input: input.input,
@@ -391,19 +404,7 @@ function createRolldownOptions(
       ...normalizePlugins(userOptions.plugins),
       createArtifactMetadataPlugin(input, metadata),
     ],
-    output: {
-      sourcemap: true,
-      minify: false,
-      dir: target.outDir,
-      format: 'esm',
-      entryFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      assetFileNames: metadata.watch
-        ? createStableWatchAssetFileName
-        : '[name]-[hash][extname]',
-      ...userOutput,
-      codeSplitting: resolveCodeSplitting(target.artifact.chunks),
-    },
+    output,
   }
 }
 
@@ -416,9 +417,29 @@ function createGroupedRolldownOptions(
   const userOptions = mergeRolldownOptions(firstTarget.artifact.rolldown) ?? {}
   const userOutput =
     typeof userOptions.output === 'object' && userOptions.output
-      ? (userOptions.output as Record<string, unknown>)
+      ? userOptions.output
       : {}
   const inputs = createArtifactInputs(targets)
+  const output: OutputOptions = Object.assign(
+    {
+      sourcemap: true,
+      minify: false,
+      dir: firstTarget.outDir,
+      format: 'esm' as const,
+    },
+    userOutput,
+    {
+      entryFileNames: '[name].js',
+      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
+      assetFileNames: metadata.watch
+        ? createStableWatchAssetFileName
+        : '[name]-[hash][extname]',
+      codeSplitting: resolveCodeSplitting(
+        firstTarget.artifact.chunks,
+        inputs.map((input) => input.entry),
+      ),
+    },
+  )
 
   return {
     input: Object.fromEntries(
@@ -436,22 +457,7 @@ function createGroupedRolldownOptions(
       ...normalizePlugins(userOptions.plugins),
       createArtifactMetadataPlugin(inputs, metadata),
     ],
-    output: {
-      sourcemap: true,
-      minify: false,
-      dir: firstTarget.outDir,
-      format: 'esm',
-      ...userOutput,
-      entryFileNames: '[name].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      assetFileNames: metadata.watch
-        ? createStableWatchAssetFileName
-        : '[name]-[hash][extname]',
-      codeSplitting: resolveCodeSplitting(
-        firstTarget.artifact.chunks,
-        inputs.map((input) => input.entry),
-      ),
-    },
+    output,
   }
 }
 
@@ -519,11 +525,11 @@ function createArtifactInput(target: BuildTarget): ArtifactInput {
 function createArtifactInputs(
   targets: readonly BuildTarget[],
 ): ArtifactInput[] {
-  return targets.map((target) => ({
-    entry: toFilePath(target.artifact.entry),
-    input: getArtifactInputName(target),
-    targetKey: target.key,
-  }))
+  return targets.map((target) => {
+    const entry = toFilePath(target.artifact.entry)
+    const input = getArtifactInputName(target)
+    return { entry, input, targetKey: target.key }
+  })
 }
 
 function getArtifactInputName(target: BuildTarget): string {
@@ -553,15 +559,16 @@ function createResolvedArtifact(
   )
   const entryFileName = metadata.entryFileName ?? entryChunk?.fileName
   const groupedEntryFileName = metadata.entryFileNames?.get(target.key)
+  const file = resolve(
+    target.outDir,
+    groupedEntryFileName ?? entryFileName ?? 'index.js',
+  )
 
   return {
     id: target.artifact.id,
     kind: target.artifact.kind,
     owner: target.owner,
-    file: resolve(
-      target.outDir,
-      groupedEntryFileName ?? entryFileName ?? 'index.js',
-    ),
+    file,
     outDir: target.outDir,
   }
 }
@@ -571,18 +578,17 @@ function createResolvedTargets(
   bundle: RolldownOutput | undefined,
   metadata: ArtifactBuildMetadata,
 ): readonly CompiledTarget[] {
-  return targets.map((target) => ({
-    target,
-    artifact: createResolvedArtifact(target, bundle, metadata),
-  }))
+  return targets.map((target) => {
+    const artifact = createResolvedArtifact(target, bundle, metadata)
+    return { target, artifact }
+  })
 }
 
 async function mkdirTargetDirs(targets: readonly BuildTarget[]): Promise<void> {
-  await Promise.all(
-    [...new Set(targets.map((target) => target.outDir))].map((outDir) =>
-      mkdir(outDir, { recursive: true }),
-    ),
-  )
+  const dirs = new Set<string>()
+  for (const { outDir } of targets) dirs.add(outDir)
+
+  await Promise.all(Array.from(dirs, (dir) => mkdir(dir, { recursive: true })))
 }
 
 function createArtifactMetadataPlugin(

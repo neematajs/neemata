@@ -155,8 +155,10 @@ export class NeemataApplication {
   protected registerApi(): void {
     const { router, filters, guards, middlewares } = this.appConfig
 
-    if (Array.from(this.routers.values()).some((r) => isRootRouter(r))) {
-      throw new Error('Root router already registered')
+    for (const registered of this.routers) {
+      if (isRootRouter(registered)) {
+        throw new Error('Root router already registered')
+      }
     }
 
     if (!isRootRouter(router)) {
@@ -208,21 +210,23 @@ export class NeemataApplication {
       if (isRouter(route)) {
         const name = route.contract.name
         if (!name) throw new Error('Nested routers must have a name')
-        for (const router of this.routers) {
-          if (router.contract.name === name) {
+        for (const registered of this.routers) {
+          if (registered.contract.name === name) {
             throw new Error(`Router ${String(name)} already registered`)
           }
         }
         this.routers.add(route)
         this.registerRouter(route, [...path, router])
-      } else if (isProcedure(route)) {
-        const name = route.contract.name
-        if (!name) throw new Error('Procedures must have a name')
-        if (this.procedures.has(name)) {
-          throw new Error(`Procedure ${name} already registered`)
-        }
-        this.procedures.set(name, { procedure: route, path: [...path, router] })
+        continue
       }
+
+      if (!isProcedure(route)) continue
+      const name = route.contract.name
+      if (!name) throw new Error('Procedures must have a name')
+      if (this.procedures.has(name)) {
+        throw new Error(`Procedure ${name} already registered`)
+      }
+      this.procedures.set(name, { procedure: route, path: [...path, router] })
     }
   }
 }

@@ -216,21 +216,20 @@ export function createProcedure<
     ? { handler: paramsOrHandler }
     : paramsOrHandler
 
-  return createContractProcedure(
-    c.procedure({
-      input,
-      output,
-      timeout,
-      schemaOptions: { title, description },
-    }),
-    {
-      dependencies,
-      handler: handler as any,
-      guards,
-      middlewares,
-      meta,
-    },
-  )
+  const contract = c.procedure({
+    input,
+    output,
+    timeout,
+    schemaOptions: { title, description },
+  })
+
+  return createContractProcedure(contract, {
+    dependencies,
+    handler: handler as any,
+    guards,
+    middlewares,
+    meta,
+  })
 }
 
 export function createContractProcedure<
@@ -287,22 +286,21 @@ export function createStream<
     streamTimeout,
   } = params
 
-  return createContractStream(
-    c.stream({
-      input,
-      output,
-      timeout,
-      schemaOptions: { title, description },
-    }),
-    {
-      dependencies,
-      handler: handler as any,
-      guards,
-      middlewares,
-      meta,
-      streamTimeout,
-    },
-  )
+  const contract = c.stream({
+    input,
+    output,
+    timeout,
+    schemaOptions: { title, description },
+  })
+
+  return createContractStream(contract, {
+    dependencies,
+    handler: handler as any,
+    guards,
+    middlewares,
+    meta,
+    streamTimeout,
+  })
 }
 
 export function createContractStream<
