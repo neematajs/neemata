@@ -36,6 +36,74 @@ const toUint8 = (buffer: ArrayBufferView) =>
   new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 
 describe('HttpTransportClient + StaticClient', () => {
+  it('keeps the requested response mode while the fetch is pending', async () => {
+    const codec = new TestJsonCodec()
+    const options = { streamResponse: true }
+    const fetchSpy = vi.fn<typeof fetch>().mockImplementation(async () => {
+      options.streamResponse = false
+      return new Response('data: AQID\n\ndata: BAU=\n\n')
+    })
+    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+      url: 'http://localhost:4000',
+      fetch: fetchSpy,
+    })
+
+    const response = await transport.call(
+      { contentType: codec.contentType },
+      { callId: 0, procedure: 'feed', payload: new Uint8Array(0) },
+      options,
+    )
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(response.type).toBe('rpc_stream')
+    if (response.type !== 'rpc_stream') throw new Error('Expected a stream')
+
+    const chunks: number[][] = []
+    for await (const chunk of response.stream) {
+      chunks.push(Array.from(toUint8(chunk)))
+    }
+    expect(chunks).toEqual([
+      [1, 2, 3],
+      [4, 5],
+    ])
+  })
+
+  it.each([false, true])(
+    'preserves HTTP status when an error body fails to read (stream: %s)',
+    async (streamResponse) => {
+      const codec = new TestJsonCodec()
+      const body = new ReadableStream({
+        start(controller) {
+          controller.error(new Error('Connection interrupted'))
+        },
+      })
+      const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(
+        new Response(body, {
+          status: 503,
+          statusText: 'Service Unavailable',
+        }),
+      )
+      const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+        url: 'http://localhost:4000',
+        fetch: fetchSpy,
+      })
+
+      const response = await transport.call(
+        { contentType: codec.contentType },
+        { callId: 0, procedure: 'feed', payload: new Uint8Array(0) },
+        { streamResponse },
+      )
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(response).toEqual({
+        type: 'error',
+        error: new Uint8Array(0),
+        status: 503,
+        statusText: 'Service Unavailable',
+      })
+    },
+  )
+
   it('returns undefined for empty unidirectional RPC response body', async () => {
     const codec = new TestJsonCodec()
     const fetchSpy = vi.fn<typeof fetch>().mockResolvedValue(

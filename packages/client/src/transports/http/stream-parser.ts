@@ -18,10 +18,10 @@ export class HttpStreamParser {
     let cursor = 0
 
     while (true) {
-      const separator = this.findNextEventSeparator(pending, cursor)
+      const separator = this.findSeparator(pending, cursor)
       if (!separator) break
 
-      this.emitEventDataFrame(pending, cursor, separator.index, emit)
+      this.emitFrame(pending, cursor, separator.index, emit)
       cursor = separator.index + separator.length
     }
 
@@ -29,7 +29,7 @@ export class HttpStreamParser {
     return pending.slice(cursor)
   }
 
-  private findNextEventSeparator(
+  private findSeparator(
     source: string,
     fromIndex: number,
   ): { index: number; length: number } | null {
@@ -42,7 +42,7 @@ export class HttpStreamParser {
     return lf < crlf ? { index: lf, length: 2 } : { index: crlf, length: 4 }
   }
 
-  private emitEventDataFrame(
+  private emitFrame(
     source: string,
     start: number,
     end: number,
@@ -65,11 +65,7 @@ export class HttpStreamParser {
 
       if (
         contentEnd - lineStart >= 5 &&
-        source.charCodeAt(lineStart) === 100 /* d */ &&
-        source.charCodeAt(lineStart + 1) === 97 /* a */ &&
-        source.charCodeAt(lineStart + 2) === 116 /* t */ &&
-        source.charCodeAt(lineStart + 3) === 97 /* a */ &&
-        source.charCodeAt(lineStart + 4) === 58 /* : */
+        source.startsWith('data:', lineStart)
       ) {
         let dataStart = lineStart + 5
         while (dataStart < contentEnd) {

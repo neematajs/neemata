@@ -11,36 +11,36 @@ import type {
 import { Client } from '../client.ts'
 import { BaseClientTransformer } from '../transformers.ts'
 
-const buildStaticCallers = (
+const buildCallers = (
   rpc: RpcLayerApi,
   isStream: boolean,
   path: string[] = [],
 ): Record<string, unknown> => {
-  const createProxy = <T>(
-    target: Record<string, unknown>,
-    current: string[],
-  ) => {
+  const createProxy = <T extends object>(target: T, current: string[]) => {
     return new Proxy(target, {
       get: (obj, prop) => {
         if (prop === 'then') return obj
 
-        const nextPath = [...current, String(prop)]
+        const path = [...current, String(prop)]
         const caller = (
           payload?: unknown,
           options?: Partial<ClientCallOptions>,
         ) => {
-          return rpc.call(nextPath.join('/'), payload, {
+          const procedure = path.join('/')
+          const stream = isStream || options?._stream_response
+          return rpc.call(procedure, payload, {
             ...options,
-            _stream_response: isStream || options?._stream_response,
+            _stream_response: stream,
           })
         }
 
-        return createProxy(caller as any, nextPath)
+        return createProxy(caller, path)
       },
-    }) as T
+    })
   }
 
-  return createProxy(Object.create(null), path)
+  const root: Record<string, unknown> = Object.create(null)
+  return createProxy(root, path)
 }
 
 export class StaticClient<
@@ -73,8 +73,8 @@ export class StaticClient<
       transportOptions,
       new BaseClientTransformer(),
       (rpc) => ({
-        call: buildStaticCallers(rpc, false),
-        stream: buildStaticCallers(rpc, true),
+        call: buildCallers(rpc, false),
+        stream: buildCallers(rpc, true),
       }),
     )
   }

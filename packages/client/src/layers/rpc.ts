@@ -709,12 +709,14 @@ export const createRpcLayer = (
     if (callOptions.signal) signals.push(callOptions.signal)
     if (core.connectionSignal) signals.push(core.connectionSignal)
 
-    const signal = signals.length ? anyAbortSignal(...signals) : undefined
+    const signal = anyAbortSignal(...signals)
     const currentCallId = nextCallId()
-    const call = createFuture() as ProtocolClientCall
-    call.procedure = procedure
-    call.signal = signal
-    call.rpcStreamWindow = rpcStreamWindow
+    const call: ProtocolClientCall = {
+      ...createFuture(),
+      procedure,
+      signal,
+      rpcStreamWindow,
+    }
 
     calls.set(currentCallId, call)
     core.emitClientEvent({
@@ -725,7 +727,7 @@ export const createRpcLayer = (
       body: payload,
     })
 
-    if (signal?.aborted) {
+    if (signal.aborted) {
       call.reject(toAbortError(signal))
     } else {
       try {
@@ -733,11 +735,11 @@ export const createRpcLayer = (
           await ensureConnectedForCall(core, signal)
         }
 
-        if (signal?.aborted) {
+        if (signal.aborted) {
           throw toAbortError(signal)
         }
 
-        signal?.addEventListener(
+        signal.addEventListener(
           'abort',
           () => {
             call.reject(toAbortError(signal))
@@ -786,9 +788,8 @@ export const createRpcLayer = (
                 }
               : undefined
 
-          const encodedPayload = blob
-            ? new Uint8Array(0)
-            : transformedPayload === undefined
+          const encodedPayload =
+            blob || transformedPayload === undefined
               ? new Uint8Array(0)
               : core.codec.encode(transformedPayload)
 

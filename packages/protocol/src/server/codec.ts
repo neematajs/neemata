@@ -48,22 +48,20 @@ export abstract class BaseServerCodec
 export const parseContentTypes = (types: string) => {
   const normalized = types.trim()
   if (normalized === '*/*') return ['*/*']
-  return normalized
-    .split(',')
-    .map((t) => t.trim())
-    .map((t) => {
-      const mime = new MIMEType(t)
-      return {
-        type: mime.essence,
-        q: Number.parseFloat(mime.params.get('q') ?? '1'),
-      }
-    })
-    .sort((a, b) => {
-      if (a.type === '*/*') return 1
-      if (b.type === '*/*') return -1
-      return b.q - a.q
-    })
-    .map((t) => t.type)
+  const entries = normalized.split(',').map((entry) => {
+    const mime = new MIMEType(entry.trim())
+    const type = mime.essence
+    const quality = Number.parseFloat(mime.params.get('q') ?? '1')
+    return { type, quality }
+  })
+
+  entries.sort((a, b) => {
+    if (a.type === '*/*') return 1
+    if (b.type === '*/*') return -1
+    return b.quality - a.quality
+  })
+
+  return entries.map(({ type }) => type)
 }
 
 export class ProtocolCodecRegistry {

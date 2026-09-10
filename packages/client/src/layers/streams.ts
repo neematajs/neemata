@@ -371,34 +371,31 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
   core.on('message', (message: any) => {
     switch (message.type) {
-      case ServerMessageType.ServerBlobPush:
+      case ServerMessageType.ServerBlobPush: {
+        const { streamId, chunk } = message
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'server_blob',
           action: 'push',
-          streamId: message.streamId,
-          byteLength: message.chunk.byteLength,
+          streamId,
+          byteLength: chunk.byteLength,
         })
 
-        {
-          const credits = serverBlobDownloads.get(message.streamId)
-          if (!credits) break
-          if (!credits.accept(message.chunk.byteLength)) {
-            abortServerBlob(
-              message.streamId,
-              STREAM_FLOW_CONTROL_VIOLATION_REASON,
-            )
-            break
-          }
+        const credits = serverBlobDownloads.get(streamId)
+        if (!credits) break
+        if (!credits.accept(chunk.byteLength)) {
+          abortServerBlob(streamId, STREAM_FLOW_CONTROL_VIOLATION_REASON)
+          break
         }
         // not awaited: the writable queue keeps per-stream arrival order and
         // awaiting would stall other streams' messages; a failed push aborts
         // the stream on both sides instead of leaking a rejection
-        serverStreams.push(message.streamId, message.chunk).catch((error) => {
-          if (!serverStreams.has(message.streamId)) return
-          abortServerBlob(message.streamId, error)
+        serverStreams.push(streamId, chunk).catch((error) => {
+          if (!serverStreams.has(streamId)) return
+          abortServerBlob(streamId, error)
         })
         break
+      }
       case ServerMessageType.ServerBlobEnd:
         serverBlobInitializers.delete(message.streamId)
         serverBlobDownloads.delete(message.streamId)
@@ -422,30 +419,30 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
         })
         void serverStreams.abort(message.streamId, message.reason).catch(noopFn)
         break
-      case ServerMessageType.ClientBlobPull:
+      case ServerMessageType.ClientBlobPull: {
+        const { streamId, size } = message
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'client_blob',
           action: 'pull',
-          streamId: message.streamId,
-          byteLength: message.size,
+          streamId,
+          byteLength: size,
         })
 
-        {
-          const state = clientBlobUploads.get(message.streamId)
-          if (!state) break
-          if (!state.credits.grant(message.size)) {
-            abortClientBlobUpload(
-              message.streamId,
-              state,
-              STREAM_FLOW_CONTROL_VIOLATION_REASON,
-            ).catch(noopFn)
-            break
-          }
-
-          pumpClientBlobUpload(message.streamId, state).catch(noopFn)
+        const state = clientBlobUploads.get(streamId)
+        if (!state) break
+        if (!state.credits.grant(size)) {
+          abortClientBlobUpload(
+            streamId,
+            state,
+            STREAM_FLOW_CONTROL_VIOLATION_REASON,
+          ).catch(noopFn)
+          break
         }
+
+        pumpClientBlobUpload(streamId, state).catch(noopFn)
         break
+      }
       case ServerMessageType.ClientBlobAbort:
         core.emitStreamEvent({
           direction: 'incoming',

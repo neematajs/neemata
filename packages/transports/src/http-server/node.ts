@@ -128,19 +128,18 @@ class NodeServerHost extends BaseServerHost<'node'> {
   }
 
   private async handleRequest(
-    uwsRes: UwsResponse,
+    res: UwsResponse,
     req: Parameters<Parameters<TemplatedApp['any']>[1]>[1],
   ) {
-    const res = uwsRes
     const requestController = new AbortController()
     let aborted = false
     let bodyController: ReadableStreamDefaultController<Buffer> | undefined
 
     res.onAborted(() => {
       aborted = true
-      uwsRes.aborted = true
-      uwsRes.wakeWritable?.()
-      uwsRes.cancelBody?.()
+      res.aborted = true
+      res.wakeWritable?.()
+      res.cancelBody?.()
       requestController.abort()
 
       try {
@@ -154,13 +153,10 @@ class NodeServerHost extends BaseServerHost<'node'> {
 
     const host = headers.get('host') || 'localhost'
     const forwardedProto = headers.get('x-forwarded-proto')
-    const proto = forwardedProto
+    const secure = forwardedProto
       ? forwardedProto === 'https'
-        ? 'https'
-        : 'http'
-      : this.options.tls
-        ? 'https'
-        : 'http'
+      : Boolean(this.options.tls)
+    const proto = secure ? 'https' : 'http'
     const url = new URL(req.getUrl(), `${proto}://${host}`)
     url.search = req.getQuery() ? `?${req.getQuery()}` : ''
 
@@ -190,34 +186,34 @@ class NodeServerHost extends BaseServerHost<'node'> {
       }
     }
 
-    if (aborted) return undefined
-    else {
-      const fixedContentLength = response.body
-        ? getContentLength(response.headers)
-        : undefined
-      res.cork(() => {
-        if (aborted) return undefined
-        res.writeStatus(`${response.status.toString()} ${response.statusText}`)
-        response.headers.forEach((v, k) => {
-          if (
-            typeof fixedContentLength === 'number' &&
-            k.toLowerCase() === 'content-length'
-          ) {
-            return
-          }
+    if (aborted) return
 
-          res.writeHeader(k, v)
-        })
-      })
-      if (response.body) {
-        try {
-          await handleResponseBody(uwsRes, response, fixedContentLength)
-        } catch {
-          if (!aborted) res.cork(() => res.close())
+    const fixedContentLength = response.body
+      ? getContentLength(response.headers)
+      : undefined
+    res.cork(() => {
+      if (aborted) return
+      res.writeStatus(`${response.status.toString()} ${response.statusText}`)
+      response.headers.forEach((value, name) => {
+        if (
+          typeof fixedContentLength === 'number' &&
+          name.toLowerCase() === 'content-length'
+        ) {
+          return
         }
-      } else {
-        if (!aborted) res.cork(() => res.end())
-      }
+
+        res.writeHeader(name, value)
+      })
+    })
+    if (!response.body) {
+      if (!aborted) res.cork(() => res.end())
+      return
+    }
+
+    try {
+      await handleResponseBody(res, response, fixedContentLength)
+    } catch {
+      if (!aborted) res.cork(() => res.close())
     }
   }
 

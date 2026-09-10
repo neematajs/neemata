@@ -12,13 +12,11 @@ import type {
 } from '../../transport.ts'
 import { HttpStreamParser } from './stream-parser.ts'
 
-type DecodeBase64Function = (data: string) => ArrayBufferView
+type DecodeBase64 = (data: string) => ArrayBufferView
 
-const createDecodeBase64 = (
-  customFn?: DecodeBase64Function,
-): DecodeBase64Function => {
+const createDecodeBase64 = (custom?: DecodeBase64): DecodeBase64 => {
   // caller-supplied decoder must win over built-ins
-  if (customFn) return customFn
+  if (custom) return custom
 
   return (string: string) => {
     if (
@@ -78,12 +76,12 @@ export type HttpClientTransportOptions = {
   debug?: boolean
   EventSource?: typeof EventSource
   fetch?: typeof fetch
-  decodeBase64?: DecodeBase64Function
+  decodeBase64?: DecodeBase64
 }
 
 export class HttpTransportClient implements UnidirectionalTransport {
   type: ConnectionType.Unidirectional = ConnectionType.Unidirectional
-  decodeBase64: DecodeBase64Function
+  decodeBase64: DecodeBase64
 
   constructor(
     protected readonly codec: BaseClientCodec,
@@ -116,22 +114,22 @@ export class HttpTransportClient implements UnidirectionalTransport {
     options: TransportCallOptions,
   ) {
     const { procedure, payload } = rpc
-    const requestHeaders = new Headers()
-    const fetchImpl = this.getFetch()
+    const headers = new Headers()
+    const fetch = this.getFetch()
 
     const url = this.url({ application: context.application, procedure })
 
-    if (context.auth) requestHeaders.set('Authorization', context.auth)
-    requestHeaders.set('Accept', context.contentType)
+    if (context.auth) headers.set('Authorization', context.auth)
+    headers.set('Accept', context.contentType)
 
     let body: any
 
     if (rpc.blob) {
-      requestHeaders.set('Content-Type', rpc.blob.metadata.type)
-      requestHeaders.set(NEEMATA_BLOB_HEADER, 'true')
+      headers.set('Content-Type', rpc.blob.metadata.type)
+      headers.set(NEEMATA_BLOB_HEADER, 'true')
       body = rpc.blob.source
     } else {
-      requestHeaders.set('Content-Type', context.contentType)
+      headers.set('Content-Type', context.contentType)
       body = new Uint8Array(
         payload.buffer,
         payload.byteOffset,
@@ -140,32 +138,29 @@ export class HttpTransportClient implements UnidirectionalTransport {
     }
 
     // duplex is required by fetch for stream bodies but missing from RequestInit typings
-    const requestInit: RequestInit & { duplex?: 'half' } = {
+    const request: RequestInit & { duplex?: 'half' } = {
       body,
       method: 'POST',
-      headers: requestHeaders,
+      headers,
       signal: options.signal,
       credentials: 'include',
-      // keepalive is opt-in: browsers cap total in-flight keepalive bytes at ~64KB
-      ...(options.keepalive && shouldUseKeepalive(body)
-        ? { keepalive: true }
-        : {}),
-      // undici and Chrome throw on stream request bodies without half-duplex
-      ...(rpc.blob ? { duplex: 'half' as const } : {}),
     }
 
-    if (options.streamResponse) {
-      const response = await fetchImpl(url.toString(), requestInit)
+    // keepalive is opt-in: browsers cap total in-flight keepalive bytes at ~64KB
+    if (options.keepalive && shouldUseKeepalive(body)) request.keepalive = true
+    // undici and Chrome throw on stream request bodies without half-duplex
+    if (rpc.blob) request.duplex = 'half'
 
-      if (!response.ok) {
-        return {
-          type: 'error' as const,
-          error: await response.bytes().catch(() => new Uint8Array(0)),
-          status: response.status,
-          statusText: response.statusText,
-        }
-      }
+    const streamResponse = options.streamResponse
+    const response = await fetch(url.toString(), request)
 
+    if (!response.ok) {
+      const error = await response.bytes().catch(() => new Uint8Array(0))
+      const { status, statusText } = response
+      return { type: 'error' as const, error, status, statusText }
+    }
+
+    if (streamResponse) {
       if (!response.body) {
         throw new ProtocolError(
           ErrorCode.ClientRequestError,
@@ -178,24 +173,21 @@ export class HttpTransportClient implements UnidirectionalTransport {
           const reader = response.body!.getReader()
           const decoder = new TextDecoder()
           const parser = new HttpStreamParser()
+          const emit = (data: string) => {
+            controller.enqueue(this.decodeBase64(data))
+          }
 
           try {
             while (true) {
               const { done, value } = await reader.read()
               if (done) break
               const chunk = decoder.decode(value, { stream: true })
-              parser.push(chunk, (eventData) => {
-                controller.enqueue(this.decodeBase64(eventData))
-              })
+              parser.push(chunk, emit)
             }
 
             const tail = decoder.decode()
-            parser.push(tail, (eventData) => {
-              controller.enqueue(this.decodeBase64(eventData))
-            })
-            parser.finish((eventData) => {
-              controller.enqueue(this.decodeBase64(eventData))
-            })
+            parser.push(tail, emit)
+            parser.finish(emit)
 
             controller.close()
           } catch (cause) {
@@ -212,42 +204,32 @@ export class HttpTransportClient implements UnidirectionalTransport {
       })
 
       return { type: 'rpc_stream' as const, stream }
-    } else {
-      const response = await fetchImpl(url.toString(), requestInit)
+    }
 
-      if (response.ok) {
-        const isBlob = !!response.headers.get(NEEMATA_BLOB_HEADER)
-        if (isBlob) {
-          const contentLength = response.headers.get('content-length')
-          // distinguish a missing header from a valid zero-byte blob size
-          const parsedLength = contentLength
-            ? Number.parseInt(contentLength, 10)
-            : Number.NaN
-          const size = Number.isNaN(parsedLength) ? undefined : parsedLength
-          const type =
-            response.headers.get('content-type') || 'application/octet-stream'
-          const disposition = response.headers.get('content-disposition')
-          let filename: string | undefined
-          if (disposition) {
-            const match = disposition.match(/filename="?([^"]+)"?/)
-            if (match) filename = match[1]
-          }
-          return {
-            type: 'blob' as const,
-            metadata: { type, size, filename },
-            source: response.body!,
-          }
-        } else {
-          return { type: 'rpc' as const, result: await response.bytes() }
-        }
-      } else {
-        return {
-          type: 'error' as const,
-          error: await response.bytes().catch(() => new Uint8Array(0)),
-          status: response.status,
-          statusText: response.statusText,
-        }
-      }
+    const isBlob = !!response.headers.get(NEEMATA_BLOB_HEADER)
+    if (!isBlob) {
+      const result = await response.bytes()
+      return { type: 'rpc' as const, result }
+    }
+
+    const contentLength = response.headers.get('content-length')
+    // distinguish a missing header from a valid zero-byte blob size
+    const length = contentLength
+      ? Number.parseInt(contentLength, 10)
+      : Number.NaN
+    const size = Number.isNaN(length) ? undefined : length
+    const type =
+      response.headers.get('content-type') || 'application/octet-stream'
+    const disposition = response.headers.get('content-disposition')
+    let filename: string | undefined
+    if (disposition) {
+      const match = disposition.match(/filename="?([^"]+)"?/)
+      if (match) filename = match[1]
+    }
+    return {
+      type: 'blob' as const,
+      metadata: { type, size, filename },
+      source: response.body!,
     }
   }
 }

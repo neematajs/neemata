@@ -28,18 +28,15 @@ export class EventEmitter<
   #listeners = new Map<string, Map<Callback, Set<ListenerRegistration>>>()
 
   #addRegistration(registration: ListenerRegistration) {
-    const events =
-      this.#listeners.get(registration.event) ??
-      new Map<Callback, Set<ListenerRegistration>>()
-
-    if (!this.#listeners.has(registration.event)) {
+    let events = this.#listeners.get(registration.event)
+    if (!events) {
+      events = new Map<Callback, Set<ListenerRegistration>>()
       this.#listeners.set(registration.event, events)
     }
 
-    const registrations =
-      events.get(registration.listener) ?? new Set<ListenerRegistration>()
-
-    if (!events.has(registration.listener)) {
+    let registrations = events.get(registration.listener)
+    if (!registrations) {
+      registrations = new Set<ListenerRegistration>()
       events.set(registration.listener, registrations)
     }
 

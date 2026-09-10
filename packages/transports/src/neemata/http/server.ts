@@ -454,59 +454,42 @@ export class NeemataHttpHandler {
     request: NeemataHttpRequest,
     headers: Headers,
   ) {
-    if (!this.#corsOptions) return
+    const options = this.#corsOptions
+    if (!options) return
 
     let params: Omit<HttpHandlerCorsCustomOptions, 'origin'> | null = null
 
-    if (this.#corsOptions === true) {
+    if (options === true) {
       params = { ...DEFAULT_CORS_PARAMS }
-    } else if (Array.isArray(this.#corsOptions)) {
-      if (this.#corsOptions.includes(origin)) {
+    } else if (Array.isArray(options)) {
+      if (options.includes(origin)) {
         params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
       }
-    } else if (typeof this.#corsOptions === 'object') {
-      if (
-        this.#corsOptions.origin === true ||
-        this.#corsOptions.origin.includes(origin)
-      ) {
-        params =
-          this.#corsOptions.origin === true
-            ? { ...DEFAULT_CORS_PARAMS }
-            : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-        for (const key in params) {
-          const value = this.#corsOptions[key]
-          if (value !== undefined) {
-            params[key] = value
-          }
-        }
-        // This explicit opt-in restores credentialed origin reflection without
-        // weakening the safe `cors: true` default.
-        if (this.#corsOptions.allowCredentials !== undefined) {
-          params.allowCredentials = this.#corsOptions.allowCredentials
-        }
-      }
-    } else if (typeof this.#corsOptions === 'function') {
-      const result = this.#corsOptions(origin, request)
-      if (typeof result === 'boolean') {
-        if (result) {
-          params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-        }
-      } else if (typeof result === 'object') {
-        // Returned params must still match the requesting origin, otherwise
-        // any origin would get reflected (with credentials for allowlists)
-        if (result.origin === true || result.origin.includes(origin)) {
+    } else {
+      const policy =
+        typeof options === 'function'
+          ? options.call(this, origin, request)
+          : options
+      if (policy === true) {
+        // A callback returning true has vetted this origin; cors: true has not.
+        params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
+      } else if (typeof policy === 'object') {
+        // Callback policies must still match the requesting origin.
+        if (policy.origin === true || policy.origin.includes(origin)) {
           params =
-            result.origin === true
+            policy.origin === true
               ? { ...DEFAULT_CORS_PARAMS }
               : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
           for (const key in params) {
-            const value = result[key]
+            const value = policy[key]
             if (value !== undefined) {
               params[key] = value
             }
           }
-          if (result.allowCredentials !== undefined) {
-            params.allowCredentials = result.allowCredentials
+          // This explicit opt-in restores credentialed origin reflection without
+          // weakening the safe `cors: true` default.
+          if (policy.allowCredentials !== undefined) {
+            params.allowCredentials = policy.allowCredentials
           }
         }
       }

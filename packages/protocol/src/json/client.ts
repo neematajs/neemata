@@ -41,10 +41,7 @@ export class JsonCodec extends BaseClientCodec {
     const streams: EncodeRPCStreams = {}
     let hasStreams = false
 
-    let payloadBuffer: ArrayBufferView | undefined
-    let streamsBuffer: ArrayBufferView
-
-    function _replacer(_key: string, value: any) {
+    function replacer(_key: string, value: unknown) {
       if (value instanceof ProtocolBlob) {
         hasStreams = true
         const stream = context.addStream(value)
@@ -54,22 +51,18 @@ export class JsonCodec extends BaseClientCodec {
       return value
     }
 
-    if (typeof data !== 'undefined') {
-      payloadBuffer = this.encode(data, _replacer)
-    }
+    const payload =
+      typeof data === 'undefined' ? undefined : this.encode(data, replacer)
 
     if (hasStreams) {
-      streamsBuffer = this.encode(streams)
-      buffers.push(
-        encodeNumber(streamsBuffer.byteLength, 'Uint32'),
-        streamsBuffer,
-      )
+      const metadata = this.encode(streams)
+      buffers.push(encodeNumber(metadata.byteLength, 'Uint32'), metadata)
     } else {
       buffers.push(encodeNumber(0, 'Uint32'))
     }
 
-    if (typeof payloadBuffer !== 'undefined') {
-      buffers.push(payloadBuffer)
+    if (typeof payload !== 'undefined') {
+      buffers.push(payload)
     }
 
     return concat(...buffers)
@@ -83,31 +76,28 @@ export class JsonCodec extends BaseClientCodec {
   }
 
   decodeRPC(
-    _buffer: ArrayBufferView,
+    data: ArrayBufferView,
     context: DecodeRPCContext<ProtocolBlobInterface>,
   ) {
-    const buffer = new Uint8Array(
-      _buffer.buffer,
-      _buffer.byteOffset,
-      _buffer.byteLength,
-    )
-    const streamsLength = Number(decodeNumber(buffer, 'Uint32'))
+    const buffer = new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    const streamsLength = decodeNumber(buffer, 'Uint32')
     const hasStreams = streamsLength > 0
-    const payloadBuffer = buffer.subarray(
-      Uint32Array.BYTES_PER_ELEMENT + streamsLength,
-    )
-    const hasPayload = payloadBuffer.byteLength > 0
+    const payloadOffset = Uint32Array.BYTES_PER_ELEMENT + streamsLength
+    const payload = buffer.subarray(payloadOffset)
 
-    const streams = hasStreams
-      ? (this.decode(
-          buffer.subarray(
-            Uint32Array.BYTES_PER_ELEMENT,
-            Uint32Array.BYTES_PER_ELEMENT + streamsLength,
-          ),
-        ) as EncodeRPCStreams)
-      : {}
+    let streams: EncodeRPCStreams = {}
+    if (hasStreams) {
+      const metadata = buffer.subarray(
+        Uint32Array.BYTES_PER_ELEMENT,
+        payloadOffset,
+      )
+      streams = this.decode(metadata)
+    }
 
-    const replacer = (_key: string, value: any) => {
+    if (payload.byteLength === 0) return undefined
+    if (!hasStreams) return this.decode(payload)
+
+    const reviver = (_key: string, value: unknown) => {
       if (typeof value === 'string' && isStreamId(value)) {
         const id = deserializeStreamId(value)
         const metadata = streams[id]
@@ -116,8 +106,6 @@ export class JsonCodec extends BaseClientCodec {
       return value
     }
 
-    if (!hasPayload) return undefined
-    else if (hasStreams) return this.decode(payloadBuffer, replacer)
-    else return this.decode(payloadBuffer)
+    return this.decode(payload, reviver)
   }
 }
