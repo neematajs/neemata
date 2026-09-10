@@ -1,13 +1,18 @@
+import { randomUUID } from 'node:crypto'
+
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
-import { describe, expect, it } from 'vitest'
+import { Redis } from 'ioredis'
+import { Redis as Valkey } from 'iovalkey'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { createRedisWorkflowRuntime } from '../src/adapters/redis.ts'
 import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
@@ -42,9 +47,22 @@ const testContainer = new Container({ logger })
 
 function workflowRuntimeAdapterContract(
   name: string,
-  createRuntime: RuntimeFactory,
+  runtimeFactory: RuntimeFactory,
 ) {
   describe(`${name} workflow runtime adapter contract`, () => {
+    const runtimes: WorkflowRuntimeAdapter[] = []
+    const createRuntime: RuntimeFactory = async (options) => {
+      const runtime = await runtimeFactory(options)
+      runtimes.push(runtime)
+      return runtime
+    }
+
+    afterEach(async () => {
+      await Promise.allSettled(
+        runtimes.splice(0).map(async (runtime) => await runtime.dispose?.()),
+      )
+    })
+
     it('starts workflow runs through the runtime client', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-contract-workflow',
@@ -2758,6 +2776,12 @@ function workflowRuntimeAdapterContract(
           input: { scenario: 'beta' },
         }),
       ).rejects.toThrow('Conflicting child run')
+      await expect(
+        runtime.store.ensureChildRun({
+          ...childParams,
+          idempotencyKey: ['child', 'different-logical-operation'],
+        }),
+      ).rejects.toThrow('Conflicting child run')
     })
 
     it('refuses to start a child run on a terminal child record', async () => {
@@ -3699,6 +3723,52 @@ workflowRuntimeAdapterContract('postgres', async (options) => {
   await installPostgresWorkflowSchemaForTesting(connection)
   return createPostgresWorkflowRuntime({ connection, ...options })
 })
+if (process.env.REDIS_URL) {
+  workflowRuntimeAdapterContract('redis', (options) => {
+    const client = new Redis(process.env.REDIS_URL!, {
+      maxRetriesPerRequest: 1,
+      commandTimeout: 2_000,
+    })
+    const runtime = createRedisWorkflowRuntime({
+      client,
+      keyPrefix: `nmtjs:test:contract:${randomUUID()}:`,
+      ...options,
+    })
+    return {
+      ...runtime,
+      async dispose() {
+        try {
+          await runtime.dispose?.()
+        } finally {
+          await client.quit()
+        }
+      },
+    }
+  })
+}
+if (process.env.VALKEY_URL) {
+  workflowRuntimeAdapterContract('valkey', (options) => {
+    const client = new Valkey(process.env.VALKEY_URL!, {
+      maxRetriesPerRequest: 1,
+      commandTimeout: 2_000,
+    })
+    const runtime = createRedisWorkflowRuntime({
+      client,
+      keyPrefix: `nmtjs:test:contract:valkey:${randomUUID()}:`,
+      ...options,
+    })
+    return {
+      ...runtime,
+      async dispose() {
+        try {
+          await runtime.dispose?.()
+        } finally {
+          await client.quit()
+        }
+      },
+    }
+  })
+}
 
 describe('postgres workflow runtime adapter invariant recovery', () => {
   it('lists each run family member once when child origins duplicate', async () => {

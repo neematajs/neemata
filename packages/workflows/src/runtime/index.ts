@@ -30,6 +30,7 @@ export type {
   WorkflowRuntimeAtomicStart,
 } from './coordinator.ts'
 export type {
+  AttemptDispatchOptions,
   AttemptHeartbeatResult,
   AttemptExecutor,
   CommandReleaseOptions,

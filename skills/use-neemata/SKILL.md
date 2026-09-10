@@ -37,8 +37,8 @@ Exceptions:
 - [Subscriptions](references/subscriptions.md) - typed event/channel contracts.
 - [PubSub](references/pubsub.md) - ephemeral fanout, publish/subscribe.
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
-  contracts, implementations, postgres runtime, client (read models, watch,
-  retry/delete), inspector serialization, Neem integration.
+  contracts, implementations, Postgres and Redis/Valkey runtimes, client (read
+  models, watch, retry/delete), inspector serialization, Neem integration.
 - [Type System](references/type-system.md) - `t.*` schemas and encode/decode.
 - [Client Usage](references/client-usage.md) - typed clients, transports,
   streams, blobs, flow control, cancellation.

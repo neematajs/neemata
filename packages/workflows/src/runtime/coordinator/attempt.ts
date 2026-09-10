@@ -7,7 +7,7 @@ import { failNodeAndRun } from './sinks.ts'
 
 const TASK_RUN_NODE_NAME = '$task'
 
-export async function dispatchTaskRunAttempt(input: {
+export type DispatchTaskRunAttemptInput = {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
@@ -18,7 +18,11 @@ export async function dispatchTaskRunAttempt(input: {
   readonly timeout?: DurationString
   readonly startAt?: Date
   readonly throwOnDispatchFailure?: boolean
-}) {
+}
+
+export async function dispatchTaskRunAttempt(
+  input: DispatchTaskRunAttemptInput,
+) {
   await input.store.createNode({
     runId: input.taskRunId,
     name: TASK_RUN_NODE_NAME,

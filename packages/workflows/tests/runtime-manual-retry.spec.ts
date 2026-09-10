@@ -1,6 +1,10 @@
+import { randomUUID } from 'node:crypto'
+
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
 import { t } from '@nmtjs/type'
+import { Redis } from 'ioredis'
+import { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -8,6 +12,7 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { createRedisWorkflowRuntime } from '../src/adapters/redis.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -25,12 +30,17 @@ import {
   timeoutExpiredWorkflowRuns,
 } from '../src/runtime/worker.ts'
 
-for (const adapter of ['memory', 'postgres'] as const) {
-  describe(`${adapter} manual retry`, () => {
+for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
+  const unavailable =
+    (adapter === 'redis' && !process.env.REDIS_URL) ||
+    (adapter === 'valkey' && !process.env.VALKEY_URL)
+  describe.skipIf(unavailable)(`${adapter} manual retry`, () => {
     let database: PGlite | undefined
+    const cleanup: (() => Promise<void>)[] = []
     afterEach(async () => {
       vi.useRealTimers()
       await database?.close()
+      for (const dispose of cleanup.splice(0)) await dispose()
     })
     async function setup(maxDeliveries = 20) {
       const container = new Container({
@@ -41,6 +51,42 @@ for (const adapter of ['memory', 'postgres'] as const) {
           ...createInMemoryWorkflowRuntime({ maxDeliveries }),
           container,
         }
+      if (adapter === 'redis' || adapter === 'valkey') {
+        let client: Redis | Valkey
+        if (adapter === 'redis')
+          client = new Redis(process.env.REDIS_URL!, {
+            maxRetriesPerRequest: 1,
+            commandTimeout: 2000,
+          })
+        else
+          client = new Valkey(process.env.VALKEY_URL!, {
+            maxRetriesPerRequest: 1,
+            commandTimeout: 2000,
+          })
+        const keyPrefix = `manual-retry:${randomUUID()}:`
+        const runtime = createRedisWorkflowRuntime({
+          client,
+          keyPrefix,
+          maxDeliveries,
+        })
+        cleanup.push(async () => {
+          await runtime.dispose?.()
+          let cursor = '0'
+          do {
+            const result = await client.scan(
+              cursor,
+              'MATCH',
+              `${keyPrefix}*`,
+              'COUNT',
+              1000,
+            )
+            cursor = result[0]
+            if (result[1].length) await client.del(...result[1])
+          } while (cursor !== '0')
+          await client.quit()
+        })
+        return { ...runtime, container }
+      }
       database = new PGlite()
       const connection = createPostgresWorkflowConnection(database)
       await installPostgresWorkflowSchemaForTesting(connection)
