@@ -430,11 +430,16 @@ function assertMapConcurrency(options: { readonly concurrency?: number }) {
 
 function createBranchCaseHelpers(): BranchCaseHelpers {
   return Object.freeze({
-    activity: (options: any) => Object.freeze({ kind: 'activity', ...options }),
-    task: (task: AnyTaskDefinition, options?: any) =>
-      Object.freeze({ kind: 'task', target: task, ...options }),
-    workflow: (workflow: AnyWorkflowDefinition, options?: any) =>
-      Object.freeze({ kind: 'workflow', target: workflow, ...options }),
+    activity: (options: Parameters<BranchCaseHelpers['activity']>[0]) =>
+      Object.freeze({ kind: 'activity', ...options }),
+    task: (
+      task: AnyTaskDefinition,
+      options?: Parameters<BranchCaseHelpers['task']>[1],
+    ) => Object.freeze({ kind: 'task', target: task, ...options }),
+    workflow: (
+      workflow: AnyWorkflowDefinition,
+      options?: Parameters<BranchCaseHelpers['workflow']>[1],
+    ) => Object.freeze({ kind: 'workflow', target: workflow, ...options }),
   }) as BranchCaseHelpers
 }
 
@@ -540,11 +545,11 @@ class WorkflowDraftBuilder<Name extends string> {
       tags: this.options.tags,
       idempotency: this.options.idempotency,
       unique: this.options.unique,
-    }) as any
+    })
   }
 
   private withNode(node: WorkflowNode) {
-    return new WorkflowDraftBuilder(this.options, [...this.nodes, node]) as any
+    return new WorkflowDraftBuilder(this.options, [...this.nodes, node])
   }
 }
 

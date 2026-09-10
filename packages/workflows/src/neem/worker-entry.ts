@@ -1,4 +1,5 @@
 import type { Container } from '@nmtjs/core'
+import { createFuture } from '@nmtjs/common'
 import {
   ExecutionEnvironment,
   ExecutionEnvironmentLifecycleHook,
@@ -35,17 +36,12 @@ export function defineWorkflowsWorker<
       let workerLoop: Promise<void> | undefined
       let runtime: WorkflowRuntimeAdapter | undefined
       let execution: ExecutionEnvironment | undefined
-      let resolveFinished!: () => void
-      let rejectFinished!: (error: unknown) => void
-      const finished = new Promise<void>((resolve, reject) => {
-        resolveFinished = resolve
-        rejectFinished = reject
-      })
+      const finished = createFuture<void>()
       // Older hosts may not observe the lifecycle promise.
-      void finished.catch(() => {})
+      void finished.promise.catch(() => {})
 
       return {
-        finished,
+        finished: finished.promise,
         async start() {
           const config = await resolveWorkflowsConfig(ctx.definition)
           const executionPool =
@@ -86,12 +82,12 @@ export function defineWorkflowsWorker<
             onError: (error) =>
               ctx.logger.error({ err: error }, 'Neem workflows worker error'),
           })
-          workerLoop.then(resolveFinished, (error: unknown) => {
+          workerLoop.then(finished.resolve, (error: unknown) => {
             ctx.logger.error(
               { err: error },
               'Neem workflows worker loop failed',
             )
-            rejectFinished(error)
+            finished.reject(error)
           })
           await execution.lifecycleHooks.callHook(
             ExecutionEnvironmentLifecycleHook.Start,

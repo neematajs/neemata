@@ -65,7 +65,7 @@ function hideFirstUniquePrecheck(
 }
 
 test('active scope rejects a duplicate while the holder is non-terminal', async () => {
-  const { connection, client } = await createHarness()
+  const { client } = await createHarness()
 
   const first = await client.start(
     workflow,

@@ -74,13 +74,13 @@ const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
 export function createPostgresWorkflowConnection(
   client: WorkflowPostgresExternalClient,
 ): WorkflowPostgresConnection {
-  let plainClientTransactionQueue = Promise.resolve()
-  const runPlainClientTransaction = async <T>(
+  let transactionQueue = Promise.resolve()
+  const serializeTransaction = async <T>(
     handler: () => Promise<T>,
   ): Promise<T> => {
-    const previous = plainClientTransactionQueue
+    const previous = transactionQueue
     let release = () => {}
-    plainClientTransactionQueue = new Promise<void>((resolve) => {
+    transactionQueue = new Promise<void>((resolve) => {
       release = resolve
     })
     await previous
@@ -88,6 +88,21 @@ export function createPostgresWorkflowConnection(
       return await handler()
     } finally {
       release()
+    }
+  }
+
+  const runTransaction = async <T>(
+    connection: WorkflowPostgresQueryClient,
+    handler: (connection: WorkflowPostgresConnection) => Promise<T>,
+  ): Promise<T> => {
+    try {
+      await connection.query('BEGIN')
+      const result = await handler(createTransactionConnection(connection))
+      await connection.query('COMMIT')
+      return result
+    } catch (error) {
+      await rollbackIgnoringFailure(connection)
+      throw error
     }
   }
 
@@ -103,29 +118,13 @@ export function createPostgresWorkflowConnection(
       if (hasConnectApi(client)) {
         const tx = await client.connect()
         try {
-          await tx.query('BEGIN')
-          const result = await handler(createTransactionConnection(tx))
-          await tx.query('COMMIT')
-          return result
-        } catch (error) {
-          await rollbackIgnoringFailure(tx)
-          throw error
+          return await runTransaction(tx, handler)
         } finally {
           tx.release()
         }
       }
 
-      return runPlainClientTransaction(async () => {
-        try {
-          await client.query('BEGIN')
-          const result = await handler(createTransactionConnection(client))
-          await client.query('COMMIT')
-          return result
-        } catch (error) {
-          await rollbackIgnoringFailure(client)
-          throw error
-        }
-      })
+      return serializeTransaction(() => runTransaction(client, handler))
     },
   }
 }

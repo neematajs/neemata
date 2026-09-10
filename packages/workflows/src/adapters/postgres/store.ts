@@ -71,26 +71,33 @@ export const createPostgresWorkflowStore = (
             `,
             [params.runId],
           )
-          const snapshots: RunSnapshot[] = rows.map((row) => ({
-            run: mapRun(row),
-            nodes: jsonRecordArrayColumn(row.nodes).map((node) =>
-              mapNode(withDateColumns(node, ['created_at', 'updated_at'])),
-            ),
-            children: jsonRecordArrayColumn(row.children).map((child) =>
-              mapNodeChild(
-                withDateColumns(child, ['created_at', 'updated_at']),
-              ),
-            ),
-            attempts: jsonRecordArrayColumn(row.attempts).map((attempt) =>
-              mapAttempt(
-                withDateColumns(attempt, [
+          const snapshots: RunSnapshot[] = rows.map((row) => {
+            const run = mapRun(row)
+            const nodes = jsonRecordArrayColumn(row.nodes).map((node) => {
+              const dated = withDateColumns(node, ['created_at', 'updated_at'])
+              return mapNode(dated)
+            })
+            const children = jsonRecordArrayColumn(row.children).map(
+              (child) => {
+                const dated = withDateColumns(child, [
+                  'created_at',
+                  'updated_at',
+                ])
+                return mapNodeChild(dated)
+              },
+            )
+            const attempts = jsonRecordArrayColumn(row.attempts).map(
+              (attempt) => {
+                const dated = withDateColumns(attempt, [
                   'dispatched_at',
                   'heartbeat_at',
                   'completed_at',
-                ]),
-              ),
-            ),
-          }))
+                ])
+                return mapAttempt(dated)
+              },
+            )
+            return { run, nodes, children, attempts }
+          })
           const reopening = validateFailedRunRetry(snapshots, params)
           const runIds = reopening.map(({ run }) => run.id)
           const guards = await many<{
@@ -181,14 +188,12 @@ export const createPostgresWorkflowStore = (
               (child) =>
                 child.nodeName === '$task' && child.childKey === '$self',
             )!
-            const attempt = (
-              await scoped.ensureChildAttempt({
-                runId: root.id,
-                nodeName: child.nodeName,
-                childKey: child.childKey,
-                input: root.input,
-              })
-            ).attempt
+            const { attempt } = await scoped.ensureChildAttempt({
+              runId: root.id,
+              nodeName: child.nodeName,
+              childKey: child.childKey,
+              input: root.input,
+            })
             const attemptExecutor = createAttemptExecutor(commands)
             await attemptExecutor.dispatchTask({
               kind: 'taskAttempt',

@@ -143,18 +143,14 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: () =>
-        hasStoredNodeInput(existing)
-          ? existing.input
-          : selected.input
-            ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
-              )
-            : input.run.input,
+      resolveNodeInput: () => {
+        if (hasStoredNodeInput(existing)) return existing.input
+        if (!selected.input) return input.run.input
+
+        return runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      },
     })
   }
 
@@ -187,18 +183,14 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: () =>
-        hasStoredNodeInput(existing)
-          ? existing.input
-          : selected.input
-            ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
-              )
-            : input.run.input,
+      resolveNodeInput: () => {
+        if (hasStoredNodeInput(existing)) return existing.input
+        if (!selected.input) return input.run.input
+
+        return runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      },
     })
   }
 
@@ -217,23 +209,18 @@ export async function dispatchBranchNode(
   // Once the child has an attempt, its input is authoritative — never re-run
   // the user's input callback on re-entry.
   const hasAttempt = child.attemptCount > 0
-  const nodeInput = hasAttempt
-    ? undefined
-    : decodeWorkflowUserSchemaValue(
-        selectedActivityDeclaration.input,
-        selected.input
-          ? runWorkflowUserCallback(() =>
-              selected.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
-            )
-          : input.run.input,
-        `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-      )
-
+  let nodeInput: unknown
   if (!hasAttempt) {
+    const rawInput = selected.input
+      ? runWorkflowUserCallback(() =>
+          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        )
+      : input.run.input
+    nodeInput = decodeWorkflowUserSchemaValue(
+      selectedActivityDeclaration.input,
+      rawInput,
+      `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+    )
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,

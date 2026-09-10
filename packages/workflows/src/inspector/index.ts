@@ -17,6 +17,7 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  BranchCaseDefinition,
   BranchCaseKind,
   WorkflowNodeKind,
 } from '../types/index.ts'
@@ -62,7 +63,7 @@ export type WorkflowGraphCase = {
   readonly target?: WorkflowGraphTarget
 }
 
-function presentationMetadata(input: {
+function metadata(input: {
   readonly title?: string
   readonly description?: string
 }) {
@@ -74,91 +75,68 @@ function presentationMetadata(input: {
   }
 }
 
-function serializeWorkflowGraphTarget(
+function serializeTarget(
   kind: WorkflowGraphTarget['kind'],
   target: AnyTaskDefinition | AnyWorkflowDefinition,
 ): WorkflowGraphTarget {
   return {
     kind,
     name: target.name,
-    ...presentationMetadata(target),
+    ...metadata(target),
   }
 }
 
 export function serializeWorkflowGraph(
   definition: AnyWorkflowDefinition,
 ): WorkflowGraph {
-  return {
-    name: definition.name,
-    ...presentationMetadata(definition),
-    nodes: definition.nodes.map((node): WorkflowGraphNode => {
-      switch (node.kind) {
-        case 'activity':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-          }
-        case 'task':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-            target: serializeWorkflowGraphTarget('task', node.task),
-          }
-        case 'workflow':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-            target: serializeWorkflowGraphTarget('workflow', node.workflow),
-          }
-        case 'branch':
-        case 'parallel':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-            cases: Object.entries(node.cases).map(
-              ([key, branchCase]): WorkflowGraphCase => {
-                const base = {
-                  key,
-                  kind: branchCase.kind,
-                  ...presentationMetadata(branchCase),
-                }
-                if (branchCase.kind === 'activity') return base
+  const base = { name: definition.name, ...metadata(definition) }
+  const nodes = definition.nodes.map((node): WorkflowGraphNode => {
+    const base = { name: node.name, kind: node.kind, ...metadata(node) }
 
-                // BranchCaseDefinition's conditional payload doesn't narrow on
-                // `kind` at the union default, so the cast lives here once.
-                const target = (
-                  branchCase as unknown as {
-                    target: AnyTaskDefinition | AnyWorkflowDefinition
-                  }
-                ).target
-                return {
-                  ...base,
-                  target: serializeWorkflowGraphTarget(branchCase.kind, target),
-                }
-              },
-            ),
-          }
-        case 'mapTask':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-            target: serializeWorkflowGraphTarget('task', node.task),
-          }
-        case 'mapWorkflow':
-          return {
-            name: node.name,
-            kind: node.kind,
-            ...presentationMetadata(node),
-            target: serializeWorkflowGraphTarget('workflow', node.workflow),
-          }
+    switch (node.kind) {
+      case 'activity':
+        return base
+      case 'task':
+      case 'mapTask': {
+        const target = serializeTarget('task', node.task)
+        return { ...base, target }
       }
-    }),
-  }
+      case 'workflow':
+      case 'mapWorkflow': {
+        const target = serializeTarget('workflow', node.workflow)
+        return { ...base, target }
+      }
+      case 'branch':
+      case 'parallel': {
+        const cases: WorkflowGraphCase[] = []
+
+        for (const key in node.cases) {
+          const branchCase = node.cases[key]
+          const graphCase = {
+            key,
+            kind: branchCase.kind,
+            ...metadata(branchCase),
+          }
+          if (branchCase.kind === 'activity') {
+            cases.push(graphCase)
+            continue
+          }
+
+          // BranchCaseDefinition's conditional payload doesn't narrow on
+          // `kind` at the union default, so the cast lives here once.
+          const reference = branchCase as BranchCaseDefinition<
+            'task' | 'workflow'
+          >
+          const target = serializeTarget(reference.kind, reference.target)
+          cases.push({ ...graphCase, target })
+        }
+
+        return { ...base, cases }
+      }
+    }
+  })
+
+  return { ...base, nodes }
 }
 
 export type WorkflowCatalog = {
@@ -181,13 +159,13 @@ export function serializeWorkflowCatalog(input: {
   readonly workflows?: Iterable<AnyWorkflowDefinition>
   readonly tasks?: Iterable<AnyTaskDefinition>
 }): WorkflowCatalog {
-  return {
-    workflows: Array.from(input.workflows ?? [], serializeWorkflowGraph),
-    tasks: Array.from(input.tasks ?? [], (task) => ({
-      name: task.name,
-      ...presentationMetadata(task),
-    })),
-  }
+  const workflows = Array.from(input.workflows ?? [], serializeWorkflowGraph)
+  const tasks = Array.from(input.tasks ?? [], (task) => ({
+    name: task.name,
+    ...metadata(task),
+  }))
+
+  return { workflows, tasks }
 }
 
 /**
@@ -315,38 +293,41 @@ export function nodeUnits(
   nodeName: string,
 ): readonly NodeUnit[] {
   const childRuns = new Map(detail.childRuns.map((run) => [run.id, run]))
-  const attemptsByChildKey = new Map<string, AttemptSummary[]>()
+  const byChild = new Map<string, AttemptSummary[]>()
   for (const attempt of detail.attempts) {
     if (attempt.nodeName !== nodeName) continue
-    const group = attemptsByChildKey.get(attempt.childKey) ?? []
+    const group = byChild.get(attempt.childKey) ?? []
     group.push(attempt)
-    attemptsByChildKey.set(attempt.childKey, group)
+    byChild.set(attempt.childKey, group)
   }
-  for (const group of attemptsByChildKey.values()) {
+  for (const group of byChild.values()) {
     group.sort((left, right) => left.attemptNumber - right.attemptNumber)
   }
 
-  return detail.children
-    .filter((child) => child.nodeName === nodeName)
-    .sort((left, right) => {
-      const byOrdinal = left.ordinal - right.ordinal
-      if (byOrdinal !== 0) return byOrdinal
-      return left.childKey.localeCompare(right.childKey)
-    })
-    .map((child) => {
-      const parsed = parseChildKey(child.childKey)
-      const childRun =
-        child.childRunId === undefined
-          ? undefined
-          : childRuns.get(child.childRunId)
-      return {
-        key: child.childKey,
-        ...(parsed === undefined ? {} : { parsed }),
-        child,
-        attempts: attemptsByChildKey.get(child.childKey) ?? [],
-        ...(childRun === undefined ? {} : { childRun }),
-      }
-    })
+  const children = detail.children.filter(
+    (child) => child.nodeName === nodeName,
+  )
+  children.sort((left, right) => {
+    const byOrdinal = left.ordinal - right.ordinal
+    if (byOrdinal !== 0) return byOrdinal
+    return left.childKey.localeCompare(right.childKey)
+  })
+
+  return children.map((child) => {
+    const parsed = parseChildKey(child.childKey)
+    const childRun =
+      child.childRunId === undefined
+        ? undefined
+        : childRuns.get(child.childRunId)
+    const attempts = byChild.get(child.childKey) ?? []
+    return {
+      key: child.childKey,
+      ...(parsed === undefined ? {} : { parsed }),
+      child,
+      attempts,
+      ...(childRun === undefined ? {} : { childRun }),
+    }
+  })
 }
 
 export function toRunSummaryDto(summary: RunSummary): RunSummaryDto {
