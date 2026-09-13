@@ -33,6 +33,11 @@
       "import": "./dist/adapters/postgres/drizzle.js",
       "module-sync": "./dist/adapters/postgres/drizzle.js"
     },
+    "./redis": {
+      "types": "./src/adapters/redis.ts",
+      "import": "./dist/adapters/redis.js",
+      "module-sync": "./dist/adapters/redis.js"
+    },
     "./neem": {
       "types": "./src/neem/index.ts",
       "import": "./dist/neem/index.js",
@@ -81,6 +86,11 @@
         "import": "./dist/adapters/postgres/drizzle.js",
         "module-sync": "./dist/adapters/postgres/drizzle.js"
       },
+      "./redis": {
+        "types": "./dist/adapters/redis.d.ts",
+        "import": "./dist/adapters/redis.js",
+        "module-sync": "./dist/adapters/redis.js"
+      },
       "./neem": {
         "types": "./dist/neem/index.d.ts",
         "import": "./dist/neem/index.js",
@@ -110,10 +120,18 @@
     "cron-parser": "^5.6.1"
   },
   "peerDependencies": {
-    "drizzle-orm": ">=1.0.0-rc.4 <2.0.0"
+    "drizzle-orm": ">=1.0.0-rc.4 <2.0.0",
+    "ioredis": "^5.10.1",
+    "iovalkey": "^0.3.3"
   },
   "peerDependenciesMeta": {
     "drizzle-orm": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "iovalkey": {
       "optional": true
     }
   },
@@ -128,6 +146,8 @@
     "@types/pg": "^8.20.0",
     "drizzle-kit": "1.0.0-rc.4",
     "drizzle-orm": "1.0.0-rc.4",
+    "ioredis": "^5.10.1",
+    "iovalkey": "^0.3.3",
     "pg": "^8.22.0"
   }
 }
