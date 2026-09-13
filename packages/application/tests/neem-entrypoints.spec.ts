@@ -119,6 +119,9 @@ describe('Neem application entrypoints', () => {
       await created.start()
 
       expect(created.host.gateway.options.identity).toBe(identity)
+      expect(created).not.toHaveProperty('reload')
+      expect(created.host).not.toHaveProperty('reload')
+      expect(created.host.gateway).not.toHaveProperty('reload')
     } finally {
       await created.stop()
       channel.port1.close()
