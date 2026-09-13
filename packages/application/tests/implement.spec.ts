@@ -58,7 +58,7 @@ describe('contract implementation helper', () => {
         },
       ),
       health: api.health((_ctx, input) => {
-        expectTypeOf(input).toEqualTypeOf<never>()
+        expectTypeOf(input).toEqualTypeOf<undefined>()
         return { ok: true }
       }),
     })

@@ -11,8 +11,10 @@ export class EnumType<
     values: T,
   ): EnumType<core.util.ToEnum<T[number]>>
   static factory<T extends core.util.EnumLike | string[]>(values: T) {
+    const schema = zodEnum(values as any)
     return new EnumType({
-      encodeZodType: zodEnum(values as any),
+      encodeZodType: schema,
+      runtimeZodType: schema,
       props: { values },
     })
   }

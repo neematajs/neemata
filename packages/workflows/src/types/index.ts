@@ -1,4 +1,4 @@
-import type { BaseTypeAny, t } from '@nmtjs/type'
+import type { WireSchema } from '@nmtjs/common/schema'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -69,11 +69,19 @@ export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
 
-export type Schema = BaseTypeAny
+export type Schema = WireSchema.Codec
 
-export type SchemaInput<T extends Schema> = t.infer.decode.input<T>
+/** Incoming wire value accepted by starts, schedules, and input mappers. */
+export type SchemaInput<T extends Schema> = WireSchema.DecodeInput<T>
 
-export type SchemaOutput<T extends Schema> = t.infer.decode.output<T>
+/** Runtime value exposed to handlers and workflow callbacks. */
+export type SchemaOutput<T extends Schema> = WireSchema.DecodeOutput<T>
+
+/** Runtime value accepted from handlers and workflow output producers. */
+export type SchemaEncodeInput<T extends Schema> = WireSchema.EncodeInput<T>
+
+/** Canonical wire value persisted by the workflow runtime. */
+export type SchemaEncodeOutput<T extends Schema> = WireSchema.EncodeOutput<T>
 
 export type SchemaBoundary<In = unknown, Out = In> = {
   readonly in: In

@@ -5,7 +5,8 @@ import { BaseType } from './base.ts'
 
 export class UnknownType extends BaseType<ZodMiniUnknown> {
   static factory() {
-    return new UnknownType({ encodeZodType: zodUnknown() })
+    const schema = zodUnknown()
+    return new UnknownType({ encodeZodType: schema, runtimeZodType: schema })
   }
 }
 

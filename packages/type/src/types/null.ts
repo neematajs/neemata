@@ -5,7 +5,8 @@ import { BaseType } from './base.ts'
 
 export class NullType extends BaseType<ZodMiniNull> {
   static factory() {
-    return new NullType({ encodeZodType: zodNull() })
+    const schema = zodNull()
+    return new NullType({ encodeZodType: schema, runtimeZodType: schema })
   }
 }
 

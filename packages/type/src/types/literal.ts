@@ -8,8 +8,10 @@ export class LiteralType<
   T extends PrimitiveValueType = PrimitiveValueType,
 > extends BaseType<ZodMiniLiteral<T>, ZodMiniLiteral<T>, { value: T }> {
   static factory<T extends PrimitiveValueType>(value: T) {
+    const schema = zodLiteral(value)
     return new LiteralType<T>({
-      encodeZodType: zodLiteral(value),
+      encodeZodType: schema,
+      runtimeZodType: schema,
       props: { value },
     })
   }

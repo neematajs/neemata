@@ -1,7 +1,25 @@
-import type { ClientCore, ConnectionState } from '../core.ts'
-import type { PingLayerApi } from '../layers/ping.ts'
+import type { ClientCore } from '../core.ts'
+import type { ClientDisconnectReason } from '../transport.ts'
+import type { ConnectionState, PingLayerApi } from '../types.ts'
 
-export type ClientDisconnectReason = 'client' | 'server' | (string & {})
+export type ClientLogEvent = ClientPluginEvent
+
+export interface LoggingPluginOptions {
+  includeBodies?: boolean
+  onEvent(event: ClientLogEvent): void | Promise<void>
+  mapEvent?(event: ClientLogEvent): ClientLogEvent | null
+  onSinkError?(error: unknown, event: ClientLogEvent): void
+}
+
+export interface ReconnectPluginOptions {
+  initialTimeout?: number
+  maxTimeout?: number
+}
+
+export interface HeartbeatPluginOptions {
+  interval?: number
+  timeout?: number
+}
 
 export interface ReconnectConfig {
   initialTimeout?: number

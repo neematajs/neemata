@@ -6,7 +6,7 @@ import type { GatewayApi, GatewayApiCallOptions } from '@nmtjs/gateway'
 import type { ServerWebSocketRuntimeOptions } from '@nmtjs/transports/http-server'
 import { RuntimeClient } from '@nmtjs/client'
 import { WsTransportFactory } from '@nmtjs/client/ws'
-import { blobType, c } from '@nmtjs/contract'
+import { c } from '@nmtjs/contract'
 import { Container, createLogger, Hooks } from '@nmtjs/core'
 import { Gateway, GatewayInjectables } from '@nmtjs/gateway'
 import {
@@ -23,7 +23,7 @@ import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
 import { createServerHost } from '@nmtjs/transports/http-server/node'
 import { neemataWebSocket } from '@nmtjs/transports/neemata/ws'
-import { t } from '@nmtjs/type'
+import { blobType, t } from '@nmtjs/type'
 import { afterEach, describe, expect, it } from 'vitest'
 
 /**

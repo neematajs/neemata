@@ -7,7 +7,7 @@ export interface DuplexStreamOptions<O = unknown, I = O> {
     consumed?: O,
   ) => MaybePromise<void>
   cancel?: (reason: unknown) => MaybePromise<void>
-  transform?: (chunk: I) => O
+  transform?: (chunk: I) => MaybePromise<O>
   close?: () => void
   readableStrategy?: globalThis.QueuingStrategy<O>
   writableStrategy?: globalThis.QueuingStrategy<I>
@@ -39,11 +39,11 @@ export class DuplexStream<O = unknown, I = O> {
           // @ts-expect-error
           this.writable = new globalThis.WritableStream<I>(
             {
-              write: (_chunk) => {
+              write: async (_chunk) => {
                 let chunk: O
                 if (options.transform) {
                   try {
-                    chunk = options.transform(_chunk)
+                    chunk = await options.transform(_chunk)
                   } catch (error) {
                     // reject the write AND error the readable — otherwise a
                     // pending reader would hang forever on a bad chunk
@@ -56,7 +56,7 @@ export class DuplexStream<O = unknown, I = O> {
                 controller.enqueue(chunk)
                 this.#queuedChunks.push(chunk)
                 if (!this.#draining && (controller.desiredSize ?? 1) <= 0) {
-                  return new Promise<void>((resolve) => {
+                  await new Promise<void>((resolve) => {
                     this.#parkedWrites.push(resolve)
                   })
                 }

@@ -25,6 +25,13 @@ export * from './union.ts'
 export * from './unknown.ts'
 
 export namespace infer {
+  export namespace parse {
+    export type input<T extends BaseTypeAny> =
+      T['runtimeZodType']['_zod']['input']
+    export type output<T extends BaseTypeAny> =
+      T['runtimeZodType']['_zod']['output']
+  }
+
   export namespace decode {
     export type input<T extends BaseTypeAny> =
       T['decodeZodType']['_zod']['input']

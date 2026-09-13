@@ -9,7 +9,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
-import { decodeSchemaValue, resolveTags } from './coordinator/codec.ts'
+import { canonicalizeSchemaInput, resolveTags } from './coordinator/codec.ts'
 import { parseDurationMs } from './duration.ts'
 
 export type StoredWorkflowSchedule = {
@@ -59,28 +59,30 @@ export type NormalizedScheduleEntry = {
   readonly nextRunAt: Date
 }
 
-export function normalizeScheduleDefinitions(
+export async function normalizeScheduleDefinitions(
   definitions: readonly AnyScheduleDefinition[],
   now = new Date(),
-): readonly NormalizedScheduleEntry[] {
+): Promise<readonly NormalizedScheduleEntry[]> {
   const names = new Set<string>()
-  return definitions.map((definition) => {
-    if (names.has(definition.name)) {
-      throw new Error(`Duplicate workflow schedule [${definition.name}]`)
-    }
-    names.add(definition.name)
-    return normalizeScheduleDefinition(definition, now)
-  })
+  return await Promise.all(
+    definitions.map((definition) => {
+      if (names.has(definition.name)) {
+        throw new Error(`Duplicate workflow schedule [${definition.name}]`)
+      }
+      names.add(definition.name)
+      return normalizeScheduleDefinition(definition, now)
+    }),
+  )
 }
 
-export function normalizeScheduleDefinition(
+export async function normalizeScheduleDefinition(
   definition: AnyScheduleDefinition,
   now = new Date(),
-): NormalizedScheduleEntry {
+): Promise<NormalizedScheduleEntry> {
   const cadence = normalizeScheduleCadence(definition)
   const runnableKind = definition.runnable.kind
   const runnableName = definition.runnable.name
-  const input = decodeScheduleInput(definition)
+  const input = await canonicalizeScheduleInput(definition)
   const nextRunAt =
     definition.immediately === true ? now : nextScheduleRunAt(cadence, now, now)
 
@@ -88,8 +90,11 @@ export function normalizeScheduleDefinition(
     name: definition.name,
     runnableKind,
     runnableName,
-    input,
-    tags: definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {},
+    input: input.encoded,
+    tags:
+      definition.tags ??
+      resolveTags(definition.runnable.tags, input.decoded) ??
+      {},
     ...cadence,
     enabled: definition.enabled ?? true,
     nextRunAt,
@@ -148,9 +153,11 @@ export async function startStoredScheduleRun(
   return run
 }
 
-function decodeScheduleInput(definition: ScheduleDefinition): unknown {
+async function canonicalizeScheduleInput(
+  definition: ScheduleDefinition,
+): Promise<{ readonly decoded: unknown; readonly encoded: unknown }> {
   try {
-    return decodeSchemaValue(
+    return await canonicalizeSchemaInput(
       definition.runnable.input,
       definition.input,
       `schedule input [${definition.name}]`,

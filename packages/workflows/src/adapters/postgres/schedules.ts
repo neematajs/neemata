@@ -48,7 +48,7 @@ export function createPostgresWorkflowScheduler(
     async reconcile(entries) {
       await ready
       const date = new Date()
-      const normalized = normalizeScheduleDefinitions(entries, date)
+      const normalized = await normalizeScheduleDefinitions(entries, date)
       await db.transaction(async (tx) => {
         await tx.query(
           `SELECT pg_advisory_xact_lock(hashtext('workflow_schedules_reconcile'))`,

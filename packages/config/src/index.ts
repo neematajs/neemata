@@ -1,8 +1,9 @@
+import type { Schema, SchemaIssue } from '@nmtjs/common/schema'
 import type { FactoryInjectable } from '@nmtjs/core'
-import type { StandardSchemaV1 } from '@standard-schema/spec'
+import { isSchema } from '@nmtjs/common/schema'
 import { createFactoryInjectable } from '@nmtjs/core'
 
-export type ConfigSchema = StandardSchemaV1
+export type ConfigSchema = Schema
 
 /**
  * A schema alone binds the record key as the environment variable name;
@@ -18,9 +19,9 @@ export type EnvConfigSource = Record<string, string | undefined>
 
 export type InferEnvConfig<Variables extends EnvConfigVariables> = {
   [K in keyof Variables]: Variables[K] extends ConfigSchema
-    ? StandardSchemaV1.InferOutput<Variables[K]>
-    : Variables[K] extends { schema: infer Schema extends ConfigSchema }
-      ? StandardSchemaV1.InferOutput<Schema>
+    ? Schema.Output<Variables[K]>
+    : Variables[K] extends { schema: infer ValueSchema extends ConfigSchema }
+      ? Schema.Output<ValueSchema>
       : never
 }
 
@@ -35,9 +36,9 @@ export interface EnvConfigOptions {
 export class EnvConfigError extends Error {
   override name = 'EnvConfigError'
   /** Validation issues keyed by environment variable name. */
-  readonly issues: Readonly<Record<string, readonly StandardSchemaV1.Issue[]>>
+  readonly issues: Readonly<Record<string, readonly SchemaIssue[]>>
 
-  constructor(issues: Record<string, readonly StandardSchemaV1.Issue[]>) {
+  constructor(issues: Record<string, readonly SchemaIssue[]>) {
     super(formatIssues(issues))
     this.issues = Object.freeze(issues)
   }
@@ -57,7 +58,7 @@ export async function resolveEnvConfig<Variables extends EnvConfigVariables>(
   source: EnvConfigSource = process.env,
 ): Promise<InferEnvConfig<Variables>> {
   const config: Record<string, unknown> = {}
-  const issues: Record<string, readonly StandardSchemaV1.Issue[]> = {}
+  const issues: Record<string, readonly SchemaIssue[]> = {}
 
   for (const [key, variable] of Object.entries(variables)) {
     const { name, schema } = isConfigSchema(variable)
@@ -83,11 +84,9 @@ export async function resolveEnvConfig<Variables extends EnvConfigVariables>(
 
 const isConfigSchema = (
   variable: EnvConfigVariable,
-): variable is ConfigSchema => '~standard' in variable
+): variable is ConfigSchema => isSchema(variable)
 
-function formatIssues(
-  issues: Record<string, readonly StandardSchemaV1.Issue[]>,
-): string {
+function formatIssues(issues: Record<string, readonly SchemaIssue[]>): string {
   const lines: string[] = []
   for (const [name, variableIssues] of Object.entries(issues)) {
     for (const issue of variableIssues) {

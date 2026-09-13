@@ -265,7 +265,7 @@ import { envConfig, procedure, t } from 'nmtjs'
 
 const config = envConfig({
   HOST: t.string(),
-  dbUrl: { name: 'DATABASE_URL', schema: t.string() },
+  dbUrl: { name: 'DATABASE_URL', schema: t.string().decode },
 })
 
 export const status = procedure({

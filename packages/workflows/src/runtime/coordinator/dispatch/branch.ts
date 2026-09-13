@@ -15,7 +15,8 @@ import {
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   resolveIdempotency,
-  decodeWorkflowUserSchemaValue,
+  canonicalizeWorkflowUserSchemaInput,
+  encodeWorkflowUserSchemaValue,
 } from '../codec.ts'
 import { runWorkflowUserCallback } from '../context.ts'
 import { cancelNodeAndRun, failNodeAndRun } from '../sinks.ts'
@@ -135,6 +136,7 @@ export async function dispatchBranchNode(
       childKey,
       workflowName: selected.target.name,
       inputSchema: selected.target.input,
+      outputSchema: selected.target.output,
       inputLabel: `workflow input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
@@ -143,9 +145,15 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: () => {
+      resolveNodeInput: async () => {
         if (hasStoredNodeInput(existing)) return existing.input
-        if (!selected.input) return input.run.input
+        if (!selected.input) {
+          return await encodeWorkflowUserSchemaValue(
+            selected.target.input,
+            input.run.input,
+            `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          )
+        }
 
         return runWorkflowUserCallback(() =>
           selected.input!(input.workflowCtx, input.outputs, input.run.input),
@@ -175,6 +183,7 @@ export async function dispatchBranchNode(
       taskName: taskTarget.name,
       timeout: taskDeclaration.timeout ?? taskTarget.timeout,
       inputSchema: taskTarget.input,
+      outputSchema: taskTarget.output,
       inputLabel: `task input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
@@ -183,9 +192,15 @@ export async function dispatchBranchNode(
           input.outputs,
           input.run.input,
         ),
-      resolveNodeInput: () => {
+      resolveNodeInput: async () => {
         if (hasStoredNodeInput(existing)) return existing.input
-        if (!selected.input) return input.run.input
+        if (!selected.input) {
+          return await encodeWorkflowUserSchemaValue(
+            selected.target.input,
+            input.run.input,
+            `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          )
+        }
 
         return runWorkflowUserCallback(() =>
           selected.input!(input.workflowCtx, input.outputs, input.run.input),
@@ -216,11 +231,22 @@ export async function dispatchBranchNode(
           selected.input!(input.workflowCtx, input.outputs, input.run.input),
         )
       : input.run.input
-    nodeInput = decodeWorkflowUserSchemaValue(
-      selectedActivityDeclaration.input,
-      rawInput,
-      `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-    )
+    const inputLabel = `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`
+    if (selected.input) {
+      nodeInput = (
+        await canonicalizeWorkflowUserSchemaInput(
+          selectedActivityDeclaration.input,
+          rawInput,
+          inputLabel,
+        )
+      ).encoded
+    } else {
+      nodeInput = await encodeWorkflowUserSchemaValue(
+        selectedActivityDeclaration.input,
+        rawInput,
+        inputLabel,
+      )
+    }
     await input.store.setNodeInput({
       runId: input.run.id,
       nodeName: input.node.name,

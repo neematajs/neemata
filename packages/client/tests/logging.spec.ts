@@ -3,8 +3,8 @@ import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BaseClientOptions } from '../src/client.ts'
-import type { ClientLogEvent } from '../src/plugins/logging.ts'
+import type { ClientLogEvent } from '../src/plugins/types.ts'
+import type { BaseClientOptions } from '../src/types.ts'
 import { StaticClient } from '../src/clients/static.ts'
 import { loggingPlugin } from '../src/plugins/logging.ts'
 import {

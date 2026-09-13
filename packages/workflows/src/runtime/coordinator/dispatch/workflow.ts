@@ -3,7 +3,11 @@ import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchChildWorkflow } from '../children.ts'
-import { hasStoredNodeInput, resolveIdempotency } from '../codec.ts'
+import {
+  encodeWorkflowUserSchemaValue,
+  hasStoredNodeInput,
+  resolveIdempotency,
+} from '../codec.ts'
 import { runWorkflowUserCallback } from '../context.ts'
 
 export async function dispatchWorkflowNode(
@@ -29,6 +33,7 @@ export async function dispatchWorkflowNode(
     childKey: SELF_CHILD_KEY,
     workflowName: input.node.target.name,
     inputSchema: input.node.target.input,
+    outputSchema: input.node.target.output,
     inputLabel: `workflow input [${input.workflow.workflow.name}.${input.node.name}]`,
     resolveIdempotencyKey: () =>
       resolveIdempotency(
@@ -37,9 +42,15 @@ export async function dispatchWorkflowNode(
         input.outputs,
         input.run.input,
       ),
-    resolveNodeInput: () => {
+    resolveNodeInput: async () => {
       if (hasStoredNodeInput(existing)) return existing.input
-      if (!input.node.input) return input.run.input
+      if (!input.node.input) {
+        return await encodeWorkflowUserSchemaValue(
+          input.node.target.input,
+          input.run.input,
+          `workflow input [${input.workflow.workflow.name}.${input.node.name}]`,
+        )
+      }
 
       return runWorkflowUserCallback(() =>
         input.node.input!(input.workflowCtx, input.outputs, input.run.input),

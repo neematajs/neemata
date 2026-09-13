@@ -5,7 +5,8 @@ import { BaseType } from './base.ts'
 
 export class NeverType extends BaseType<ZodMiniNever> {
   static factory() {
-    return new NeverType({ encodeZodType: zodNever() })
+    const schema = zodNever()
+    return new NeverType({ encodeZodType: schema, runtimeZodType: schema })
   }
 }
 

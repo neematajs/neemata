@@ -245,7 +245,7 @@ describe('workflow API boundaries', () => {
     implementTask(dateTask, {
       handler: async (_ctx, input) => {
         expectTypeOf(input).toEqualTypeOf<Date>()
-        return input.toISOString()
+        return input
       },
     })
 
@@ -253,7 +253,7 @@ describe('workflow API boundaries', () => {
       .normalize(
         async (_ctx, input) => {
           expectTypeOf(input).toEqualTypeOf<Date>()
-          return input.toISOString()
+          return input
         },
         {
           input: (_ctx, _outputs, input) => {
@@ -278,7 +278,7 @@ describe('workflow API boundaries', () => {
         expectTypeOf(dates.items[0]?.item).toExtend<Date | undefined>()
         expectTypeOf(dates.items[0]?.output).toExtend<Date | undefined>()
         expectTypeOf(input).toEqualTypeOf<Date>()
-        return normalize.toISOString()
+        return normalize
       })
   })
 })

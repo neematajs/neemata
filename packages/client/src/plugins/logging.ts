@@ -1,13 +1,8 @@
-import type { ClientPlugin, ClientPluginEvent } from './types.ts'
-
-export type ClientLogEvent = ClientPluginEvent
-
-export interface LoggingPluginOptions {
-  includeBodies?: boolean
-  onEvent(event: ClientLogEvent): void | Promise<void>
-  mapEvent?(event: ClientLogEvent): ClientLogEvent | null
-  onSinkError?(error: unknown, event: ClientLogEvent): void
-}
+import type {
+  ClientPlugin,
+  ClientLogEvent,
+  LoggingPluginOptions,
+} from './types.ts'
 
 const stripEventBody = (event: ClientLogEvent): ClientLogEvent => {
   if (!('body' in event)) return event

@@ -28,8 +28,10 @@ export class StringType extends BaseType<
   ZodMiniString<string>
 > {
   static factory(...checks: Check[]) {
+    const schema = zodString().check(...checks)
     return new StringType({
-      encodeZodType: zodString().check(...checks),
+      encodeZodType: schema,
+      runtimeZodType: schema,
       params: { checks },
     })
   }

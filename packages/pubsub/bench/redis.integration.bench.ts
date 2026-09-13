@@ -28,7 +28,7 @@ for (const target of serviceTargets) {
     const channelName = createTestName('pubsub-benchmark')
     const channel = SubscriptionContract({
       namespace: channelName,
-      params: t.object({ id: t.string() }),
+      params: t.object({ id: t.string() }).decode,
       events: {
         message: EventContract({ payload: t.object({ text: t.string() }) }),
       },

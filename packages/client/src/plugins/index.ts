@@ -1,4 +1,8 @@
 export type {
+  ClientLogEvent,
+  LoggingPluginOptions,
+  ReconnectPluginOptions,
+  HeartbeatPluginOptions,
   ClientPlugin,
   ClientPluginContext,
   ClientPluginEvent,

@@ -8,6 +8,7 @@ import {
 import type { BaseTypeAny, OptionalType } from './base.ts'
 import type { LiteralType } from './literal.ts'
 import type { StringType } from './string.ts'
+import { mapWireZodTypes } from './_metadata.ts'
 import { BaseType } from './base.ts'
 import { EnumType } from './enum.ts'
 
@@ -16,14 +17,17 @@ export type ObjectTypeProps = { [k: string]: BaseTypeAny }
 export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$strip>,
   ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$strip>,
-  { properties: T }
+  { properties: T },
+  ZodMiniObject<{ [K in keyof T]: T[K]['runtimeZodType'] }, core.$strip>
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
-    const { encode, decode } = createShapes(properties)
+    const { encode, decode, runtime, wire } = createShapes(properties)
 
     return new ObjectType<T>({
       encodeZodType: zodObject(encode),
       decodeZodType: zodObject(decode),
+      runtimeZodType: zodObject(runtime),
+      wireZodTypes: mapWireZodTypes((side) => zodObject(wire[side])),
       props: { properties },
     })
   }
@@ -32,14 +36,17 @@ export class ObjectType<T extends ObjectTypeProps = {}> extends BaseType<
 export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
   ZodMiniObject<{ [K in keyof T]: T[K]['encodeZodType'] }, core.$loose>,
   ZodMiniObject<{ [K in keyof T]: T[K]['decodeZodType'] }, core.$loose>,
-  { properties: T }
+  { properties: T },
+  ZodMiniObject<{ [K in keyof T]: T[K]['runtimeZodType'] }, core.$loose>
 > {
   static factory<T extends ObjectTypeProps = {}>(properties: T) {
-    const { encode, decode } = createShapes(properties)
+    const { encode, decode, runtime, wire } = createShapes(properties)
 
     return new LooseObjectType<T>({
       encodeZodType: zodLooseObject(encode),
       decodeZodType: zodLooseObject(decode),
+      runtimeZodType: zodLooseObject(runtime),
+      wireZodTypes: mapWireZodTypes((side) => zodLooseObject(wire[side])),
       props: { properties },
     })
   }
@@ -48,14 +55,22 @@ export class LooseObjectType<T extends ObjectTypeProps = {}> extends BaseType<
 function createShapes<T extends ObjectTypeProps>(properties: T) {
   const encode = {} as { [K in keyof T]: T[K]['encodeZodType'] }
   const decode = {} as { [K in keyof T]: T[K]['decodeZodType'] }
+  const runtime = {} as { [K in keyof T]: T[K]['runtimeZodType'] }
 
+  const wire: Record<
+    'input' | 'output',
+    Record<string, BaseTypeAny['wireZodTypes']['input']>
+  > = { input: {}, output: {} }
   for (const key in properties) {
     const property = properties[key]
     encode[key] = property.encodeZodType
     decode[key] = property.decodeZodType
+    runtime[key] = property.runtimeZodType
+    wire.input[key] = property.wireZodTypes.input
+    wire.output[key] = property.wireZodTypes.output
   }
 
-  return { encode, decode }
+  return { encode, decode, runtime, wire }
 }
 
 export type ObjectLikeType<T extends ObjectTypeProps> =
@@ -72,7 +87,8 @@ export class RecordType<
 > extends BaseType<
   ZodMiniRecord<K['encodeZodType'], E['encodeZodType']>,
   ZodMiniRecord<K['decodeZodType'], E['decodeZodType']>,
-  { key: K; element: E }
+  { key: K; element: E },
+  ZodMiniRecord<K['runtimeZodType'], E['runtimeZodType']>
 > {
   static factory<
     K extends LiteralType<string | number> | EnumType<any> | StringType,
@@ -81,6 +97,13 @@ export class RecordType<
     return new RecordType<K, E>({
       encodeZodType: zodRecord(key.encodeZodType, element.encodeZodType),
       decodeZodType: zodRecord(key.decodeZodType, element.decodeZodType),
+      wireZodTypes: mapWireZodTypes((side) =>
+        zodRecord(
+          key.wireZodTypes[side] as K['encodeZodType'],
+          element.wireZodTypes[side],
+        ),
+      ),
+      runtimeZodType: zodRecord(key.runtimeZodType, element.runtimeZodType),
       props: { key, element },
     })
   }

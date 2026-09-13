@@ -14,10 +14,14 @@ export class DateType extends TransformType<
       ZodMiniUnion<[iso.ZodMiniISODate, iso.ZodMiniISODateTime]>,
       ZodMiniDate<Date>
     >({
-      decode: (value) => new Date(value),
-      encode: (value) => value.toISOString(),
-      type: union([iso.date(), iso.datetime()]),
-      decodedType: zodDate('Invalid Date'),
+      decode: {
+        type: zodDate('Invalid Date'),
+        transform: (value) => new Date(value),
+      },
+      encode: {
+        type: union([iso.date(), iso.datetime()]),
+        transform: (value) => value.toISOString(),
+      },
       error: 'Invalid date format',
       prototype: DateType.prototype,
     })

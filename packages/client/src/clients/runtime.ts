@@ -4,16 +4,23 @@ import type {
   TRouteContract,
 } from '@nmtjs/contract'
 import {
+  getDecodeSchema,
+  getEncodeSchema,
+  isWireSchemaCodec,
+  validateSchema,
+} from '@nmtjs/common/schema'
+import {
   IsCallableContract,
   IsRouterContract,
   IsStreamContract,
 } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../client.ts'
-import type { RpcLayerApi } from '../layers/rpc.ts'
 import type { ClientTransportFactory } from '../transport.ts'
 import type {
+  BaseClientOptions,
+  RpcLayerApi,
   ClientCallOptions,
+  NonCodecSchemas,
   RuntimeInputContractTypeProvider,
   RuntimeOutputContractTypeProvider,
 } from '../types.ts'
@@ -44,18 +51,32 @@ export class RuntimeContractTransformer {
 
   constructor(router: TAnyRouterContract) {
     this.#procedures = collectProcedures(router)
+    for (const [path, route] of this.#procedures) {
+      if (route.input && !isWireSchemaCodec(route.input)) {
+        throw new Error(
+          `Runtime client procedure input must be a codec: ${path}`,
+        )
+      }
+      if (route.output && !isWireSchemaCodec(route.output)) {
+        throw new Error(
+          `Runtime client procedure output must be a codec: ${path}`,
+        )
+      }
+    }
   }
 
-  encode(procedure: string, payload: any) {
+  async encode(procedure: string, payload: any) {
     const contract = this.#procedures.get(procedure)
     if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.input.encode(payload)
+    if (!contract.input) return undefined
+    return await validateSchema(getEncodeSchema(contract.input), payload)
   }
 
-  decode(procedure: string, payload: any) {
+  async decode(procedure: string, payload: any) {
     const contract = this.#procedures.get(procedure)
     if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.output.decode(payload)
+    if (!contract.output) return undefined
+    return await validateSchema(getDecodeSchema(contract.output), payload)
   }
 }
 
@@ -120,7 +141,8 @@ export class RuntimeClient<
   RuntimeOutputContractTypeProvider
 > {
   constructor(
-    options: BaseClientOptions<RouterContract, SafeCall>,
+    options: BaseClientOptions<RouterContract, SafeCall> &
+      ([NonCodecSchemas<RouterContract>] extends [never] ? unknown : never),
     transport: Transport,
     transportOptions: Transport extends ClientTransportFactory<
       any,

@@ -23,11 +23,10 @@
     }
   },
   "dependencies": {
-    "@nmtjs/core": "workspace:*",
-    "@standard-schema/spec": "^1.1.0"
+    "@nmtjs/common": "workspace:*",
+    "@nmtjs/core": "workspace:*"
   },
   "devDependencies": {
-    "@nmtjs/common": "workspace:*",
     "@nmtjs/type": "workspace:*",
     "@types/node": "^24.13.2"
   },

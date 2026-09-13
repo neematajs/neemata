@@ -26,8 +26,10 @@ export class NumberType extends BaseType<
   ZodMiniNumber<number>
 > {
   static factory(...checks: Check[]) {
+    const schema = zodNumber().check(...checks)
     return new NumberType({
-      encodeZodType: zodNumber().check(...checks),
+      encodeZodType: schema,
+      runtimeZodType: schema,
       params: { checks },
     })
   }
@@ -74,10 +76,14 @@ export class BigIntType extends TransformType<
       ZodMiniString<string>,
       ZodMiniBigInt<bigint>
     >({
-      decode: (value) => BigInt(value),
-      encode: (value) => value.toString(),
-      type: zodString().check(regex(/^-?\d+$/)),
-      decodedType: zodBigInt('Invalid bigint'),
+      decode: {
+        type: zodBigInt('Invalid bigint'),
+        transform: (value) => BigInt(value),
+      },
+      encode: {
+        type: zodString().check(regex(/^-?\d+$/)),
+        transform: (value) => value.toString(),
+      },
       error: 'Invalid bigint format',
     })
   }

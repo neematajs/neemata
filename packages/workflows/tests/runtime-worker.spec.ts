@@ -86,6 +86,48 @@ describe('workflow worker runtime', () => {
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
   })
 
+  it('decodes task input for the handler and stores encoded output', async () => {
+    const task = defineTask({
+      name: 'standalone.coded-task',
+      input: t.date(),
+      output: t.date(),
+    })
+    let handlerInput: Date | undefined
+    const implementation = implementTask(task, {
+      handler: async (_ctx, input) => {
+        handlerInput = input
+        return new Date(input.getTime() + 1_000)
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await startTaskRun({
+      ...runtime,
+      task,
+      input: '2026-09-01T00:00:00.000Z',
+    })
+    const claimed = await runtime.attemptExecutor.claim({
+      workflowNames: [],
+      activityNames: [],
+      workerId: 'coded-task-worker',
+      taskNames: [task.name],
+      leaseMs: 30_000,
+    })
+
+    await runTaskAttempt({
+      ...runtime,
+      tasks: [implementation],
+      workerId: 'coded-task-worker',
+      container: createTestContainer(),
+      claimed: claimed!,
+    })
+
+    const completed = await runtime.store.loadRunSnapshot(run.id)
+    expect(handlerInput).toStrictEqual(new Date('2026-09-01T00:00:00.000Z'))
+    expect(completed?.run.input).toBe('2026-09-01T00:00:00.000Z')
+    expect(completed?.run.output).toBe('2026-09-01T00:00:01.000Z')
+    expect(completed?.nodes[0]?.output).toBe('2026-09-01T00:00:01.000Z')
+  })
+
   it('uses the atomic scoped runtime for task completion, retry, and stale reconcile writes', async () => {
     const createAtomicMarker = (
       runtime: ReturnType<typeof createInMemoryWorkflowRuntime>,

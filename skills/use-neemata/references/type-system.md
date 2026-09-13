@@ -6,12 +6,17 @@ Use `t` from `nmtjs` in end-user Neemata examples.
 import { t } from 'nmtjs'
 ```
 
-Schemas are runtime validators and bidirectional protocol transformers:
+Each `t.*` value exposes wire encoding, wire decoding, and runtime parsing as
+explicit callable Standard Schemas:
 
 - `schema.decode(value)` parses wire format into app values.
 - `schema.encode(value)` converts app values into wire format.
-- `schema['~standard']` is Standard Schema decode mode.
-- `schema.standard.encode` and `schema.standard.decode` expose explicit modes.
+- `schema.parse(value)` validates app values without invoking wire transforms.
+- `schema.decode` is a `WireSchema.Decode` Standard Schema.
+- `schema.encode` is a `WireSchema.Encode` Standard Schema.
+
+The codec itself deliberately has no default `~standard` direction. Pick
+`.decode`, `.encode`, or `.parse` whenever an API accepts a one-way schema.
 
 ```ts
 const user = t.object({
@@ -35,7 +40,29 @@ const encoded = user.encode({
 })
 // encoded.id: string
 // encoded.createdAt: string
+
+const checked = user.parse(decoded)
+// checked.id: bigint; checked.createdAt: Date
+// An ISO string is not a valid runtime Date.
 ```
+
+All three callables accept `unknown` and return their inferred parsed output,
+throwing `NeemataTypeError` for invalid values. Runtime parsing preserves defaults,
+optional/nullable fields, and collection constraints. Like other parsers, it may
+clone objects, strip unknown object keys, or normalize values through the supplied
+runtime schema; it does not promise object identity.
+
+For asynchronous constraints, use the Standard Schema validation API or
+`validateSchema` from `@nmtjs/common/schema`:
+
+```ts
+const result = await user.parse['~standard'].validate(input)
+// { value: ... } or { issues: ... }
+```
+
+`schema.runtimeZodType` exposes the underlying runtime parser, including Zod's
+`parseAsync` and compilation APIs. Custom `BaseType` subclasses must supply
+`runtimeZodType` explicitly to the constructor.
 
 ## Builders
 
@@ -135,22 +162,54 @@ t.string().meta({ examples: ['Ada'] })
 Custom transforms:
 
 ```ts
+import { number, string } from 'zod/mini'
+
 const cents = t.custom({
-  decode: (value: string) => Number(value),
-  encode: (value: number) => value.toString(),
+  decode: { type: number(), transform: Number },
+  encode: { type: string(), transform: String },
 })
 
 cents.decode('123') // number
 cents.encode(123) // string
+cents.parse(123) // number
 ```
 
-Use `type`, `validation`, `error`, and `prototype` in `t.custom(...)` only when
-the transform needs low-level validation or class behavior.
+Each direction requires its output schema in `type` and conversion in `transform`.
+`decode.type` validates runtime values; `encode.type` validates wire values.
+Decoding validates the wire input, transforms it, then validates the runtime output.
+Encoding validates the runtime input, transforms it, then validates the wire output.
+Runtime parsing uses `decode.type` without either wire transform.
+The parser cannot derive validation from a TypeScript type or a conversion function.
+Use `error` or `prototype` for custom errors or class behavior.
+
+A `validation` function defines shared runtime constraints and runs during runtime
+parsing, encoding, and decoding. The object form combines shared and directional
+constraints:
+
+```ts
+validation: {
+  runtime(value, ctx) { /* shared runtime constraints */ },
+  decode(value, ctx) { /* additional incoming constraints */ },
+  encode(value, ctx) { /* additional outgoing constraints */ },
+}
+```
+
+Put shared constraints on `decode.type`, `validation`, or `validation.runtime`.
+The runtime parser does not execute `validation.decode` or `validation.encode`.
+For built-in blobs, instance validation is shared; `maxSize` remains an incoming
+wire restriction.
 
 ## Procedure Boundary
 
-- Input schemas decode inbound payload before guards and handlers.
-- Output schemas encode and validate handler returns and stream chunks.
+- Procedure inputs accept a decode schema or a full codec. Full codecs use
+  their `.decode` direction.
+- Procedure outputs accept an encode schema or a full codec. Full codecs use
+  their `.encode` direction.
+- Runtime clients require full codecs because they execute both directions;
+  static clients can use directional schemas for type inference alone.
+- `createProcedure(...)` without an explicit output uses an encode-only
+  passthrough schema. Its handler must already return a transport-ready value;
+  provide a full output codec when the contract will be used by RuntimeClient.
 - `t.date()` and `t.bigInt()` are app values in handlers, encoded wire values
   across the protocol.
 - `t.object(...)` strips unknown keys; `t.looseObject(...)` preserves them.
@@ -159,10 +218,11 @@ the transform needs low-level validation or class behavior.
 
 ## Inference
 
-Use decode output for handler input and encode input for handler output when
-writing helper types:
+`t.infer` remains a provider-specific convenience:
 
 ```ts
+type UserRuntimeInput = t.infer.parse.input<typeof user>
+type UserRuntimeOutput = t.infer.parse.output<typeof user>
 type UserDecodeInput = t.infer.decode.input<typeof user>
 type UserInput = t.infer.decode.output<typeof user>
 type UserOutput = t.infer.encode.input<typeof user>
@@ -171,11 +231,11 @@ type UserWire = t.infer.encode.output<typeof user>
 
 ## Standard Schema And JSON Schema
 
-Default Standard Schema mode is decode:
+Use either codec direction as a Standard Schema:
 
 ```ts
-const standard = user['~standard']
-const result = standard.validate({
+const standard = user.decode['~standard']
+const result = await standard.validate({
   id: '123',
   createdAt: '2021-01-01T00:00:00.000Z',
   name: 'Ada',
@@ -186,11 +246,12 @@ if ('value' in result) {
 }
 ```
 
-Use explicit encode/decode modes when integrating with tools:
+Standard JSON Schema is an optional capability of a directional schema. The
+`t.*` provider exposes it on all three parsers:
 
 ```ts
-const decodeStandard = user.standard.decode['~standard']
-const encodeStandard = user.standard.encode['~standard']
+const decodeStandard = user.decode['~standard']
+const encodeStandard = user.encode['~standard']
 
 const decodeInputSchema = decodeStandard.jsonSchema.input({
   target: 'draft-07',
@@ -201,13 +262,35 @@ const encodeOutputSchema = encodeStandard.jsonSchema.output({
 ```
 
 JSON Schema helpers also accept `libraryOptions.json` for Zod JSON Schema
-settings such as `cycles` and `reused`.
+settings such as `cycles` and `reused`. Conversion is strict by default and
+throws when a boundary cannot be represented faithfully. Neemata runtime
+validation does not require JSON Schema support.
+
+Titles and descriptions are preserved on both directions, including nested
+transformed fields. Both `.examples(...values)` and `.meta({ examples: values })`
+accept runtime values, validate and encode them once, and attach the results to
+the wire value schemas. Examples are emitted on decode-input and encode-output
+JSON Schema projections, including examples on entire objects and collections.
+Runtime projections retain titles and descriptions without wire examples.
+`libraryOptions.json.override` is passed directly to Zod's converter.
+
+Framework-neutral helpers and contracts are available from
+`@nmtjs/common/schema`:
+
+```ts
+import type { Schema, WireSchema } from '@nmtjs/common/schema'
+
+type RuntimeValue<S extends Schema> = Schema.Output<S>
+type IncomingWire<C extends WireSchema.Codec> = WireSchema.DecodeInput<C>
+type OutgoingWire<C extends WireSchema.Codec> = WireSchema.EncodeOutput<C>
+```
 
 ## Errors
 
-`schema.encode(...)`, `schema.decode(...)`, and Standard Schema validation use
-Zod validation under the hood. Direct encode/decode calls throw
-`t.NeemataTypeError` on invalid data; Standard Schema returns `{ issues }`.
+The `t.*` provider's callable `schema.encode(...)` and `schema.decode(...)`
+helpers use Zod validation under the hood and throw `t.NeemataTypeError` on
+invalid data. Standard Schema validation returns `{ issues }` and may be
+asynchronous.
 
 ```ts
 try {

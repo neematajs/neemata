@@ -56,14 +56,11 @@ export class PlainDateType<
   ): PlainDateType<T> {
     const transformer = createTemporalTransformer(implementation, 'PlainDate')
     return CustomType.factory<InstanceType<T['PlainDate']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: iso.date(),
-      decodedType: temporalType(
-        implementation,
-        'PlainDate',
-        'Invalid PlainDate',
-      ),
+      decode: {
+        type: temporalType(implementation, 'PlainDate', 'Invalid PlainDate'),
+        transform: transformer.decode,
+      },
+      encode: { type: iso.date(), transform: transformer.encode },
       error: 'Invalid date format',
     })
   }
@@ -80,14 +77,18 @@ export class PlainDateTimeType<
       'PlainDateTime',
     )
     return CustomType.factory<InstanceType<T['PlainDateTime']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: iso.datetime({ local: true }),
-      decodedType: temporalType(
-        implementation,
-        'PlainDateTime',
-        'Invalid PlainDateTime',
-      ),
+      decode: {
+        type: temporalType(
+          implementation,
+          'PlainDateTime',
+          'Invalid PlainDateTime',
+        ),
+        transform: transformer.decode,
+      },
+      encode: {
+        type: iso.datetime({ local: true }),
+        transform: transformer.encode,
+      },
       error: 'Invalid datetime format',
     })
   }
@@ -106,14 +107,15 @@ export class ZonedDateTimeType<
       (value) => value.toString({ smallestUnit: 'microsecond' }),
     )
     return CustomType.factory<InstanceType<T['ZonedDateTime']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: string(),
-      decodedType: temporalType(
-        implementation,
-        'ZonedDateTime',
-        'Invalid ZonedDateTime',
-      ),
+      decode: {
+        type: temporalType(
+          implementation,
+          'ZonedDateTime',
+          'Invalid ZonedDateTime',
+        ),
+        transform: transformer.decode,
+      },
+      encode: { type: string(), transform: transformer.encode },
       error: 'Invalid zoned datetime format',
     })
   }
@@ -128,10 +130,11 @@ export class InstantType<
     const encode = (value: InstanceType<T['Instant']>) => value.toJSON()
 
     return CustomType.factory<InstanceType<T['Instant']>, EncodeType>({
-      decode,
-      encode,
-      type: iso.datetime(),
-      decodedType: temporalType(implementation, 'Instant', 'Invalid Instant'),
+      decode: {
+        type: temporalType(implementation, 'Instant', 'Invalid Instant'),
+        transform: decode,
+      },
+      encode: { type: iso.datetime(), transform: encode },
       error: 'Invalid instant format',
     }) as InstantType<T>
   }
@@ -145,14 +148,11 @@ export class PlainTimeType<
   ): PlainTimeType<T> {
     const transformer = createTemporalTransformer(implementation, 'PlainTime')
     return CustomType.factory<InstanceType<T['PlainTime']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: iso.time(),
-      decodedType: temporalType(
-        implementation,
-        'PlainTime',
-        'Invalid PlainTime',
-      ),
+      decode: {
+        type: temporalType(implementation, 'PlainTime', 'Invalid PlainTime'),
+        transform: transformer.decode,
+      },
+      encode: { type: iso.time(), transform: transformer.encode },
       error: 'Invalid time format',
     })
   }
@@ -166,10 +166,11 @@ export class DurationType<
   ): DurationType<T> {
     const transformer = createTemporalTransformer(implementation, 'Duration')
     return CustomType.factory<InstanceType<T['Duration']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: iso.duration(),
-      decodedType: temporalType(implementation, 'Duration', 'Invalid Duration'),
+      decode: {
+        type: temporalType(implementation, 'Duration', 'Invalid Duration'),
+        transform: transformer.decode,
+      },
+      encode: { type: iso.duration(), transform: transformer.encode },
       error: 'Invalid duration format',
     })
   }
@@ -186,14 +187,18 @@ export class PlainYearMonthType<
       'PlainYearMonth',
     )
     return CustomType.factory<InstanceType<T['PlainYearMonth']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: string().check(regex(/^\d{4}-\d{2}$/)),
-      decodedType: temporalType(
-        implementation,
-        'PlainYearMonth',
-        'Invalid PlainYearMonth',
-      ),
+      decode: {
+        type: temporalType(
+          implementation,
+          'PlainYearMonth',
+          'Invalid PlainYearMonth',
+        ),
+        transform: transformer.decode,
+      },
+      encode: {
+        type: string().check(regex(/^\d{4}-\d{2}$/)),
+        transform: transformer.encode,
+      },
       error: 'Invalid year-month format',
     })
   }
@@ -210,14 +215,18 @@ export class PlainMonthDayType<
       'PlainMonthDay',
     )
     return CustomType.factory<InstanceType<T['PlainMonthDay']>, EncodeType>({
-      decode: transformer.decode,
-      encode: transformer.encode,
-      type: string().check(regex(/^\d{2}-\d{2}$/)),
-      decodedType: temporalType(
-        implementation,
-        'PlainMonthDay',
-        'Invalid PlainMonthDay',
-      ),
+      decode: {
+        type: temporalType(
+          implementation,
+          'PlainMonthDay',
+          'Invalid PlainMonthDay',
+        ),
+        transform: transformer.decode,
+      },
+      encode: {
+        type: string().check(regex(/^\d{2}-\d{2}$/)),
+        transform: transformer.encode,
+      },
       error: 'Invalid month-day format',
     })
   }

@@ -34,10 +34,10 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
     "@nmtjs/neem": "workspace:*"
   },
   "devDependencies": {
+    "@nmtjs/type": "workspace:*",
     "zod": "catalog:"
   },
   "peerDependencies": {
@@ -46,9 +46,7 @@
     "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "@nmtjs/neem": "workspace:*",
-    "zod": "catalog:"
+    "@nmtjs/neem": "workspace:*"
   },
   "files": [
     "dist",
