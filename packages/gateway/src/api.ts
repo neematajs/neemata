@@ -4,7 +4,7 @@ import type {
   ResolveInjectableType,
   StaticMetaBinding,
 } from '@nmtjs/core'
-import { getMetaBindingMeta } from '@nmtjs/core'
+import { getMetaBindingMeta, getStaticMetaValue } from '@nmtjs/core'
 
 import type { GatewayConnection } from './connections.ts'
 
@@ -46,15 +46,7 @@ export function createGatewayStaticMetaView(
 ): GatewayStaticMetaView {
   return Object.freeze({
     get<T extends AnyMeta>(meta: T) {
-      let value: ResolveInjectableType<T> | undefined
-
-      for (const binding of bindings) {
-        if (getMetaBindingMeta(binding) === meta) {
-          value = binding.value as ResolveInjectableType<T>
-        }
-      }
-
-      return value
+      return getStaticMetaValue(bindings, meta)
     },
     has<T extends AnyMeta>(meta: T) {
       return bindings.some((binding) => getMetaBindingMeta(binding) === meta)
@@ -63,12 +55,4 @@ export function createGatewayStaticMetaView(
       return bindings
     },
   })
-}
-
-export function isAsyncIterable(
-  value: GatewayApiCallResult,
-): value is AsyncIterable<unknown> | Iterable<unknown> {
-  return Boolean(
-    value && typeof value === 'object' && Symbol.asyncIterator in value,
-  )
 }

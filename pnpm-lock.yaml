@@ -164,12 +164,6 @@ importers:
       '@nmtjs/protocol':
         specifier: workspace:*
         version: link:../protocol
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
-      hookable:
-        specifier: 6.1.1
-        version: 6.1.1
 
   packages/metrics:
     dependencies:

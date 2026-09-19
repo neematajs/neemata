@@ -19,6 +19,17 @@ import type { ConnectionIdentity } from './types.ts'
 import { ConnectionManager } from './connections.ts'
 import * as injectables from './injectables.ts'
 
+export type GatewayHost = { url: string; type: ProxyableTransportType }
+
+export type GatewayTransports<
+  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
+> = {
+  [key: string]: {
+    transport: TransportWorker<ResolvedProcedure>
+    proxyable?: readonly ProxyableTransportType[]
+  }
+}
+
 export interface GatewayOptions<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
@@ -26,12 +37,7 @@ export interface GatewayOptions<
   container: Container
   hooks: Hooks
   api: GatewayApi<ResolvedProcedure>
-  transports: {
-    [key: string]: {
-      transport: TransportWorker<ResolvedProcedure>
-      proxyable?: readonly ProxyableTransportType[]
-    }
-  }
+  transports: GatewayTransports<ResolvedProcedure>
   identity?: ConnectionIdentity
 }
 
@@ -40,6 +46,34 @@ export interface GatewayOptions<
  * disposal can't hang closeConnection() and stop().
  */
 export const GATEWAY_TEARDOWN_STEP_TIMEOUT = 10_000
+
+function serializePayload(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(serializePayload)
+  if (isTypedArray(value)) {
+    return `<${value.constructor.name} length=${value.byteLength}>`
+  }
+  if (isBlobInterface(value)) {
+    // must run before the generic object branch, blobs are objects too
+    return `<ClientBlobStream metadata=${JSON.stringify(value.metadata)}>`
+  }
+  if (typeof value !== 'object' || value === null) return value
+
+  const fields: Record<string, unknown> = {}
+  for (const [key, field] of Object.entries(value)) {
+    fields[key] = serializePayload(field)
+  }
+  return fields
+}
+
+export const gatewayLoggerOptions: ChildLoggerOptions = {
+  serializers: {
+    chunk: (chunk) =>
+      isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,
+    payload: serializePayload,
+    headers: (value) =>
+      value instanceof Headers ? Object.fromEntries(value) : value,
+  },
+}
 
 /**
  * Application-session kernel. Owns connection scopes, identity, procedure
@@ -80,21 +114,17 @@ export class Gateway<
   }
 
   async start() {
-    const hosts: { url: string; type: ProxyableTransportType }[] = []
+    const hosts: GatewayHost[] = []
     try {
-      for (const transportKey in this.options.transports) {
-        const { transport, proxyable } = this.options.transports[transportKey]
-        const url = await transport.start({
-          onConnect: this.onConnect(transportKey),
-          onDisconnect: this.onDisconnect(transportKey),
-          resolve: this.resolve(transportKey),
-          onRpc: this.onRpc(transportKey),
-        })
+      for (const [key, { transport, proxyable }] of Object.entries(
+        this.options.transports,
+      )) {
+        const url = await transport.start(this.createTransportParams(key))
         this.#startedTransports.defer(async () => {
           await transport.stop()
-          this.logger.debug(`Transport [${transportKey}] stopped`)
+          this.logger.debug(`Transport [${key}] stopped`)
         })
-        this.logger.info(`Transport [${transportKey}] started on [${url}]`)
+        this.logger.info(`Transport [${key}] started on [${url}]`)
 
         for (const type of new Set(proxyable ?? [])) hosts.push({ url, type })
       }
@@ -145,13 +175,29 @@ export class Gateway<
       this.options.identity = options.identity ?? this.options.identity
     }
 
-    for (const connections of this.connections.connections.values()) {
-      await connections.container.dispose()
+    for (const connection of this.connections.getAll()) {
+      await connection.container.dispose()
     }
   }
 
-  protected onConnect(transport: string): TransportWorkerParams['onConnect'] {
+  protected createTransportParams(
+    transport: string,
+  ): TransportWorkerParams<ResolvedProcedure> {
     const logger = forkLogger(this.logger, undefined, undefined, { transport })
+    const onDisconnect = this.createDisconnectHandler(logger)
+
+    return {
+      onConnect: this.createConnectHandler(logger, onDisconnect),
+      onDisconnect,
+      resolve: this.createResolveHandler(logger),
+      onRpc: this.createRpcHandler(),
+    }
+  }
+
+  protected createConnectHandler(
+    logger: Logger,
+    onDisconnect: TransportWorkerParams['onDisconnect'],
+  ): TransportWorkerParams['onConnect'] {
     return async (options, ...injections) => {
       logger.trace('Initiating new connection')
 
@@ -190,7 +236,7 @@ export class Gateway<
 
         return Object.assign(connection, {
           [Symbol.asyncDispose]: async () => {
-            await this.onDisconnect(transport)(connection.id)
+            await onDisconnect(connection.id)
           },
         })
       } catch (error) {
@@ -201,31 +247,26 @@ export class Gateway<
     }
   }
 
-  protected onDisconnect(
-    transport: string,
+  protected createDisconnectHandler(
+    logger: Logger,
   ): TransportWorkerParams['onDisconnect'] {
-    const logger = forkLogger(this.logger, undefined, undefined, { transport })
     return async (connectionId) => {
       logger.debug({ connectionId }, 'Disconnecting connection')
       await this.closeConnection(connectionId)
     }
   }
 
-  protected resolve(
-    transport: string,
+  protected createResolveHandler(
+    logger: Logger,
   ): TransportWorkerParams<ResolvedProcedure>['resolve'] {
-    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
-
     return async (connection, procedure) => {
-      _logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
+      logger.trace({ connectionId: connection.id, procedure }, 'Resolving RPC')
 
       return this.options.api.resolve({ connection, procedure })
     }
   }
 
-  protected onRpc(transport: string): TransportWorkerParams['onRpc'] {
-    const _logger = forkLogger(this.logger, undefined, undefined, { transport })
-
+  protected createRpcHandler(): TransportWorkerParams['onRpc'] {
     return async (connection, rpc, signal, ...injections) => {
       const controller = new AbortController()
       this.trackCall(connection.id, controller)
@@ -334,41 +375,4 @@ export class Gateway<
       for (const controller of calls) controller.abort()
     }
   }
-}
-
-export const gatewayLoggerOptions: ChildLoggerOptions = {
-  serializers: {
-    chunk: (chunk) =>
-      isTypedArray(chunk) ? `<Buffer length=${chunk.byteLength}>` : chunk,
-    payload: (payload) => {
-      function serialize(value: unknown): unknown {
-        if (Array.isArray(value)) return value.map(serialize)
-        if (isTypedArray(value)) {
-          return `<${value.constructor.name} length=${value.byteLength}>`
-        }
-        if (isBlobInterface(value)) {
-          // must run before the generic object branch, blobs are objects too
-          return `<ClientBlobStream metadata=${JSON.stringify(value.metadata)}>`
-        }
-        if (typeof value !== 'object' || value === null) return value
-
-        const fields: Record<string, unknown> = {}
-        for (const [key, field] of Object.entries(value)) {
-          fields[key] = serialize(field)
-        }
-        return fields
-      }
-      return serialize(payload)
-    },
-    headers: (value) => {
-      if (value instanceof Headers) {
-        const headers: Record<string, string> = {}
-        value.forEach((value, name) => {
-          headers[name] = value
-        })
-        return headers
-      }
-      return value
-    },
-  },
 }

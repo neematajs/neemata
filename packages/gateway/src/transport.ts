@@ -40,12 +40,6 @@ export type TransportWorkerParams<
   ) => Promise<unknown>
 }
 
-export interface TransportWorkerStartOptions<
-  ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
-> extends TransportWorkerParams<ResolvedProcedure> {
-  // for extra props in the future
-}
-
 export interface TransportWorker<
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
@@ -55,14 +49,16 @@ export interface TransportWorker<
   stop: () => MaybePromise<void>
 }
 
+export type TransportInjections = {
+  [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
+}
+
+export type TransportProxyable = readonly ProxyableTransportType[] | undefined
+
 export interface Transport<
   TransportOptions = any,
-  Injections extends {
-    [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
-  } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends readonly ProxyableTransportType[] | undefined =
-    | readonly ProxyableTransportType[]
-    | undefined,
+  Injections extends TransportInjections = TransportInjections,
+  Proxyable extends TransportProxyable = TransportProxyable,
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 > {
   proxyable: Proxyable
@@ -74,12 +70,8 @@ export interface Transport<
 
 export function createTransport<
   TransportOptions = any,
-  Injections extends {
-    [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
-  } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends readonly ProxyableTransportType[] | undefined =
-    | readonly ProxyableTransportType[]
-    | undefined,
+  Injections extends TransportInjections = TransportInjections,
+  Proxyable extends TransportProxyable = TransportProxyable,
   ResolvedProcedure extends GatewayResolvedProcedure = GatewayResolvedProcedure,
 >(
   config: Transport<TransportOptions, Injections, Proxyable, ResolvedProcedure>,

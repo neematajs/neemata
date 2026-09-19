@@ -33,8 +33,6 @@ export const connectionData = createLazyInjectable<unknown, Scope.Connection>(
 /**
  * Aborts when the underlying connection is closed.
  *
- * Scope: Connection
- *
  * Use this when work should be cancelled as soon as the peer disconnects.
  */
 export const connectionAbortSignal = createLazyInjectable<
@@ -44,8 +42,6 @@ export const connectionAbortSignal = createLazyInjectable<
 
 /**
  * Base per-RPC signal provisioned by the gateway for the current call.
- *
- * Scope: Call
  *
  * This represents call-level cancellation from the client/request side
  * (client abort, client timeout, or request abort in unidirectional
@@ -62,8 +58,6 @@ export const rpcClientAbortSignal = createLazyInjectable<
 /**
  * Optional stream-specific timeout/cancellation signal.
  *
- * Scope: Call
- *
  * This is provided only when stream timeout logic is enabled by the runtime
  * for the procedure (i.e. when the stream procedure uses a numeric
  * `streamTimeout`).
@@ -77,8 +71,6 @@ export const rpcStreamAbortSignal = createLazyInjectable<
 /**
  * Optional procedure timeout signal.
  *
- * Scope: Call
- *
  * Provided by the runtime when a procedure/api timeout is configured, and
  * aborted when the call times out, so handlers stop instead of running past
  * the timed-out response.
@@ -91,8 +83,6 @@ export const rpcTimeoutSignal = createLazyInjectable<AbortSignal, Scope.Call>(
 
 /**
  * Unified RPC cancellation signal derived from other call/connection signals.
- *
- * Scope: Call
  *
  * Combines rpcClientAbortSignal, connectionAbortSignal, and (if present)
  * rpcStreamAbortSignal and rpcTimeoutSignal. This is the recommended signal

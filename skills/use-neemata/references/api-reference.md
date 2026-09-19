@@ -19,7 +19,6 @@ import {
   factory,
   filter,
   GatewayInjectables,
-  GatewayHook,
   guard,
   hook,
   host,

@@ -54,7 +54,6 @@ export {
 export {
   type ConnectionIdentityType,
   createTransport as transport,
-  GatewayHook,
   GatewayInjectables,
   ProxyableTransportType,
 } from '@nmtjs/gateway'

@@ -21,15 +21,12 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*",
-    "hookable": "6.1.1"
+    "@nmtjs/protocol": "workspace:*"
   },
   "peerDependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/core": "workspace:*",
-    "@nmtjs/protocol": "workspace:*",
-    "@nmtjs/type": "workspace:*"
+    "@nmtjs/protocol": "workspace:*"
   },
   "files": [
     "dist",
