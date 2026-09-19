@@ -526,6 +526,8 @@ export const createPostgresWorkflowRunStore = (
     )
     return runListPage(query, rows, mapRunSummary)
   },
+  // Lock-free on purpose: callers driving their own sweep already serialize.
+  // The runtime's retentionPruner takes an advisory lock for the shared case.
   pruneTerminalRuns: (params) =>
     db.transaction((tx) => pruneTerminalRunsInTransaction(tx, params)),
   deleteRun: (runId) =>

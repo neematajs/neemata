@@ -1,6 +1,70 @@
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { WORKFLOW_POSTGRES_SCHEMA_MANIFEST } from './manifest.ts'
 
+/** `[table, constraint name, definition]`, applied if not already present. */
+const CONSTRAINTS: readonly (readonly [string, string, string])[] = [
+  [
+    'workflow_runs',
+    'workflow_runs_parent_run_fk',
+    'FOREIGN KEY (parent_run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_runs',
+    'workflow_runs_root_run_fk',
+    'FOREIGN KEY (root_run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_runs',
+    'workflow_runs_parent_node_fk',
+    'FOREIGN KEY (parent_run_id, parent_node_name) REFERENCES workflow_nodes(run_id, name) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_nodes',
+    'workflow_nodes_run_fk',
+    'FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_attempts',
+    'workflow_attempts_node_fk',
+    'FOREIGN KEY (run_id, node_name) REFERENCES workflow_nodes(run_id, name) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_attempts',
+    'workflow_attempts_child_attempt_key',
+    'UNIQUE (run_id, node_name, child_key, attempt_number)',
+  ],
+  [
+    'workflow_node_children',
+    'workflow_node_children_run_fk',
+    'FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_node_children',
+    'workflow_node_children_node_fk',
+    'FOREIGN KEY (run_id, node_name) REFERENCES workflow_nodes(run_id, name) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_node_children',
+    'workflow_node_children_child_run_fk',
+    'FOREIGN KEY (child_run_id) REFERENCES workflow_runs(id) ON DELETE SET NULL',
+  ],
+  [
+    'workflow_node_children',
+    'workflow_node_children_current_attempt_fk',
+    'FOREIGN KEY (current_attempt_id) REFERENCES workflow_attempts(id) ON DELETE SET NULL',
+  ],
+  [
+    'workflow_run_leases',
+    'workflow_run_leases_run_fk',
+    'FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+  [
+    'workflow_commands',
+    'workflow_commands_run_fk',
+    'FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE',
+  ],
+]
+
 export async function installPostgresWorkflowSchemaForTesting(
   db: WorkflowPostgresConnection,
 ) {
@@ -350,99 +414,15 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_run_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_parent_run_fk
-        FOREIGN KEY (parent_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_root_run_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_root_run_fk
-        FOREIGN KEY (root_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_node_fk') THEN
-        ALTER TABLE workflow_runs
-        ADD CONSTRAINT workflow_runs_parent_node_fk
-        FOREIGN KEY (parent_run_id, parent_node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_nodes_run_fk') THEN
-        ALTER TABLE workflow_nodes
-        ADD CONSTRAINT workflow_nodes_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_node_fk') THEN
-        ALTER TABLE workflow_attempts
-        ADD CONSTRAINT workflow_attempts_node_fk
-        FOREIGN KEY (run_id, node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_child_attempt_key') THEN
-        ALTER TABLE workflow_attempts
-        ADD CONSTRAINT workflow_attempts_child_attempt_key
-        UNIQUE (run_id, node_name, child_key, attempt_number);
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_run_fk') THEN
-        ALTER TABLE workflow_node_children
-        ADD CONSTRAINT workflow_node_children_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_node_fk') THEN
-        ALTER TABLE workflow_node_children
-        ADD CONSTRAINT workflow_node_children_node_fk
-        FOREIGN KEY (run_id, node_name)
-        REFERENCES workflow_nodes(run_id, name)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_child_run_fk') THEN
-        ALTER TABLE workflow_node_children
-        ADD CONSTRAINT workflow_node_children_child_run_fk
-        FOREIGN KEY (child_run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_current_attempt_fk') THEN
-        ALTER TABLE workflow_node_children
-        ADD CONSTRAINT workflow_node_children_current_attempt_fk
-        FOREIGN KEY (current_attempt_id)
-        REFERENCES workflow_attempts(id)
-        ON DELETE SET NULL;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
-        ALTER TABLE workflow_run_leases
-        ADD CONSTRAINT workflow_run_leases_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
-
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_commands_run_fk') THEN
-        ALTER TABLE workflow_commands
-        ADD CONSTRAINT workflow_commands_run_fk
-        FOREIGN KEY (run_id)
-        REFERENCES workflow_runs(id)
-        ON DELETE CASCADE;
-      END IF;
+      ${CONSTRAINTS.map(
+        ([table, name, definition]) => `
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = '${name}'
+          ) THEN
+            ALTER TABLE ${table} ADD CONSTRAINT ${name} ${definition};
+          END IF;
+        `,
+      ).join('')}
     END
     $$;
   `)

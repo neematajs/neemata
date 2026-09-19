@@ -17,95 +17,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-type TableKey =
-  | 'schemaVersion'
-  | 'schedules'
-  | 'runs'
-  | 'nodes'
-  | 'attempts'
-  | 'nodeChildren'
-  | 'runLeases'
-  | 'commands'
-
-type EnumKey =
-  | 'runKind'
-  | 'nodeKind'
-  | 'nodeChildKind'
-  | 'runStatus'
-  | 'nodeStatus'
-  | 'attemptStatus'
-  | 'commandKind'
-
-const runKindValues = ['workflow', 'task'] as const
-const nodeKindValues = [
-  'activity',
-  'task',
-  'workflow',
-  'branch',
-  'parallel',
-  'mapTask',
-  'mapWorkflow',
-] as const
-const nodeChildKindValues = ['activity', 'task', 'workflow'] as const
-const runStatusValues = [
-  'queued',
-  'running',
-  'waiting',
-  'cancelling',
-  'cancelled',
-  'failed',
-  'completed',
-] as const
-const nodeStatusValues = [
-  'pending',
-  'running',
-  'waiting',
-  'cancelling',
-  'cancelled',
-  'failed',
-  'completed',
-] as const
-const attemptStatusValues = [
-  'started',
-  'completed',
-  'failed',
-  'timedOut',
-  'cancelled',
-] as const
-const commandKindValues = ['continue', 'activity', 'task'] as const
-
-const tableNames = {
-  schemaVersion: 'workflow_schema_version',
-  schedules: 'workflow_schedules',
-  runs: 'workflow_runs',
-  nodes: 'workflow_nodes',
-  attempts: 'workflow_attempts',
-  nodeChildren: 'workflow_node_children',
-  runLeases: 'workflow_run_leases',
-  commands: 'workflow_commands',
-} as const satisfies Record<TableKey, string>
-
-const enumNames = {
-  runKind: 'workflow_run_kind',
-  nodeKind: 'workflow_node_kind',
-  nodeChildKind: 'workflow_node_child_kind',
-  runStatus: 'workflow_run_status',
-  nodeStatus: 'workflow_node_status',
-  attemptStatus: 'workflow_attempt_status',
-  commandKind: 'workflow_command_kind',
-} as const satisfies Record<EnumKey, string>
-
-function createEnums() {
-  return {
-    runKind: pgEnum(enumNames.runKind, runKindValues),
-    nodeKind: pgEnum(enumNames.nodeKind, nodeKindValues),
-    nodeChildKind: pgEnum(enumNames.nodeChildKind, nodeChildKindValues),
-    runStatus: pgEnum(enumNames.runStatus, runStatusValues),
-    nodeStatus: pgEnum(enumNames.nodeStatus, nodeStatusValues),
-    attemptStatus: pgEnum(enumNames.attemptStatus, attemptStatusValues),
-    commandKind: pgEnum(enumNames.commandKind, commandKindValues),
-  }
-}
+import { WORKFLOW_POSTGRES_SCHEMA_MANIFEST } from './manifest.ts'
 
 export type CreateSchemaOptions = {
   /**
@@ -116,13 +28,33 @@ export type CreateSchemaOptions = {
   readonly searchIndexes?: boolean
 }
 
+// Enum values come from the manifest so the schema, the DDL the verifier
+// expects and the runtime status unions cannot drift apart.
+const { enumValues } = WORKFLOW_POSTGRES_SCHEMA_MANIFEST
+
 export function createSchema(options?: CreateSchemaOptions) {
   const searchIndexes = options?.searchIndexes ?? false
-  const enums = createEnums()
-  const createTable = pgTable
+  const enums = {
+    runKind: pgEnum('workflow_run_kind', enumValues.workflow_run_kind),
+    nodeKind: pgEnum('workflow_node_kind', enumValues.workflow_node_kind),
+    nodeChildKind: pgEnum(
+      'workflow_node_child_kind',
+      enumValues.workflow_node_child_kind,
+    ),
+    runStatus: pgEnum('workflow_run_status', enumValues.workflow_run_status),
+    nodeStatus: pgEnum('workflow_node_status', enumValues.workflow_node_status),
+    attemptStatus: pgEnum(
+      'workflow_attempt_status',
+      enumValues.workflow_attempt_status,
+    ),
+    commandKind: pgEnum(
+      'workflow_command_kind',
+      enumValues.workflow_command_kind,
+    ),
+  }
 
-  const schemaVersion = createTable(
-    tableNames.schemaVersion,
+  const schemaVersion = pgTable(
+    'workflow_schema_version',
     {
       id: integer('id').primaryKey().default(1),
       version: integer('version').notNull(),
@@ -132,8 +64,8 @@ export function createSchema(options?: CreateSchemaOptions) {
     },
     (t) => [check('workflow_schema_version_singleton_chk', sql`${t.id} = 1`)],
   )
-  const runs = createTable(
-    tableNames.runs,
+  const runs = pgTable(
+    'workflow_runs',
     {
       id: uuid('id').primaryKey(),
       kind: enums.runKind('kind').notNull(),
@@ -160,6 +92,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       updatedAt: timestamp('updated_at', { withTimezone: true }).notNull(),
     },
     (t) => [
+      // sql.raw keeps the predicate unqualified: pg_get_expr renders it the
+      // same way, which is what verify.ts compares against the manifest
       uniqueIndex('workflow_runs_idempotency_idx')
         .on(t.idempotencyKey)
         .where(sql.raw('idempotency_key IS NOT NULL')),
@@ -214,8 +148,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       }).onDelete('cascade'),
     ],
   )
-  const schedules = createTable(
-    tableNames.schedules,
+  const schedules = pgTable(
+    'workflow_schedules',
     {
       id: uuid('id').primaryKey(),
       name: text('name').notNull(),
@@ -244,8 +178,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       ),
     ],
   )
-  const nodes = createTable(
-    tableNames.nodes,
+  const nodes = pgTable(
+    'workflow_nodes',
     {
       runId: uuid('run_id').notNull(),
       name: text('name').notNull(),
@@ -268,8 +202,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       }).onDelete('cascade'),
     ],
   )
-  const attempts = createTable(
-    tableNames.attempts,
+  const attempts = pgTable(
+    'workflow_attempts',
     {
       id: uuid('id').primaryKey(),
       runId: uuid('run_id').notNull(),
@@ -305,8 +239,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       }).onDelete('cascade'),
     ],
   )
-  const nodeChildren = createTable(
-    tableNames.nodeChildren,
+  const nodeChildren = pgTable(
+    'workflow_node_children',
     {
       runId: uuid('run_id').notNull(),
       nodeName: text('node_name').notNull(),
@@ -355,8 +289,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       }).onDelete('set null'),
     ],
   )
-  const runLeases = createTable(
-    tableNames.runLeases,
+  const runLeases = pgTable(
+    'workflow_run_leases',
     {
       runId: uuid('run_id').primaryKey(),
       leaseToken: text('lease_token').notNull(),
@@ -371,8 +305,8 @@ export function createSchema(options?: CreateSchemaOptions) {
       }).onDelete('cascade'),
     ],
   )
-  const commands = createTable(
-    tableNames.commands,
+  const commands = pgTable(
+    'workflow_commands',
     {
       id: uuid('id').primaryKey(),
       kind: enums.commandKind('kind').notNull(),

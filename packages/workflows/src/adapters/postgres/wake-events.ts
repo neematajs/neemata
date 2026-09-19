@@ -51,9 +51,13 @@ export function createPostgresWorkflowWakeEvents(
   params: CreatePostgresWorkflowWakeEventsParams,
 ): PostgresWorkflowWakeEvents {
   const reconnectDelayMs = params.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS
-  const commandListeners = new Map<WorkflowCommandWakeKind, Set<() => void>>()
-  const cancellationListeners = new Map<string, Set<() => void>>()
-  const runEventListeners = new Map<string, Set<() => void>>()
+  // One map per LISTEN channel, keyed by the notification payload (command
+  // kind, run id, root run id).
+  const byChannel: Record<string, Map<string, Set<() => void>>> = {
+    [WORKFLOW_COMMANDS_CHANNEL]: new Map(),
+    [WORKFLOW_CANCELLATIONS_CHANNEL]: new Map(),
+    [WORKFLOW_RUN_EVENTS_CHANNEL]: new Map(),
+  }
 
   let disposed = false
   let client: WorkflowPostgresListenerClient | undefined
@@ -78,19 +82,9 @@ export function createPostgresWorkflowWakeEvents(
   }
 
   const handleNotification = (message: WorkflowPostgresNotification) => {
-    if (message.channel === WORKFLOW_COMMANDS_CHANNEL) {
-      if (message.payload) {
-        fire(commandListeners.get(message.payload as WorkflowCommandWakeKind))
-      }
-      return
-    }
-    if (message.channel === WORKFLOW_CANCELLATIONS_CHANNEL) {
-      if (message.payload) fire(cancellationListeners.get(message.payload))
-      return
-    }
-    if (message.channel === WORKFLOW_RUN_EVENTS_CHANNEL) {
-      if (message.payload) fire(runEventListeners.get(message.payload))
-    }
+    const listeners = byChannel[message.channel]
+    if (!listeners || !message.payload) return
+    fire(listeners.get(message.payload))
   }
 
   const scheduleReconnect = () => {
@@ -134,9 +128,9 @@ export function createPostgresWorkflowWakeEvents(
       // wakes are idempotent, so a spurious one costs one refetch/claim pass,
       // never correctness. Heals watchers and worker dispatch alike.
       if (everListened) {
-        for (const listeners of commandListeners.values()) fire(listeners)
-        for (const listeners of cancellationListeners.values()) fire(listeners)
-        for (const listeners of runEventListeners.values()) fire(listeners)
+        for (const channel of Object.values(byChannel)) {
+          for (const listeners of channel.values()) fire(listeners)
+        }
       }
       everListened = true
     } catch (error) {
@@ -156,11 +150,8 @@ export function createPostgresWorkflowWakeEvents(
 
   void connect()
 
-  const subscribe = <K>(
-    listeners: Map<K, Set<() => void>>,
-    key: K,
-    listener: () => void,
-  ) => {
+  const subscribe = (channel: string, key: string, listener: () => void) => {
+    const listeners = byChannel[channel]!
     const set = listeners.get(key) ?? new Set<() => void>()
     listeners.set(key, set)
     set.add(listener)
@@ -171,17 +162,16 @@ export function createPostgresWorkflowWakeEvents(
   }
 
   return {
-    onCommand: (kind, listener) => subscribe(commandListeners, kind, listener),
+    onCommand: (kind: WorkflowCommandWakeKind, listener) =>
+      subscribe(WORKFLOW_COMMANDS_CHANNEL, kind, listener),
     onCancellation: (runId, listener) =>
-      subscribe(cancellationListeners, runId, listener),
+      subscribe(WORKFLOW_CANCELLATIONS_CHANNEL, runId, listener),
     onRunEvent: (rootRunId, listener) =>
-      subscribe(runEventListeners, rootRunId, listener),
+      subscribe(WORKFLOW_RUN_EVENTS_CHANNEL, rootRunId, listener),
     async dispose() {
       disposed = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
-      commandListeners.clear()
-      cancellationListeners.clear()
-      runEventListeners.clear()
+      for (const listeners of Object.values(byChannel)) listeners.clear()
       const current = client
       client = undefined
       try {
