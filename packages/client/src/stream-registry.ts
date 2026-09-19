@@ -65,8 +65,10 @@ export class ClientStreams {
 export class ServerStreams<
   T extends ProtocolServerStreamInterface = ProtocolServerStreamInterface,
 > {
-  readonly #collection = new Map<number, T>()
-  readonly #writers = new Map<number, WritableStreamDefaultWriter>()
+  readonly #collection = new Map<
+    number,
+    { stream: T; writer: WritableStreamDefaultWriter }
+  >()
 
   get size() {
     return this.#collection.size
@@ -77,69 +79,62 @@ export class ServerStreams<
   }
 
   get(streamId: number) {
-    const stream = this.#collection.get(streamId)
-    if (!stream) throw new Error('Stream not found')
-    return stream
+    const entry = this.#collection.get(streamId)
+    if (!entry) throw new Error('Stream not found')
+    return entry.stream
   }
 
   add(streamId: number, stream: T) {
-    this.#collection.set(streamId, stream)
-    this.#writers.set(
-      streamId,
-      stream.writable.getWriter() as WritableStreamDefaultWriter,
-    )
+    const writer = stream.writable.getWriter() as WritableStreamDefaultWriter
+    this.#collection.set(streamId, { stream, writer })
     return stream
   }
 
   remove(streamId: number) {
     this.#collection.delete(streamId)
-    this.#writers.delete(streamId)
   }
 
   async abort(streamId: number, reason?: unknown) {
-    const stream = this.#collection.get(streamId)
-    if (!stream) return
+    const entry = this.#collection.get(streamId)
+    if (!entry) return
 
     // a write parked on backpressure would block abort() from settling
-    stream.releaseParkedWrites()
-    const writer = this.#writers.get(streamId)
-    if (writer) {
-      await writer.abort(reason)
-      writer.releaseLock()
-    }
+    entry.stream.releaseParkedWrites()
+    await entry.writer.abort(reason)
+    entry.writer.releaseLock()
     this.remove(streamId)
   }
 
   async push(streamId: number, chunk: ArrayBufferView) {
-    const writer = this.#writers.get(streamId)
-    if (writer) {
-      return await writer.write(chunk)
+    const entry = this.#collection.get(streamId)
+    if (entry) {
+      return await entry.writer.write(chunk)
     }
   }
 
   async end(streamId: number) {
-    // no more data is coming: flush parked writes into the readable queue so
-    // close() can settle while the consumer drains at its own pace
-    this.#collection.get(streamId)?.releaseParkedWrites()
-    const writer = this.#writers.get(streamId)
-    if (writer) {
-      await writer.close()
-      writer.releaseLock()
+    const entry = this.#collection.get(streamId)
+    if (entry) {
+      // no more data is coming: flush parked writes into the readable queue so
+      // close() can settle while the consumer drains at its own pace
+      entry.stream.releaseParkedWrites()
+      await entry.writer.close()
+      entry.writer.releaseLock()
     }
     this.remove(streamId)
   }
 
-  async clear(reason?: any) {
+  async clear(reason?: unknown) {
     if (reason) {
-      for (const stream of this.#collection.values()) {
+      const pending: Promise<void>[] = []
+
+      for (const { stream, writer } of this.#collection.values()) {
         stream.releaseParkedWrites()
+        pending.push(writer.abort(reason).finally(() => writer.releaseLock()))
       }
-      const pending = Array.from(this.#writers.values()).map((writer) =>
-        writer.abort(reason).finally(() => writer.releaseLock()),
-      )
+
       await Promise.allSettled(pending)
     }
     this.#collection.clear()
-    this.#writers.clear()
   }
 }

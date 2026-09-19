@@ -1,36 +1,12 @@
+import { noopFn } from '@nmtjs/common'
 import { ConnectionType } from '@nmtjs/protocol'
 
 import type { ClientPlugin } from './types.ts'
+import { isOffline, isTabHidden, sleep } from '../utils.ts'
 
 const DEFAULT_HEARTBEAT_INTERVAL = 15000
 const DEFAULT_HEARTBEAT_TIMEOUT = 5000
-
-const sleep = (ms: number, signal?: AbortSignal) => {
-  return new Promise<void>((resolve) => {
-    if (signal?.aborted) return resolve()
-    const timer = setTimeout(resolve, ms)
-    if (signal) {
-      signal.addEventListener(
-        'abort',
-        () => {
-          clearTimeout(timer)
-          resolve()
-        },
-        { once: true },
-      )
-    }
-  })
-}
-
-const isPaused = () => {
-  if (globalThis.window && 'navigator' in globalThis.window) {
-    if (globalThis.window.navigator?.onLine === false) return true
-  }
-  if (globalThis.document) {
-    if (globalThis.document.visibilityState === 'hidden') return true
-  }
-  return false
-}
+const PAUSE_POLL_INTERVAL = 1000
 
 export interface HeartbeatPluginOptions {
   interval?: number
@@ -44,68 +20,53 @@ export const heartbeatPlugin = (
     const interval = options.interval ?? DEFAULT_HEARTBEAT_INTERVAL
     const timeout = options.timeout ?? DEFAULT_HEARTBEAT_TIMEOUT
 
-    let heartbeatAbortController: AbortController | null = null
-    let heartbeatTask: Promise<void> | null = null
+    let controller: AbortController | null = null
 
-    const stopHeartbeat = () => {
-      heartbeatAbortController?.abort()
-      heartbeatAbortController = null
-      heartbeatTask = null
+    const stop = () => {
+      controller?.abort()
+      controller = null
     }
 
-    const startHeartbeat = () => {
-      if (heartbeatTask) return
+    const start = () => {
+      if (controller) return
       if (core.transportType !== ConnectionType.Bidirectional) return
 
-      heartbeatAbortController = new AbortController()
-      const signal = heartbeatAbortController.signal
+      const beating = new AbortController()
+      controller = beating
+      const { signal } = beating
 
-      heartbeatTask = (async () => {
-        while (
-          !signal.aborted &&
-          !core.isDisposed() &&
-          core.state === 'connected'
-        ) {
-          if (isPaused()) {
-            await sleep(1000, signal)
+      const isActive = () =>
+        !signal.aborted && !core.isDisposed() && core.state === 'connected'
+
+      void (async () => {
+        while (isActive()) {
+          if (isOffline() || isTabHidden()) {
+            await sleep(PAUSE_POLL_INTERVAL, signal)
             continue
           }
 
           await sleep(interval, signal)
 
-          if (
-            signal.aborted ||
-            core.isDisposed() ||
-            core.state !== 'connected'
-          ) {
-            continue
-          }
+          if (!isActive()) continue
 
           try {
             await ping.ping(timeout, signal)
           } catch {
-            if (
-              !signal.aborted &&
-              !core.isDisposed() &&
-              core.state === 'connected'
-            ) {
-              await core
-                .requestReconnect('heartbeat_timeout')
-                .catch(() => void 0)
+            if (isActive()) {
+              await core.requestReconnect('heartbeat_timeout').catch(noopFn)
             }
           }
         }
       })().finally(() => {
-        heartbeatTask = null
-        heartbeatAbortController = null
+        if (controller === beating) controller = null
       })
     }
 
     return {
       name: 'heartbeat',
-      onConnect: startHeartbeat,
-      onDisconnect: () => stopHeartbeat(),
-      dispose: stopHeartbeat,
+      onConnect: start,
+      onDisconnect: stop,
+      dispose: stop,
     }
   }
 }

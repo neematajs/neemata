@@ -18,9 +18,8 @@ import type { RpcLayerApi } from './layers/rpc.ts'
 import type { StreamLayerApi } from './layers/streams.ts'
 import type { ClientPlugin } from './plugins/types.ts'
 import type { BaseClientTransformer } from './transformers.ts'
-import type { ClientTransportFactory } from './transport.ts'
+import type { ClientTransportFactory, TransportOptionsOf } from './transport.ts'
 import type {
-  AnyResolvedContractRouter,
   ClientBackpressureOptions,
   ClientCallers,
   ResolveAPIRouterRoutes,
@@ -49,19 +48,6 @@ export interface ClientOptions<
   safe?: SafeCall
 }
 
-export type BaseClientOptions<
-  RouterContract extends TAnyRouterContract = TAnyRouterContract,
-  SafeCall extends boolean = false,
-> = ClientOptions<RouterContract, SafeCall>
-
-export interface ClientCallersFactory<
-  Routes extends AnyResolvedContractRouter,
-  SafeCall extends boolean,
-> {
-  call: ClientCallers<Routes, SafeCall, false>
-  stream: ClientCallers<Routes, SafeCall, true>
-}
-
 type ClientRoutes<
   RouterContract extends TAnyRouterContract,
   InputTypeProvider extends TypeProvider,
@@ -81,11 +67,7 @@ export class Client<
   OutputTypeProvider extends TypeProvider = TypeProvider,
 > {
   _!: {
-    routes: ResolveAPIRouterRoutes<
-      RouterContract,
-      InputTypeProvider,
-      OutputTypeProvider
-    >
+    routes: ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>
     safe: SafeCall
   }
 
@@ -112,21 +94,27 @@ export class Client<
 
   constructor(
     readonly options: ClientOptions<RouterContract, SafeCall>,
-    readonly transportFactory: TransportFactory,
-    readonly transportOptions: TransportFactory extends ClientTransportFactory<
-      any,
-      infer Options
-    >
-      ? Options
-      : never,
+    transportFactory: TransportFactory,
+    transportOptions: TransportOptionsOf<TransportFactory>,
     transformer: BaseClientTransformer,
-    buildCallers: (rpc: RpcLayerApi) => { call: unknown; stream: unknown },
+    buildCallers: (rpc: RpcLayerApi) => {
+      call: ClientCallers<
+        ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+        SafeCall,
+        false
+      >
+      stream: ClientCallers<
+        ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
+        SafeCall,
+        true
+      >
+    },
   ) {
     this.transformer = transformer
 
-    const transport = this.transportFactory(
+    const transport = transportFactory(
       { protocol: this.options.protocol, codec: this.options.codec },
-      this.transportOptions,
+      transportOptions,
     )
 
     const coreOptions: ClientCoreOptions = {
@@ -153,7 +141,7 @@ export class Client<
           this.core.send(buffer).catch(noopFn)
         },
       },
-      streamId: () => this.streamLayer.getStreamId(),
+      streamId: () => this.streamLayer.nextStreamId(),
       addClientStream: (blob) => this.streamLayer.addClientStream(blob),
       addServerStream: (streamId, metadata) =>
         this.streamLayer.createServerBlob(streamId, metadata),
@@ -165,16 +153,8 @@ export class Client<
     })
 
     const callers = buildCallers(this.rpcLayer)
-    this.call = callers.call as ClientCallers<
-      ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
-      SafeCall,
-      false
-    >
-    this.stream = callers.stream as ClientCallers<
-      ClientRoutes<RouterContract, InputTypeProvider, OutputTypeProvider>,
-      SafeCall,
-      true
-    >
+    this.call = callers.call
+    this.stream = callers.stream
 
     this.on = this.core.on.bind(this.core)
     this.once = this.core.once.bind(this.core)
@@ -197,7 +177,7 @@ export class Client<
     return this.core.auth
   }
 
-  set auth(value: any) {
+  set auth(value: string | undefined) {
     this.core.auth = value
   }
 

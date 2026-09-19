@@ -35,7 +35,15 @@ class MockCore extends EventEmitter<{
     encodeMessage: vi.fn((_context, type) => new Uint8Array([type])),
   } as any
 
-  readonly send = vi.fn(async () => {})
+  readonly send = vi.fn(async (_buffer?: any, _signal?: AbortSignal) => {})
+
+  sendMessage(type: number, payload: unknown, signal?: AbortSignal) {
+    if (!this.messageContext) return null
+    return this.send(
+      this.protocol.encodeMessage(this.messageContext, type, payload),
+      signal,
+    )
+  }
 }
 
 describe('PingLayer', () => {

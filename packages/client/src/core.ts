@@ -1,6 +1,7 @@
-import type { ProtocolVersion } from '@nmtjs/protocol'
+import type { ClientMessageType, ProtocolVersion } from '@nmtjs/protocol'
 import type {
   BaseClientCodec,
+  ClientMessageTypePayload,
   MessageContext,
   ProtocolVersionInterface,
 } from '@nmtjs/protocol/client'
@@ -9,9 +10,9 @@ import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError, versions } from '@nmtjs/protocol/client'
 
 import type {
+  ClientEvent,
   ClientPlugin,
   ClientPluginContext,
-  ClientPluginEvent,
   ClientPluginInstance,
   ReconnectConfig,
   StreamEvent,
@@ -25,12 +26,7 @@ import type {
   TransportRpcParams,
 } from './transport.ts'
 import { EventEmitter } from './events.ts'
-
-export {
-  ErrorCode,
-  ProtocolBlob,
-  type ProtocolBlobMetadata,
-} from '@nmtjs/protocol'
+import { sleep } from './utils.ts'
 
 export type ConnectionState =
   | 'idle'
@@ -39,12 +35,15 @@ export type ConnectionState =
   | 'disconnecting'
   | 'disconnected'
 
+export type ServerMessage = ReturnType<
+  ProtocolVersionInterface['decodeMessage']
+>
+
 export interface ClientCoreOptions {
   protocol: ProtocolVersion
   codec: BaseClientCodec
   application?: string
   autoConnect?: boolean
-  plugins?: ClientPlugin[]
 }
 
 export class ClientError extends ProtocolError {}
@@ -52,22 +51,7 @@ export class ClientError extends ProtocolError {}
 const DEFAULT_RECONNECT_TIMEOUT = 1000
 const DEFAULT_MAX_RECONNECT_TIMEOUT = 60000
 const DEFAULT_CONNECT_ERROR_REASON = 'connect_error'
-
-const sleep = (ms: number, signal?: AbortSignal) => {
-  return new Promise<void>((resolve) => {
-    if (signal?.aborted) return resolve()
-
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer)
-        resolve()
-      },
-      { once: true },
-    )
-  })
-}
+const PAUSE_POLL_INTERVAL = 1000
 
 const computeReconnectDelay = (ms: number) => {
   // jitter unconditionally: Node fleets would otherwise reconnect in lockstep
@@ -76,7 +60,7 @@ const computeReconnectDelay = (ms: number) => {
 }
 
 export class ClientCore extends EventEmitter<{
-  message: [message: unknown, raw: ArrayBufferView]
+  message: [message: ServerMessage, raw: ArrayBufferView]
   connected: []
   disconnected: [reason: ClientDisconnectReason]
   state_changed: [state: ConnectionState, previous: ConnectionState]
@@ -88,7 +72,7 @@ export class ClientCore extends EventEmitter<{
   readonly application?: string
   readonly autoConnect: boolean
 
-  auth: any
+  auth?: string
   messageContext: MessageContext | null = null
 
   #state: ConnectionState = 'idle'
@@ -98,12 +82,10 @@ export class ClientCore extends EventEmitter<{
   #disposed = false
   #plugins: ClientPluginInstance[] = []
   #lastDisconnectReason: ClientDisconnectReason = 'server'
-  #clientDisconnectAsReconnect = false
-  #clientDisconnectOverrideReason: ClientDisconnectReason | null = null
+  #reconnectDisconnectReason: ClientDisconnectReason | null = null
   #reconnectConfig: ReconnectConfig | null = null
   #reconnectPauseReasons = new Set<string>()
   #reconnectController: AbortController | null = null
-  #reconnectPromise: Promise<void> | null = null
   #reconnectTimeout = DEFAULT_RECONNECT_TIMEOUT
   #reconnectImmediate = false
 
@@ -144,7 +126,9 @@ export class ClientCore extends EventEmitter<{
       this.autoConnect &&
       !this.#disposed &&
       this.#lastDisconnectReason !== 'client' &&
-      (this.#state === 'connecting' || !this.#reconnectPromise) &&
+      // a running reconnect loop owns connecting, unless this call arrived
+      // while its attempt is already in flight
+      (this.#state === 'connecting' || !this.#reconnectController) &&
       (this.#state === 'idle' ||
         this.#state === 'connecting' ||
         this.#state === 'disconnected')
@@ -166,8 +150,7 @@ export class ClientCore extends EventEmitter<{
 
   configureReconnect(config: ReconnectConfig | null) {
     this.#reconnectConfig = config
-    this.#reconnectTimeout = config?.initialTimeout ?? DEFAULT_RECONNECT_TIMEOUT
-    this.#reconnectImmediate = false
+    this.#resetBackoff()
 
     if (!config) {
       this.#cancelReconnectLoop()
@@ -234,7 +217,7 @@ export class ClientCore extends EventEmitter<{
         auth: this.auth,
         application: this.application,
         onMessage: (message) => {
-          void this.#onMessage(message)
+          this.#onMessage(message)
         },
         onConnect: () => {
           void this.#handleConnected()
@@ -271,14 +254,7 @@ export class ClientCore extends EventEmitter<{
     }
 
     this.#setState('disconnecting')
-
-    if (this.#cab && !this.#cab.signal.aborted) {
-      try {
-        this.#cab.abort(reason)
-      } catch {
-        this.#cab.abort()
-      }
-    }
+    this.#cab?.abort(reason)
 
     try {
       await this.transport.disconnect()
@@ -297,8 +273,9 @@ export class ClientCore extends EventEmitter<{
       return Promise.resolve()
     }
 
-    this.#clientDisconnectAsReconnect = true
-    this.#clientDisconnectOverrideReason = reason
+    // the transport is closed as a client disconnect, but consumers must see
+    // the reason that asked for the reconnect
+    this.#reconnectDisconnectReason = reason
 
     return this.disconnect('client')
   }
@@ -309,14 +286,7 @@ export class ClientCore extends EventEmitter<{
     this.#disposed = true
     this.#cancelReconnectLoop()
     this.messageContext = null
-
-    if (this.#cab && !this.#cab.signal.aborted) {
-      try {
-        this.#cab.abort('dispose')
-      } catch {
-        this.#cab.abort()
-      }
-    }
+    this.#cab?.abort('dispose')
 
     if (
       this.transport.type === ConnectionType.Bidirectional &&
@@ -325,8 +295,8 @@ export class ClientCore extends EventEmitter<{
       void this.transport.disconnect().catch(noopFn)
     }
 
-    for (let i = this.#plugins.length - 1; i >= 0; i--) {
-      this.#plugins[i].dispose?.()
+    for (const plugin of this.#plugins.toReversed()) {
+      plugin.dispose?.()
     }
   }
 
@@ -336,6 +306,23 @@ export class ClientCore extends EventEmitter<{
     }
 
     return this.transport.send(buffer, { signal })
+  }
+
+  // returns null when there is no message context, i.e. nothing to send over
+  sendMessage<T extends ClientMessageType>(
+    type: T,
+    payload: ClientMessageTypePayload[T],
+    signal?: AbortSignal,
+  ) {
+    if (!this.messageContext) return null
+
+    const buffer = this.protocol.encodeMessage(
+      this.messageContext,
+      type,
+      payload,
+    )
+
+    return this.send(buffer, signal)
   }
 
   transportCall(
@@ -350,27 +337,30 @@ export class ClientCore extends EventEmitter<{
     return this.transport.call(context, rpc, options)
   }
 
-  emitClientEvent(event: ClientPluginEvent) {
+  emitClientEvent(event: ClientEvent) {
+    if (!this.#plugins.length) return
+
+    const timestamped = { ...event, timestamp: Date.now() }
+
     for (const plugin of this.#plugins) {
       try {
-        const result = plugin.onClientEvent?.(event)
+        const result = plugin.onClientEvent?.(timestamped)
         Promise.resolve(result).catch(noopFn)
-      } catch {}
+      } catch {
+        // plugin telemetry is observational: a throwing sink must not break
+        // the call or message flow that produced the event
+      }
     }
   }
 
   emitStreamEvent(event: StreamEvent) {
-    this.emitClientEvent({
-      kind: 'stream_event',
-      timestamp: Date.now(),
-      ...event,
-    })
+    this.emitClientEvent({ kind: 'stream_event', ...event })
   }
 
-  async #onMessage(buffer: ArrayBufferView) {
+  #onMessage(buffer: ArrayBufferView) {
     if (!this.messageContext) return
 
-    let message: ReturnType<ProtocolVersionInterface['decodeMessage']>
+    let message: ServerMessage
     try {
       message = this.protocol.decodeMessage(this.messageContext, buffer)
     } catch (cause) {
@@ -392,7 +382,6 @@ export class ClientCore extends EventEmitter<{
 
     this.emitClientEvent({
       kind: 'server_message',
-      timestamp: Date.now(),
       messageType: message.type,
       rawByteLength: buffer.byteLength,
       body: message,
@@ -402,16 +391,12 @@ export class ClientCore extends EventEmitter<{
   }
 
   async #handleConnected() {
-    this.#reconnectTimeout =
-      this.#reconnectConfig?.initialTimeout ?? DEFAULT_RECONNECT_TIMEOUT
-    this.#reconnectImmediate = false
-
+    this.#resetBackoff()
     this.#setState('connected')
     this.#lastDisconnectReason = 'server'
 
     this.emitClientEvent({
       kind: 'connected',
-      timestamp: Date.now(),
       transportType:
         this.transport.type === ConnectionType.Bidirectional
           ? 'bidirectional'
@@ -426,13 +411,11 @@ export class ClientCore extends EventEmitter<{
   }
 
   async #handleDisconnected(reason: ClientDisconnectReason) {
+    const requested = this.#reconnectDisconnectReason
     const effectiveReason =
-      reason === 'client' && this.#clientDisconnectAsReconnect
-        ? (this.#clientDisconnectOverrideReason ?? 'server')
-        : reason
+      reason === 'client' && requested !== null ? requested : reason
 
-    this.#clientDisconnectAsReconnect = false
-    this.#clientDisconnectOverrideReason = null
+    this.#reconnectDisconnectReason = null
 
     const shouldSkip =
       this.#state === 'disconnected' &&
@@ -440,33 +423,19 @@ export class ClientCore extends EventEmitter<{
       this.#lastDisconnectReason === effectiveReason
 
     this.messageContext = null
-
-    if (this.#cab) {
-      if (!this.#cab.signal.aborted) {
-        try {
-          this.#cab.abort(reason)
-        } catch {
-          this.#cab.abort()
-        }
-      }
-      this.#cab = null
-    }
+    this.#cab?.abort(reason)
+    this.#cab = null
 
     if (shouldSkip) return
 
     this.#lastDisconnectReason = effectiveReason
     this.#setState('disconnected')
 
-    this.emitClientEvent({
-      kind: 'disconnected',
-      timestamp: Date.now(),
-      reason: effectiveReason,
-    })
-
+    this.emitClientEvent({ kind: 'disconnected', reason: effectiveReason })
     this.emit('disconnected', effectiveReason)
 
-    for (let i = this.#plugins.length - 1; i >= 0; i--) {
-      await this.#plugins[i].onDisconnect?.(effectiveReason)
+    for (const plugin of this.#plugins.toReversed()) {
+      await plugin.onDisconnect?.(effectiveReason)
     }
 
     if (this.#shouldReconnect(effectiveReason)) {
@@ -480,13 +449,7 @@ export class ClientCore extends EventEmitter<{
     const previous = this.#state
     this.#state = next
 
-    this.emitClientEvent({
-      kind: 'state_changed',
-      timestamp: Date.now(),
-      state: next,
-      previous,
-    })
-
+    this.emitClientEvent({ kind: 'state_changed', state: next, previous })
     this.emit('state_changed', next, previous)
   }
 
@@ -499,29 +462,37 @@ export class ClientCore extends EventEmitter<{
     )
   }
 
+  #resetBackoff() {
+    this.#reconnectTimeout =
+      this.#reconnectConfig?.initialTimeout ?? DEFAULT_RECONNECT_TIMEOUT
+    this.#reconnectImmediate = false
+  }
+
   #cancelReconnectLoop() {
     this.#reconnectImmediate = false
     this.#reconnectController?.abort()
     this.#reconnectController = null
-    this.#reconnectPromise = null
   }
 
   #ensureReconnectLoop() {
-    if (this.#reconnectPromise || !this.#reconnectConfig) return
+    if (this.#reconnectController || !this.#reconnectConfig) return
 
-    const signal = new AbortController()
-    this.#reconnectController = signal
+    const controller = new AbortController()
+    const { signal } = controller
+    this.#reconnectController = controller
 
-    this.#reconnectPromise = (async () => {
+    void (async () => {
+      // checks after an await read `state`, not `#state`: the connection can
+      // change while the loop is suspended, which narrowing would hide
       while (
-        !signal.signal.aborted &&
+        !signal.aborted &&
         !this.#disposed &&
         this.#reconnectConfig &&
         (this.#state === 'disconnected' || this.#state === 'idle') &&
         this.#lastDisconnectReason !== 'client'
       ) {
         if (this.#reconnectPauseReasons.size) {
-          await sleep(1000, signal.signal)
+          await sleep(PAUSE_POLL_INTERVAL, signal)
           continue
         }
 
@@ -531,17 +502,17 @@ export class ClientCore extends EventEmitter<{
         this.#reconnectImmediate = false
 
         if (delay > 0) {
-          await sleep(delay, signal.signal)
+          await sleep(delay, signal)
         }
 
-        const currentState = this.state
+        const state = this.state
 
         if (
-          signal.signal.aborted ||
+          signal.aborted ||
           this.#disposed ||
           !this.#reconnectConfig ||
-          currentState === 'connected' ||
-          currentState === 'connecting'
+          state === 'connected' ||
+          state === 'connecting'
         ) {
           break
         }
@@ -558,10 +529,9 @@ export class ClientCore extends EventEmitter<{
         }
       }
     })().finally(() => {
-      if (this.#reconnectController === signal) {
+      if (this.#reconnectController === controller) {
         this.#reconnectController = null
       }
-      this.#reconnectPromise = null
     })
   }
 }

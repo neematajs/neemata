@@ -1,6 +1,13 @@
 import type { Future } from '@nmtjs/common'
+import type { BaseProtocolError } from '@nmtjs/protocol'
 import type { ServerMessageTypePayload } from '@nmtjs/protocol/client'
-import { anyAbortSignal, createFuture, MAX_UINT32, noopFn } from '@nmtjs/common'
+import {
+  anyAbortSignal,
+  createFuture,
+  MAX_UINT32,
+  noopFn,
+  onAbort,
+} from '@nmtjs/common'
 import {
   ClientMessageType,
   ConnectionType,
@@ -15,15 +22,19 @@ import { ProtocolError, ProtocolServerRPCStream } from '@nmtjs/protocol/client'
 
 import type { ClientCore } from '../core.ts'
 import type { BaseClientTransformer } from '../transformers.ts'
-import type { ClientCallOptions } from '../types.ts'
+import type {
+  TransportCallResponse,
+  TransportErrorResponse,
+} from '../transport.ts'
+import type { StreamCallOptions } from '../types.ts'
 import type { StreamLayerApi } from './streams.ts'
-import { ServerStreams } from '../streams.ts'
-import { toReasonString } from './streams.ts'
+import { ServerStreams } from '../stream-registry.ts'
+import { createIdCounter, toReasonString } from '../utils.ts'
 
-export type ProtocolClientCall = Future<any> & {
+type Call = Future<any> & {
   procedure: string
-  signal?: AbortSignal
-  rpcStreamWindow: number
+  signal: AbortSignal
+  streamWindow: number
   cleanup?: () => void
 }
 
@@ -31,16 +42,14 @@ export interface RpcLayerApi {
   call(
     procedure: string,
     payload: any,
-    options?: ClientCallOptions,
+    options?: StreamCallOptions,
+    params?: { stream?: boolean },
   ): Promise<any>
-  readonly pendingCallCount: number
-  readonly activeStreamCount: number
 }
 
-const DEFAULT_RPC_STREAM_WINDOW = 16
-const resolveRpcStreamWindow = (
-  value: number | undefined = DEFAULT_RPC_STREAM_WINDOW,
-) => {
+const DEFAULT_STREAM_WINDOW = 16
+
+const validateStreamWindow = (value: number) => {
   if (!Number.isInteger(value) || value < 1 || value > MAX_UINT32) {
     throw new RangeError(
       'backpressure.rpc.window must be a positive uint32 integer',
@@ -53,41 +62,16 @@ const toAbortError = (signal: AbortSignal) => {
   return new ProtocolError(ErrorCode.ClientRequestError, String(signal.reason))
 }
 
-const waitForConnect = async (core: ClientCore, signal?: AbortSignal) => {
-  if (!core.shouldConnectOnCall()) return
+const connectIfNeeded = async (core: ClientCore, signal: AbortSignal) => {
+  if (core.state !== 'connected' && core.shouldConnectOnCall()) {
+    if (signal.aborted) throw toAbortError(signal)
 
-  if (signal?.aborted) {
-    throw toAbortError(signal)
-  }
+    const connecting = core.connect()
 
-  const connectPromise = core.connect()
-
-  if (!signal) {
-    await connectPromise
-    return
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const onAbort = () => {
-      reject(toAbortError(signal))
-    }
-
-    signal.addEventListener('abort', onAbort, { once: true })
-
-    connectPromise.then(resolve, reject).finally(() => {
-      signal.removeEventListener('abort', onAbort)
+    await new Promise<void>((resolve, reject) => {
+      const off = onAbort(signal, () => reject(toAbortError(signal)))
+      connecting.then(resolve, reject).finally(off)
     })
-  })
-}
-
-const ensureConnectedForCall = async (
-  core: ClientCore,
-  signal?: AbortSignal,
-) => {
-  if (!core.autoConnect) return
-
-  if (core.state !== 'connected') {
-    await waitForConnect(core, signal)
   }
 
   if (core.state !== 'connected') {
@@ -98,7 +82,7 @@ const ensureConnectedForCall = async (
   }
 }
 
-const waitForConnected = (core: ClientCore, signal?: AbortSignal) => {
+const waitUntilConnected = (core: ClientCore, signal?: AbortSignal) => {
   if (core.state === 'connected') return Promise.resolve()
 
   return new Promise<void>((resolve, reject) => {
@@ -107,17 +91,19 @@ const waitForConnected = (core: ClientCore, signal?: AbortSignal) => {
       return
     }
 
+    let removeAbort = noopFn
+
     const offConnected = core.once('connected', () => {
-      signal?.removeEventListener('abort', onAbort)
+      removeAbort()
       resolve()
     })
 
-    const onAbort = () => {
-      offConnected()
-      reject(signal?.reason)
+    if (signal) {
+      removeAbort = onAbort(signal, () => {
+        offConnected()
+        reject(signal.reason)
+      })
     }
-
-    signal?.addEventListener('abort', onAbort, { once: true })
   })
 }
 
@@ -147,7 +133,7 @@ async function* reconnectingAsyncIterable<T>(
         error instanceof ProtocolError &&
         error.code === ErrorCode.ConnectionError
       ) {
-        await waitForConnected(core, signal)
+        await waitUntilConnected(core, signal)
         continue
       }
 
@@ -208,127 +194,107 @@ export const createRpcLayer = (
     safe?: boolean
   } = {},
 ): RpcLayerApi => {
-  const calls = new Map<number, ProtocolClientCall>()
+  const calls = new Map<number, Call>()
   const rpcStreams = new ServerStreams<ProtocolServerRPCStream>()
-  const rpcStreamCredits = new Map<number, ReceiveCreditWindow>()
-  const defaultRpcStreamWindow = resolveRpcStreamWindow(options.rpcStreamWindow)
+  const streamCredits = new Map<number, ReceiveCreditWindow>()
+  const defaultWindow = validateStreamWindow(
+    options.rpcStreamWindow ?? DEFAULT_STREAM_WINDOW,
+  )
+  const nextCallId = createIdCounter()
 
-  let callId = 0
-
-  const nextCallId = () => {
-    if (callId >= MAX_UINT32) {
-      callId = 0
-    }
-
-    return callId++
+  const sendAbort = (callId: number, reason?: string) => {
+    core
+      .sendMessage(ClientMessageType.RpcAbort, { callId, reason })
+      ?.catch(noopFn)
   }
 
-  const handleRPCResponseMessage = (
-    message: ServerMessageTypePayload[ServerMessageType.RpcResponse],
-  ) => {
-    const call = calls.get(message.callId)
-    if (!call) return
-
-    if (message.error) {
-      core.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId: message.callId,
-        procedure: call.procedure,
-        error: message.error,
-      })
-
-      call.reject(
-        new ProtocolError(
-          message.error.code,
-          message.error.message,
-          message.error.data,
-        ),
-      )
-      return
-    }
-
-    try {
-      const transformed = transformer.decode(call.procedure, message.result)
-      core.emitClientEvent({
-        kind: 'rpc_response',
-        timestamp: Date.now(),
-        callId: message.callId,
-        procedure: call.procedure,
-        body: transformed,
-      })
-      call.resolve(transformed)
-    } catch (error) {
-      core.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId: message.callId,
-        procedure: call.procedure,
-        error,
-      })
-      call.reject(
-        new ProtocolError(
-          ErrorCode.ClientRequestError,
-          'Unable to decode response',
-          error,
-        ),
-      )
-    }
+  // credits, the abort listener and the pending entry always go together
+  const release = (callId: number) => {
+    streamCredits.delete(callId)
+    const call = calls.get(callId)
+    call?.cleanup?.()
+    calls.delete(callId)
+    return call
   }
 
-  const handleRPCStreamResponseMessage = (
-    message: ServerMessageTypePayload[ServerMessageType.RpcStreamResponse],
-  ) => {
-    const call = calls.get(message.callId)
+  const emitError = (callId: number, procedure: string, error: unknown) => {
+    core.emitClientEvent({ kind: 'rpc_error', callId, procedure, error })
+  }
 
-    if (message.error) {
-      if (!call) return
-
-      core.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId: message.callId,
-        procedure: call.procedure,
-        error: message.error,
-      })
-
-      call.reject(
-        new ProtocolError(
-          message.error.code,
-          message.error.message,
-          message.error.data,
-        ),
-      )
-      return
-    }
-
-    if (!call) {
-      if (!core.messageContext) return
-
-      const buffer = core.protocol.encodeMessage(
-        core.messageContext,
-        ClientMessageType.RpcAbort,
-        { callId: message.callId },
-      )
-
-      core.send(buffer).catch(noopFn)
-      return
-    }
-
+  const emitStreamResponse = (callId: number, call: Call) => {
     core.emitClientEvent({
       kind: 'rpc_response',
-      timestamp: Date.now(),
-      callId: message.callId,
+      callId,
       procedure: call.procedure,
       stream: true,
     })
+  }
 
-    const { procedure, signal, rpcStreamWindow } = call
-    const rpcStreamRefill = Math.ceil(rpcStreamWindow / 2)
+  const rejectServerError = (
+    callId: number,
+    call: Call,
+    error: BaseProtocolError,
+  ) => {
+    emitError(callId, call.procedure, error)
+    call.reject(new ProtocolError(error.code, error.message, error.data))
+  }
+
+  const rejectUndecodable = (callId: number, call: Call, error: unknown) => {
+    emitError(callId, call.procedure, error)
+    call.reject(
+      new ProtocolError(
+        ErrorCode.ClientRequestError,
+        'Unable to decode response',
+        error,
+      ),
+    )
+  }
+
+  const resolveResult = (callId: number, call: Call, result: unknown) => {
+    try {
+      const body = transformer.decode(call.procedure, result)
+      core.emitClientEvent({
+        kind: 'rpc_response',
+        callId,
+        procedure: call.procedure,
+        body,
+      })
+      call.resolve(body)
+    } catch (error) {
+      rejectUndecodable(callId, call, error)
+    }
+  }
+
+  // A failed local push (e.g. transform/decode error) must surface as a
+  // stream abort on both sides, never as an unhandled rejection.
+  const abortStreamOnPushFailure = (callId: number, reason: unknown) => {
+    if (!rpcStreams.has(callId)) return
+
+    release(callId)
+    void rpcStreams.abort(callId, reason).catch(noopFn)
+
+    if (core.messageContext) {
+      const reasonString = toReasonString(reason)
+
+      core.emitStreamEvent({
+        direction: 'outgoing',
+        streamType: 'rpc',
+        action: 'abort',
+        callId,
+        reason: reasonString,
+      })
+
+      sendAbort(callId, reasonString)
+    }
+  }
+
+  const createRpcStream = (callId: number, call: Call) => {
+    const { procedure, signal, streamWindow } = call
     const credits = new ReceiveCreditWindow({
-      capacity: rpcStreamWindow,
-      refill: rpcStreamRefill,
+      capacity: streamWindow,
+      refill: Math.ceil(streamWindow / 2),
     })
+
     const stream = new ProtocolServerRPCStream({
       pull: (_controller, consumed) => {
         if (!core.messageContext) return
@@ -342,52 +308,31 @@ export const createRpcLayer = (
           direction: 'outgoing',
           streamType: 'rpc',
           action: 'pull',
-          callId: message.callId,
+          callId,
         })
 
-        const buffer = core.protocol.encodeMessage(
-          core.messageContext,
-          ClientMessageType.RpcStreamPull,
-          { callId: message.callId, size },
-        )
-
-        core.send(buffer).catch((error) => {
-          credits.revoke(size)
-          abortRpcStreamOnPushFailure(message.callId, error)
-        })
+        core
+          .sendMessage(ClientMessageType.RpcStreamPull, { callId, size })
+          ?.catch((error) => {
+            credits.revoke(size)
+            abortStreamOnPushFailure(callId, error)
+          })
       },
       start: (controller) => {
-        if (!signal) return
-
         if (signal.aborted) {
           controller.error(signal.reason)
           return
         }
 
-        const onAbort = () => {
-          rpcStreamCredits.delete(message.callId)
+        call.cleanup = onAbort(signal, () => {
+          streamCredits.delete(callId)
           controller.error(signal.reason)
 
-          if (rpcStreams.has(message.callId)) {
-            void rpcStreams.abort(message.callId).catch(noopFn)
-            if (core.messageContext) {
-              const buffer = core.protocol.encodeMessage(
-                core.messageContext,
-                ClientMessageType.RpcAbort,
-                {
-                  callId: message.callId,
-                  reason: toReasonString(signal.reason),
-                },
-              )
-              core.send(buffer).catch(noopFn)
-            }
+          if (rpcStreams.has(callId)) {
+            void rpcStreams.abort(callId).catch(noopFn)
+            sendAbort(callId, toReasonString(signal.reason))
           }
-        }
-
-        signal.addEventListener('abort', onAbort, { once: true })
-        call.cleanup = () => {
-          signal.removeEventListener('abort', onAbort)
-        }
+        })
       },
       transform: (chunk) => {
         return transformer.decode(procedure, core.codec.decode(chunk))
@@ -395,23 +340,63 @@ export const createRpcLayer = (
       readableStrategy: { highWaterMark: 0 },
     })
 
-    rpcStreams.add(message.callId, stream)
-    rpcStreamCredits.set(message.callId, credits)
+    rpcStreams.add(callId, stream)
+    streamCredits.set(callId, credits)
     call.resolve(stream)
   }
 
-  const handleTransportErrorResponse = (
+  // Unidirectional transports deliver their own readable; republish it as an
+  // RPC stream so both transports hand the caller the same thing.
+  const adoptRpcStream = (
     callId: number,
-    response: Extract<
-      Awaited<ReturnType<ClientCore['transportCall']>>,
-      { type: 'error' }
-    >,
+    call: Call,
+    source: ReadableStream<ArrayBufferView>,
   ) => {
-    const call = calls.get(callId)
-    if (!call) return
+    const reader = source.getReader()
+    const { signal } = call
+    let removeAbort = noopFn
 
-    let error: ProtocolError
+    const stream = new ProtocolServerRPCStream({
+      start: (controller) => {
+        const abort = () => {
+          controller.error(signal.reason)
+          reader.cancel(signal.reason).catch(noopFn)
+          void rpcStreams.abort(callId).catch(noopFn)
+        }
 
+        if (signal.aborted) {
+          abort()
+        } else {
+          removeAbort = onAbort(signal, abort)
+        }
+      },
+      transform: (chunk) => {
+        return transformer.decode(call.procedure, core.codec.decode(chunk))
+      },
+      readableStrategy: { highWaterMark: 0 },
+    })
+
+    rpcStreams.add(callId, stream)
+    call.resolve(stream)
+
+    void (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          await rpcStreams.push(callId, value)
+        }
+        await rpcStreams.end(callId)
+      } catch {
+        await rpcStreams.abort(callId).catch(noopFn)
+      } finally {
+        reader.releaseLock()
+        removeAbort()
+      }
+    })()
+  }
+
+  const toTransportError = (response: TransportErrorResponse) => {
     try {
       const decoded = core.codec.decode(response.error) as {
         code?: string
@@ -419,210 +404,129 @@ export const createRpcLayer = (
         data?: unknown
       }
 
-      error = new ProtocolError(
+      return new ProtocolError(
         decoded.code || ErrorCode.ClientRequestError,
         decoded.message || response.statusText || 'Request failed',
         decoded.data,
       )
     } catch {
-      error = new ProtocolError(
+      return new ProtocolError(
         ErrorCode.ClientRequestError,
         response.statusText
           ? `HTTP ${response.status ?? ''}: ${response.statusText}`.trim()
           : 'Request failed',
       )
     }
-
-    core.emitClientEvent({
-      kind: 'rpc_error',
-      timestamp: Date.now(),
-      callId,
-      procedure: call.procedure,
-      error,
-    })
-
-    call.reject(error)
   }
 
   const handleCallResponse = (
-    currentCallId: number,
-    response: Awaited<ReturnType<ClientCore['transportCall']>>,
+    callId: number,
+    response: TransportCallResponse,
   ) => {
-    const call = calls.get(currentCallId)
+    const call = calls.get(callId)
 
-    if (response.type === 'error') {
-      handleTransportErrorResponse(currentCallId, response)
-      return
-    }
+    switch (response.type) {
+      case 'error': {
+        if (!call) break
 
-    if (response.type === 'rpc_stream') {
-      if (!call) {
-        response.stream.cancel().catch(noopFn)
-        return
+        const error = toTransportError(response)
+        emitError(callId, call.procedure, error)
+        call.reject(error)
+        break
       }
-
-      core.emitClientEvent({
-        kind: 'rpc_response',
-        timestamp: Date.now(),
-        callId: currentCallId,
-        procedure: call.procedure,
-        stream: true,
-      })
-
-      const reader = response.stream.getReader()
-      const { signal } = call
-      let onAbort: (() => void) | undefined
-
-      const stream = new ProtocolServerRPCStream({
-        start: (controller) => {
-          if (!signal) return
-
-          onAbort = () => {
-            controller.error(signal.reason)
-            reader.cancel(signal.reason).catch(noopFn)
-            void rpcStreams.abort(currentCallId).catch(noopFn)
-          }
-
-          if (signal.aborted) {
-            onAbort()
-          } else {
-            signal.addEventListener('abort', onAbort, { once: true })
-          }
-        },
-        transform: (chunk) => {
-          return transformer.decode(call.procedure, core.codec.decode(chunk))
-        },
-        readableStrategy: { highWaterMark: 0 },
-      })
-
-      rpcStreams.add(currentCallId, stream)
-      call.resolve(stream)
-
-      void (async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            await rpcStreams.push(currentCallId, value)
-          }
-          await rpcStreams.end(currentCallId)
-        } catch {
-          await rpcStreams.abort(currentCallId).catch(noopFn)
-        } finally {
-          reader.releaseLock()
-          if (signal && onAbort) {
-            signal.removeEventListener('abort', onAbort)
-          }
+      case 'rpc_stream': {
+        if (!call) {
+          response.stream.cancel().catch(noopFn)
+          break
         }
-      })()
 
-      return
-    }
-
-    if (response.type === 'blob') {
-      if (!call) {
-        response.source.cancel().catch(noopFn)
-        return
+        emitStreamResponse(callId, call)
+        adoptRpcStream(callId, call, response.stream)
+        break
       }
+      case 'blob': {
+        if (!call) {
+          response.source.cancel().catch(noopFn)
+          break
+        }
 
-      core.emitClientEvent({
-        kind: 'rpc_response',
-        timestamp: Date.now(),
-        callId: currentCallId,
-        procedure: call.procedure,
-        stream: true,
-      })
+        emitStreamResponse(callId, call)
+        call.resolve(
+          streams.addServerBlobStream(response.metadata, response.source),
+        )
+        break
+      }
+      case 'rpc': {
+        if (!call) break
 
-      const { blob } = streams.addServerBlobStream(response.metadata, {
-        source: response.source,
-      })
-      call.resolve(blob)
-      return
+        let result: unknown
+        try {
+          result =
+            response.result.byteLength === 0
+              ? undefined
+              : core.codec.decode(response.result)
+        } catch (error) {
+          rejectUndecodable(callId, call, error)
+          break
+        }
+
+        resolveResult(callId, call, result)
+        break
+      }
     }
+  }
 
+  const handleResponse = (
+    message: ServerMessageTypePayload[ServerMessageType.RpcResponse],
+  ) => {
+    const call = calls.get(message.callId)
     if (!call) return
 
-    try {
-      const decodedPayload =
-        response.result.byteLength === 0
-          ? undefined
-          : core.codec.decode(response.result)
-
-      const transformed = transformer.decode(call.procedure, decodedPayload)
-      core.emitClientEvent({
-        kind: 'rpc_response',
-        timestamp: Date.now(),
-        callId: currentCallId,
-        procedure: call.procedure,
-        body: transformed,
-      })
-      call.resolve(transformed)
-    } catch (error) {
-      core.emitClientEvent({
-        kind: 'rpc_error',
-        timestamp: Date.now(),
-        callId: currentCallId,
-        procedure: call.procedure,
-        error,
-      })
-      call.reject(
-        new ProtocolError(
-          ErrorCode.ClientRequestError,
-          'Unable to decode response',
-          error,
-        ),
-      )
+    if (message.error) {
+      rejectServerError(message.callId, call, message.error)
+      return
     }
+
+    resolveResult(message.callId, call, message.result)
   }
 
-  // A failed local push (e.g. transform/decode error) must surface as a
-  // stream abort on both sides, never as an unhandled rejection.
-  const abortRpcStreamOnPushFailure = (callId: number, reason: unknown) => {
-    if (!rpcStreams.has(callId)) return
+  const handleStreamResponse = (
+    message: ServerMessageTypePayload[ServerMessageType.RpcStreamResponse],
+  ) => {
+    const call = calls.get(message.callId)
 
-    rpcStreamCredits.delete(callId)
-    calls.get(callId)?.cleanup?.()
-    calls.delete(callId)
-    void rpcStreams.abort(callId, reason).catch(noopFn)
-
-    if (core.messageContext) {
-      core.emitStreamEvent({
-        direction: 'outgoing',
-        streamType: 'rpc',
-        action: 'abort',
-        callId,
-        reason: toReasonString(reason),
-      })
-
-      const buffer = core.protocol.encodeMessage(
-        core.messageContext,
-        ClientMessageType.RpcAbort,
-        { callId, reason: toReasonString(reason) },
-      )
-
-      core.send(buffer).catch(noopFn)
+    if (message.error) {
+      if (call) rejectServerError(message.callId, call, message.error)
+      return
     }
+
+    // nothing is waiting for the stream anymore: tell the server to drop it
+    if (!call) {
+      sendAbort(message.callId)
+      return
+    }
+
+    emitStreamResponse(message.callId, call)
+    createRpcStream(message.callId, call)
   }
 
-  core.on('message', (message: any) => {
+  core.on('message', (message) => {
     switch (message.type) {
       case ServerMessageType.RpcResponse:
-        handleRPCResponseMessage(message)
+        handleResponse(message)
         break
       case ServerMessageType.RpcStreamResponse:
-        handleRPCStreamResponseMessage(message)
+        handleStreamResponse(message)
         break
-      case ServerMessageType.RpcStreamChunk:
-        {
-          const credits = rpcStreamCredits.get(message.callId)
-          if (!credits) break
-          if (!credits.accept(1)) {
-            abortRpcStreamOnPushFailure(
-              message.callId,
-              STREAM_FLOW_CONTROL_VIOLATION_REASON,
-            )
-            break
-          }
+      case ServerMessageType.RpcStreamChunk: {
+        const credits = streamCredits.get(message.callId)
+        if (!credits) break
+        if (!credits.accept(1)) {
+          abortStreamOnPushFailure(
+            message.callId,
+            STREAM_FLOW_CONTROL_VIOLATION_REASON,
+          )
+          break
         }
 
         core.emitStreamEvent({
@@ -637,11 +541,11 @@ export const createRpcLayer = (
         // unrelated streams behind this one's backpressure
         rpcStreams
           .push(message.callId, message.chunk)
-          .catch((error) => abortRpcStreamOnPushFailure(message.callId, error))
+          .catch((error) => abortStreamOnPushFailure(message.callId, error))
         break
+      }
       case ServerMessageType.RpcStreamEnd:
-        rpcStreamCredits.delete(message.callId)
-        calls.get(message.callId)?.cleanup?.()
+        release(message.callId)
         core.emitStreamEvent({
           direction: 'incoming',
           streamType: 'rpc',
@@ -649,12 +553,9 @@ export const createRpcLayer = (
           callId: message.callId,
         })
         void rpcStreams.end(message.callId).catch(noopFn)
-        calls.delete(message.callId)
         break
       case ServerMessageType.RpcStreamAbort: {
-        rpcStreamCredits.delete(message.callId)
-        const call = calls.get(message.callId)
-        call?.cleanup?.()
+        const call = release(message.callId)
         // an abort may arrive before the stream response was processed;
         // settle the still-pending call or it would hang forever (no-op if
         // the call already resolved with a stream)
@@ -672,7 +573,6 @@ export const createRpcLayer = (
           reason: message.reason,
         })
         void rpcStreams.abort(message.callId, message.reason).catch(noopFn)
-        calls.delete(message.callId)
         break
       }
     }
@@ -688,18 +588,87 @@ export const createRpcLayer = (
       call.reject(error)
     }
     calls.clear()
-    rpcStreamCredits.clear()
+    streamCredits.clear()
     void rpcStreams.clear(error).catch(noopFn)
   })
+
+  const dispatch = async (
+    callId: number,
+    call: Call,
+    payload: any,
+    callOptions: StreamCallOptions,
+    stream: boolean,
+  ) => {
+    const { procedure, signal } = call
+
+    // not awaited at all without autoConnect: the request must reach the
+    // transport in the same tick the caller made it
+    if (core.autoConnect) await connectIfNeeded(core, signal)
+
+    if (signal.aborted) throw toAbortError(signal)
+
+    onAbort(signal, () => {
+      call.reject(toAbortError(signal))
+
+      if (core.transportType === ConnectionType.Bidirectional) {
+        sendAbort(callId, toReasonString(signal.reason))
+      }
+    })
+
+    const transformed = transformer.encode(procedure, payload)
+
+    if (core.transportType === ConnectionType.Bidirectional) {
+      const sent = core.sendMessage(
+        ClientMessageType.Rpc,
+        { callId, procedure, payload: transformed },
+        signal,
+      )
+
+      if (!sent) {
+        throw new ProtocolError(
+          ErrorCode.ConnectionError,
+          'Client is not connected',
+        )
+      }
+
+      await sent
+      return
+    }
+
+    const blob =
+      transformed instanceof ProtocolBlob
+        ? { source: transformed.source, metadata: transformed.metadata }
+        : undefined
+
+    const encoded =
+      blob || transformed === undefined
+        ? new Uint8Array(0)
+        : core.codec.encode(transformed)
+
+    const response = await core.transportCall(
+      {
+        application: core.application,
+        auth: core.auth,
+        contentType: core.codec.contentType,
+      },
+      { callId, procedure, payload: encoded, blob },
+      { signal, streamResponse: stream, keepalive: callOptions.keepalive },
+    )
+
+    handleCallResponse(callId, response)
+  }
 
   const callInternal = async (
     procedure: string,
     payload: any,
-    callOptions: ClientCallOptions = {},
-  ) => {
-    const rpcStreamWindow = resolveRpcStreamWindow(
-      callOptions.backpressure?.rpc?.window ?? defaultRpcStreamWindow,
-    )
+    callOptions: StreamCallOptions = {},
+    stream = false,
+  ): Promise<any> => {
+    const requestedWindow = callOptions.backpressure?.rpc?.window
+    const streamWindow =
+      requestedWindow === undefined
+        ? defaultWindow
+        : validateStreamWindow(requestedWindow)
     const timeout = callOptions.timeout ?? options.timeout
     const controller = new AbortController()
 
@@ -710,19 +679,13 @@ export const createRpcLayer = (
     if (core.connectionSignal) signals.push(core.connectionSignal)
 
     const signal = anyAbortSignal(...signals)
-    const currentCallId = nextCallId()
-    const call: ProtocolClientCall = {
-      ...createFuture(),
-      procedure,
-      signal,
-      rpcStreamWindow,
-    }
+    const callId = nextCallId()
+    const call: Call = { ...createFuture(), procedure, signal, streamWindow }
 
-    calls.set(currentCallId, call)
+    calls.set(callId, call)
     core.emitClientEvent({
       kind: 'rpc_request',
-      timestamp: Date.now(),
-      callId: currentCallId,
+      callId,
       procedure,
       body: payload,
     })
@@ -731,159 +694,75 @@ export const createRpcLayer = (
       call.reject(toAbortError(signal))
     } else {
       try {
-        if (core.autoConnect) {
-          await ensureConnectedForCall(core, signal)
-        }
-
-        if (signal.aborted) {
-          throw toAbortError(signal)
-        }
-
-        signal.addEventListener(
-          'abort',
-          () => {
-            call.reject(toAbortError(signal))
-
-            if (
-              core.transportType === ConnectionType.Bidirectional &&
-              core.messageContext
-            ) {
-              const buffer = core.protocol.encodeMessage(
-                core.messageContext,
-                ClientMessageType.RpcAbort,
-                {
-                  callId: currentCallId,
-                  reason: toReasonString(signal.reason),
-                },
-              )
-              core.send(buffer).catch(noopFn)
-            }
-          },
-          { once: true },
-        )
-
-        const transformedPayload = transformer.encode(procedure, payload)
-
-        if (core.transportType === ConnectionType.Bidirectional) {
-          if (!core.messageContext) {
-            throw new ProtocolError(
-              ErrorCode.ConnectionError,
-              'Client is not connected',
-            )
-          }
-
-          const buffer = core.protocol.encodeMessage(
-            core.messageContext,
-            ClientMessageType.Rpc,
-            { callId: currentCallId, procedure, payload: transformedPayload },
-          )
-
-          await core.send(buffer, signal)
-        } else {
-          const blob =
-            transformedPayload instanceof ProtocolBlob
-              ? {
-                  source: transformedPayload.source,
-                  metadata: transformedPayload.metadata,
-                }
-              : undefined
-
-          const encodedPayload =
-            blob || transformedPayload === undefined
-              ? new Uint8Array(0)
-              : core.codec.encode(transformedPayload)
-
-          const response = await core.transportCall(
-            {
-              application: core.application,
-              auth: core.auth,
-              contentType: core.codec.contentType,
-            },
-            { callId: currentCallId, procedure, payload: encodedPayload, blob },
-            {
-              signal,
-              streamResponse: callOptions._stream_response,
-              keepalive: callOptions.keepalive,
-            },
-          )
-
-          handleCallResponse(currentCallId, response)
-        }
+        await dispatch(callId, call, payload, callOptions, stream)
       } catch (error) {
-        core.emitClientEvent({
-          kind: 'rpc_error',
-          timestamp: Date.now(),
-          callId: currentCallId,
-          procedure,
-          error,
-        })
+        emitError(callId, procedure, error)
         call.reject(error)
       }
     }
 
-    return call.promise
-      .then((value) => {
-        if (value instanceof ProtocolServerRPCStream) {
-          const stream = createManagedAsyncIterable(value, {
-            onDone: () => {
-              rpcStreamCredits.delete(currentCallId)
-              call.cleanup?.()
-            },
-            onReturn: (reason) => {
-              controller.abort(reason)
-            },
-            onThrow: (error) => {
-              controller.abort(error)
-            },
-          })
+    try {
+      const value = await call.promise
 
-          if (callOptions.autoReconnect) {
-            return reconnectingAsyncIterable(
-              core,
+      if (value instanceof ProtocolServerRPCStream) {
+        const managed = createManagedAsyncIterable(value, {
+          onDone: () => {
+            streamCredits.delete(callId)
+            call.cleanup?.()
+          },
+          onReturn: (reason) => {
+            controller.abort(reason)
+          },
+          onThrow: (error) => {
+            controller.abort(error)
+          },
+        })
+
+        if (!callOptions.autoReconnect) return managed
+
+        return reconnectingAsyncIterable(
+          core,
+          managed,
+          () =>
+            callInternal(
+              procedure,
+              payload,
+              { ...callOptions, autoReconnect: false },
               stream,
-              () =>
-                callInternal(procedure, payload, {
-                  ...callOptions,
-                  autoReconnect: false,
-                }),
-              callOptions.signal,
-            )
-          }
+            ),
+          callOptions.signal,
+        )
+      }
 
-          return stream
-        }
+      // a blob outlives its call: aborting here would cancel the transfer
+      // the caller is about to read
+      if (isBlobInterface(value)) return value
 
-        if (isBlobInterface(value)) {
-          return value
-        }
-
-        controller.abort()
-        return value
-      })
-      .catch((error) => {
-        controller.abort()
-        throw error
-      })
-      .finally(() => {
-        calls.delete(currentCallId)
-      })
+      controller.abort()
+      return value
+    } catch (error) {
+      controller.abort()
+      throw error
+    } finally {
+      calls.delete(callId)
+    }
   }
 
   return {
-    async call(procedure, payload, callOptions = {}) {
+    async call(procedure, payload, callOptions = {}, params = {}) {
+      const stream = params.stream ?? false
+
       if (!options.safe) {
-        return callInternal(procedure, payload, callOptions)
+        return callInternal(procedure, payload, callOptions, stream)
       }
 
-      return callInternal(procedure, payload, callOptions)
-        .then((result) => ({ result }))
-        .catch((error) => ({ error }))
-    },
-    get pendingCallCount() {
-      return calls.size
-    },
-    get activeStreamCount() {
-      return rpcStreams.size
+      try {
+        return {
+          result: await callInternal(procedure, payload, callOptions, stream),
+        }
+      } catch (error) {
+        return { error }
+      }
     },
   }
 }

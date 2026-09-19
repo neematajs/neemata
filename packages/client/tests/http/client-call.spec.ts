@@ -43,7 +43,7 @@ describe('HttpTransportClient + StaticClient', () => {
       options.streamResponse = false
       return new Response('data: AQID\n\ndata: BAU=\n\n')
     })
-    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+    const transport = new HttpTransportClient(codec, {
       url: 'http://localhost:4000',
       fetch: fetchSpy,
     })
@@ -83,7 +83,7 @@ describe('HttpTransportClient + StaticClient', () => {
           statusText: 'Service Unavailable',
         }),
       )
-      const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+      const transport = new HttpTransportClient(codec, {
         url: 'http://localhost:4000',
         fetch: fetchSpy,
       })
@@ -247,11 +247,10 @@ describe('HttpTransportClient + StaticClient', () => {
     const decoded = new Uint8Array([42])
     const customDecode = vi.fn(() => decoded)
 
-    const transport = new HttpTransportClient(
-      new TestJsonCodec(),
-      ProtocolVersion.v1,
-      { url: 'http://localhost:4000', decodeBase64: customDecode },
-    )
+    const transport = new HttpTransportClient(new TestJsonCodec(), {
+      url: 'http://localhost:4000',
+      decodeBase64: customDecode,
+    })
 
     expect(transport.decodeBase64('AAECAw==')).toBe(decoded)
     expect(customDecode).toHaveBeenCalledWith('AAECAw==')

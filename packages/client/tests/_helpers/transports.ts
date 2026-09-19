@@ -2,7 +2,7 @@ import type { TAnyRouterContract } from '@nmtjs/contract'
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { ConnectionType, ProtocolVersion } from '@nmtjs/protocol'
 
-import type { BaseClientOptions } from '../../src/client.ts'
+import type { ClientOptions } from '../../src/client.ts'
 import type {
   TransportCallContext,
   TransportCallOptions,
@@ -70,14 +70,14 @@ export const createBaseOptions = <
   RouterContract extends TAnyRouterContract = TAnyRouterContract,
   SafeCall extends boolean = false,
 >(
-  overrides: Partial<BaseClientOptions<RouterContract, SafeCall>> = {},
-): BaseClientOptions<RouterContract, SafeCall> =>
+  overrides: Partial<ClientOptions<RouterContract, SafeCall>> = {},
+): ClientOptions<RouterContract, SafeCall> =>
   ({
     contract: (overrides.contract ?? ({} as RouterContract)) as RouterContract,
     protocol: ProtocolVersion.v1,
     codec: mockCodec,
     ...overrides,
-  }) as BaseClientOptions<RouterContract, SafeCall>
+  }) as ClientOptions<RouterContract, SafeCall>
 
 export const createMockBidirectionalTransport =
   (): MockBidirectionalTransportControl => {

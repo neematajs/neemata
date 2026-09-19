@@ -1,23 +1,10 @@
 import type { ClientPlugin } from './types.ts'
-
-const syncPauseReasons = (
-  setPauseReason: (reason: string, active: boolean) => void,
-) => {
-  if (globalThis.window && 'navigator' in globalThis.window) {
-    setPauseReason('offline', globalThis.window.navigator?.onLine === false)
-  }
-
-  if (globalThis.document) {
-    setPauseReason(
-      'tab_hidden',
-      globalThis.document.visibilityState === 'hidden',
-    )
-  }
-}
+import { isOffline, isTabHidden } from '../utils.ts'
 
 export const browserConnectivityPlugin = (): ClientPlugin => {
   return ({ core }) => {
-    const cleanup: Array<() => void> = []
+    const listeners = new AbortController()
+    const { signal } = listeners
 
     const triggerReconnect = () => {
       if (!core.isDisposed()) {
@@ -28,64 +15,44 @@ export const browserConnectivityPlugin = (): ClientPlugin => {
     return {
       name: 'browser-connectivity',
       onInit: () => {
-        syncPauseReasons(core.setReconnectPauseReason.bind(core))
+        core.setReconnectPauseReason('offline', isOffline())
+        core.setReconnectPauseReason('tab_hidden', isTabHidden())
 
-        if (globalThis.window) {
-          const onPageShow = () => triggerReconnect()
-          globalThis.window.addEventListener('pageshow', onPageShow)
-          cleanup.push(() =>
-            globalThis.window?.removeEventListener('pageshow', onPageShow),
-          )
-
-          const onOnline = () => {
+        globalThis.window?.addEventListener('pageshow', triggerReconnect, {
+          signal,
+        })
+        globalThis.window?.addEventListener('focus', triggerReconnect, {
+          signal,
+        })
+        globalThis.window?.addEventListener(
+          'online',
+          () => {
             core.setReconnectPauseReason('offline', false)
             triggerReconnect()
-          }
-          globalThis.window.addEventListener('online', onOnline)
-          cleanup.push(() =>
-            globalThis.window?.removeEventListener('online', onOnline),
-          )
-
-          const onOffline = () => {
+          },
+          { signal },
+        )
+        globalThis.window?.addEventListener(
+          'offline',
+          () => {
             core.setReconnectPauseReason('offline', true)
-          }
-          globalThis.window.addEventListener('offline', onOffline)
-          cleanup.push(() =>
-            globalThis.window?.removeEventListener('offline', onOffline),
-          )
+          },
+          { signal },
+        )
 
-          const onFocus = () => triggerReconnect()
-          globalThis.window.addEventListener('focus', onFocus)
-          cleanup.push(() =>
-            globalThis.window?.removeEventListener('focus', onFocus),
-          )
-        }
-
-        if (globalThis.document) {
-          const onVisibilityChange = () => {
-            const hidden = globalThis.document?.visibilityState === 'hidden'
+        globalThis.document?.addEventListener(
+          'visibilitychange',
+          () => {
+            const hidden = isTabHidden()
             core.setReconnectPauseReason('tab_hidden', hidden)
             if (!hidden) {
               triggerReconnect()
             }
-          }
-
-          globalThis.document.addEventListener(
-            'visibilitychange',
-            onVisibilityChange,
-          )
-          cleanup.push(() =>
-            globalThis.document?.removeEventListener(
-              'visibilitychange',
-              onVisibilityChange,
-            ),
-          )
-        }
+          },
+          { signal },
+        )
       },
-      dispose: () => {
-        for (const stop of cleanup) stop()
-        cleanup.length = 0
-      },
+      dispose: () => listeners.abort(),
     }
   }
 }

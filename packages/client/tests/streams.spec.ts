@@ -3,6 +3,7 @@ import {
   ClientMessageType,
   DEFAULT_BLOB_CHUNK_SIZE,
   DEFAULT_BLOB_CREDIT_REFILL,
+  getProtocolBlobStreamId,
   ProtocolBlob,
   ServerMessageType,
   STREAM_FLOW_CONTROL_VIOLATION_REASON,
@@ -11,8 +12,9 @@ import { ProtocolServerStream } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
 import { EventEmitter } from '../src/events.ts'
-import { createStreamLayer, toReasonString } from '../src/layers/streams.ts'
-import { ClientStreams, ServerStreams } from '../src/streams.ts'
+import { createStreamLayer } from '../src/layers/streams.ts'
+import { ClientStreams, ServerStreams } from '../src/stream-registry.ts'
+import { toReasonString } from '../src/utils.ts'
 
 const metadata: ProtocolBlobMetadata = { type: 'application/octet-stream' }
 
@@ -336,18 +338,28 @@ describe('ServerStreams', () => {
 })
 
 describe('createStreamLayer', () => {
-  const createCore = () =>
-    Object.assign(new EventEmitter(), {
-      messageContext: {},
+  const createCore = () => {
+    const core = Object.assign(new EventEmitter(), {
+      messageContext: {} as any,
       protocol: {
         encodeMessage: vi.fn(
           (_context, type, payload) => ({ type, payload }) as any,
         ),
       },
-      send: vi.fn(async () => {}),
+      send: vi.fn(async (_buffer: any, _signal?: AbortSignal) => {}),
       emitStreamEvent: vi.fn(),
       emitClientEvent: vi.fn(),
+      sendMessage: (type: number, payload: unknown, signal?: AbortSignal) => {
+        if (!core.messageContext) return null
+        return core.send(
+          core.protocol.encodeMessage(core.messageContext, type, payload),
+          signal,
+        )
+      },
     })
+
+    return core
+  }
 
   it('spends one byte-credit grant across multiple bounded upload frames', async () => {
     const core = createCore()
@@ -476,9 +488,10 @@ describe('createStreamLayer', () => {
   it('forwards a registered server blob source when it is consumed', async () => {
     const core = createCore()
     const layer = createStreamLayer(core as any)
-    const { blob } = layer.addServerBlobStream(metadata, {
-      source: createReadable([new Uint8Array([1, 2]), new Uint8Array([3, 4])]),
-    })
+    const blob = layer.addServerBlobStream(
+      metadata,
+      createReadable([new Uint8Array([1, 2]), new Uint8Array([3, 4])]),
+    )
 
     await expect(layer.consumeServerBlob(blob).bytes()).resolves.toEqual(
       new Uint8Array([1, 2, 3, 4]),
@@ -489,7 +502,14 @@ describe('createStreamLayer', () => {
     const core = createCore()
 
     const layer = createStreamLayer(core as any)
-    const { blob, streamId } = layer.addServerBlobStream(metadata)
+    // a source that never produces: the abort must settle the consumer
+    const blob = layer.addServerBlobStream(
+      metadata,
+      new ReadableStream<ArrayBufferView>({
+        pull: () => new Promise(() => {}),
+      }),
+    )
+    const streamId = getProtocolBlobStreamId(blob)
     const stream = layer.consumeServerBlob(blob)
 
     const iterator = stream[Symbol.asyncIterator]()

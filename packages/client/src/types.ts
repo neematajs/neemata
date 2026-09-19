@@ -47,17 +47,6 @@ export type StreamCallOptions = RpcCallOptions & {
   backpressure?: ClientBackpressureOptions
 }
 
-export type ClientCallOptions = StreamCallOptions & {
-  /**
-   * @internal
-   */
-  _stream_response?: boolean
-}
-
-export type BlobSubscriptionOptions = { signal?: AbortSignal }
-
-export type StreamSubscriptionOptions = Partial<StreamCallOptions>
-
 export interface StaticInputContractTypeProvider extends TypeProvider {
   output: this['input'] extends BaseTypeAny
     ? t.infer.decode.input<this['input']>
@@ -127,40 +116,18 @@ export type ResolveAPIRouterRoutes<
         : never
 }
 
-export type ResolveContract<
-  C extends TAnyRouterContract = TAnyRouterContract,
-  InputTypeProvider extends TypeProvider = TypeProvider,
-  OutputTypeProvider extends TypeProvider = TypeProvider,
-> = ResolveAPIRouterRoutes<C, InputTypeProvider, OutputTypeProvider>
+type CallerOptions<Procedure extends AnyResolvedContractProcedure> =
+  Procedure['stream'] extends true ? StreamCallOptions : RpcCallOptions
 
 export type ClientCaller<
   Procedure extends AnyResolvedContractProcedure,
   SafeCall extends boolean,
 > = (
   ...args: Procedure['input'] extends t.NeverType
-    ? [
-        data?: undefined,
-        options?: Partial<
-          Procedure['stream'] extends true ? StreamCallOptions : RpcCallOptions
-        >,
-      ]
+    ? [data?: undefined, options?: CallerOptions<Procedure>]
     : undefined extends t.infer.encode.input<Procedure['contract']['input']>
-      ? [
-          data?: Procedure['input'],
-          options?: Partial<
-            Procedure['stream'] extends true
-              ? StreamCallOptions
-              : RpcCallOptions
-          >,
-        ]
-      : [
-          data: Procedure['input'],
-          options?: Partial<
-            Procedure['stream'] extends true
-              ? StreamCallOptions
-              : RpcCallOptions
-          >,
-        ]
+      ? [data?: Procedure['input'], options?: CallerOptions<Procedure>]
+      : [data: Procedure['input'], options?: CallerOptions<Procedure>]
 ) => SafeCall extends true
   ? Promise<OneOf<[{ result: Procedure['output'] }, { error: ProtocolError }]>>
   : Promise<Procedure['output']>

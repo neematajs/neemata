@@ -1,20 +1,12 @@
-import type { ClientPlugin } from './types.ts'
-
-export interface ReconnectPluginOptions {
-  initialTimeout?: number
-  maxTimeout?: number
-}
+import type { ClientPlugin, ReconnectConfig } from './types.ts'
 
 export const reconnectPlugin = (
-  options: ReconnectPluginOptions = {},
+  options: ReconnectConfig = {},
 ): ClientPlugin => {
   return ({ core }) => ({
     name: 'reconnect',
     onInit: () => {
-      core.configureReconnect({
-        initialTimeout: options.initialTimeout,
-        maxTimeout: options.maxTimeout,
-      })
+      core.configureReconnect(options)
     },
     dispose: () => {
       core.configureReconnect(null)

@@ -97,7 +97,7 @@ describe('public clients', () => {
         expect(context.contentType).toBe(mockCodec.contentType)
         expect(rpc.procedure).toBe('users/profile')
         expect(mockCodec.decode(rpc.payload)).toEqual({ userId: 'u1' })
-        expect(options.streamResponse).toBeUndefined()
+        expect(options.streamResponse).toBe(false)
 
         return {
           type: 'rpc' as const,

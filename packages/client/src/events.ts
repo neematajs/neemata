@@ -13,7 +13,6 @@ type ListenerRegistration = {
   wrapper: EventListener
 }
 
-// TODO: add errors and promise rejections handling
 /**
  * Thin node-like event emitter wrapper around EventTarget
  */

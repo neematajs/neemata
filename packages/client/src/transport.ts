@@ -95,7 +95,5 @@ export type ClientTransportFactory<
   Options = unknown,
 > = (params: ClientTransportParams, options: Options) => Transport
 
-export type ClientTransportMessageOptions = TransportSendOptions
-export type ClientTransportStartParams = TransportConnectParams
-export type ClientTransportRpcParams = TransportCallContext
-export type ClientCallResponse = TransportCallResponse
+export type TransportOptionsOf<Factory> =
+  Factory extends ClientTransportFactory<any, infer Options> ? Options : never

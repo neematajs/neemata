@@ -3,8 +3,8 @@ import { ServerMessageType } from '@nmtjs/protocol'
 import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { BaseClientOptions } from '../src/client.ts'
-import type { ClientLogEvent } from '../src/plugins/logging.ts'
+import type { ClientOptions } from '../src/client.ts'
+import type { ClientPluginEvent } from '../src/plugins/types.ts'
 import { StaticClient } from '../src/clients/static.ts'
 import { loggingPlugin } from '../src/plugins/logging.ts'
 import {
@@ -42,7 +42,7 @@ const testContract = c.router({
   },
 })
 
-const baseOptions: BaseClientOptions<typeof testContract> = {
+const baseOptions: ClientOptions<typeof testContract> = {
   contract: testContract,
   protocol: 1,
   codec: mockCodec,
@@ -50,7 +50,7 @@ const baseOptions: BaseClientOptions<typeof testContract> = {
 
 describe('loggingPlugin', () => {
   it('emits rpc_request and rpc_response for unidirectional rpc call', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
     const client = new StaticClient(
@@ -82,7 +82,7 @@ describe('loggingPlugin', () => {
   })
 
   it('defaults includeBodies to false for request/response/server_message events', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
     const client = new StaticClient(
@@ -103,7 +103,6 @@ describe('loggingPlugin', () => {
     await client.call.account.get({ token: 'secret' })
     client.core.emitClientEvent({
       kind: 'server_message',
-      timestamp: Date.now(),
       messageType: 1,
       rawByteLength: 10,
       body: { private: true },
@@ -125,7 +124,7 @@ describe('loggingPlugin', () => {
   })
 
   it('preserves event body when includeBodies is true', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const payload = { token: 'keep-me' }
     const { factory } = createMockUnidirectionalTransport()
@@ -148,7 +147,6 @@ describe('loggingPlugin', () => {
     await client.call.account.get(payload)
     client.core.emitClientEvent({
       kind: 'server_message',
-      timestamp: Date.now(),
       messageType: 2,
       rawByteLength: 3,
       body: { nested: true },
@@ -156,13 +154,13 @@ describe('loggingPlugin', () => {
 
     const requestEvent = emitted.find(
       (event) => event.kind === 'rpc_request',
-    ) as Extract<ClientLogEvent, { kind: 'rpc_request' }>
+    ) as Extract<ClientPluginEvent, { kind: 'rpc_request' }>
     const responseEvent = emitted.find(
       (event) => event.kind === 'rpc_response',
-    ) as Extract<ClientLogEvent, { kind: 'rpc_response' }>
+    ) as Extract<ClientPluginEvent, { kind: 'rpc_response' }>
     const serverMessageEvent = emitted.find(
       (event) => event.kind === 'server_message',
-    ) as Extract<ClientLogEvent, { kind: 'server_message' }>
+    ) as Extract<ClientPluginEvent, { kind: 'server_message' }>
 
     expect(requestEvent.body).toEqual(payload)
     expect(responseEvent.body).toEqual({ ok: true, echoed: payload })
@@ -173,7 +171,7 @@ describe('loggingPlugin', () => {
     const onSinkError = vi.fn()
 
     const onEvent = vi
-      .fn<(event: ClientLogEvent) => void | Promise<void>>()
+      .fn<(event: ClientPluginEvent) => void | Promise<void>>()
       .mockImplementationOnce(() => {
         throw new Error('sync sink error')
       })
@@ -200,7 +198,7 @@ describe('loggingPlugin', () => {
   })
 
   it('applies mapEvent and skips sink when it returns null', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const { factory } = createMockUnidirectionalTransport()
     const client = new StaticClient(
@@ -227,7 +225,7 @@ describe('loggingPlugin', () => {
   })
 
   it('emits server_message through core message handling', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const transport = createMockBidirectionalTransport()
     const client = new StaticClient(
@@ -258,7 +256,7 @@ describe('loggingPlugin', () => {
 
     const serverMessageEvent = emitted.find(
       (event) => event.kind === 'server_message',
-    ) as Extract<ClientLogEvent, { kind: 'server_message' }>
+    ) as Extract<ClientPluginEvent, { kind: 'server_message' }>
 
     expect(serverMessageEvent).toBeDefined()
     expect(serverMessageEvent.rawByteLength).toBe(3)
@@ -266,7 +264,7 @@ describe('loggingPlugin', () => {
   })
 
   it('emits stream_event for incoming server stream chunk', async () => {
-    const emitted: ClientLogEvent[] = []
+    const emitted: ClientPluginEvent[] = []
 
     const transport = createMockBidirectionalTransport()
     const client = new StaticClient(
@@ -300,7 +298,7 @@ describe('loggingPlugin', () => {
 
     const streamEvent = emitted.find(
       (event) => event.kind === 'stream_event',
-    ) as Extract<ClientLogEvent, { kind: 'stream_event' }>
+    ) as Extract<ClientPluginEvent, { kind: 'stream_event' }>
 
     expect(streamEvent).toBeDefined()
     expect(streamEvent.direction).toBe('incoming')

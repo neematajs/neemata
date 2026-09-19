@@ -1,4 +1,3 @@
-import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
@@ -14,58 +13,27 @@ import { HttpStreamParser } from './stream-parser.ts'
 
 type DecodeBase64 = (data: string) => ArrayBufferView
 
-const createDecodeBase64 = (custom?: DecodeBase64): DecodeBase64 => {
+const decodeWithAtob = (data: string) => {
+  return Uint8Array.from(atob(data), (char) => char.charCodeAt(0))
+}
+
+// resolved once: the choice cannot change between chunks
+const resolveDecodeBase64 = (custom?: DecodeBase64): DecodeBase64 => {
   // caller-supplied decoder must win over built-ins
   if (custom) return custom
+  if ('fromBase64' in Uint8Array) {
+    const fromBase64 = Uint8Array.fromBase64
+    if (typeof fromBase64 === 'function') return (data) => fromBase64(data)
+  }
+  if (typeof atob === 'function') return decodeWithAtob
 
-  return (string: string) => {
-    if (
-      'fromBase64' in Uint8Array &&
-      typeof Uint8Array.fromBase64 === 'function'
-    ) {
-      return Uint8Array.fromBase64(string)
-    } else if (typeof atob === 'function') {
-      return Uint8Array.from(atob(string), (c) => c.charCodeAt(0))
-    } else {
-      throw new Error('No base64 decoding function available')
-    }
+  return () => {
+    throw new Error('No base64 decoding function available')
   }
 }
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
 const MAX_KEEPALIVE_BODY_BYTES = 64 * 1024
-
-const getBodyByteLength = (body: unknown): number | undefined => {
-  if (typeof body === 'string') {
-    return new TextEncoder().encode(body).byteLength
-  }
-
-  if (ArrayBuffer.isView(body)) {
-    return body.byteLength
-  }
-
-  if (body instanceof ArrayBuffer) {
-    return body.byteLength
-  }
-
-  if (typeof Blob !== 'undefined' && body instanceof Blob) {
-    return body.size
-  }
-
-  if (
-    typeof URLSearchParams !== 'undefined' &&
-    body instanceof URLSearchParams
-  ) {
-    return new TextEncoder().encode(body.toString()).byteLength
-  }
-
-  return undefined
-}
-
-const shouldUseKeepalive = (body: unknown): boolean => {
-  const byteLength = getBodyByteLength(body)
-  return byteLength !== undefined && byteLength <= MAX_KEEPALIVE_BODY_BYTES
-}
 
 export type HttpClientTransportOptions = {
   /**
@@ -73,23 +41,19 @@ export type HttpClientTransportOptions = {
    * @example 'http://localhost:3000'
    */
   url: string
-  debug?: boolean
-  EventSource?: typeof EventSource
   fetch?: typeof fetch
   decodeBase64?: DecodeBase64
 }
 
 export class HttpTransportClient implements UnidirectionalTransport {
   type: ConnectionType.Unidirectional = ConnectionType.Unidirectional
-  decodeBase64: DecodeBase64
+  readonly decodeBase64: DecodeBase64
 
   constructor(
     protected readonly codec: BaseClientCodec,
-    protected readonly protocol: ProtocolVersion,
-    protected options: HttpClientTransportOptions,
+    protected readonly options: HttpClientTransportOptions,
   ) {
-    this.options = { debug: false, ...options }
-    this.decodeBase64 = createDecodeBase64(options.decodeBase64)
+    this.decodeBase64 = resolveDecodeBase64(options.decodeBase64)
   }
 
   private getFetch(): typeof fetch {
@@ -104,8 +68,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
 
   url({ procedure, application }: { procedure: string; application?: string }) {
     const base = application ? `/${application}/${procedure}` : `/${procedure}`
-    const url = new URL(base, this.options.url)
-    return url
+    return new URL(base, this.options.url)
   }
 
   async call(
@@ -122,7 +85,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
     if (context.auth) headers.set('Authorization', context.auth)
     headers.set('Accept', context.contentType)
 
-    let body: any
+    let body: BodyInit
 
     if (rpc.blob) {
       headers.set('Content-Type', rpc.blob.metadata.type)
@@ -130,8 +93,9 @@ export class HttpTransportClient implements UnidirectionalTransport {
       body = rpc.blob.source
     } else {
       headers.set('Content-Type', context.contentType)
+      // fetch's typing rejects views over shared memory, which cannot occur here
       body = new Uint8Array(
-        payload.buffer,
+        payload.buffer as ArrayBuffer,
         payload.byteOffset,
         payload.byteLength,
       )
@@ -147,10 +111,17 @@ export class HttpTransportClient implements UnidirectionalTransport {
     }
 
     // keepalive is opt-in: browsers cap total in-flight keepalive bytes at ~64KB
-    if (options.keepalive && shouldUseKeepalive(body)) request.keepalive = true
+    if (
+      options.keepalive &&
+      !rpc.blob &&
+      payload.byteLength <= MAX_KEEPALIVE_BODY_BYTES
+    ) {
+      request.keepalive = true
+    }
     // undici and Chrome throw on stream request bodies without half-duplex
     if (rpc.blob) request.duplex = 'half'
 
+    // read before awaiting: the caller may reuse and mutate its options object
     const streamResponse = options.streamResponse
     const response = await fetch(url.toString(), request)
 
@@ -161,71 +132,74 @@ export class HttpTransportClient implements UnidirectionalTransport {
     }
 
     if (streamResponse) {
-      if (!response.body) {
-        throw new ProtocolError(
-          ErrorCode.ClientRequestError,
-          'Empty stream response body',
-        )
-      }
-
-      const stream = new ReadableStream<ArrayBufferView>({
-        start: async (controller) => {
-          const reader = response.body!.getReader()
-          const decoder = new TextDecoder()
-          const parser = new HttpStreamParser()
-          const emit = (data: string) => {
-            controller.enqueue(this.decodeBase64(data))
-          }
-
-          try {
-            while (true) {
-              const { done, value } = await reader.read()
-              if (done) break
-              const chunk = decoder.decode(value, { stream: true })
-              parser.push(chunk, emit)
-            }
-
-            const tail = decoder.decode()
-            parser.push(tail, emit)
-            parser.finish(emit)
-
-            controller.close()
-          } catch (cause) {
-            controller.error(new Error('Stream error', { cause }))
-          } finally {
-            reader.releaseLock()
-          }
-        },
-        cancel: async () => {
-          try {
-            await response.body?.cancel()
-          } catch {}
-        },
-      })
-
-      return { type: 'rpc_stream' as const, stream }
+      return { type: 'rpc_stream' as const, stream: this.toStream(response) }
     }
 
-    const isBlob = !!response.headers.get(NEEMATA_BLOB_HEADER)
-    if (!isBlob) {
+    if (!response.headers.get(NEEMATA_BLOB_HEADER)) {
       const result = await response.bytes()
       return { type: 'rpc' as const, result }
     }
 
-    const contentLength = response.headers.get('content-length')
-    // distinguish a missing header from a valid zero-byte blob size
-    const length = contentLength
-      ? Number.parseInt(contentLength, 10)
-      : Number.NaN
-    const size = Number.isNaN(length) ? undefined : length
+    return this.toBlob(response)
+  }
+
+  private toStream(response: Response) {
+    const body = response.body
+    if (!body) {
+      throw new ProtocolError(
+        ErrorCode.ClientRequestError,
+        'Empty stream response body',
+      )
+    }
+
+    return new ReadableStream<ArrayBufferView>({
+      start: async (controller) => {
+        const reader = body.getReader()
+        const decoder = new TextDecoder()
+        const parser = new HttpStreamParser()
+        const emit = (data: string) => {
+          controller.enqueue(this.decodeBase64(data))
+        }
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const chunk = decoder.decode(value, { stream: true })
+            parser.push(chunk, emit)
+          }
+
+          const tail = decoder.decode()
+          parser.push(tail, emit)
+          parser.finish(emit)
+
+          controller.close()
+        } catch (cause) {
+          controller.error(new Error('Stream error', { cause }))
+        } finally {
+          reader.releaseLock()
+        }
+      },
+      cancel: async () => {
+        try {
+          await body.cancel()
+        } catch {}
+      },
+    })
+  }
+
+  private toBlob(response: Response) {
+    const contentLength = Number.parseInt(
+      response.headers.get('content-length') ?? '',
+      10,
+    )
+    // a missing or malformed header is not a valid zero-byte blob size
+    const size = Number.isNaN(contentLength) ? undefined : contentLength
     const type =
       response.headers.get('content-type') || 'application/octet-stream'
     const disposition = response.headers.get('content-disposition')
-    let filename: string | undefined
-    if (disposition) {
-      const match = disposition.match(/filename="?([^"]+)"?/)
-      if (match) filename = match[1]
-    }
+    const filename = disposition?.match(/filename="?([^"]+)"?/)?.[1]
+
     return {
       type: 'blob' as const,
       metadata: { type, size, filename },
@@ -240,5 +214,5 @@ export type HttpTransportFactory = ClientTransportFactory<
 >
 
 export const HttpTransportFactory: HttpTransportFactory = (params, options) => {
-  return new HttpTransportClient(params.codec, params.protocol, options)
+  return new HttpTransportClient(params.codec, options)
 }

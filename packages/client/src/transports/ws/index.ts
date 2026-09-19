@@ -1,4 +1,3 @@
-import type { ProtocolVersion } from '@nmtjs/protocol'
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
 import { once } from '@nmtjs/common'
 import {
@@ -10,6 +9,7 @@ import { ProtocolError } from '@nmtjs/protocol/client'
 
 import type {
   BidirectionalTransport,
+  ClientDisconnectReason,
   ClientTransportFactory,
   TransportConnectParams,
   TransportSendOptions,
@@ -17,6 +17,7 @@ import type {
 
 // WebSocket.OPEN without touching the global: a custom implementation may be injected
 const WS_OPEN = 1
+const CLOSE_REASON_CLIENT = 'client'
 
 export type WsClientTransportOptions = {
   /**
@@ -24,7 +25,6 @@ export type WsClientTransportOptions = {
    * @example 'ws://localhost:3000'
    */
   url: string
-  debug?: boolean
 
   /**
    * Custom WebSocket class
@@ -42,11 +42,8 @@ export class WsTransportClient implements BidirectionalTransport {
 
   constructor(
     protected readonly codec: BaseClientCodec,
-    protected readonly protocol: ProtocolVersion,
-    protected options: WsClientTransportOptions,
-  ) {
-    this.options = { debug: false, ...options }
-  }
+    protected readonly options: WsClientTransportOptions,
+  ) {}
 
   async connect(params: TransportConnectParams) {
     this.closingByClient = false
@@ -105,8 +102,8 @@ export class WsTransportClient implements BidirectionalTransport {
         })
       })
       ws.addEventListener('close', (event) => {
-        const reason: 'client' | 'server' =
-          this.closingByClient || event.reason === 'client'
+        const reason: ClientDisconnectReason =
+          this.closingByClient || event.reason === CLOSE_REASON_CLIENT
             ? 'client'
             : 'server'
         this.webSocket = null
@@ -129,10 +126,11 @@ export class WsTransportClient implements BidirectionalTransport {
   }
 
   async disconnect() {
-    if (this.webSocket === null) return
+    const webSocket = this.webSocket
+    if (webSocket === null) return
     this.closingByClient = true
-    const closing = once(this.webSocket, 'close')
-    this.webSocket!.close(1000, 'client')
+    const closing = once(webSocket, 'close')
+    webSocket.close(1000, CLOSE_REASON_CLIENT)
     return closing
   }
 
@@ -153,7 +151,8 @@ export class WsTransportClient implements BidirectionalTransport {
         'WebSocket is not open',
       )
     }
-    if (!options.signal?.aborted) webSocket.send(message as any)
+    // the DOM typing rejects views over shared memory, which cannot occur here
+    if (!options.signal?.aborted) webSocket.send(message as BufferSource)
   }
 }
 
@@ -163,4 +162,4 @@ export type WsTransportFactory = ClientTransportFactory<
 >
 
 export const WsTransportFactory: WsTransportFactory = (params, options) =>
-  new WsTransportClient(params.codec, params.protocol, options)
+  new WsTransportClient(params.codec, options)

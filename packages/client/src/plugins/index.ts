@@ -1,4 +1,5 @@
 export type {
+  ClientEvent,
   ClientPlugin,
   ClientPluginContext,
   ClientPluginEvent,

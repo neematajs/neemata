@@ -1,8 +1,4 @@
-import {
-  encodeWsAuthSubprotocol,
-  ErrorCode,
-  ProtocolVersion,
-} from '@nmtjs/protocol'
+import { encodeWsAuthSubprotocol, ErrorCode } from '@nmtjs/protocol'
 import { BaseClientCodec, ProtocolError } from '@nmtjs/protocol/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -76,11 +72,10 @@ afterEach(() => {
 
 describe('WsTransportClient', () => {
   it('connects, forwards messages, and reports server disconnects', async () => {
-    const transport = new WsTransportClient(
-      new TestCodec(),
-      ProtocolVersion.v1,
-      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
-    )
+    const transport = new WsTransportClient(new TestCodec(), {
+      url: 'http://localhost:4000',
+      WebSocket: FakeWebSocket as any,
+    })
 
     const onConnect = vi.fn()
     const onMessage = vi.fn()
@@ -117,11 +112,10 @@ describe('WsTransportClient', () => {
   })
 
   it('closes with client reason and respects aborted sends', async () => {
-    const transport = new WsTransportClient(
-      new TestCodec(),
-      ProtocolVersion.v1,
-      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
-    )
+    const transport = new WsTransportClient(new TestCodec(), {
+      url: 'http://localhost:4000',
+      WebSocket: FakeWebSocket as any,
+    })
 
     const onDisconnect = vi.fn()
 
@@ -148,11 +142,10 @@ describe('WsTransportClient', () => {
   })
 
   it('rejects sends when the socket closes while awaiting connect', async () => {
-    const transport = new WsTransportClient(
-      new TestCodec(),
-      ProtocolVersion.v1,
-      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
-    )
+    const transport = new WsTransportClient(new TestCodec(), {
+      url: 'http://localhost:4000',
+      WebSocket: FakeWebSocket as any,
+    })
 
     const connectPromise = transport.connect({
       onConnect: vi.fn(),
@@ -177,11 +170,10 @@ describe('WsTransportClient', () => {
   })
 
   it('rejects sends while the socket is still closing', async () => {
-    const transport = new WsTransportClient(
-      new TestCodec(),
-      ProtocolVersion.v1,
-      { url: 'http://localhost:4000', WebSocket: FakeWebSocket as any },
-    )
+    const transport = new WsTransportClient(new TestCodec(), {
+      url: 'http://localhost:4000',
+      WebSocket: FakeWebSocket as any,
+    })
 
     const onDisconnect = vi.fn()
 

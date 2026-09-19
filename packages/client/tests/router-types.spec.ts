@@ -4,7 +4,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 
 import type {
   ClientCallers,
-  ResolveContract,
+  ResolveAPIRouterRoutes,
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider,
 } from '../src/index.ts'
@@ -142,7 +142,7 @@ const level7Contract = c.router({
 
 describe('ClientCallers type resolution with nested routers', () => {
   it('should resolve types for level 1 (flat) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level1Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -154,7 +154,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 2 (one nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level2Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -167,7 +167,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 3 (two nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level3Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -181,7 +181,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 4 (three nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level4Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -196,7 +196,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 5 (four nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level5Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -212,7 +212,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 6 (five nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level6Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider
@@ -229,7 +229,7 @@ describe('ClientCallers type resolution with nested routers', () => {
   })
 
   it('should resolve types for level 7 (six nested) router', () => {
-    type Resolved = ResolveContract<
+    type Resolved = ResolveAPIRouterRoutes<
       typeof level7Contract,
       StaticInputContractTypeProvider,
       StaticOutputContractTypeProvider

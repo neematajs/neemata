@@ -9,13 +9,16 @@ import {
   IsStreamContract,
 } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../client.ts'
+import type { ClientOptions } from '../client.ts'
 import type { RpcLayerApi } from '../layers/rpc.ts'
-import type { ClientTransportFactory } from '../transport.ts'
 import type {
-  ClientCallOptions,
+  ClientTransportFactory,
+  TransportOptionsOf,
+} from '../transport.ts'
+import type {
   RuntimeInputContractTypeProvider,
   RuntimeOutputContractTypeProvider,
+  StreamCallOptions,
 } from '../types.ts'
 import { Client } from '../client.ts'
 
@@ -47,62 +50,55 @@ export class RuntimeContractTransformer {
   }
 
   encode(procedure: string, payload: any) {
-    const contract = this.#procedures.get(procedure)
-    if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.input.encode(payload)
+    return this.#contract(procedure).input.encode(payload)
   }
 
   decode(procedure: string, payload: any) {
+    return this.#contract(procedure).output.decode(payload)
+  }
+
+  #contract(procedure: string) {
     const contract = this.#procedures.get(procedure)
     if (!contract) throw new Error(`Procedure not found: ${procedure}`)
-    return contract.output.decode(payload)
+    return contract
   }
 }
 
-const assignNested = (
-  root: Record<string, any>,
-  name: string,
-  value: unknown,
+const buildCallers = <Callers>(
+  rpc: RpcLayerApi,
+  router: TAnyRouterContract,
 ) => {
-  const parts = name.split('/')
-  let current = root
+  const call: Record<string, any> = Object.create(null)
+  const stream: Record<string, any> = Object.create(null)
 
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i]
-    if (i === parts.length - 1) {
-      current[part] = value
-    } else {
-      current[part] = current[part] ?? Object.create(null)
-      current = current[part]
-    }
-  }
-}
-
-const buildCallers = (rpc: RpcLayerApi, contract: TAnyRouterContract) => {
-  const procedures = collectProcedures(contract)
-  const callers: Record<string, any> = Object.create(null)
-  const streams: Record<string, any> = Object.create(null)
-
-  for (const [name, procedure] of procedures) {
-    const isStream = IsStreamContract(procedure)
-    const invoke = (
-      payload?: unknown,
-      options?: Partial<ClientCallOptions>,
-    ) => {
-      return rpc.call(name, payload, {
-        ...options,
-        _stream_response: isStream,
-      })
+  const visit = (route: TRouteContract, path: string[]) => {
+    if (IsRouterContract(route)) {
+      for (const [key, child] of Object.entries(route.routes)) {
+        visit(child, [...path, key])
+      }
+      return
     }
 
-    if (isStream) {
-      assignNested(streams, name, invoke)
-    } else {
-      assignNested(callers, name, invoke)
+    if (!IsCallableContract(route)) return
+
+    const procedure = path.join('/')
+    const isStream = IsStreamContract(route)
+    const invoke = (payload?: unknown, options?: StreamCallOptions) => {
+      return rpc.call(procedure, payload, options, { stream: isStream })
     }
+
+    // only the tree the procedure belongs to grows the intermediate namespaces
+    let target = isStream ? stream : call
+    for (const key of path.slice(0, -1)) {
+      target[key] = target[key] ?? Object.create(null)
+      target = target[key]
+    }
+    target[path[path.length - 1]] = invoke
   }
 
-  return { call: callers, stream: streams }
+  visit(router, [])
+
+  return { call, stream } as Callers
 }
 
 export class RuntimeClient<
@@ -120,14 +116,9 @@ export class RuntimeClient<
   RuntimeOutputContractTypeProvider
 > {
   constructor(
-    options: BaseClientOptions<RouterContract, SafeCall>,
+    options: ClientOptions<RouterContract, SafeCall>,
     transport: Transport,
-    transportOptions: Transport extends ClientTransportFactory<
-      any,
-      infer Options
-    >
-      ? Options
-      : never,
+    transportOptions: TransportOptionsOf<Transport>,
   ) {
     super(
       options,

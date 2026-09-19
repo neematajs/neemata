@@ -1,7 +1,8 @@
-import type { ClientCore, ConnectionState } from '../core.ts'
+import type { ClientCore, ConnectionState, ServerMessage } from '../core.ts'
 import type { PingLayerApi } from '../layers/ping.ts'
+import type { ClientDisconnectReason } from '../transport.ts'
 
-export type ClientDisconnectReason = 'client' | 'server' | (string & {})
+export type { ClientDisconnectReason }
 
 export interface ReconnectConfig {
   initialTimeout?: number
@@ -11,7 +12,7 @@ export interface ReconnectConfig {
 export type StreamEvent = {
   direction: 'incoming' | 'outgoing'
   streamType: 'rpc' | 'client_blob' | 'server_blob'
-  action: 'response' | 'pull' | 'push' | 'end' | 'abort'
+  action: 'pull' | 'push' | 'end' | 'abort'
   callId?: number
   streamId?: number
   byteLength?: number
@@ -62,6 +63,13 @@ export type ClientPluginEvent =
     }
   | ({ kind: 'stream_event'; timestamp: number } & StreamEvent)
 
+// distributive: emitters describe the event, the core stamps the time
+export type ClientEvent = ClientPluginEvent extends infer Event
+  ? Event extends ClientPluginEvent
+    ? Omit<Event, 'timestamp'>
+    : never
+  : never
+
 /**
  * Client plugin lifecycle contract.
  *
@@ -74,7 +82,7 @@ export interface ClientPluginInstance {
   onInit?(): void
   onConnect?(): void | Promise<void>
   onDisconnect?(reason: ClientDisconnectReason): void | Promise<void>
-  onServerMessage?(message: unknown, raw: ArrayBufferView): void
+  onServerMessage?(message: ServerMessage, raw: ArrayBufferView): void
   onClientEvent?(event: ClientPluginEvent): void | Promise<void>
   dispose?(): void
 }

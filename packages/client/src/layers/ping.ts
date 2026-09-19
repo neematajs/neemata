@@ -1,5 +1,5 @@
 import type { Future } from '@nmtjs/common'
-import { createFuture, MAX_UINT32, withTimeout } from '@nmtjs/common'
+import { createFuture, noopFn, withTimeout } from '@nmtjs/common'
 import {
   ClientMessageType,
   ConnectionType,
@@ -7,57 +7,42 @@ import {
 } from '@nmtjs/protocol'
 
 import type { ClientCore } from '../core.ts'
+import { createIdCounter } from '../utils.ts'
 
 export interface PingLayerApi {
   ping(timeout: number, signal?: AbortSignal): Promise<void>
-  stopAll(reason?: unknown): void
 }
 
 export const createPingLayer = (core: ClientCore): PingLayerApi => {
-  let pingNonce = 0
-  const pendingPings = new Map<number, Future<void>>()
-
-  const nextPingNonce = () => {
-    if (pingNonce >= MAX_UINT32) {
-      pingNonce = 0
-    }
-
-    return pingNonce++
-  }
+  const pending = new Map<number, Future<void>>()
+  const nextNonce = createIdCounter()
 
   const stopAll = (reason?: unknown) => {
-    if (!pendingPings.size) return
+    if (!pending.size) return
 
     const error = new Error('Heartbeat stopped', { cause: reason })
-    for (const pending of pendingPings.values()) {
-      pending.reject(error)
+    for (const ping of pending.values()) {
+      ping.reject(error)
     }
-    pendingPings.clear()
+    pending.clear()
   }
 
-  core.on('message', (message: any) => {
+  core.on('message', (message) => {
     switch (message.type) {
       case ServerMessageType.Pong: {
-        const pending = pendingPings.get(message.nonce)
-        if (!pending) return
+        const ping = pending.get(message.nonce)
+        if (!ping) break
 
-        pendingPings.delete(message.nonce)
-        pending.resolve()
+        pending.delete(message.nonce)
+        ping.resolve()
         core.emit('pong', message.nonce)
         break
       }
-      case ServerMessageType.Ping: {
-        if (!core.messageContext) return
-
-        const buffer = core.protocol.encodeMessage(
-          core.messageContext,
-          ClientMessageType.Pong,
-          { nonce: message.nonce },
-        )
-
-        core.send(buffer).catch(() => {})
+      case ServerMessageType.Ping:
+        core
+          .sendMessage(ClientMessageType.Pong, { nonce: message.nonce })
+          ?.catch(noopFn)
         break
-      }
     }
   })
 
@@ -75,9 +60,9 @@ export const createPingLayer = (core: ClientCore): PingLayerApi => {
         return Promise.reject(new Error('Client is not connected'))
       }
 
-      const nonce = nextPingNonce()
+      const nonce = nextNonce()
       const future = createFuture<void>()
-      pendingPings.set(nonce, future)
+      pending.set(nonce, future)
 
       const buffer = core.protocol.encodeMessage(
         core.messageContext,
@@ -91,9 +76,8 @@ export const createPingLayer = (core: ClientCore): PingLayerApi => {
           withTimeout(future.promise, timeout, new Error('Heartbeat timeout')),
         )
         .finally(() => {
-          pendingPings.delete(nonce)
+          pending.delete(nonce)
         })
     },
-    stopAll,
   }
 }

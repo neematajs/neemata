@@ -1,5 +1,4 @@
 import type { EncodeRPCContext } from '@nmtjs/protocol/client'
-import { ProtocolVersion } from '@nmtjs/protocol'
 import { BaseClientCodec } from '@nmtjs/protocol/client'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -32,7 +31,7 @@ describe('HttpTransportClient headers', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }))
 
-    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+    const transport = new HttpTransportClient(codec, {
       url: 'http://localhost:4000',
       fetch: fetchSpy,
     })
@@ -56,7 +55,7 @@ describe('HttpTransportClient headers', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }))
 
-    const transport = new HttpTransportClient(codec, ProtocolVersion.v1, {
+    const transport = new HttpTransportClient(codec, {
       url: 'http://localhost:4000',
       fetch: fetchSpy,
     })

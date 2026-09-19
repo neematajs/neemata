@@ -1,21 +1,20 @@
 import type { TAnyRouterContract } from '@nmtjs/contract'
 
-import type { BaseClientOptions } from '../client.ts'
+import type { ClientOptions } from '../client.ts'
 import type { RpcLayerApi } from '../layers/rpc.ts'
-import type { ClientTransportFactory } from '../transport.ts'
 import type {
-  ClientCallOptions,
+  ClientTransportFactory,
+  TransportOptionsOf,
+} from '../transport.ts'
+import type {
   StaticInputContractTypeProvider,
   StaticOutputContractTypeProvider,
+  StreamCallOptions,
 } from '../types.ts'
 import { Client } from '../client.ts'
 import { BaseClientTransformer } from '../transformers.ts'
 
-const buildCallers = (
-  rpc: RpcLayerApi,
-  isStream: boolean,
-  path: string[] = [],
-): Record<string, unknown> => {
+const buildCallers = <Callers>(rpc: RpcLayerApi, stream: boolean) => {
   const createProxy = <T extends object>(target: T, current: string[]) => {
     return new Proxy(target, {
       get: (_obj, prop) => {
@@ -25,16 +24,8 @@ const buildCallers = (
         if (prop === 'then') return undefined
 
         const path = [...current, String(prop)]
-        const caller = (
-          payload?: unknown,
-          options?: Partial<ClientCallOptions>,
-        ) => {
-          const procedure = path.join('/')
-          const stream = isStream || options?._stream_response
-          return rpc.call(procedure, payload, {
-            ...options,
-            _stream_response: stream,
-          })
+        const caller = (payload?: unknown, options?: StreamCallOptions) => {
+          return rpc.call(path.join('/'), payload, options, { stream })
         }
 
         return createProxy(caller, path)
@@ -43,7 +34,8 @@ const buildCallers = (
   }
 
   const root: Record<string, unknown> = Object.create(null)
-  return createProxy(root, path)
+  // the proxy answers any path; the contract decides which ones are real
+  return createProxy(root, []) as Callers
 }
 
 export class StaticClient<
@@ -61,14 +53,9 @@ export class StaticClient<
   StaticOutputContractTypeProvider
 > {
   constructor(
-    options: BaseClientOptions<RouterContract, SafeCall>,
+    options: ClientOptions<RouterContract, SafeCall>,
     transport: Transport,
-    transportOptions: Transport extends ClientTransportFactory<
-      any,
-      infer Options
-    >
-      ? Options
-      : never,
+    transportOptions: TransportOptionsOf<Transport>,
   ) {
     super(
       options,

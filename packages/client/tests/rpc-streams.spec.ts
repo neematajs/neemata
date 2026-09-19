@@ -59,7 +59,18 @@ class MockCore extends EventEmitter<{
     encodeMessage: vi.fn((_context, type) => new Uint8Array([type])),
   } as any
 
-  readonly send = vi.fn(async () => {})
+  readonly send = vi.fn(async (_buffer: any, _signal?: AbortSignal) => {})
+
+  sendMessage(type: number, payload: unknown, signal?: AbortSignal) {
+    if (!this.messageContext) return null
+    const buffer = this.protocol.encodeMessage(
+      this.messageContext,
+      type,
+      payload,
+    )
+    return this.send(buffer, signal)
+  }
+
   readonly transportCall = vi.fn()
   readonly emitClientEvent = vi.fn()
   readonly emitStreamEvent = vi.fn()
@@ -78,7 +89,8 @@ describe('RPC streams', () => {
       rpcLayer.call(
         'users/profile',
         { userId: '1' },
-        { _stream_response: true, backpressure: { rpc: { window: 0 } } },
+        { backpressure: { rpc: { window: 0 } } },
+        { stream: true },
       ),
     ).rejects.toThrow(
       'backpressure.rpc.window must be a positive uint32 integer',
@@ -97,7 +109,8 @@ describe('RPC streams', () => {
     const streamPromise = rpcLayer.call(
       'users/profile',
       { userId: '1' },
-      { _stream_response: true },
+      {},
+      { stream: true },
     )
 
     expect(core.send).toHaveBeenCalledTimes(1)
@@ -179,7 +192,8 @@ describe('RPC streams', () => {
     const streamPromise = rpcLayer.call(
       'users/profile',
       { userId: '1' },
-      { _stream_response: true },
+      {},
+      { stream: true },
     )
     core.emit(
       'message',
@@ -219,7 +233,8 @@ describe('RPC streams', () => {
     const streamPromise = rpcLayer.call(
       'users/profile',
       { userId: '1' },
-      { _stream_response: true, autoReconnect: true },
+      { autoReconnect: true },
+      { stream: true },
     )
 
     expect(core.send).toHaveBeenCalledTimes(1)
@@ -289,7 +304,8 @@ describe('RPC streams', () => {
       const streamPromise = rpcLayer.call(
         'users/profile',
         { userId: '1' },
-        { _stream_response: true },
+        {},
+        { stream: true },
       )
 
       core.emit(
@@ -344,7 +360,8 @@ describe('RPC streams', () => {
     const streamPromise = rpcLayer.call(
       'users/profile',
       { userId: '1' },
-      { _stream_response: true },
+      {},
+      { stream: true },
     )
 
     // abort lands while the call is still pending (e.g. server-side idle
@@ -374,7 +391,8 @@ describe('RPC streams', () => {
     const streamPromise = rpcLayer.call(
       'users/profile',
       { userId: '1' },
-      { _stream_response: true },
+      {},
+      { stream: true },
     )
 
     core.emit(

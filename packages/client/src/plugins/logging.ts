@@ -1,19 +1,17 @@
 import type { ClientPlugin, ClientPluginEvent } from './types.ts'
 
-export type ClientLogEvent = ClientPluginEvent
-
 export interface LoggingPluginOptions {
   includeBodies?: boolean
-  onEvent(event: ClientLogEvent): void | Promise<void>
-  mapEvent?(event: ClientLogEvent): ClientLogEvent | null
-  onSinkError?(error: unknown, event: ClientLogEvent): void
+  onEvent(event: ClientPluginEvent): void | Promise<void>
+  mapEvent?(event: ClientPluginEvent): ClientPluginEvent | null
+  onSinkError?(error: unknown, event: ClientPluginEvent): void
 }
 
-const stripEventBody = (event: ClientLogEvent): ClientLogEvent => {
+const stripBody = (event: ClientPluginEvent): ClientPluginEvent => {
   if (!('body' in event)) return event
 
   const { body: _body, ...rest } = event
-  return rest as ClientLogEvent
+  return rest
 }
 
 export const loggingPlugin = (options: LoggingPluginOptions): ClientPlugin => {
@@ -22,20 +20,18 @@ export const loggingPlugin = (options: LoggingPluginOptions): ClientPlugin => {
   return () => ({
     name: 'logging',
     onClientEvent: (event) => {
-      const eventToMap = includeBodies ? event : stripEventBody(event)
-      const mappedEvent = options.mapEvent
-        ? options.mapEvent(eventToMap)
-        : eventToMap
+      const logged = includeBodies ? event : stripBody(event)
+      const mapped = options.mapEvent ? options.mapEvent(logged) : logged
 
-      if (!mappedEvent) return
+      if (!mapped) return
 
       try {
-        const sinkResult = options.onEvent(mappedEvent)
-        Promise.resolve(sinkResult).catch((error) => {
-          options.onSinkError?.(error, mappedEvent)
+        const result = options.onEvent(mapped)
+        Promise.resolve(result).catch((error) => {
+          options.onSinkError?.(error, mapped)
         })
       } catch (error) {
-        options.onSinkError?.(error, mappedEvent)
+        options.onSinkError?.(error, mapped)
       }
     },
   })

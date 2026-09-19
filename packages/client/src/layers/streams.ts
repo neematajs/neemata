@@ -4,7 +4,7 @@ import type {
   ProtocolBlobMetadata,
 } from '@nmtjs/protocol'
 import type { ProtocolClientBlobStream } from '@nmtjs/protocol/client'
-import { MAX_UINT32, noopFn } from '@nmtjs/common'
+import { noopFn } from '@nmtjs/common'
 import {
   ClientMessageType,
   createProtocolBlobReference,
@@ -20,37 +20,18 @@ import {
 import { ProtocolServerBlobStream } from '@nmtjs/protocol/client'
 
 import type { ClientCore } from '../core.ts'
-import { ClientStreams, ServerStreams } from '../streams.ts'
+import { ClientStreams, ServerStreams } from '../stream-registry.ts'
+import { createIdCounter, toReasonString } from '../utils.ts'
 
-type ClientBlobUploadState = {
+type ClientBlobUpload = {
   credits: SendCredits
   pumping: boolean
-}
-
-export const toReasonString = (reason: unknown) => {
-  if (typeof reason === 'string') return reason
-  if (reason === undefined || reason === null) return undefined
-  if (reason instanceof Error) return reason.message
-  try {
-    // JSON.stringify returns undefined (does not throw) for symbols/functions
-    const json = JSON.stringify(reason)
-    if (json !== undefined) return json
-  } catch {}
-  if (
-    typeof reason === 'number' ||
-    typeof reason === 'boolean' ||
-    typeof reason === 'bigint' ||
-    typeof reason === 'symbol'
-  ) {
-    return reason.toString()
-  }
-  return Object.prototype.toString.call(reason)
 }
 
 export interface StreamLayerApi {
   readonly clientStreams: ClientStreams
   readonly serverStreams: ServerStreams
-  getStreamId: () => number
+  nextStreamId: () => number
   addClientStream: (blob: ProtocolBlob) => ProtocolClientBlobStream
   createServerBlob: (
     streamId: number,
@@ -58,18 +39,8 @@ export interface StreamLayerApi {
   ) => ProtocolBlobInterface
   addServerBlobStream: (
     metadata: ProtocolBlobMetadata,
-    options?: {
-      source?: ReadableStream<ArrayBufferView>
-      start?: (
-        stream: ProtocolServerBlobStream,
-        options?: { signal?: AbortSignal },
-      ) => void
-    },
-  ) => {
-    blob: ProtocolBlobInterface
-    streamId: number
-    stream: ProtocolServerBlobStream
-  }
+    source: ReadableStream<ArrayBufferView>,
+  ) => ProtocolBlobInterface
   consumeServerBlob: (
     blob: ProtocolBlobInterface,
     options?: { signal?: AbortSignal },
@@ -78,7 +49,7 @@ export interface StreamLayerApi {
 
 export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
   const clientStreams = new ClientStreams()
-  const clientBlobUploads = new Map<number, ClientBlobUploadState>()
+  const clientBlobUploads = new Map<number, ClientBlobUpload>()
   const serverStreams = new ServerStreams<ProtocolServerBlobStream>()
   const serverBlobDownloads = new Map<number, ReceiveCreditWindow>()
   const serverBlobInitializers = new Map<
@@ -86,18 +57,10 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
     (options?: { signal?: AbortSignal }) => void
   >()
 
-  let streamId = 0
-
-  const getStreamId = () => {
-    if (streamId >= MAX_UINT32) {
-      streamId = 0
-    }
-
-    return streamId++
-  }
+  const nextStreamId = createIdCounter()
 
   const addClientStream = (blob: ProtocolBlob) => {
-    const id = getStreamId()
+    const id = nextStreamId()
     const stream = clientStreams.add(blob.source, id, blob.metadata)
     clientBlobUploads.set(id, {
       credits: new SendCredits(),
@@ -108,10 +71,10 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
   const abortClientBlobUpload = async (
     streamId: number,
-    state: ClientBlobUploadState,
+    upload: ClientBlobUpload,
     reason?: unknown,
   ) => {
-    if (clientBlobUploads.get(streamId) !== state) return
+    if (clientBlobUploads.get(streamId) !== upload) return
     clientBlobUploads.delete(streamId)
     const reasonString = toReasonString(reason)
 
@@ -123,38 +86,36 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
       reason: reasonString,
     })
 
-    if (core.messageContext) {
-      const buffer = core.protocol.encodeMessage(
-        core.messageContext,
-        ClientMessageType.ClientBlobAbort,
-        { streamId, reason: reasonString },
-      )
-      await core.send(buffer).catch(noopFn)
-    }
+    await core
+      .sendMessage(ClientMessageType.ClientBlobAbort, {
+        streamId,
+        reason: reasonString,
+      })
+      ?.catch(noopFn)
 
     await clientStreams.abort(streamId, reason).catch(noopFn)
   }
 
   const pumpClientBlobUpload = async (
     streamId: number,
-    state: ClientBlobUploadState,
+    upload: ClientBlobUpload,
   ) => {
-    if (state.pumping) return
-    state.pumping = true
+    if (upload.pumping) return
+    upload.pumping = true
 
     try {
       while (
-        clientBlobUploads.get(streamId) === state &&
-        state.credits.available > 0
+        clientBlobUploads.get(streamId) === upload &&
+        upload.credits.available > 0
       ) {
         const chunk = await clientStreams.pull(
           streamId,
-          Math.min(state.credits.available, DEFAULT_BLOB_CHUNK_SIZE),
+          Math.min(upload.credits.available, DEFAULT_BLOB_CHUNK_SIZE),
         )
 
         // Cancellation can settle a pending read with done=true. Recheck
         // ownership so a peer abort or disconnect cannot turn into End.
-        if (clientBlobUploads.get(streamId) !== state) return
+        if (clientBlobUploads.get(streamId) !== upload) return
 
         if (!chunk) {
           clientBlobUploads.delete(streamId)
@@ -166,14 +127,9 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
             streamId,
           })
 
-          if (core.messageContext) {
-            const buffer = core.protocol.encodeMessage(
-              core.messageContext,
-              ClientMessageType.ClientBlobEnd,
-              { streamId },
-            )
-            await core.send(buffer).catch(noopFn)
-          }
+          await core
+            .sendMessage(ClientMessageType.ClientBlobEnd, { streamId })
+            ?.catch(noopFn)
 
           await clientStreams.end(streamId).catch(noopFn)
           return
@@ -183,7 +139,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           continue
         }
 
-        if (!state.credits.spend(chunk.byteLength)) {
+        if (!upload.credits.spend(chunk.byteLength)) {
           throw new Error('Client blob upload exceeded granted credit')
         }
 
@@ -195,20 +151,17 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           byteLength: chunk.byteLength,
         })
 
-        if (!core.messageContext) {
-          throw new Error('Client disconnected during blob upload')
-        }
-        const buffer = core.protocol.encodeMessage(
-          core.messageContext,
-          ClientMessageType.ClientBlobPush,
-          { streamId, chunk },
-        )
-        await core.send(buffer)
+        const sent = core.sendMessage(ClientMessageType.ClientBlobPush, {
+          streamId,
+          chunk,
+        })
+        if (!sent) throw new Error('Client disconnected during blob upload')
+        await sent
       }
     } catch (error) {
-      await abortClientBlobUpload(streamId, state, error)
+      await abortClientBlobUpload(streamId, upload, error)
     } finally {
-      state.pumping = false
+      upload.pumping = false
     }
   }
 
@@ -216,21 +169,22 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
     serverBlobDownloads.delete(streamId)
 
     if (core.messageContext) {
+      const reasonString = toReasonString(reason)
+
       core.emitStreamEvent({
         direction: 'outgoing',
         streamType: 'server_blob',
         action: 'abort',
         streamId,
-        reason: toReasonString(reason),
+        reason: reasonString,
       })
 
-      const buffer = core.protocol.encodeMessage(
-        core.messageContext,
-        ClientMessageType.ServerBlobAbort,
-        { streamId, reason: toReasonString(reason) },
-      )
-
-      core.send(buffer).catch(noopFn)
+      core
+        .sendMessage(ClientMessageType.ServerBlobAbort, {
+          streamId,
+          reason: reasonString,
+        })
+        ?.catch(noopFn)
     }
 
     void serverStreams.abort(streamId, reason).catch(noopFn)
@@ -257,16 +211,15 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           byteLength: grant,
         })
 
-        const buffer = core.protocol.encodeMessage(
-          core.messageContext,
-          ClientMessageType.ServerBlobPull,
-          { streamId: id, size: grant },
-        )
-
-        core.send(buffer).catch((error) => {
-          credits.revoke(grant)
-          if (serverStreams.has(id)) abortServerBlob(id, error)
-        })
+        core
+          .sendMessage(ClientMessageType.ServerBlobPull, {
+            streamId: id,
+            size: grant,
+          })
+          ?.catch((error) => {
+            credits.revoke(grant)
+            if (serverStreams.has(id)) abortServerBlob(id, error)
+          })
       },
       close: () => {
         serverBlobInitializers.delete(id)
@@ -284,42 +237,17 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
 
   const addServerBlobStream = (
     metadata: ProtocolBlobMetadata,
-    options?: {
-      source?: ReadableStream<ArrayBufferView>
-      start?: (
-        stream: ProtocolServerBlobStream,
-        options?: { signal?: AbortSignal },
-      ) => void
-    },
+    source: ReadableStream<ArrayBufferView>,
   ) => {
-    const id = getStreamId()
-    const stream = new ProtocolServerBlobStream(metadata)
-    serverStreams.add(id, stream)
+    const id = nextStreamId()
+    serverStreams.add(id, new ProtocolServerBlobStream(metadata))
 
-    if (options?.start) {
-      let started = false
-      serverBlobInitializers.set(id, (subscriptionOptions) => {
-        if (started) return
-        started = true
-        options.start?.(stream, subscriptionOptions)
-      })
-    } else if (options?.source) {
-      const source = options.source
-      let started = false
-      serverBlobInitializers.set(id, (subscriptionOptions) => {
-        if (started) return
-        started = true
-        forwardServerBlobSource(id, source, subscriptionOptions?.signal).catch(
-          noopFn,
-        )
-      })
-    }
+    // forwarding starts on consumption: the blob may never be read
+    serverBlobInitializers.set(id, (options) => {
+      forwardServerBlobSource(id, source, options?.signal).catch(noopFn)
+    })
 
-    return {
-      blob: createProtocolBlobReference(id, metadata),
-      streamId: id,
-      stream,
-    }
+    return createProtocolBlobReference(id, metadata)
   }
 
   const forwardServerBlobSource = async (
@@ -369,7 +297,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
     return stream
   }
 
-  core.on('message', (message: any) => {
+  core.on('message', (message) => {
     switch (message.type) {
       case ServerMessageType.ServerBlobPush: {
         const { streamId, chunk } = message
@@ -429,18 +357,18 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
           byteLength: size,
         })
 
-        const state = clientBlobUploads.get(streamId)
-        if (!state) break
-        if (!state.credits.grant(size)) {
+        const upload = clientBlobUploads.get(streamId)
+        if (!upload) break
+        if (!upload.credits.grant(size)) {
           abortClientBlobUpload(
             streamId,
-            state,
+            upload,
             STREAM_FLOW_CONTROL_VIOLATION_REASON,
           ).catch(noopFn)
           break
         }
 
-        pumpClientBlobUpload(streamId, state).catch(noopFn)
+        pumpClientBlobUpload(streamId, upload).catch(noopFn)
         break
       }
       case ServerMessageType.ClientBlobAbort:
@@ -468,7 +396,7 @@ export const createStreamLayer = (core: ClientCore): StreamLayerApi => {
   return {
     clientStreams,
     serverStreams,
-    getStreamId,
+    nextStreamId,
     addClientStream,
     createServerBlob,
     addServerBlobStream,
