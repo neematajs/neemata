@@ -395,7 +395,11 @@ export const createPostgresWorkflowNodeStore = (
           SELECT a.id, a.status::text AS old_status, r.root_run_id
           FROM workflow_attempts a
           JOIN workflow_runs r ON r.id = a.run_id
+          JOIN workflow_node_children c ON c.run_id = a.run_id
+            AND c.node_name = a.node_name AND c.child_key = a.child_key
           WHERE a.id = $1 AND a.lease_token = $2 AND a.status = 'started'
+            AND c.current_attempt_id = a.id
+            AND c.status NOT IN ('completed', 'failed', 'cancelled')
         ),
         updated AS (
         UPDATE workflow_attempts
