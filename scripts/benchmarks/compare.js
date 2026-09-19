@@ -2,12 +2,14 @@
 
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { parseArgs } from 'node:util'
 
 import {
   median,
   medianAbsoluteDeviation,
-  parseArguments,
   readJson,
+  SCHEMA_VERSION,
+  SUITES,
   writeJson,
   writeText,
 } from './utils.js'
@@ -29,7 +31,7 @@ export async function compareReports(options) {
 
   const summary = renderSummary(results, headReports)
   const comparison = {
-    schemaVersion: 1,
+    schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     enforced: options.enforce,
     counts: countStatuses(results),
@@ -62,148 +64,201 @@ function compareSuite(suite, reports, thresholds) {
   const results = []
 
   for (const id of headIds) {
-    const representative = headCases.find((cases) => cases.has(id))?.get(id)
-    const categoryThreshold = thresholds.categories[representative.category]
-    if (!categoryThreshold) {
-      throw new Error(`No threshold category for ${representative.category}`)
+    const sample = headCases.find((cases) => cases.has(id))?.get(id)
+    const threshold = thresholds.categories[sample.category]
+    if (!threshold) {
+      throw new Error(`No threshold category for ${sample.category}`)
     }
 
-    const paired = []
-    for (
-      let round = 0;
-      round < Math.min(baseCases.length, headCases.length);
-      round++
-    ) {
-      const base = baseCases[round].get(id)
-      const head = headCases[round].get(id)
-      if (base && head) paired.push({ base, head })
-    }
-    const availableBaseValues = baseCases
-      .map((cases) => cases.get(id)?.value)
-      .filter(Number.isFinite)
-    const availableHeadValues = headCases
-      .map((cases) => cases.get(id)?.value)
-      .filter(Number.isFinite)
+    const paired = pairRounds(baseCases, headCases, id)
+    const pending = pendingFor({
+      hasBase: reports.base.length > 0,
+      suiteChanged,
+      environmentsMatch,
+      rounds: paired.length,
+      minimumRounds: thresholds.minimumRounds,
+    })
 
-    const pendingReason =
-      reports.base.length === 0
-        ? 'No base benchmark suite is available yet'
-        : suiteChanged
-          ? 'Benchmark definition changed; establish a new baseline'
-          : !environmentsMatch
-            ? 'Base and head environments are incompatible'
-            : paired.length < thresholds.minimumRounds
-              ? `Only ${paired.length}/${thresholds.minimumRounds} paired rounds are available`
-              : undefined
-
-    if (pendingReason) {
+    if (pending) {
+      // Unpaired rounds still carry measurements worth showing, so report the
+      // median over whatever each side produced.
+      const baseValues = availableValues(baseCases, id)
+      const headValues = availableValues(headCases, id)
       results.push({
-        baseMedian: median(availableBaseValues),
-        category: representative.category,
-        headMedian: median(availableHeadValues),
+        baseMedian: median(baseValues),
+        category: sample.category,
+        headMedian: median(headValues),
         id,
-        name: representative.name,
-        rounds: availableHeadValues.length,
+        name: sample.name,
+        rounds: headValues.length,
         status: 'pending',
         suite,
-        unit: representative.unit,
-        reason: pendingReason,
+        unit: sample.unit,
+        reason: pending.reason,
+        pendingKind: pending.kind,
       })
       continue
     }
 
-    const baseValues = paired.map(({ base }) => base.value)
-    const headValues = paired.map(({ head }) => head.value)
-    const deltas = paired.map(({ base, head }) =>
-      base.value === 0 ? 0 : ((head.value - base.value) / base.value) * 100,
-    )
-    const deltaPercent = median(deltas)
-    const deviationPercent = medianAbsoluteDeviation(deltas) ?? 0
-    const baseMedian = median(baseValues)
-    const headMedian = median(headValues)
-    const baseRelativeMargins = paired
-      .map(({ base }) => base.statistics?.relativeMarginOfError)
-      .filter(Number.isFinite)
-    const headRelativeMargins = paired
-      .map(({ head }) => head.statistics?.relativeMarginOfError)
-      .filter(Number.isFinite)
-    const precisionRequired =
-      categoryThreshold.maximumRelativeMarginOfError !== undefined
-    const precisionComplete =
-      baseRelativeMargins.length === paired.length &&
-      headRelativeMargins.length === paired.length
-    if (precisionRequired && !precisionComplete) {
+    const stats = computeStats(paired)
+    if (
+      threshold.maximumRelativeMarginOfError !== undefined &&
+      !stats.marginsComplete
+    ) {
       throw new Error(
         `Benchmark ${id} is missing finite relative margin of error statistics`,
       )
     }
-    const relativeMarginOfError = Math.max(
-      median(baseRelativeMargins) ?? 0,
-      median(headRelativeMargins) ?? 0,
-    )
-    const noisy =
-      categoryThreshold.maximumRelativeMarginOfError !== undefined &&
-      relativeMarginOfError !== undefined &&
-      relativeMarginOfError > categoryThreshold.maximumRelativeMarginOfError
-    const consistent =
-      deltas.filter((delta) => delta > 0).length >=
-      Math.ceil(deltas.length * (2 / 3))
-    const statisticallyClear =
-      deviationPercent === 0 || deltaPercent >= deviationPercent * 3
-
-    let status = 'pass'
-    let reason
-    if (noisy) {
-      status = 'unstable'
-      reason = `Relative margin of error ${formatPercent(relativeMarginOfError)} exceeds ${formatPercent(categoryThreshold.maximumRelativeMarginOfError)}`
-    } else if (deltaPercent >= categoryThreshold.failPercent) {
-      if (categoryThreshold.enforce && consistent && statisticallyClear) {
-        status = 'fail'
-      } else {
-        status = 'warn'
-        if (!categoryThreshold.enforce)
-          reason = 'This category is informational'
-        else if (!consistent)
-          reason = 'The slowdown was not present in enough rounds'
-        else reason = 'The paired-round spread is too wide to fail reliably'
-      }
-    } else if (deltaPercent >= categoryThreshold.warnPercent) {
-      status = 'warn'
-    }
+    const { status, reason } = classify(stats, threshold)
 
     results.push({
-      baseMedian,
-      category: representative.category,
-      deltaPercent,
-      deviationPercent,
-      headMedian,
+      baseMedian: stats.baseMedian,
+      category: sample.category,
+      deltaPercent: stats.deltaPercent,
+      deviationPercent: stats.deviationPercent,
+      headMedian: stats.headMedian,
       id,
-      name: representative.name,
+      name: sample.name,
       reason,
-      relativeMarginOfError,
+      relativeMarginOfError: stats.relativeMarginOfError,
       rounds: paired.length,
       status,
       suite,
-      unit: representative.unit,
+      unit: sample.unit,
     })
   }
 
   return results
 }
 
+// Rounds are compared like for like: round N of base against round N of head,
+// so machine drift over a long run cancels out.
+function pairRounds(baseCases, headCases, id) {
+  const paired = []
+  const rounds = Math.min(baseCases.length, headCases.length)
+  for (let round = 0; round < rounds; round++) {
+    const base = baseCases[round].get(id)
+    const head = headCases[round].get(id)
+    if (base && head) paired.push({ base, head })
+  }
+  return paired
+}
+
+function availableValues(rounds, id) {
+  return rounds.map((cases) => cases.get(id)?.value).filter(Number.isFinite)
+}
+
+/** The reason a case cannot be judged yet, or undefined when it can. */
+function pendingFor(input) {
+  if (!input.hasBase) {
+    return {
+      kind: 'no-base',
+      reason: 'No base benchmark suite is available yet',
+    }
+  }
+  if (input.suiteChanged) {
+    return {
+      kind: 'suite-changed',
+      reason: 'Benchmark definition changed; establish a new baseline',
+    }
+  }
+  if (!input.environmentsMatch) {
+    return {
+      kind: 'environment-mismatch',
+      reason: 'Base and head environments are incompatible',
+    }
+  }
+  if (input.rounds < input.minimumRounds) {
+    return {
+      kind: 'insufficient-rounds',
+      reason: `Only ${input.rounds}/${input.minimumRounds} paired rounds are available`,
+    }
+  }
+  return undefined
+}
+
+function computeStats(paired) {
+  const deltas = paired.map(({ base, head }) =>
+    base.value === 0 ? 0 : ((head.value - base.value) / base.value) * 100,
+  )
+  const baseMargins = paired
+    .map(({ base }) => base.statistics?.relativeMarginOfError)
+    .filter(Number.isFinite)
+  const headMargins = paired
+    .map(({ head }) => head.statistics?.relativeMarginOfError)
+    .filter(Number.isFinite)
+
+  const deltaPercent = median(deltas)
+  const deviationPercent = medianAbsoluteDeviation(deltas) ?? 0
+  const slower = deltas.filter((delta) => delta > 0).length
+
+  return {
+    baseMedian: median(paired.map(({ base }) => base.value)),
+    headMedian: median(paired.map(({ head }) => head.value)),
+    deltaPercent,
+    deviationPercent,
+    relativeMarginOfError: Math.max(
+      median(baseMargins) ?? 0,
+      median(headMargins) ?? 0,
+    ),
+    marginsComplete:
+      baseMargins.length === paired.length &&
+      headMargins.length === paired.length,
+    // Two thirds of the rounds must agree on the direction, and the change
+    // must clear three times the paired-round spread, before it can fail.
+    consistent: slower >= Math.ceil(deltas.length * (2 / 3)),
+    statisticallyClear:
+      deviationPercent === 0 || deltaPercent >= deviationPercent * 3,
+  }
+}
+
+function classify(stats, threshold) {
+  const { maximumRelativeMarginOfError: maximumMargin } = threshold
+  if (
+    maximumMargin !== undefined &&
+    stats.relativeMarginOfError > maximumMargin
+  ) {
+    return {
+      status: 'unstable',
+      reason: `Relative margin of error ${formatPercent(stats.relativeMarginOfError)} exceeds ${formatPercent(maximumMargin)}`,
+    }
+  }
+
+  if (stats.deltaPercent >= threshold.failPercent) {
+    if (threshold.enforce && stats.consistent && stats.statisticallyClear) {
+      return { status: 'fail' }
+    }
+    if (!threshold.enforce) {
+      return { status: 'warn', reason: 'This category is informational' }
+    }
+    if (!stats.consistent) {
+      return {
+        status: 'warn',
+        reason: 'The slowdown was not present in enough rounds',
+      }
+    }
+    return {
+      status: 'warn',
+      reason: 'The paired-round spread is too wide to fail reliably',
+    }
+  }
+
+  if (stats.deltaPercent >= threshold.warnPercent) return { status: 'warn' }
+  return { status: 'pass' }
+}
+
 function groupReports(baseReports, headReports) {
   const suites = new Map()
-  for (const report of baseReports) {
-    validateReport(report)
-    const entry = suites.get(report.suite) ?? { base: [], head: [] }
-    entry.base.push(report)
-    suites.set(report.suite, entry)
-  }
-  for (const report of headReports) {
-    validateReport(report)
-    const entry = suites.get(report.suite) ?? { base: [], head: [] }
-    entry.head.push(report)
-    suites.set(report.suite, entry)
+  for (const [side, reports] of [
+    ['base', baseReports],
+    ['head', headReports],
+  ]) {
+    for (const report of reports) {
+      validateReport(report)
+      const entry = suites.get(report.suite) ?? { base: [], head: [] }
+      entry[side].push(report)
+      suites.set(report.suite, entry)
+    }
   }
   return suites
 }
@@ -232,7 +287,7 @@ function compatibleEnvironment(base, head) {
 
 function validateThresholds(thresholds) {
   if (
-    thresholds.schemaVersion !== 1 ||
+    thresholds.schemaVersion !== SCHEMA_VERSION ||
     !Number.isInteger(thresholds.minimumRounds) ||
     !thresholds.categories
   ) {
@@ -242,7 +297,7 @@ function validateThresholds(thresholds) {
 
 function validateReport(report) {
   if (
-    report.schemaVersion !== 1 ||
+    report.schemaVersion !== SCHEMA_VERSION ||
     typeof report.suite !== 'string' ||
     !Array.isArray(report.cases) ||
     typeof report.source?.suiteHash !== 'string'
@@ -262,11 +317,7 @@ function renderSummary(results, headReports) {
   const counts = countStatuses(results)
   const baselineInitialization =
     results.length > 0 &&
-    results.every(
-      (result) =>
-        result.status === 'pending' &&
-        result.reason === 'No base benchmark suite is available yet',
-    )
+    results.every((result) => result.pendingKind === 'no-base')
   const environment = headReports[0]?.environment
   const lines = [
     baselineInitialization
@@ -305,17 +356,21 @@ function renderSummary(results, headReports) {
   return `${lines.join('\n')}\n`
 }
 
-function appendComparisonSuites(lines, results) {
-  const suiteOrder = ['runtime', 'integration']
+function groupBySuite(results) {
+  const order = Object.keys(SUITES)
   const grouped = Map.groupBy(results, (result) => result.suite)
-  const suites = [...grouped.keys()].sort(
-    (left, right) => suiteOrder.indexOf(left) - suiteOrder.indexOf(right),
-  )
+  return [...grouped.keys()]
+    .sort((left, right) => order.indexOf(left) - order.indexOf(right))
+    .map((suite) => ({
+      heading: `${SUITES[suite]?.label ?? suite} (${grouped.get(suite).length} cases)`,
+      results: grouped.get(suite),
+    }))
+}
 
-  for (const suite of suites) {
-    const suiteResults = grouped.get(suite)
+function appendComparisonSuites(lines, results) {
+  for (const { heading, results: suiteResults } of groupBySuite(results)) {
     lines.push(
-      `## ${suiteLabel(suite)} (${suiteResults.length} cases)`,
+      `## ${heading}`,
       '',
       '| Status | Benchmark | Base | Head | Change | Spread | Notes |',
       '| --- | --- | ---: | ---: | ---: | ---: | --- |',
@@ -331,17 +386,10 @@ function appendComparisonSuites(lines, results) {
 }
 
 function appendCandidateSuites(lines, results) {
-  const suiteOrder = ['runtime', 'integration']
-  const grouped = Map.groupBy(results, (result) => result.suite)
-  const suites = [...grouped.keys()].sort(
-    (left, right) => suiteOrder.indexOf(left) - suiteOrder.indexOf(right),
-  )
-
-  for (const suite of suites) {
-    const suiteResults = grouped.get(suite)
+  for (const { heading, results: suiteResults } of groupBySuite(results)) {
     lines.push(
       '<details>',
-      `<summary><strong>${suiteLabel(suite)} (${suiteResults.length} cases)</strong></summary>`,
+      `<summary><strong>${heading}</strong></summary>`,
       '',
       '| Benchmark | Candidate median |',
       '| --- | ---: |',
@@ -353,13 +401,6 @@ function appendCandidateSuites(lines, results) {
     }
     lines.push('', '</details>', '')
   }
-}
-
-function suiteLabel(suite) {
-  return {
-    integration: 'Integration',
-    runtime: 'Runtime',
-  }[suite]
 }
 
 function statusLabel(status) {
@@ -408,20 +449,28 @@ function escapeCell(value) {
   return String(value).replaceAll('|', '\\|').replaceAll('\n', ' ')
 }
 
+function parsePathList(value) {
+  return (value ?? '')
+    .split(',')
+    .filter(Boolean)
+    .map((path) => resolve(path))
+}
+
 if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? '')) {
-  const args = parseArguments(process.argv.slice(2))
-  const base = String(args.base ?? '')
-    .split(',')
-    .filter(Boolean)
-    .map((path) => resolve(path))
-  const head = String(args.head ?? '')
-    .split(',')
-    .filter(Boolean)
-    .map((path) => resolve(path))
+  const { values: args } = parseArgs({
+    options: {
+      base: { type: 'string' },
+      enforce: { type: 'boolean' },
+      head: { type: 'string' },
+      output: { type: 'string' },
+      summary: { type: 'string' },
+      thresholds: { type: 'string' },
+    },
+  })
   const result = await compareReports({
-    base,
+    base: parsePathList(args.base),
     enforce: Boolean(args.enforce),
-    head,
+    head: parsePathList(args.head),
     output: args.output ? resolve(args.output) : undefined,
     summary: args.summary ? resolve(args.summary) : undefined,
     thresholds: resolve(args.thresholds || 'benchmarks/thresholds.json'),

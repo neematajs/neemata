@@ -1,89 +1,38 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import {
-  readFile,
-  readdir,
-  rename,
-  stat,
-  writeFile,
-  mkdir,
-} from 'node:fs/promises'
-import { cpus, arch, platform, release } from 'node:os'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { arch, cpus, platform, release } from 'node:os'
 import { dirname, relative, resolve, sep } from 'node:path'
 
-const IGNORED_DIRECTORIES = new Set([
-  '.git',
-  '.benchmark',
-  'benchmark-results',
-  'coverage',
-  'dist',
-  'node_modules',
-])
+/** Version of the report, comparison and run JSON documents. */
+export const SCHEMA_VERSION = 1
 
-export function parseArguments(argv) {
-  const result = { _: [] }
-
-  for (let index = 0; index < argv.length; index++) {
-    const argument = argv[index]
-    if (!argument.startsWith('--')) {
-      result._.push(argument)
-      continue
-    }
-
-    const [rawKey, inlineValue] = argument.slice(2).split('=', 2)
-    if (inlineValue !== undefined) {
-      result[rawKey] = inlineValue
-      continue
-    }
-
-    const next = argv[index + 1]
-    if (next !== undefined && !next.startsWith('--')) {
-      result[rawKey] = next
-      index++
-    } else {
-      result[rawKey] = true
-    }
-  }
-
-  return result
+/**
+ * The benchmark suites, in report order. `config` is the vitest config the
+ * suite runs under; `label` is its heading in the rendered summary.
+ */
+export const SUITES = {
+  runtime: { label: 'Runtime', config: 'vitest.bench.config.ts' },
+  integration: {
+    label: 'Integration',
+    config: 'vitest.bench.integration.config.ts',
+  },
 }
 
 export async function readJson(path) {
   return JSON.parse(await readFile(path, 'utf8'))
 }
 
-export async function writeJson(path, value) {
-  await mkdir(dirname(path), { recursive: true })
-  const temporaryPath = `${path}.${process.pid}.tmp`
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`)
-  await rename(temporaryPath, path)
-}
-
 export async function writeText(path, value) {
   await mkdir(dirname(path), { recursive: true })
+  // Rename over the final path so a reader never sees a half-written file.
   const temporaryPath = `${path}.${process.pid}.tmp`
   await writeFile(temporaryPath, value)
   await rename(temporaryPath, path)
 }
 
-export async function findFiles(root, predicate, directory = root) {
-  const files = []
-  const entries = await readdir(directory, { withFileTypes: true })
-
-  for (const entry of entries) {
-    const path = resolve(directory, entry.name)
-    if (entry.isDirectory()) {
-      if (!IGNORED_DIRECTORIES.has(entry.name)) {
-        files.push(...(await findFiles(root, predicate, path)))
-      }
-      continue
-    }
-    if (entry.isFile() && predicate(path, toPosixPath(relative(root, path)))) {
-      files.push(path)
-    }
-  }
-
-  return files.sort((left, right) => left.localeCompare(right))
+export async function writeJson(path, value) {
+  await writeText(path, `${JSON.stringify(value, null, 2)}\n`)
 }
 
 export async function hashFiles(root, files) {
@@ -111,15 +60,20 @@ export async function collectEnvironment(root) {
     node: process.version,
     operatingSystem: `${platform()} ${release()}`,
     platform: platform(),
-    pnpm: commandVersion('pnpm', root),
+    pnpm: tryExec('pnpm', ['--version'], root),
     pnpmDeclaration: packageJson.packageManager ?? 'unknown',
     typescript: typescriptPackage?.version ?? 'unknown',
   }
 }
 
-function commandVersion(command, cwd) {
+export function gitCommit(root) {
+  return tryExec('git', ['rev-parse', 'HEAD'], root)
+}
+
+// Environment metadata is best-effort: a missing tool must not fail a run.
+function tryExec(command, args, cwd) {
   try {
-    return execFileSync(command, ['--version'], {
+    return execFileSync(command, args, {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -129,30 +83,14 @@ function commandVersion(command, cwd) {
   }
 }
 
-export function gitCommit(root) {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
-      cwd: root,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim()
-  } catch {
-    return 'unknown'
-  }
-}
-
-export function runCommand(command, args, options = {}) {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd,
-      env: options.env ?? process.env,
-      stdio: options.stdio ?? 'inherit',
-    })
+export function runCommand(command, args, cwd) {
+  return new Promise((settle, reject) => {
+    const child = spawn(command, args, { cwd, stdio: 'inherit' })
 
     child.once('error', reject)
     child.once('exit', (code, signal) => {
       if (code === 0) {
-        resolvePromise()
+        settle()
         return
       }
       reject(
