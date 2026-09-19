@@ -16,47 +16,47 @@ export async function dispatchTaskNode(
     readonly node: RunnableNodeImplementation
   },
 ): Promise<AdvanceOutcome> {
+  const { node } = input
   const existing = await input.store.createNode({
     runId: input.run.id,
-    name: input.node.name,
+    name: node.name,
     kind: 'task',
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
-  const declaration = getWorkflowNodeDeclaration(
-    input.workflow,
-    input.node.name,
-  )
+  const declaration = getWorkflowNodeDeclaration(input.workflow, node.name)
   if (declaration.kind !== 'task') {
-    throw new Error(`Workflow node [${input.node.name}] is not a task`)
+    throw new Error(`Workflow node [${node.name}] is not a task`)
   }
 
+  const target = node.target as AnyTaskDefinition
+  const nodeInput = node.input
   await input.store.ensureNodeChildren({
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: node.name,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
   })
   return await dispatchChildTaskRun({
     ...input,
     parentNode: existing,
-    nodeName: input.node.name,
+    nodeName: node.name,
     childKey: SELF_CHILD_KEY,
-    taskName: input.node.target.name,
+    taskName: target.name,
     timeout: declaration.timeout ?? declaration.task.timeout,
-    inputSchema: (input.node.target as AnyTaskDefinition).input,
-    inputLabel: `task input [${input.workflow.workflow.name}.${input.node.name}]`,
+    inputSchema: target.input,
+    inputLabel: `task input [${input.workflow.workflow.name}.${node.name}]`,
     resolveIdempotencyKey: () =>
       resolveIdempotency(
-        input.node.idempotency,
+        node.idempotency,
         input.workflowCtx,
         input.outputs,
         input.run.input,
       ),
     resolveNodeInput: () => {
       if (hasStoredNodeInput(existing)) return existing.input
-      if (!input.node.input) return input.run.input
+      if (!nodeInput) return input.run.input
 
       return runWorkflowUserCallback(() =>
-        input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+        nodeInput(input.workflowCtx, input.outputs, input.run.input),
       )
     },
   })

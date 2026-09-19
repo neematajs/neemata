@@ -16,77 +16,63 @@ export async function dispatchActivityNode(
     readonly node: ActivityNodeImplementation
   },
 ): Promise<AdvanceOutcome> {
+  const { node } = input
   const existing = await input.store.createNode({
     runId: input.run.id,
-    name: input.node.name,
+    name: node.name,
     kind: 'activity',
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
 
-  const declaration = getWorkflowNodeDeclaration(
-    input.workflow,
-    input.node.name,
-  )
+  const declaration = getWorkflowNodeDeclaration(input.workflow, node.name)
   if (declaration.kind !== 'activity') {
-    throw new Error(`Workflow node [${input.node.name}] is not an activity`)
+    throw new Error(`Workflow node [${node.name}] is not an activity`)
   }
+  const inputFn = node.input
   let nodeInput = existing.input
   if (!hasStoredNodeInput(existing)) {
-    const rawInput = input.node.input
+    const rawInput = inputFn
       ? runWorkflowUserCallback(() =>
-          input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+          inputFn(input.workflowCtx, input.outputs, input.run.input),
         )
       : input.run.input
     nodeInput = decodeWorkflowUserSchemaValue(
       declaration.input,
       rawInput,
-      `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
+      `activity input [${input.workflow.workflow.name}.${node.name}]`,
     )
     await input.store.setNodeInput({
       runId: input.run.id,
-      nodeName: input.node.name,
+      nodeName: node.name,
       input: nodeInput,
     })
   }
 
   const ensured = await input.store.ensureNodeChildren({
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: node.name,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
   })
   // Once the child has an attempt, its stored state is authoritative — never
   // re-run the user's idempotency callback on re-entry.
   const hasAttempt = ensured.children[0]!.attemptCount > 0
-  await dispatchActivityAttempt({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
+  const idempotencyKey = hasAttempt
+    ? undefined
+    : resolveIdempotency(
+        node.idempotency,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      )
+
+  await dispatchActivityAttempt(input, {
     workflowName: input.workflow.workflow.name,
-    activityName: input.node.activity.name,
+    activityName: node.activity.name,
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: node.name,
     childKey: SELF_CHILD_KEY,
-    prepareAttempt: async () => {
-      const result = await input.store.ensureChildAttempt({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        childKey: SELF_CHILD_KEY,
-        input: nodeInput,
-        idempotencyKey: hasAttempt
-          ? undefined
-          : resolveIdempotency(
-              input.node.idempotency,
-              input.workflowCtx,
-              input.outputs,
-              input.run.input,
-            ),
-      })
-      return {
-        attempt: result.attempt,
-        commandInput: result.attempt.input,
-        created: result.created,
-      }
-    },
+    input: nodeInput,
+    idempotencyKey,
   })
   return 'local'
 }

@@ -1,17 +1,14 @@
 import type { Container, DependencyContext } from '@nmtjs/core'
 
-import type { TaskImplementation } from '../../implement/index.ts'
-import type { AnyTaskDefinition } from '../../types/index.ts'
+import type { AnyTaskImplementation } from '../../implement/index.ts'
 import type { ClaimedAttempt } from '../commands.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { WorkflowStore } from '../store.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { decodeSchemaValue } from '../coordinator/codec.ts'
 import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
-import { wakeParentRun } from '../wake.ts'
-import { decodeSchemaValue } from './activity-attempt.ts'
 import {
   runAtomicCompletion,
   type WorkflowRuntimeAtomicCompletion,
@@ -20,25 +17,20 @@ import {
   isAttemptCancellationObserved,
   isAttemptShutdown,
   runWithAttemptHeartbeat,
-  WorkflowAttemptTimeoutError,
 } from './heartbeat.ts'
 import { isAttemptHeartbeatLeaseLost } from './loop.ts'
 import {
   ackTerminalAttempt,
-  enqueueContinueRun,
   isFreshAttempt,
+  loadAttemptState,
   reconcileStaleAttempt,
-  shouldCompleteNodeFromAttempt,
+  releaseUnroutable,
+  settleAttemptFailure,
+  settleAttemptSuccess,
   type WorkerCommandResult,
 } from './reconcile.ts'
-import { retryTaskAttempt } from './retry.ts'
 
-type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
-
-export type RunTaskAttemptInput = {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
+export type RunTaskAttemptInput = RuntimeDeps & {
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
   readonly tasks: readonly AnyTaskImplementation[]
   readonly workerId: string
@@ -57,55 +49,43 @@ export async function runTaskAttempt(
     throw new Error(`Unsupported attempt command kind [${command.kind}]`)
   }
 
-  const snapshot = await input.store.loadRunSnapshot(command.runId)
-  const storedChild = snapshot?.children.find(
-    (child) =>
-      child.nodeName === command.nodeName &&
-      child.childKey === command.childKey,
+  const { snapshot, child, attempt } = await loadAttemptState(
+    input.store,
+    command,
   )
-  const storedAttempt = snapshot?.attempts.find(
-    (attempt) => attempt.id === command.attemptId,
-  )
-  if (snapshot?.run.kind === 'task' && snapshot.run.status === 'cancelling') {
+  const taskRun = snapshot?.run.kind === 'task'
+  if (taskRun && snapshot.run.status === 'cancelling') {
     return await settleCancelledTaskRun(input)
   }
   if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
     return await ackTerminalAttempt(input)
   }
 
-  if (!isFreshAttempt(command, storedChild, storedAttempt)) {
+  if (!isFreshAttempt(command, child, attempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt),
+      reconcileStaleAttempt(scoped, command, child, attempt, taskRun),
     )
   }
 
   if (snapshot?.run.workflowName !== command.workflowName) {
-    await input.attemptExecutor.release(input.claimed, {
-      reason: 'unroutable',
-      error: new Error(
-        `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
-      ),
-    })
-    return { status: 'released' }
+    return await releaseUnroutable(
+      input,
+      `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
+    )
   }
 
-  const registry = createWorkflowRuntimeRegistry({
-    tasks: input.tasks,
-  })
+  const registry = createWorkflowRuntimeRegistry({ tasks: input.tasks })
   const task = registry.getTask(command.taskName)
   if (!task) {
-    await input.attemptExecutor.release(input.claimed, {
-      reason: 'unroutable',
-      error: new Error(
-        `No registered task implementation [${command.taskName}]`,
-      ),
-    })
-    return { status: 'released' }
+    return await releaseUnroutable(
+      input,
+      `No registered task implementation [${command.taskName}]`,
+    )
   }
 
   // Task runs are advanced by workers, never by the coordinator, so this is
   // the queued → running transition for them.
-  if (snapshot.run.kind === 'task') {
+  if (taskRun) {
     await input.store.markRunRunning({ runId: command.runId })
   }
 
@@ -113,7 +93,7 @@ export async function runTaskAttempt(
   try {
     const timeoutMs = parseDurationMs(command.timeout ?? task.task.timeout)
     output = await runWithAttemptHeartbeat(
-      input,
+      { ...input, timeoutMs },
       async (lifecycle) => {
         const ctx = await input.container.createContext(task.dependencies)
         return await task.handler(
@@ -122,18 +102,6 @@ export async function runTaskAttempt(
           lifecycle,
         )
       },
-      timeoutMs === undefined
-        ? undefined
-        : {
-            timeoutMs,
-            createError: () =>
-              new WorkflowAttemptTimeoutError({
-                runId: command.runId,
-                nodeName: command.nodeName,
-                attemptId: command.attemptId,
-                timeoutMs,
-              }),
-          },
     )
     output = decodeSchemaValue(
       task.task.output,
@@ -145,110 +113,23 @@ export async function runTaskAttempt(
       throw error
     }
     if (isAttemptCancellationObserved(error)) {
-      return snapshot.run.kind === 'task'
+      return taskRun
         ? await settleCancelledTaskRun(input)
         : await ackTerminalAttempt(input)
     }
-    return await runAtomicCompletion(input, async (scoped) => {
-      const attempt =
-        error instanceof WorkflowAttemptTimeoutError
-          ? await scoped.store.timeoutCurrentAttempt({
-              attemptId: command.attemptId,
-              leaseToken: command.leaseToken,
-              error,
-            })
-          : await scoped.store.failCurrentAttempt({
-              attemptId: command.attemptId,
-              leaseToken: command.leaseToken,
-              error,
-            })
-
-      if (attempt) {
-        const retried = await retryTaskAttempt(scoped, {
-          command,
-          failedAttempt: attempt,
-          retry: task.task.retry,
-        })
-        if (retried) {
-          await scoped.attemptExecutor.ack(scoped.claimed)
-          return { status: 'processed' }
-        }
-
-        await scoped.store.failNodeChild({
-          runId: command.runId,
-          nodeName: command.nodeName,
-          childKey: command.childKey,
-          error,
-        })
-        if (shouldCompleteNodeFromAttempt(command.childKey)) {
-          await scoped.store.failNode({
-            runId: command.runId,
-            nodeName: command.nodeName,
-            error,
-          })
-        }
-        if (snapshot?.run.kind === 'task') {
-          const failed = await scoped.store.failRun({
-            runId: command.runId,
-            error,
-          })
-          await wakeParentRun({
-            store: scoped.store,
-            runCoordinationExecutor: scoped.runCoordinationExecutor,
-            run: failed,
-          })
-          await scoped.attemptExecutor.ack(scoped.claimed)
-          return { status: 'processed' }
-        }
-        await enqueueContinueRun(scoped.runCoordinationExecutor, command)
-      }
-
-      await scoped.attemptExecutor.ack(scoped.claimed)
-      return { status: 'processed' }
-    })
+    return await runAtomicCompletion(input, (scoped) =>
+      settleAttemptFailure(scoped, {
+        command,
+        error,
+        retry: task.task.retry,
+        taskRun,
+      }),
+    )
   }
 
-  return await runAtomicCompletion(input, async (scoped) => {
-    const attempt = await scoped.store.completeCurrentAttempt({
-      attemptId: command.attemptId,
-      leaseToken: command.leaseToken,
-      output,
-    })
-    if (!attempt) {
-      await scoped.attemptExecutor.ack(scoped.claimed)
-      return { status: 'processed' }
-    }
-
-    if (snapshot?.run.kind === 'task') {
-      await scoped.store.completeNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
-        output,
-      })
-      const completed = await scoped.store.completeRun({
-        runId: command.runId,
-        output,
-      })
-      await wakeParentRun({
-        store: scoped.store,
-        runCoordinationExecutor: scoped.runCoordinationExecutor,
-        run: completed,
-      })
-      await scoped.attemptExecutor.ack(scoped.claimed)
-      return { status: 'processed' }
-    }
-
-    if (shouldCompleteNodeFromAttempt(command.childKey)) {
-      await scoped.store.completeNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
-        output,
-      })
-    }
-    await enqueueContinueRun(scoped.runCoordinationExecutor, command)
-    await scoped.attemptExecutor.ack(scoped.claimed)
-    return { status: 'processed' }
-  })
+  return await runAtomicCompletion(input, (scoped) =>
+    settleAttemptSuccess(scoped, { command, output, taskRun }),
+  )
 }
 
 /**
@@ -260,16 +141,11 @@ export async function runTaskAttempt(
 async function settleCancelledTaskRun(
   input: RunTaskAttemptInput,
 ): Promise<WorkerCommandResult> {
-  const runId = input.claimed.command.runId
+  const { runId } = input.claimed.command
   return await runAtomicCompletion(input, async (scoped) => {
     const [run] = await scoped.store.loadRuns([runId])
     if (run?.status === 'cancelling') {
-      await cancelRunAndWakeParent({
-        store: scoped.store,
-        attemptExecutor: scoped.attemptExecutor,
-        runCoordinationExecutor: scoped.runCoordinationExecutor,
-        runId,
-      })
+      await cancelRunAndWakeParent(scoped, runId)
     }
     await scoped.attemptExecutor.ack(scoped.claimed)
     return { status: 'processed' }

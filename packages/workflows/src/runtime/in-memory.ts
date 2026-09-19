@@ -84,17 +84,17 @@ export function createInMemoryWorkflowRuntime(
       const started = createRun(state, run)
       if (!started.created) return started.run
 
-      await dispatchTaskRunAttempt({
-        store,
-        runCoordinationExecutor,
-        attemptExecutor,
-        taskName,
-        taskRunId: started.run.id,
-        taskInput,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-        startAt,
-        throwOnDispatchFailure: true,
-      })
+      await dispatchTaskRunAttempt(
+        { store, runCoordinationExecutor, attemptExecutor },
+        {
+          taskName,
+          taskRunId: started.run.id,
+          taskInput,
+          ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+          startAt,
+          failRunOnDispatchFailure: true,
+        },
+      )
       return started.run
     },
   }

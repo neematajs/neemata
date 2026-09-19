@@ -125,15 +125,12 @@ export async function startStoredScheduleRun(
   })
 
   if (schedule.runnableKind === 'task') {
-    await dispatchTaskRunAttempt({
-      store: runtime.store,
-      attemptExecutor: runtime.attemptExecutor,
-      runCoordinationExecutor: runtime.runCoordinationExecutor,
+    await dispatchTaskRunAttempt(runtime, {
       taskName: schedule.runnableName,
       taskRunId: run.id,
       taskInput: schedule.input,
       idempotencyKey,
-      throwOnDispatchFailure: true,
+      failRunOnDispatchFailure: true,
     })
     return run
   }

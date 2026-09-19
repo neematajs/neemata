@@ -1,14 +1,24 @@
+import { createFuture } from '@nmtjs/common'
+
 import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { DEFAULT_LEASE_MS } from '../executors.ts'
 import { isTerminalRunStatus } from '../status.ts'
-import { DEFAULT_LEASE_MS, isAttemptHeartbeatLeaseLost } from './loop.ts'
+import { isAttemptHeartbeatLeaseLost } from './loop.ts'
 
 export type AttemptAbortReasonType =
   | 'timeout'
   | 'leaseLost'
   | 'cancelled'
   | 'shutdown'
+
+/** Identifies the attempt an abort, timeout or cancellation belongs to. */
+type AttemptRef = {
+  readonly runId: string
+  readonly nodeName: string
+  readonly attemptId: string
+}
 
 /**
  * `lifecycle.signal.reason` handed to handlers. An Error rather than a bare
@@ -22,12 +32,7 @@ export class WorkflowAttemptAbortError extends Error {
   readonly nodeName: string
   readonly attemptId: string
 
-  constructor(input: {
-    readonly type: AttemptAbortReasonType
-    readonly runId: string
-    readonly nodeName: string
-    readonly attemptId: string
-  }) {
+  constructor(input: AttemptRef & { readonly type: AttemptAbortReasonType }) {
     super(
       `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] aborted: ${input.type}`,
     )
@@ -47,12 +52,7 @@ export class WorkflowAttemptTimeoutError extends Error {
   readonly attemptId: string
   readonly timeoutMs: number
 
-  constructor(input: {
-    readonly runId: string
-    readonly nodeName: string
-    readonly attemptId: string
-    readonly timeoutMs: number
-  }) {
+  constructor(input: AttemptRef & { readonly timeoutMs: number }) {
     super(
       `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] timed out after ${input.timeoutMs}ms`,
     )
@@ -65,11 +65,7 @@ export class WorkflowAttemptTimeoutError extends Error {
 }
 
 export class WorkflowAttemptCancellationObservedError extends Error {
-  constructor(input: {
-    readonly runId: string
-    readonly nodeName: string
-    readonly attemptId: string
-  }) {
+  constructor(input: AttemptRef) {
     super(
       `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] observed cancellation`,
     )
@@ -78,11 +74,7 @@ export class WorkflowAttemptCancellationObservedError extends Error {
 }
 
 export class WorkflowAttemptShutdownError extends Error {
-  constructor(input: {
-    readonly runId: string
-    readonly nodeName: string
-    readonly attemptId: string
-  }) {
+  constructor(input: AttemptRef) {
     super(
       `Workflow attempt [${input.attemptId}] for [${input.runId}.${input.nodeName}] interrupted by worker shutdown`,
     )
@@ -90,11 +82,15 @@ export class WorkflowAttemptShutdownError extends Error {
   }
 }
 
-export function isAttemptCancellationObserved(error: unknown): boolean {
+export function isAttemptCancellationObserved(
+  error: unknown,
+): error is WorkflowAttemptCancellationObservedError {
   return error instanceof WorkflowAttemptCancellationObservedError
 }
 
-export function isAttemptShutdown(error: unknown): boolean {
+export function isAttemptShutdown(
+  error: unknown,
+): error is WorkflowAttemptShutdownError {
   return error instanceof WorkflowAttemptShutdownError
 }
 
@@ -103,35 +99,24 @@ export async function runWithAttemptHeartbeat<T>(
     readonly attemptExecutor: AttemptExecutor
     readonly claimed: ClaimedAttempt
     readonly leaseMs?: number
+    readonly timeoutMs?: number
     readonly signal?: AbortSignal
     readonly wakeEvents?: Pick<WorkflowWakeEvents, 'onCancellation'>
   },
   handler: (lifecycle: { readonly signal: AbortSignal }) => Promise<T>,
-  timeout?: {
-    readonly timeoutMs: number
-    readonly createError: () => Error
-  },
 ): Promise<T> {
+  const { runId, nodeName, attemptId } = input.claimed.command
+  const ref: AttemptRef = { runId, nodeName, attemptId }
   const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
   const attemptAbort = new AbortController()
   const abortAttempt = (type: AttemptAbortReasonType) => {
     if (attemptAbort.signal.aborted) return
-    attemptAbort.abort(
-      new WorkflowAttemptAbortError({
-        type,
-        runId: input.claimed.command.runId,
-        nodeName: input.claimed.command.nodeName,
-        attemptId: input.claimed.command.attemptId,
-      }),
-    )
+    attemptAbort.abort(new WorkflowAttemptAbortError({ ...ref, type }))
   }
   let heartbeatRunning = false
   let heartbeatFailed = false
-  let rejectHeartbeat: (error: unknown) => void = () => {}
-  const heartbeatFailure = new Promise<never>((_resolve, reject) => {
-    rejectHeartbeat = reject
-  })
+  const heartbeatFailure = createFuture<never>()
   let beatPending = false
   const beat = () => {
     if (heartbeatRunning || heartbeatFailed) return
@@ -143,19 +128,15 @@ export async function runWithAttemptHeartbeat<T>(
           return
         heartbeatFailed = true
         abortAttempt('cancelled')
-        rejectHeartbeat(
-          new WorkflowAttemptCancellationObservedError({
-            runId: input.claimed.command.runId,
-            nodeName: input.claimed.command.nodeName,
-            attemptId: input.claimed.command.attemptId,
-          }),
+        heartbeatFailure.reject(
+          new WorkflowAttemptCancellationObservedError(ref),
         )
       })
       .catch((error: unknown) => {
         if (!isAttemptHeartbeatLeaseLost(error)) return
         heartbeatFailed = true
         abortAttempt('leaseLost')
-        rejectHeartbeat(error)
+        heartbeatFailure.reject(error)
       })
       .finally(() => {
         heartbeatRunning = false
@@ -172,7 +153,7 @@ export async function runWithAttemptHeartbeat<T>(
   // a heartbeat is in flight is latched: that snapshot may predate the
   // cancellation commit, so a follow-up check must run once it settles.
   const unsubscribeCancellationWake = input.wakeEvents?.onCancellation(
-    input.claimed.command.runId,
+    runId,
     () => {
       if (heartbeatRunning) {
         beatPending = true
@@ -181,16 +162,16 @@ export async function runWithAttemptHeartbeat<T>(
       beat()
     },
   )
+  const { timeoutMs } = input
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   const timeoutFailure =
-    timeout === undefined
+    timeoutMs === undefined
       ? undefined
       : new Promise<never>((_resolve, reject) => {
           timeoutHandle = setTimeout(() => {
-            const error = timeout.createError()
             abortAttempt('timeout')
-            reject(error)
-          }, timeout.timeoutMs)
+            reject(new WorkflowAttemptTimeoutError({ ...ref, timeoutMs }))
+          }, timeoutMs)
         })
   let removeShutdownListener: (() => void) | undefined
   const shutdownSignal = input.signal
@@ -200,13 +181,7 @@ export async function runWithAttemptHeartbeat<T>(
       : new Promise<never>((_resolve, reject) => {
           const shutdown = () => {
             abortAttempt('shutdown')
-            reject(
-              new WorkflowAttemptShutdownError({
-                runId: input.claimed.command.runId,
-                nodeName: input.claimed.command.nodeName,
-                attemptId: input.claimed.command.attemptId,
-              }),
-            )
+            reject(new WorkflowAttemptShutdownError(ref))
           }
           if (shutdownSignal.aborted) {
             shutdown()
@@ -220,7 +195,7 @@ export async function runWithAttemptHeartbeat<T>(
   try {
     const work = handler({ signal: attemptAbort.signal })
     work.catch(() => {})
-    const races = [work, heartbeatFailure]
+    const races = [work, heartbeatFailure.promise]
     if (timeoutFailure !== undefined) races.push(timeoutFailure)
     if (shutdownFailure !== undefined) races.push(shutdownFailure)
     return await Promise.race(races)

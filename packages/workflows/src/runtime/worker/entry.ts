@@ -1,21 +1,17 @@
 import type { Container } from '@nmtjs/core'
 
 import type {
-  TaskImplementation,
-  WorkflowImplementation,
+  AnyTaskImplementation,
+  AnyWorkflowImplementation,
 } from '../../implement/index.ts'
-import type {
-  AnyTaskDefinition,
-  AnyWorkflowDefinition,
-} from '../../types/index.ts'
 import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { WorkflowStore } from '../store.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type {
   WorkflowCommandWakeKind,
   WorkflowWakeEvents,
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
+import { DEFAULT_LEASE_MS } from '../executors.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
   runAtomicContinuation,
@@ -24,7 +20,6 @@ import {
 } from './atomic.ts'
 import { isAttemptShutdown } from './heartbeat.ts'
 import {
-  DEFAULT_LEASE_MS,
   drainWorkerPool,
   isAttemptHeartbeatLeaseLost,
   isStaleWorkflowCommandAck,
@@ -44,101 +39,81 @@ import { runTaskAttempt } from './task-attempt.ts'
 const DEFAULT_REAPING_EVERY_MS = 30_000
 const DEFAULT_RUN_TIMEOUTS_EVERY_MS = 60_000
 
-export type WorkerReapingOptions = {
+/** Cadence and batch size of a periodic worker sweep. */
+export type WorkerPeriodicOptions = {
   readonly everyMs?: number
   readonly batchSize?: number
 }
 
-export type WorkerRunTimeoutsOptions = {
-  readonly everyMs?: number
-  readonly batchSize?: number
-}
+export type WorkerReapingOptions = WorkerPeriodicOptions
+export type WorkerRunTimeoutsOptions = WorkerPeriodicOptions
 
-type AnyWorkflowImplementation = WorkflowImplementation<
-  AnyWorkflowDefinition,
-  any
->
-type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
+export type RunWorkflowWorkerInput = WorkerLoopOptions &
+  RuntimeDeps & {
+    readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
+    readonly wakeEvents?: WorkflowWakeEvents
+    readonly workflows: readonly AnyWorkflowImplementation[]
+    readonly container: Pick<Container, 'createContext'>
+    readonly reaping?: false | WorkerReapingOptions
+    readonly runTimeouts?: false | WorkerRunTimeoutsOptions
+  }
 
-export type RunWorkflowWorkerInput = WorkerLoopOptions & {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-  readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
-  readonly wakeEvents?: WorkflowWakeEvents
-  readonly workflows: readonly AnyWorkflowImplementation[]
-  readonly container: Pick<Container, 'createContext'>
-  readonly reaping?: false | WorkerReapingOptions
-  readonly runTimeouts?: false | WorkerRunTimeoutsOptions
-}
-
-export type RunExecutionWorkerInput = WorkerLoopOptions & {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
-  readonly wakeEvents?: WorkflowWakeEvents
-  readonly workflows: readonly AnyWorkflowImplementation[]
-  readonly activityNames?: readonly string[]
-  readonly tasks: readonly AnyTaskImplementation[]
-  readonly taskNames?: readonly string[]
-  readonly container: Pick<Container, 'createContext'>
-  readonly reaping?: false | WorkerReapingOptions
-}
-
-type MaintenanceDeps = {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly maintenance?: readonly WorkerMaintenanceHook[]
-  readonly reaping?: false | WorkerReapingOptions
-}
+export type RunExecutionWorkerInput = WorkerLoopOptions &
+  RuntimeDeps & {
+    readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+    readonly wakeEvents?: WorkflowWakeEvents
+    readonly workflows: readonly AnyWorkflowImplementation[]
+    readonly activityNames?: readonly string[]
+    readonly tasks: readonly AnyTaskImplementation[]
+    readonly taskNames?: readonly string[]
+    readonly container: Pick<Container, 'createContext'>
+    readonly reaping?: false | WorkerReapingOptions
+  }
 
 // Reaping is on by default: a dead-lettered command must fail its run instead
 // of leaving a zombie only the dead-command table knows about.
-function withReapingHook(
-  input: MaintenanceDeps,
-): readonly WorkerMaintenanceHook[] {
-  const hooks = [...(input.maintenance ?? [])]
-  if (input.reaping !== false) {
-    const options = input.reaping
-    hooks.push({
-      everyMs: options?.everyMs ?? DEFAULT_REAPING_EVERY_MS,
-      run: async () => {
-        await reapDeadWorkflowCommands({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          batchSize: options?.batchSize,
-        })
-      },
-    })
+function reapingHook(
+  input: RuntimeDeps & { readonly reaping?: false | WorkerReapingOptions },
+): WorkerMaintenanceHook | undefined {
+  if (input.reaping === false) return undefined
+  const options = input.reaping
+  return {
+    everyMs: options?.everyMs ?? DEFAULT_REAPING_EVERY_MS,
+    run: async () => {
+      await reapDeadWorkflowCommands({
+        ...input,
+        batchSize: options?.batchSize,
+      })
+    },
   }
-  return hooks
 }
 
-function withRunTimeoutsHook(
+function runTimeoutsHook(
   input: RunWorkflowWorkerInput,
-  hooks: readonly WorkerMaintenanceHook[],
-): readonly WorkerMaintenanceHook[] {
-  if (input.runTimeouts === false) return hooks
+): WorkerMaintenanceHook | undefined {
+  if (input.runTimeouts === false) return undefined
   const options = input.runTimeouts
-  return [
-    ...hooks,
-    {
-      everyMs: options?.everyMs ?? DEFAULT_RUN_TIMEOUTS_EVERY_MS,
-      run: async (now: Date) => {
-        await timeoutExpiredWorkflowRuns({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          workflows: input.workflows,
-          batchSize: options?.batchSize,
-          now,
-        })
-      },
+  return {
+    everyMs: options?.everyMs ?? DEFAULT_RUN_TIMEOUTS_EVERY_MS,
+    run: async (now: Date) => {
+      await timeoutExpiredWorkflowRuns({
+        ...input,
+        batchSize: options?.batchSize,
+        now,
+      })
     },
-  ]
+  }
+}
+
+function maintenanceHooks(
+  configured: readonly WorkerMaintenanceHook[] | undefined,
+  ...added: readonly (WorkerMaintenanceHook | undefined)[]
+): readonly WorkerMaintenanceHook[] {
+  const hooks = [...(configured ?? [])]
+  for (const hook of added) {
+    if (hook) hooks.push(hook)
+  }
+  return hooks
 }
 
 function commandWake(
@@ -179,10 +154,13 @@ export async function serveWorkflowWorker(
 }
 
 function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
-  const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
   return withDefaultRetentionPruner({
     ...input,
-    maintenance,
+    maintenance: maintenanceHooks(
+      input.maintenance,
+      reapingHook(input),
+      runTimeoutsHook(input),
+    ),
     onWake: commandWake(input.wakeEvents, 'continue'),
   })
 }
@@ -193,12 +171,13 @@ function workflowDriver(
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
+  const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   return {
     claim: () =>
       input.runCoordinationExecutor.claim({
         workerId: input.workerId,
         workflowNames,
-        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+        leaseMs,
       }),
     abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
     // Continuations stay atomic during shutdown; interrupting coordination
@@ -206,14 +185,8 @@ function workflowDriver(
     async execute(claimed) {
       try {
         return await runAtomicContinuation(input, async (scoped) => {
-          const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
           const result = await continueWorkflowRun({
-            store: scoped.store,
-            runCoordinationExecutor: scoped.runCoordinationExecutor,
-            attemptExecutor: scoped.attemptExecutor,
-            container: input.container,
-            workflows: input.workflows,
-            workerId: input.workerId,
+            ...scoped,
             command: claimed.command,
             leaseMs,
           })
@@ -255,7 +228,7 @@ export async function serveExecutionWorker(
 function executionWorkerOptions(input: RunExecutionWorkerInput) {
   return withDefaultRetentionPruner({
     ...input,
-    maintenance: withReapingHook(input),
+    maintenance: maintenanceHooks(input.maintenance, reapingHook(input)),
     onWake: executionWake(input.wakeEvents),
   })
 }
@@ -271,6 +244,7 @@ function executionDriver(
   const taskNames =
     input.taskNames ??
     input.tasks.map((implementation) => implementation.task.name)
+  const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   return {
     claim: () =>
       input.attemptExecutor.claim({
@@ -278,7 +252,7 @@ function executionDriver(
         workflowNames,
         activityNames,
         taskNames,
-        leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
+        leaseMs,
       }),
     abandon: (claimed) => input.attemptExecutor.release(claimed),
     async execute(claimed, signal) {
@@ -323,7 +297,7 @@ export function collectWorkflowActivityNames(
     }
   }
 
-  return [...names]
+  return Array.from(names)
 }
 
 export function collectWorkflowTaskNames(
@@ -345,7 +319,7 @@ export function collectWorkflowTaskNames(
     }
   }
 
-  return [...names]
+  return Array.from(names)
 }
 
 export function collectChildWorkflowNames(
@@ -367,5 +341,5 @@ export function collectChildWorkflowNames(
     }
   }
 
-  return [...names]
+  return Array.from(names)
 }

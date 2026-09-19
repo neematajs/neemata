@@ -1,12 +1,15 @@
 import type { DurationString, Schema } from '../../types/index.ts'
-import type { StoredNodeChild } from '../state.ts'
+import type { RuntimeDeps } from '../executors.ts'
+import type { StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
+import { continueRun } from '../commands.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import { decodeWorkflowUserSchemaValue } from './codec.ts'
 import {
   cancelNodeAndRun,
+  completeNodeAndAdvance,
   failMissingChildRun,
   failNodeAndRun,
 } from './sinks.ts'
@@ -25,6 +28,52 @@ export async function loadChildRuns(
   return new Map(runs.map((run) => [run.id, run]))
 }
 
+export type ChildRunOutcome =
+  | { readonly kind: 'active' }
+  | { readonly kind: 'completed'; readonly output: unknown }
+  | { readonly kind: 'cancelled' }
+  | { readonly kind: 'failed'; readonly error: unknown }
+
+/**
+ * Records a child run's terminal status on its child row and reports what the
+ * node has to aggregate. Cancellation is settled here because it always takes
+ * the whole run with it; a failure only marks the child, so fan-in nodes can
+ * keep counting their remaining siblings.
+ */
+export async function settleChildRun(
+  deps: RuntimeDeps,
+  params: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly childKey: string
+    readonly childRun: StoredRun
+    /** Used when the child run carries no error of its own. */
+    readonly failure: string
+  },
+): Promise<ChildRunOutcome> {
+  const { runId, nodeName, childKey, childRun } = params
+  if (!isTerminalRunStatus(childRun.status)) return { kind: 'active' }
+
+  if (childRun.status === 'completed') {
+    await deps.store.completeNodeChild({
+      runId,
+      nodeName,
+      childKey,
+      output: childRun.output,
+    })
+    return { kind: 'completed', output: childRun.output }
+  }
+
+  if (childRun.status === 'cancelled') {
+    await cancelNodeAndRun(deps, { runId, nodeName })
+    return { kind: 'cancelled' }
+  }
+
+  const error = childRun.error ?? new Error(params.failure)
+  await deps.store.failNodeChild({ runId, nodeName, childKey, error })
+  return { kind: 'failed', error }
+}
+
 export async function dispatchChildTaskRun(
   input: AdvanceCtx & {
     readonly parentNode: { readonly input?: unknown }
@@ -38,89 +87,55 @@ export async function dispatchChildTaskRun(
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
 ): Promise<AdvanceOutcome> {
+  const { nodeName, childKey, taskName } = input
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
-    nodeName: input.nodeName,
+    nodeName,
   })
   const child = children.children.find(
-    (candidate) => candidate.childKey === input.childKey,
+    (candidate) => candidate.childKey === childKey,
   )
   if (child?.childRunId !== undefined) {
     const childRun = (await input.store.loadRuns([child.childRunId]))[0]
     if (!childRun) {
-      await failMissingChildRun({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
+      await failMissingChildRun(input, {
         parentRunId: input.run.id,
-        nodeName: input.nodeName,
+        nodeName,
         childKind: 'task',
         childRunId: child.childRunId,
       })
       return 'terminal'
     }
 
-    if (!isTerminalRunStatus(childRun.status)) {
-      await dispatchTaskRunAttempt({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.taskName,
+    const settled = await settleChildRun(input, {
+      runId: input.run.id,
+      nodeName,
+      childKey,
+      childRun,
+      failure: `Child task run [${childRun.id}] failed`,
+    })
+
+    if (settled.kind === 'active') {
+      await dispatchTaskRunAttempt(input, {
+        taskName,
         taskRunId: child.childRunId,
         taskInput: childRun.input ?? input.parentNode.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: input.timeout,
       })
-      await input.store.waitNode({
-        runId: input.run.id,
-        nodeName: input.nodeName,
-      })
+      await input.store.waitNode({ runId: input.run.id, nodeName })
       return 'parked'
     }
-
-    if (childRun.status === 'completed') {
-      await input.store.completeNodeChild({
+    if (settled.kind === 'completed') {
+      return await completeNodeAndAdvance(input, nodeName, settled.output)
+    }
+    if (settled.kind === 'failed') {
+      await failNodeAndRun(input, {
         runId: input.run.id,
-        nodeName: input.nodeName,
-        childKey: input.childKey,
-        output: childRun.output,
-      })
-      await input.store.completeNode({
-        runId: input.run.id,
-        nodeName: input.nodeName,
-        output: childRun.output,
-      })
-      return await input.advance({
-        ...input,
-        outputs: { ...input.outputs, [input.nodeName]: childRun.output },
+        nodeName,
+        error: settled.error,
       })
     }
-
-    if (childRun.status === 'cancelled') {
-      await cancelNodeAndRun({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        runId: input.run.id,
-        nodeName: input.nodeName,
-      })
-      return 'terminal'
-    }
-
-    const error =
-      childRun.error ?? new Error(`Child task run [${childRun.id}] failed`)
-    await input.store.failNodeChild({
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      childKey: input.childKey,
-      error,
-    })
-    await failNodeAndRun({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      error,
-    })
     return 'terminal'
   }
 
@@ -132,33 +147,27 @@ export async function dispatchChildTaskRun(
   const idempotencyKey = input.resolveIdempotencyKey?.()
   await input.store.setNodeInput({
     runId: input.run.id,
-    nodeName: input.nodeName,
+    nodeName,
     input: nodeInput,
   })
   const ensured = await input.store.ensureChildRun({
     runId: input.run.id,
-    nodeName: input.nodeName,
-    childKey: input.childKey,
+    nodeName,
+    childKey,
     childKind: 'task',
-    childName: input.taskName,
+    childName: taskName,
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
   })
-  await dispatchTaskRunAttempt({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    taskName: input.taskName,
+  await dispatchTaskRunAttempt(input, {
+    taskName,
     taskRunId: ensured.childRun.id,
     taskInput: nodeInput,
     idempotencyKey,
     timeout: input.timeout,
   })
-  await input.store.waitNode({
-    runId: input.run.id,
-    nodeName: input.nodeName,
-  })
+  await input.store.waitNode({ runId: input.run.id, nodeName })
   return 'parked'
 }
 
@@ -173,85 +182,49 @@ export async function dispatchChildWorkflow(
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
 ): Promise<AdvanceOutcome> {
+  const { nodeName, childKey, workflowName } = input
   const children = await input.store.loadNodeChildren({
     runId: input.run.id,
-    nodeName: input.nodeName,
+    nodeName,
   })
   const child = children.children.find(
-    (candidate) => candidate.childKey === input.childKey,
+    (candidate) => candidate.childKey === childKey,
   )
   if (child?.childRunId !== undefined) {
     const childRun = (await input.store.loadRuns([child.childRunId]))[0]
     if (!childRun) {
-      await failMissingChildRun({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
+      await failMissingChildRun(input, {
         parentRunId: input.run.id,
-        nodeName: input.nodeName,
+        nodeName,
         childKind: 'workflow',
         childRunId: child.childRunId,
       })
       return 'terminal'
     }
 
-    if (!isTerminalRunStatus(childRun.status)) {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childRun.workflowName,
-      })
-      await input.store.waitNode({
-        runId: input.run.id,
-        nodeName: input.nodeName,
-      })
+    const settled = await settleChildRun(input, {
+      runId: input.run.id,
+      nodeName,
+      childKey,
+      childRun,
+      failure: `Child workflow [${childRun.id}] ${childRun.status}`,
+    })
+
+    if (settled.kind === 'active') {
+      await input.runCoordinationExecutor.enqueue(continueRun(childRun))
+      await input.store.waitNode({ runId: input.run.id, nodeName })
       return 'parked'
     }
-
-    if (childRun.status === 'completed') {
-      await input.store.completeNodeChild({
+    if (settled.kind === 'completed') {
+      return await completeNodeAndAdvance(input, nodeName, settled.output)
+    }
+    if (settled.kind === 'failed') {
+      await failNodeAndRun(input, {
         runId: input.run.id,
-        nodeName: input.nodeName,
-        childKey: input.childKey,
-        output: childRun.output,
-      })
-      await input.store.completeNode({
-        runId: input.run.id,
-        nodeName: input.nodeName,
-        output: childRun.output,
-      })
-      return await input.advance({
-        ...input,
-        outputs: { ...input.outputs, [input.nodeName]: childRun.output },
+        nodeName,
+        error: settled.error,
       })
     }
-
-    if (childRun.status === 'cancelled') {
-      await cancelNodeAndRun({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        runId: input.run.id,
-        nodeName: input.nodeName,
-      })
-      return 'terminal'
-    }
-
-    const error =
-      childRun.error ??
-      new Error(`Child workflow [${childRun.id}] ${childRun.status}`)
-    await input.store.failNodeChild({
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      childKey: input.childKey,
-      error,
-    })
-    await failNodeAndRun({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: input.run.id,
-      nodeName: input.nodeName,
-      error,
-    })
     return 'terminal'
   }
 
@@ -263,28 +236,21 @@ export async function dispatchChildWorkflow(
   const idempotencyKey = input.resolveIdempotencyKey?.()
   await input.store.setNodeInput({
     runId: input.run.id,
-    nodeName: input.nodeName,
+    nodeName,
     input: nodeInput,
   })
   const ensured = await input.store.ensureChildRun({
     runId: input.run.id,
-    nodeName: input.nodeName,
-    childKey: input.childKey,
+    nodeName,
+    childKey,
     childKind: 'workflow',
-    childName: input.workflowName,
+    childName: workflowName,
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
   })
 
-  await input.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: ensured.childRun.id,
-    workflowName: input.workflowName,
-  })
-  await input.store.waitNode({
-    runId: input.run.id,
-    nodeName: input.nodeName,
-  })
+  await input.runCoordinationExecutor.enqueue(continueRun(ensured.childRun))
+  await input.store.waitNode({ runId: input.run.id, nodeName })
   return 'parked'
 }

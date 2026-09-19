@@ -2,16 +2,14 @@ import type {
   ParallelNodeImplementation,
   WorkflowCaseImplementation,
 } from '../../../implement/index.ts'
-import type {
-  AnyTaskDefinition,
-  BranchCaseDefinition,
-} from '../../../types/index.ts'
+import type { AnyTaskDefinition, WorkflowNode } from '../../../types/index.ts'
 import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { memberChildKey } from '../../child-key.ts'
-import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
+import { continueRun } from '../../commands.ts'
+import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt, dispatchActivityAttempt } from '../attempt.ts'
-import { loadChildRuns } from '../children.ts'
+import { loadChildRuns, settleChildRun } from '../children.ts'
 import {
   decodeWorkflowUserSchemaValue,
   getWorkflowNodeDeclaration,
@@ -24,41 +22,54 @@ import {
 } from '../context.ts'
 import {
   cancelNodeAndRun,
+  completeNodeAndAdvance,
   failMissingChildRun,
   failNodeAndRun,
 } from '../sinks.ts'
 
+type ParallelDeclaration = Extract<WorkflowNode, { readonly kind: 'parallel' }>
+
+type ParallelCtx = AdvanceCtx & {
+  readonly node: ParallelNodeImplementation
+}
+
+/** What one member contributed to this pass; `terminal` means the run is settled. */
+type MemberOutcome =
+  | { readonly kind: 'terminal' }
+  | { readonly kind: 'pending' }
+  | { readonly kind: 'local' }
+  | { readonly kind: 'completed'; readonly output: unknown }
+  | { readonly kind: 'failed'; readonly error: unknown }
+
 export async function dispatchParallelNode(
-  input: AdvanceCtx & {
-    readonly node: ParallelNodeImplementation
-  },
+  input: ParallelCtx,
 ): Promise<AdvanceOutcome> {
+  const { node } = input
+  const runId = input.run.id
+  const nodeName = node.name
   const existing = await input.store.createNode({
-    runId: input.run.id,
-    name: input.node.name,
+    runId,
+    name: nodeName,
     kind: 'parallel',
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
 
-  const declaration = getWorkflowNodeDeclaration(
-    input.workflow,
-    input.node.name,
-  )
+  const declaration = getWorkflowNodeDeclaration(input.workflow, nodeName)
   if (declaration.kind !== 'parallel') {
-    throw new Error(`Workflow node [${input.node.name}] is not parallel`)
+    throw new Error(`Workflow node [${nodeName}] is not parallel`)
   }
-  for (const memberKey of Object.keys(input.node.cases)) {
+  for (const memberKey of Object.keys(node.cases)) {
     if (!declaration.cases[memberKey]) {
       throw new Error(
-        `Missing parallel member declaration [${input.node.name}.${memberKey}]`,
+        `Missing parallel member declaration [${nodeName}.${memberKey}]`,
       )
     }
   }
 
   const ensured = await input.store.ensureNodeChildren({
-    runId: input.run.id,
-    nodeName: input.node.name,
-    children: Object.entries(input.node.cases).map(([memberKey, member]) => ({
+    runId,
+    nodeName,
+    children: Object.entries(node.cases).map(([memberKey, member]) => ({
       childKey: memberChildKey(memberKey),
       kind: member.kind,
     })),
@@ -70,299 +81,228 @@ export async function dispatchParallelNode(
 
   const outputs: Record<string, unknown> = {}
   let hasLocalWork = false
-
   let failedChildren = 0
   let failure: unknown
-  const failMember = async (error: unknown, child: StoredNodeChild) => {
-    await input.store.failNodeChild({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      childKey: child.childKey,
-      error,
-    })
-    failedChildren += 1
-    failure ??= error
-  }
 
-  for (const [memberKey, member] of Object.entries(input.node.cases)) {
+  for (const [memberKey, member] of Object.entries(node.cases)) {
     const childKey = memberChildKey(memberKey)
     const child = byKey.get(childKey)
     if (!child) {
       throw new Error(
-        `Missing parallel member child [${input.node.name}.${memberKey}]`,
+        `Missing parallel member child [${nodeName}.${memberKey}]`,
       )
     }
 
+    let outcome: MemberOutcome
     try {
-      if (child.status === 'completed') {
-        outputs[memberKey] = child.output
-        continue
-      }
-      if (child.status === 'failed') {
-        const error =
-          child.error ??
-          new Error(`Parallel member [${input.node.name}.${memberKey}] failed`)
-        failedChildren += 1
-        failure ??= error
-        continue
-      }
-      if (child.status === 'cancelled') {
-        await cancelNodeAndRun({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: input.run.id,
-          nodeName: input.node.name,
-        })
-        return 'terminal'
-      }
-
-      if (member.kind === 'workflow' || member.kind === 'task') {
-        if (child.childRunId !== undefined) {
-          const childRun = childRuns.get(child.childRunId)
-          if (!childRun) {
-            await failMissingChildRun({
-              store: input.store,
-              runCoordinationExecutor: input.runCoordinationExecutor,
-              parentRunId: input.run.id,
-              nodeName: input.node.name,
-              childKind: member.kind,
-              childRunId: child.childRunId,
-            })
-            return 'terminal'
-          }
-
-          if (!isTerminalRunStatus(childRun.status)) {
-            await redispatchParallelChildRun(input, member, memberKey, childRun)
-            continue
-          }
-          if (childRun.status === 'completed') {
-            await input.store.completeNodeChild({
-              runId: input.run.id,
-              nodeName: input.node.name,
-              childKey,
-              output: childRun.output,
-            })
-            outputs[memberKey] = childRun.output
-            continue
-          }
-          if (childRun.status === 'cancelled') {
-            await cancelNodeAndRun({
-              store: input.store,
-              attemptExecutor: input.attemptExecutor,
-              runCoordinationExecutor: input.runCoordinationExecutor,
-              runId: input.run.id,
-              nodeName: input.node.name,
-            })
-            return 'terminal'
-          }
-
-          const error =
-            childRun.error ??
-            new Error(
-              `Parallel child ${member.kind} run [${childRun.id}] ${childRun.status}`,
-            )
-          await failMember(error, child)
-          continue
-        }
-
-        const memberDeclaration = declaration.cases[memberKey]!
-        const nodeInput = decodeWorkflowUserSchemaValue(
-          member.target.input,
-          member.input
-            ? runWorkflowUserCallback(() =>
-                member.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
-              )
-            : input.run.input,
-          `${member.kind} input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-        )
-        const idempotencyKey = resolveIdempotency(
-          member.idempotency,
-          input.workflowCtx,
-          input.outputs,
-          input.run.input,
-        )
-        const created = await input.store.ensureChildRun({
-          runId: input.run.id,
-          nodeName: input.node.name,
-          childKey,
-          childKind: member.kind,
-          childName: member.target.name,
-          input: nodeInput,
-          rootRunId: input.run.rootRunId,
-          idempotencyKey,
-        })
-        if (member.kind === 'workflow') {
-          await input.runCoordinationExecutor.enqueue({
-            kind: 'continueRun',
-            runId: created.childRun.id,
-            workflowName: member.target.name,
-          })
-        } else {
-          const taskDeclaration = memberDeclaration as BranchCaseDefinition<
-            'task',
-            unknown,
-            unknown,
-            AnyTaskDefinition
-          >
-          const taskTarget = member.target as AnyTaskDefinition
-          await dispatchTaskRunAttempt({
-            store: input.store,
-            attemptExecutor: input.attemptExecutor,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            taskName: taskTarget.name,
-            taskRunId: created.childRun.id,
-            taskInput: nodeInput,
-            idempotencyKey,
-            timeout: taskDeclaration.timeout ?? taskTarget.timeout,
-          })
-        }
-        continue
-      }
-
-      if (member.kind !== 'activity') {
-        throw unsupportedParallelCase(input.node.name, member)
-      }
-
-      const memberDeclaration = declaration.cases[memberKey]
-      if (memberDeclaration?.kind !== 'activity') {
-        throw new Error(
-          `Parallel member [${input.node.name}.${memberKey}] is not an activity`,
-        )
-      }
-      const activity = memberDeclaration as BranchCaseDefinition<'activity'>
-
-      // Once the member has an attempt, its input is authoritative — never
-      // re-run the user's input callback on re-entry.
-      const hasAttempt = child.attemptCount > 0
-      let nodeInput: unknown
-      let idempotencyKey: readonly unknown[] | undefined
-      if (!hasAttempt) {
-        const value = member.input
-          ? runWorkflowUserCallback(() =>
-              member.input!(input.workflowCtx, input.outputs, input.run.input),
-            )
-          : input.run.input
-        nodeInput = decodeWorkflowUserSchemaValue(
-          activity.input,
-          value,
-          `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-        )
-        idempotencyKey = resolveIdempotency(
-          member.idempotency,
-          input.workflowCtx,
-          input.outputs,
-          input.run.input,
-        )
-      }
-
-      await dispatchActivityAttempt({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        workflowName: input.workflow.workflow.name,
-        activityName: member.activity.name,
-        runId: input.run.id,
-        nodeName: input.node.name,
-        childKey,
-        prepareAttempt: async () => {
-          const result = await input.store.ensureChildAttempt({
-            runId: input.run.id,
-            nodeName: input.node.name,
-            childKey,
-            input: nodeInput,
-            idempotencyKey,
-          })
-          return {
-            attempt: result.attempt,
-            commandInput: result.attempt.input,
-            created: result.created,
-          }
-        },
+      outcome = await dispatchMember(input, {
+        declaration,
+        memberKey,
+        member,
+        child,
+        childRuns,
       })
-      hasLocalWork = true
     } catch (error) {
       if (!isWorkflowUserCallbackError(error)) throw error
-      await failMember(unwrapWorkflowUserCallbackError(error), child)
+      const cause = unwrapWorkflowUserCallbackError(error)
+      await input.store.failNodeChild({
+        runId,
+        nodeName,
+        childKey,
+        error: cause,
+      })
+      outcome = { kind: 'failed', error: cause }
     }
+
+    if (outcome.kind === 'terminal') return 'terminal'
+    if (outcome.kind === 'completed') {
+      outputs[memberKey] = outcome.output
+      continue
+    }
+    if (outcome.kind === 'failed') {
+      failedChildren += 1
+      failure ??= outcome.error
+      continue
+    }
+    if (outcome.kind === 'local') hasLocalWork = true
   }
 
-  const expectedCount = Object.keys(input.node.cases).length
+  const expectedCount = Object.keys(node.cases).length
   const completedCount = Object.keys(outputs).length
   if (failedChildren > 0 && completedCount + failedChildren === expectedCount) {
-    await failNodeAndRun({
-      ...input,
-      runId: input.run.id,
-      nodeName: input.node.name,
-      error: failure,
-    })
+    await failNodeAndRun(input, { runId, nodeName, error: failure })
     return 'terminal'
   }
   if (completedCount === expectedCount) {
-    await input.store.completeNode({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      output: outputs,
-    })
-    return await input.advance({
-      ...input,
-      outputs: { ...input.outputs, [input.node.name]: outputs },
-    })
+    return await completeNodeAndAdvance(input, nodeName, outputs)
   }
 
-  await input.store.waitNode({
-    runId: input.run.id,
-    nodeName: input.node.name,
-  })
+  await input.store.waitNode({ runId, nodeName })
   return hasLocalWork ? 'local' : 'parked'
 }
 
-async function redispatchParallelChildRun(
-  input: AdvanceCtx & { readonly node: ParallelNodeImplementation },
-  member: WorkflowCaseImplementation,
-  memberKey: string,
-  childRun: StoredRun,
-): Promise<void> {
-  if (member.kind === 'workflow') {
-    await input.runCoordinationExecutor.enqueue({
-      kind: 'continueRun',
-      runId: childRun.id,
-      workflowName: childRun.workflowName,
-    })
-    return
+async function dispatchMember(
+  input: ParallelCtx,
+  params: {
+    readonly declaration: ParallelDeclaration
+    readonly memberKey: string
+    readonly member: WorkflowCaseImplementation
+    readonly child: StoredNodeChild
+    readonly childRuns: ReadonlyMap<string, StoredRun>
+  },
+): Promise<MemberOutcome> {
+  const { declaration, memberKey, member, child } = params
+  const runId = input.run.id
+  const nodeName = input.node.name
+  const { childKey } = child
+
+  if (child.status === 'completed') {
+    return { kind: 'completed', output: child.output }
   }
-  if (member.kind !== 'task') return
+  if (child.status === 'failed') {
+    return {
+      kind: 'failed',
+      error:
+        child.error ??
+        new Error(`Parallel member [${nodeName}.${memberKey}] failed`),
+    }
+  }
+  if (child.status === 'cancelled') {
+    await cancelNodeAndRun(input, { runId, nodeName })
+    return { kind: 'terminal' }
+  }
 
-  const declaration = getWorkflowNodeDeclaration(
-    input.workflow,
-    input.node.name,
-  )
-  if (declaration.kind !== 'parallel') return
-  const taskDeclaration = declaration.cases[memberKey] as
-    | BranchCaseDefinition<'task', unknown, unknown, AnyTaskDefinition>
-    | undefined
-  const taskTarget = member.target as AnyTaskDefinition
-  await dispatchTaskRunAttempt({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    taskName: taskTarget.name,
-    taskRunId: childRun.id,
-    taskInput: childRun.input ?? input.run.input,
-    idempotencyKey: childRun.idempotencyKey,
-    timeout: taskDeclaration?.timeout ?? taskTarget.timeout,
+  const memberDeclaration = declaration.cases[memberKey]!
+
+  if (member.kind === 'workflow' || member.kind === 'task') {
+    const timeout =
+      memberDeclaration.kind === 'task' ? memberDeclaration.timeout : undefined
+    const target = member.target as AnyTaskDefinition
+
+    if (child.childRunId !== undefined) {
+      const childRun = params.childRuns.get(child.childRunId)
+      if (!childRun) {
+        await failMissingChildRun(input, {
+          parentRunId: runId,
+          nodeName,
+          childKind: member.kind,
+          childRunId: child.childRunId,
+        })
+        return { kind: 'terminal' }
+      }
+
+      const settled = await settleChildRun(input, {
+        runId,
+        nodeName,
+        childKey,
+        childRun,
+        failure: `Parallel child ${member.kind} run [${childRun.id}] ${childRun.status}`,
+      })
+      if (settled.kind !== 'active') {
+        return settled.kind === 'cancelled' ? { kind: 'terminal' } : settled
+      }
+
+      if (member.kind === 'workflow') {
+        await input.runCoordinationExecutor.enqueue(continueRun(childRun))
+      } else {
+        await dispatchTaskRunAttempt(input, {
+          taskName: target.name,
+          taskRunId: childRun.id,
+          taskInput: childRun.input ?? input.run.input,
+          idempotencyKey: childRun.idempotencyKey,
+          timeout: timeout ?? target.timeout,
+        })
+      }
+      return { kind: 'pending' }
+    }
+
+    const memberInput = member.input
+    const nodeInput = decodeWorkflowUserSchemaValue(
+      member.target.input,
+      memberInput
+        ? runWorkflowUserCallback(() =>
+            memberInput(input.workflowCtx, input.outputs, input.run.input),
+          )
+        : input.run.input,
+      `${member.kind} input [${input.workflow.workflow.name}.${nodeName}.${memberKey}]`,
+    )
+    const idempotencyKey = resolveIdempotency(
+      member.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      input.run.input,
+    )
+    const created = await input.store.ensureChildRun({
+      runId,
+      nodeName,
+      childKey,
+      childKind: member.kind,
+      childName: member.target.name,
+      input: nodeInput,
+      rootRunId: input.run.rootRunId,
+      idempotencyKey,
+    })
+    if (member.kind === 'workflow') {
+      await input.runCoordinationExecutor.enqueue(continueRun(created.childRun))
+    } else {
+      await dispatchTaskRunAttempt(input, {
+        taskName: target.name,
+        taskRunId: created.childRun.id,
+        taskInput: nodeInput,
+        idempotencyKey,
+        timeout: timeout ?? target.timeout,
+      })
+    }
+    return { kind: 'pending' }
+  }
+
+  if (member.kind !== 'activity') {
+    // Member implementations are user-built, so an unknown kind can still
+    // reach this point that the case union has already ruled out.
+    const unknown: WorkflowCaseImplementation = member
+    throw new Error(
+      `Unsupported parallel ${unknown.kind} member [${unknown.name}] in node [${nodeName}]`,
+    )
+  }
+  if (memberDeclaration.kind !== 'activity') {
+    throw new Error(
+      `Parallel member [${nodeName}.${memberKey}] is not an activity`,
+    )
+  }
+
+  // Once the member has an attempt, its input is authoritative — never
+  // re-run the user's input callback on re-entry.
+  const hasAttempt = child.attemptCount > 0
+  const memberInput = member.input
+  let nodeInput: unknown
+  let idempotencyKey: readonly unknown[] | undefined
+  if (!hasAttempt) {
+    const value = memberInput
+      ? runWorkflowUserCallback(() =>
+          memberInput(input.workflowCtx, input.outputs, input.run.input),
+        )
+      : input.run.input
+    nodeInput = decodeWorkflowUserSchemaValue(
+      memberDeclaration.input,
+      value,
+      `activity input [${input.workflow.workflow.name}.${nodeName}.${memberKey}]`,
+    )
+    idempotencyKey = resolveIdempotency(
+      member.idempotency,
+      input.workflowCtx,
+      input.outputs,
+      input.run.input,
+    )
+  }
+
+  await dispatchActivityAttempt(input, {
+    workflowName: input.workflow.workflow.name,
+    activityName: member.activity.name,
+    runId,
+    nodeName,
+    childKey,
+    input: nodeInput,
+    idempotencyKey,
   })
-}
-
-function unsupportedParallelCase(
-  nodeName: string,
-  member: WorkflowCaseImplementation,
-): Error {
-  return new Error(
-    `Unsupported parallel ${member.kind} member [${member.name}] in node [${nodeName}]`,
-  )
+  return { kind: 'local' }
 }

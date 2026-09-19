@@ -3,9 +3,10 @@ import type { MapNodeOutput, WorkflowNode } from '../../../types/index.ts'
 import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { itemChildKey } from '../../child-key.ts'
+import { continueRun } from '../../commands.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt } from '../attempt.ts'
-import { loadChildRuns } from '../children.ts'
+import { loadChildRuns, settleChildRun } from '../children.ts'
 import {
   decodeMapItems,
   decodeWorkflowUserSchemaValue,
@@ -20,7 +21,7 @@ import {
   unwrapWorkflowUserCallbackError,
 } from '../context.ts'
 import {
-  cancelNodeAndRun,
+  completeNodeAndAdvance,
   failMissingChildRun,
   failNodeAndRun,
 } from '../sinks.ts'
@@ -55,23 +56,21 @@ type MapCallbacks<T extends MapDeclaration> = {
     readonly nodeInput: unknown
     readonly idempotencyKey?: readonly unknown[]
     readonly declaration: T
-  }) => Promise<StoredRun>
-  readonly failedChildError: (childRun: StoredRun) => unknown
+  }) => Promise<void>
+  readonly failure: (childRun: StoredRun) => string
 }
 
 export async function dispatchMapTaskNode(
   input: DispatchInput,
 ): Promise<AdvanceOutcome> {
+  const target = input.node.target.name
   return await dispatchMap<TaskDeclaration>(input, {
     kind: 'mapTask',
     childKind: 'task',
     inputLabel: 'task',
     redispatchActiveChild: async ({ childRun, declaration }) => {
-      await dispatchTaskRunAttempt({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.node.target.name,
+      await dispatchTaskRunAttempt(input, {
+        taskName: target,
         taskRunId: childRun.id,
         taskInput: childRun.input ?? input.run.input,
         idempotencyKey: childRun.idempotencyKey,
@@ -84,41 +83,33 @@ export async function dispatchMapTaskNode(
         nodeName: input.node.name,
         childKey: child.childKey,
         childKind: 'task',
-        childName: input.node.target.name,
+        childName: target,
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
       })
-      await dispatchTaskRunAttempt({
-        store: input.store,
-        attemptExecutor: input.attemptExecutor,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.node.target.name,
+      await dispatchTaskRunAttempt(input, {
+        taskName: target,
         taskRunId: ensured.childRun.id,
         taskInput: nodeInput,
         idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
       })
-      return ensured.childRun
     },
-    failedChildError: (childRun) =>
-      childRun.error ?? new Error(`Mapped task run [${childRun.id}] failed`),
+    failure: (childRun) => `Mapped task run [${childRun.id}] failed`,
   })
 }
 
 export async function dispatchMapWorkflowNode(
   input: DispatchInput,
 ): Promise<AdvanceOutcome> {
+  const target = input.node.target.name
   return await dispatchMap<WorkflowDeclaration>(input, {
     kind: 'mapWorkflow',
     childKind: 'workflow',
     inputLabel: 'workflow',
     redispatchActiveChild: async ({ childRun }) => {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: childRun.id,
-        workflowName: childRun.workflowName,
-      })
+      await input.runCoordinationExecutor.enqueue(continueRun(childRun))
     },
     startChild: async ({ child, nodeInput, idempotencyKey }) => {
       const ensured = await input.store.ensureChildRun({
@@ -126,21 +117,15 @@ export async function dispatchMapWorkflowNode(
         nodeName: input.node.name,
         childKey: child.childKey,
         childKind: 'workflow',
-        childName: input.node.target.name,
+        childName: target,
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
       })
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: ensured.childRun.id,
-        workflowName: input.node.target.name,
-      })
-      return ensured.childRun
+      await input.runCoordinationExecutor.enqueue(continueRun(ensured.childRun))
     },
-    failedChildError: (childRun) =>
-      childRun.error ??
-      new Error(`Mapped child workflow [${childRun.id}] ${childRun.status}`),
+    failure: (childRun) =>
+      `Mapped child workflow [${childRun.id}] ${childRun.status}`,
   })
 }
 
@@ -148,46 +133,42 @@ async function dispatchMap<T extends MapDeclaration>(
   input: DispatchInput,
   callbacks: MapCallbacks<T>,
 ): Promise<AdvanceOutcome> {
+  const { node } = input
+  const runId = input.run.id
+  const nodeName = node.name
   const existing = await input.store.createNode({
-    runId: input.run.id,
-    name: input.node.name,
+    runId,
+    name: nodeName,
     kind: callbacks.kind,
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
 
-  const declaration = getWorkflowNodeDeclaration(
-    input.workflow,
-    input.node.name,
-  )
+  const declaration = getWorkflowNodeDeclaration(input.workflow, nodeName)
   if (declaration.kind !== callbacks.kind) {
-    throw new Error(
-      `Workflow node [${input.node.name}] is not a ${callbacks.kind}`,
-    )
+    throw new Error(`Workflow node [${nodeName}] is not a ${callbacks.kind}`)
   }
+  // The kind check above is the discriminant, but it is written against a
+  // generic key that TypeScript cannot relate back to `T`.
   const typedDeclaration = declaration as T
 
   // The node input records the decoded item list, marking the (possibly
   // empty) item set as ensured so the user's items callback runs only once.
   let children: readonly StoredNodeChild[]
   if (hasStoredNodeInput(existing)) {
-    children = (
-      await input.store.loadNodeChildren({
-        runId: input.run.id,
-        nodeName: input.node.name,
-      })
-    ).children
+    children = (await input.store.loadNodeChildren({ runId, nodeName }))
+      .children
   } else {
     const items = decodeMapItems(
       typedDeclaration.item,
       runWorkflowUserCallback(() =>
-        input.node.items(input.workflowCtx, input.outputs, input.run.input),
+        node.items(input.workflowCtx, input.outputs, input.run.input),
       ),
-      `map item [${input.workflow.workflow.name}.${input.node.name}]`,
+      `map item [${input.workflow.workflow.name}.${nodeName}]`,
     )
     children = (
       await input.store.ensureNodeChildren({
-        runId: input.run.id,
-        nodeName: input.node.name,
+        runId,
+        nodeName,
         children: items.map((item, index) => ({
           childKey: itemChildKey(index),
           kind: callbacks.childKind,
@@ -199,18 +180,14 @@ async function dispatchMap<T extends MapDeclaration>(
     // Commit marker LAST: if we crash before it, re-entry re-derives the
     // items and re-ensures idempotently. Marker-first would let a crash
     // window complete a non-empty map with zero children.
-    await input.store.setNodeInput({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      input: items,
-    })
+    await input.store.setNodeInput({ runId, nodeName, input: items })
   }
 
   const childRuns = await loadChildRuns(input.store, children)
   const byOrdinal: Array<
     MapNodeOutput<unknown, unknown>['items'][number] | undefined
   > = []
-  const concurrency = mapConcurrencyLimit(input.node)
+  const concurrency = mapConcurrencyLimit(node)
   let activeChildren = 0
   for (const { status, childRunId } of children) {
     if (status === 'pending' || childRunId === undefined) continue
@@ -224,23 +201,29 @@ async function dispatchMap<T extends MapDeclaration>(
     if (child.childRunId !== undefined) {
       const childRun = childRuns.get(child.childRunId)
       if (!childRun) {
-        await failMissingChildRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          parentRunId: input.run.id,
-          nodeName: input.node.name,
+        await failMissingChildRun(input, {
+          parentRunId: runId,
+          nodeName,
           childKind: callbacks.childKind,
           childRunId: child.childRunId,
         })
         return 'terminal'
       }
 
-      if (!isTerminalRunStatus(childRun.status)) {
+      const settled = await settleChildRun(input, {
+        runId,
+        nodeName,
+        childKey: child.childKey,
+        childRun,
+        failure: callbacks.failure(childRun),
+      })
+
+      if (settled.kind === 'active') {
         if (child.status === 'pending') {
           if (activeChildren >= concurrency) continue
           await input.store.ensureChildRun({
-            runId: input.run.id,
-            nodeName: input.node.name,
+            runId,
+            nodeName,
             childKey: child.childKey,
             childKind: callbacks.childKind,
             childName: childRun.name,
@@ -257,43 +240,19 @@ async function dispatchMap<T extends MapDeclaration>(
         })
         continue
       }
-
-      if (childRun.status === 'completed') {
-        await input.store.completeNodeChild({
-          runId: input.run.id,
-          nodeName: input.node.name,
-          childKey: child.childKey,
-          output: childRun.output,
-        })
+      if (settled.kind === 'completed') {
         byOrdinal[child.ordinal] = {
           item: child.item,
           index: child.ordinal,
           runId: child.childRunId,
-          output: childRun.output,
+          output: settled.output,
         }
         continue
       }
+      if (settled.kind === 'cancelled') return 'terminal'
 
-      if (childRun.status === 'cancelled') {
-        await cancelNodeAndRun({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: input.run.id,
-          nodeName: input.node.name,
-        })
-        return 'terminal'
-      }
-
-      const error = callbacks.failedChildError(childRun)
-      await input.store.failNodeChild({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        childKey: child.childKey,
-        error,
-      })
       failedChildren += 1
-      failure ??= error
+      failure ??= settled.error
       continue
     }
 
@@ -307,9 +266,9 @@ async function dispatchMap<T extends MapDeclaration>(
 
     try {
       const nodeInput = decodeWorkflowUserSchemaValue(
-        input.node.target.input,
+        node.target.input,
         runWorkflowUserCallback(() =>
-          input.node.input(
+          node.input(
             input.workflowCtx,
             input.outputs,
             child.item,
@@ -317,10 +276,10 @@ async function dispatchMap<T extends MapDeclaration>(
             child.ordinal,
           ),
         ),
-        `${callbacks.inputLabel} input [${input.workflow.workflow.name}.${input.node.name}.${child.ordinal}]`,
+        `${callbacks.inputLabel} input [${input.workflow.workflow.name}.${nodeName}.${child.ordinal}]`,
       )
       const idempotencyKey = resolveIdempotency(
-        input.node.idempotency,
+        node.idempotency,
         input.workflowCtx,
         input.outputs,
         child.item,
@@ -338,8 +297,8 @@ async function dispatchMap<T extends MapDeclaration>(
       if (!isWorkflowUserCallbackError(error)) throw error
       const cause = unwrapWorkflowUserCallbackError(error)
       await input.store.failNodeChild({
-        runId: input.run.id,
-        nodeName: input.node.name,
+        runId,
+        nodeName,
         childKey: child.childKey,
         error: cause,
       })
@@ -350,30 +309,13 @@ async function dispatchMap<T extends MapDeclaration>(
 
   const items = byOrdinal.filter((item) => item !== undefined)
   if (failedChildren > 0 && items.length + failedChildren === children.length) {
-    await failNodeAndRun({
-      ...input,
-      runId: input.run.id,
-      nodeName: input.node.name,
-      error: failure,
-    })
+    await failNodeAndRun(input, { runId, nodeName, error: failure })
     return 'terminal'
   }
   if (items.length === children.length) {
-    const output = { items }
-    await input.store.completeNode({
-      runId: input.run.id,
-      nodeName: input.node.name,
-      output,
-    })
-    return await input.advance({
-      ...input,
-      outputs: { ...input.outputs, [input.node.name]: output },
-    })
+    return await completeNodeAndAdvance(input, nodeName, { items })
   }
 
-  await input.store.waitNode({
-    runId: input.run.id,
-    nodeName: input.node.name,
-  })
+  await input.store.waitNode({ runId, nodeName })
   return 'parked'
 }

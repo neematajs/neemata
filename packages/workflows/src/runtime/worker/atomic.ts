@@ -1,65 +1,44 @@
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { WorkflowStore } from '../store.ts'
+import type { RuntimeDeps } from '../executors.ts'
 
-export type WorkflowRuntimeOperationContext = {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-}
+export type WorkflowRuntimeOperationContext = RuntimeDeps
 
+/**
+ * Runs a handler against a store and executors scoped to one transaction, so
+ * an attempt's completion writes and its ack commit together.
+ */
 export type WorkflowRuntimeAtomicCompletion = {
   readonly run: <T>(
     handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
   ) => Promise<T>
 }
 
-export type WorkflowRuntimeAtomicContinuation = {
-  readonly run: <T>(
-    handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
-  ) => Promise<T>
-}
-
-type AtomicCompletionInput = WorkflowRuntimeOperationContext & {
-  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
-}
-
-type AtomicContinuationInput = WorkflowRuntimeOperationContext & {
-  readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
-}
+/** Same contract, named apart so drivers cannot mix up the two scopes. */
+export type WorkflowRuntimeAtomicContinuation = WorkflowRuntimeAtomicCompletion
 
 export async function runAtomicCompletion<
-  Input extends AtomicCompletionInput,
+  Input extends RuntimeDeps & {
+    readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  },
   Result,
->(
-  input: Input,
-  handler: (scopedInput: Input) => Promise<Result>,
-): Promise<Result> {
-  if (!input.atomicCompletion) return await handler(input)
-
-  return await input.atomicCompletion.run((runtime) =>
-    handler({
-      ...input,
-      store: runtime.store,
-      runCoordinationExecutor: runtime.runCoordinationExecutor,
-      attemptExecutor: runtime.attemptExecutor,
-    }),
-  )
+>(input: Input, handler: (scoped: Input) => Promise<Result>): Promise<Result> {
+  return await runAtomic(input, input.atomicCompletion, handler)
 }
 
 export async function runAtomicContinuation<
-  Input extends AtomicContinuationInput,
+  Input extends RuntimeDeps & {
+    readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
+  },
   Result,
->(
-  input: Input,
-  handler: (runtime: WorkflowRuntimeOperationContext) => Promise<Result>,
-): Promise<Result> {
-  if (!input.atomicContinuation) {
-    return await handler({
-      store: input.store,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      attemptExecutor: input.attemptExecutor,
-    })
-  }
+>(input: Input, handler: (scoped: Input) => Promise<Result>): Promise<Result> {
+  return await runAtomic(input, input.atomicContinuation, handler)
+}
 
-  return await input.atomicContinuation.run(handler)
+async function runAtomic<Input extends RuntimeDeps, Result>(
+  input: Input,
+  atomic: WorkflowRuntimeAtomicCompletion | undefined,
+  handler: (scoped: Input) => Promise<Result>,
+): Promise<Result> {
+  if (!atomic) return await handler(input)
+
+  return await atomic.run((runtime) => handler({ ...input, ...runtime }))
 }

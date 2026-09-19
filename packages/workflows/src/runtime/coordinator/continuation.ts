@@ -1,10 +1,10 @@
 import type { Container, DependencyContext } from '@nmtjs/core'
 
-import type { WorkflowImplementation } from '../../implement/index.ts'
-import type { AnyWorkflowDefinition } from '../../types/index.ts'
+import type { AnyWorkflowImplementation } from '../../implement/index.ts'
 import type { ContinueRunCommand } from '../commands.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
+import { DEFAULT_LEASE_MS } from '../executors.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -18,15 +18,9 @@ class StaleRunLeaseError extends Error {
   }
 }
 
-export type ContinueWorkflowRunInput = {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
+export type ContinueWorkflowRunInput = RuntimeDeps & {
   readonly container: Pick<Container, 'createContext'>
-  readonly workflows: readonly WorkflowImplementation<
-    AnyWorkflowDefinition,
-    any
-  >[]
+  readonly workflows: readonly AnyWorkflowImplementation[]
   readonly workerId: string
   readonly command: ContinueRunCommand
   readonly leaseMs?: number
@@ -42,170 +36,152 @@ export async function continueWorkflowRun(
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows,
   })
-  const implementation = registry.getWorkflow(input.command.workflowName) as
-    | WorkflowImplementation
-    | undefined
+  const implementation = registry.getWorkflow(input.command.workflowName)
   if (!implementation) return { status: 'ignored' }
 
-  const leaseMs = input.leaseMs ?? 30_000
+  const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   const lease = await input.store.acquireRunLease({
     runId: input.command.runId,
     leaseMs,
   })
   if (!lease) return { status: 'busy' }
-  const store = createRunLeaseFencedStore(input.store, lease, leaseMs)
+  const deps: RuntimeDeps = {
+    ...input,
+    store: createRunLeaseFencedStore(input.store, lease, leaseMs),
+  }
+
+  const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
+  // Keeps the lease alive across a long coordination pass; a failed renewal
+  // is ignored here because the fenced store rejects the next write anyway.
+  const renewal = setInterval(() => {
+    void input.store.renewRunLease(lease, leaseMs).catch(() => {})
+  }, intervalMs)
 
   try {
-    return await runWithRunLeaseRenewal(
-      input.store,
-      lease,
-      leaseMs,
-      async (): Promise<ContinueWorkflowRunResult> => {
-        const snapshot = await store.loadRunSnapshot(input.command.runId)
-        if (!snapshot) return { status: 'ignored' }
-        if (snapshot.run.workflowName !== input.command.workflowName) {
-          return { status: 'ignored' }
-        }
-        if (snapshot.run.status === 'cancelling') {
-          await cancelRunAndWakeParent({
-            store,
-            attemptExecutor: input.attemptExecutor,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            runId: snapshot.run.id,
-          })
-          return { status: 'processed' }
-        }
-        if (isTerminalRunStatus(snapshot.run.status)) {
-          await wakeParentRun({
-            store,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            run: snapshot.run,
-          })
-          return { status: 'processed' }
-        }
-
-        const failedNode = snapshot.nodes.find(
-          (node) => node.status === 'failed',
-        )
-        if (failedNode) {
-          await failRunAndWakeParent({
-            store,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            runId: snapshot.run.id,
-            error:
-              failedNode.error ??
-              new Error(`Workflow node [${failedNode.name}] failed`),
-          })
-          return { status: 'processed' }
-        }
-
-        if (snapshot.nodes.some((node) => node.status === 'cancelled')) {
-          await cancelRunAndWakeParent({
-            store,
-            attemptExecutor: input.attemptExecutor,
-            runCoordinationExecutor: input.runCoordinationExecutor,
-            runId: snapshot.run.id,
-          })
-          return { status: 'processed' }
-        }
-
-        const workflowCtx = await input.container.createContext(
-          implementation.dependencies,
-        )
-        const outputs = Object.fromEntries(
-          snapshot.nodes
-            .filter((node) => node.status === 'completed')
-            .map((node) => [node.name, node.output]),
-        )
-
-        // The run has coordination work from here on; queued/waiting → running
-        // before dispatching so status filters see live runs as such.
-        await store.markRunRunning({ runId: snapshot.run.id })
-
-        const outcome = await advanceWorkflowRun({
-          store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          workflow: implementation,
-          workflowCtx: workflowCtx as DependencyContext<any>,
-          run: snapshot.run,
-          outputs,
-          advance: advanceWorkflowRun,
-        })
-        if (outcome === 'parked') {
-          await store.markRunWaiting({ runId: snapshot.run.id })
-        }
-        return { status: 'processed' }
-      },
-    ).catch((error: unknown) => {
-      if (error instanceof StaleRunLeaseError) {
-        return { status: 'busy' } satisfies ContinueWorkflowRunResult
-      }
-      throw error
-    })
+    return await coordinateRun(deps, input, implementation)
+  } catch (error) {
+    if (error instanceof StaleRunLeaseError) return { status: 'busy' }
+    throw error
   } finally {
+    clearInterval(renewal)
     await input.store.releaseRunLease(lease)
   }
 }
+
+async function coordinateRun(
+  deps: RuntimeDeps,
+  input: ContinueWorkflowRunInput,
+  implementation: AnyWorkflowImplementation,
+): Promise<ContinueWorkflowRunResult> {
+  const snapshot = await deps.store.loadRunSnapshot(input.command.runId)
+  if (!snapshot) return { status: 'ignored' }
+  const { run } = snapshot
+  if (run.workflowName !== input.command.workflowName) {
+    return { status: 'ignored' }
+  }
+  if (run.status === 'cancelling') {
+    await cancelRunAndWakeParent(deps, run.id)
+    return { status: 'processed' }
+  }
+  if (isTerminalRunStatus(run.status)) {
+    await wakeParentRun(deps, run)
+    return { status: 'processed' }
+  }
+
+  const failedNode = snapshot.nodes.find((node) => node.status === 'failed')
+  if (failedNode) {
+    await failRunAndWakeParent(deps, {
+      runId: run.id,
+      error:
+        failedNode.error ??
+        new Error(`Workflow node [${failedNode.name}] failed`),
+    })
+    return { status: 'processed' }
+  }
+
+  if (snapshot.nodes.some((node) => node.status === 'cancelled')) {
+    await cancelRunAndWakeParent(deps, run.id)
+    return { status: 'processed' }
+  }
+
+  const workflowCtx = await input.container.createContext(
+    implementation.dependencies,
+  )
+  const outputs: Record<string, unknown> = {}
+  for (const node of snapshot.nodes) {
+    if (node.status === 'completed') outputs[node.name] = node.output
+  }
+
+  // The run has coordination work from here on; queued/waiting → running
+  // before dispatching so status filters see live runs as such.
+  await deps.store.markRunRunning({ runId: run.id })
+
+  const outcome = await advanceWorkflowRun({
+    ...deps,
+    workflow: implementation,
+    workflowCtx: workflowCtx as DependencyContext<any>,
+    run,
+    outputs,
+    advance: advanceWorkflowRun,
+  })
+  if (outcome === 'parked') {
+    await deps.store.markRunWaiting({ runId: run.id })
+  }
+  return { status: 'processed' }
+}
+
+/**
+ * Writes go through the run lease so a coordinator that lost its lease to a
+ * takeover cannot keep mutating the run. Reads and the lease operations
+ * themselves stay unfenced: they are either harmless or the fence itself.
+ */
+const FENCED_METHODS = [
+  'createRun',
+  'createNode',
+  'setNodeInput',
+  'createAttempt',
+  'completeCurrentAttempt',
+  'failCurrentAttempt',
+  'completeNode',
+  'failNode',
+  'markRunRunning',
+  'markRunWaiting',
+  'completeRun',
+  'failRun',
+  'requestRunCancellation',
+  'cancelRun',
+  'cancelNode',
+  'cancelNonTerminalRunNodes',
+  'ensureNodeChildren',
+  'ensureChildRun',
+  'ensureChildAttempt',
+  'selectNodeCase',
+  'completeNodeChild',
+  'failNodeChild',
+  'waitNode',
+] as const satisfies readonly (keyof WorkflowStore)[]
+
+type FencedMethod = (typeof FENCED_METHODS)[number]
+type StoreWrite = (params: never) => Promise<unknown>
 
 export function createRunLeaseFencedStore(
   store: WorkflowStore,
   lease: RunLease,
   leaseMs: number,
 ): WorkflowStore {
-  const fence = async <T>(operation: () => Promise<T>): Promise<T> => {
-    const renewedLease = await store.renewRunLease(lease, leaseMs)
-    if (!renewedLease) throw new StaleRunLeaseError()
-    return operation()
+  const fenced: WorkflowStore = { ...store }
+  // Every fenced method has the same shape, but TypeScript cannot write
+  // through a key that is a union of method names without this view.
+  const writes = fenced as Record<FencedMethod, StoreWrite>
+
+  for (const name of FENCED_METHODS) {
+    const method: StoreWrite = store[name]
+    writes[name] = async (params) => {
+      const renewed = await store.renewRunLease(lease, leaseMs)
+      if (!renewed) throw new StaleRunLeaseError()
+      return await method.call(store, params)
+    }
   }
 
-  return {
-    ...store,
-    createRun: (params) => fence(() => store.createRun(params)),
-    createNode: (params) => fence(() => store.createNode(params)),
-    setNodeInput: (params) => fence(() => store.setNodeInput(params)),
-    createAttempt: (params) => fence(() => store.createAttempt(params)),
-    completeCurrentAttempt: (params) =>
-      fence(() => store.completeCurrentAttempt(params)),
-    failCurrentAttempt: (params) =>
-      fence(() => store.failCurrentAttempt(params)),
-    completeNode: (params) => fence(() => store.completeNode(params)),
-    failNode: (params) => fence(() => store.failNode(params)),
-    markRunRunning: (params) => fence(() => store.markRunRunning(params)),
-    markRunWaiting: (params) => fence(() => store.markRunWaiting(params)),
-    completeRun: (params) => fence(() => store.completeRun(params)),
-    failRun: (params) => fence(() => store.failRun(params)),
-    requestRunCancellation: (params) =>
-      fence(() => store.requestRunCancellation(params)),
-    cancelRun: (params) => fence(() => store.cancelRun(params)),
-    cancelNode: (params) => fence(() => store.cancelNode(params)),
-    cancelNonTerminalRunNodes: (params) =>
-      fence(() => store.cancelNonTerminalRunNodes(params)),
-    ensureNodeChildren: (params) =>
-      fence(() => store.ensureNodeChildren(params)),
-    ensureChildRun: (params) => fence(() => store.ensureChildRun(params)),
-    ensureChildAttempt: (params) =>
-      fence(() => store.ensureChildAttempt(params)),
-    selectNodeCase: (params) => fence(() => store.selectNodeCase(params)),
-    completeNodeChild: (params) => fence(() => store.completeNodeChild(params)),
-    failNodeChild: (params) => fence(() => store.failNodeChild(params)),
-    waitNode: (params) => fence(() => store.waitNode(params)),
-  }
-}
-
-async function runWithRunLeaseRenewal<T>(
-  store: WorkflowStore,
-  lease: RunLease,
-  leaseMs: number,
-  handler: () => Promise<T>,
-): Promise<T> {
-  const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
-  const interval = setInterval(() => {
-    void store.renewRunLease(lease, leaseMs).catch(() => {})
-  }, intervalMs)
-  try {
-    return await handler()
-  } finally {
-    clearInterval(interval)
-  }
+  return fenced
 }

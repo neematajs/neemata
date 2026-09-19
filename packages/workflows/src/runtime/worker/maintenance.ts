@@ -1,24 +1,27 @@
-import type { WorkflowImplementation } from '../../implement/index.ts'
-import type { AnyWorkflowDefinition } from '../../types/index.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { AnyWorkflowImplementation } from '../../implement/index.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { RunSnapshot } from '../state.ts'
-import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
+import type { RuntimeRunStatus } from '../status.ts'
+import type { DeadWorkflowCommand } from '../store.ts'
+import { continueRun } from '../commands.ts'
 import { cancelRunTree } from '../coordinator/cancel.ts'
 import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
+import { failRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
-import { wakeParentRun } from '../wake.ts'
+import { DEFAULT_LEASE_MS } from '../executors.ts'
+import { isTerminalRunStatus } from '../status.ts'
 import { shouldCompleteNodeFromAttempt } from './reconcile.ts'
 
-type AnyWorkflowImplementation = WorkflowImplementation<
-  AnyWorkflowDefinition,
-  any
->
+/** The statuses a run can still be timed out from. */
+const ACTIVE_RUN_STATUSES = [
+  'queued',
+  'running',
+  'waiting',
+  'cancelling',
+] as const satisfies readonly RuntimeRunStatus[]
 
-export type ReapDeadWorkflowCommandsInput = {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
+export type ReapDeadWorkflowCommandsInput = RuntimeDeps & {
   readonly batchSize?: number
 }
 
@@ -43,126 +46,128 @@ export async function reapDeadWorkflowCommands(
 
   let reaped = 0
   for (const command of dead) {
-    const lease = await input.store.acquireRunLease({
-      runId: command.runId,
-      leaseMs: 30_000,
-    })
-    if (!lease) {
-      if (!(await input.store.loadRuns([command.runId])).length) {
-        await input.store.markDeadCommandReaped(command.id)
-        reaped += 1
-      }
-      continue
-    }
-    const originalStore = input.store
-    const scopedInput = {
-      ...input,
-      store: createRunLeaseFencedStore(originalStore, lease, 30_000),
-    }
-    try {
-      // Retry may have retired this command after the initial batch read.
-      // Recheck under the run lease, without comparing different clock precisions.
-      if (
-        !(
-          await scopedInput.store.listUnreapedDeadCommands({
-            commandId: command.id,
-          })
-        ).length
-      )
-        continue
-      const snapshot = await scopedInput.store.loadRunSnapshot(command.runId)
-      const run = snapshot?.run
-      if (!run || ['completed', 'cancelled'].includes(run.status)) {
-        await scopedInput.store.markDeadCommandReaped(command.id)
-        reaped += 1
-        continue
-      }
-      const error =
-        command.lastError ??
-        toStoredError(
-          new Error(`Workflow command [${command.id}] was dead-lettered`),
-        )
-
-      if (
-        (command.kind === 'activity' || command.kind === 'task') &&
-        command.nodeName !== undefined
-      ) {
-        const childKey = attemptCommandChildKey(command)
-        if (command.attemptId) {
-          const child = snapshot?.children.find(
-            (child) =>
-              child.nodeName === command.nodeName &&
-              child.childKey === childKey,
-          )
-          const attempt = snapshot?.attempts.find(
-            (attempt) => attempt.id === command.attemptId,
-          )
-          if (
-            !child ||
-            child.currentAttemptId !== command.attemptId ||
-            attempt?.status === 'completed'
-          ) {
-            await scopedInput.store.markDeadCommandReaped(command.id)
-            reaped += 1
-            continue
-          }
-          if (attempt?.status === 'started' && attempt.leaseToken) {
-            await scopedInput.store.failCurrentAttempt({
-              attemptId: attempt.id,
-              leaseToken: attempt.leaseToken,
-              error,
-            })
-          }
-        }
-        if (childKey !== undefined) {
-          await scopedInput.store.failNodeChild({
-            runId: command.runId,
-            nodeName: command.nodeName,
-            childKey,
-            error,
-          })
-        }
-        if (childKey === undefined || shouldCompleteNodeFromAttempt(childKey)) {
-          await scopedInput.store.failNode({
-            runId: command.runId,
-            nodeName: command.nodeName,
-            error,
-          })
-        }
-      }
-
-      if (run.kind === 'task' || command.kind === 'continue') {
-        // No coordination pass will run for this run, so cancel its live
-        // descendants and nodes here — a failed run must not leave children
-        // executing or nodes reporting running/waiting.
-        await cancelDescendants(scopedInput, snapshot!)
-        const failed = await scopedInput.store.failRun({
-          runId: command.runId,
-          error,
-        })
-        await wakeParentRun({
-          store: scopedInput.store,
-          runCoordinationExecutor: scopedInput.runCoordinationExecutor,
-          run: failed,
-        })
-      } else {
-        // Workflow runs get a coordination pass: the coordinator sees the
-        // failed node/child and fails the run after all fan-in siblings settle.
-        await scopedInput.runCoordinationExecutor.enqueue({
-          kind: 'continueRun',
-          runId: command.runId,
-          workflowName: command.workflowName ?? run.workflowName,
-        })
-      }
-
-      await scopedInput.store.markDeadCommandReaped(command.id)
-      reaped += 1
-    } finally {
-      await originalStore.releaseRunLease(lease)
-    }
+    if (await reapDeadCommand(input, command)) reaped += 1
   }
 
   return { reaped }
+}
+
+async function reapDeadCommand(
+  input: ReapDeadWorkflowCommandsInput,
+  command: DeadWorkflowCommand,
+): Promise<boolean> {
+  const store = input.store
+  const lease = await store.acquireRunLease({
+    runId: command.runId,
+    leaseMs: DEFAULT_LEASE_MS,
+  })
+  if (!lease) {
+    // Another worker holds the run; only a run that no longer exists can be
+    // retired without one.
+    const [run] = await store.loadRuns([command.runId])
+    if (run) return false
+    await store.markDeadCommandReaped(command.id)
+    return true
+  }
+
+  const scoped: ReapDeadWorkflowCommandsInput = {
+    ...input,
+    store: createRunLeaseFencedStore(store, lease, DEFAULT_LEASE_MS),
+  }
+  try {
+    // Retry may have retired this command after the initial batch read.
+    // Recheck under the run lease, without comparing different clock precisions.
+    const [unreaped] = await scoped.store.listUnreapedDeadCommands({
+      commandId: command.id,
+    })
+    if (!unreaped) return false
+
+    const snapshot = await scoped.store.loadRunSnapshot(command.runId)
+    if (!snapshot) {
+      await scoped.store.markDeadCommandReaped(command.id)
+      return true
+    }
+    const { run } = snapshot
+    if (run.status === 'completed' || run.status === 'cancelled') {
+      await scoped.store.markDeadCommandReaped(command.id)
+      return true
+    }
+
+    const error =
+      command.lastError ??
+      toStoredError(
+        new Error(`Workflow command [${command.id}] was dead-lettered`),
+      )
+    const { nodeName } = command
+
+    if (
+      (command.kind === 'activity' || command.kind === 'task') &&
+      nodeName !== undefined
+    ) {
+      const childKey = attemptCommandChildKey(command)
+      if (command.attemptId) {
+        const child = snapshot.children.find(
+          (candidate) =>
+            candidate.nodeName === nodeName && candidate.childKey === childKey,
+        )
+        const attempt = snapshot.attempts.find(
+          (candidate) => candidate.id === command.attemptId,
+        )
+        if (
+          !child ||
+          child.currentAttemptId !== command.attemptId ||
+          attempt?.status === 'completed'
+        ) {
+          await scoped.store.markDeadCommandReaped(command.id)
+          return true
+        }
+        if (attempt?.status === 'started' && attempt.leaseToken) {
+          await scoped.store.failCurrentAttempt({
+            attemptId: attempt.id,
+            leaseToken: attempt.leaseToken,
+            error,
+          })
+        }
+      }
+      if (childKey !== undefined) {
+        await scoped.store.failNodeChild({
+          runId: command.runId,
+          nodeName,
+          childKey,
+          error,
+        })
+      }
+      if (childKey === undefined || shouldCompleteNodeFromAttempt(childKey)) {
+        await scoped.store.failNode({
+          runId: command.runId,
+          nodeName,
+          error,
+        })
+      }
+    }
+
+    if (run.kind === 'task' || command.kind === 'continue') {
+      // No coordination pass will run for this run, so cancel its live
+      // descendants and nodes here — a failed run must not leave children
+      // executing or nodes reporting running/waiting.
+      await cancelDescendants(scoped, snapshot)
+      await failRunAndWakeParent(scoped, { runId: command.runId, error })
+    } else {
+      // Workflow runs get a coordination pass: the coordinator sees the
+      // failed node/child and fails the run after all fan-in siblings settle.
+      await scoped.runCoordinationExecutor.enqueue(
+        continueRun({
+          id: command.runId,
+          workflowName: command.workflowName ?? run.workflowName,
+        }),
+      )
+    }
+
+    await scoped.store.markDeadCommandReaped(command.id)
+    return true
+  } finally {
+    await store.releaseRunLease(lease)
+  }
 }
 
 function attemptCommandChildKey(
@@ -177,30 +182,19 @@ function attemptCommandChildKey(
 }
 
 async function cancelDescendants(
-  input: Pick<
-    ReapDeadWorkflowCommandsInput,
-    'store' | 'attemptExecutor' | 'runCoordinationExecutor'
-  >,
+  deps: RuntimeDeps,
   snapshot: RunSnapshot,
 ): Promise<void> {
   const runId = snapshot.run.id
   for (const child of snapshot.children) {
     if (child.childRunId === undefined) continue
-    await cancelRunTree({
-      store: input.store,
-      attemptExecutor: input.attemptExecutor,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: child.childRunId,
-    })
+    await cancelRunTree(deps, child.childRunId)
   }
-  await input.attemptExecutor.deleteUnclaimed({ runId })
-  await input.store.cancelNonTerminalRunNodes({ runId })
+  await deps.attemptExecutor.deleteUnclaimed({ runId })
+  await deps.store.cancelNonTerminalRunNodes({ runId })
 }
 
-export type TimeoutExpiredWorkflowRunsInput = {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
+export type TimeoutExpiredWorkflowRunsInput = RuntimeDeps & {
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly batchSize?: number
   readonly now?: Date
@@ -224,55 +218,66 @@ export async function timeoutExpiredWorkflowRuns(
     const timeoutMs = parseDurationMs(implementation.workflow.timeout)
     if (timeoutMs === undefined) continue
 
+    const expiredBefore = new Date(now.getTime() - timeoutMs)
     // Filtering by the current retry epoch in the store keeps the batch limit honest:
     // every returned run is already expired, so newer runs can never crowd
     // older expired ones out of the page.
     const { runs } = await input.store.listRuns({
       kind: 'workflow',
       name: implementation.workflow.name,
-      status: ['queued', 'running', 'waiting', 'cancelling'],
-      activeBefore: new Date(now.getTime() - timeoutMs),
+      status: ACTIVE_RUN_STATUSES,
+      activeBefore: expiredBefore,
       limit: input.batchSize,
     })
     for (const candidate of runs) {
-      const lease = await input.store.acquireRunLease({
-        runId: candidate.id,
-        leaseMs: 30_000,
-      })
-      if (!lease) continue
-      const scoped = {
-        ...input,
-        store: createRunLeaseFencedStore(input.store, lease, 30_000),
-      }
-      try {
-        const snapshot = await scoped.store.loadRunSnapshot(candidate.id)
-        const run = snapshot?.run
-        if (
-          !run ||
-          !['queued', 'running', 'waiting', 'cancelling'].includes(
-            run.status,
-          ) ||
-          run.activeSince.getTime() >= now.getTime() - timeoutMs
-        )
-          continue
-        await cancelDescendants(scoped, snapshot!)
-        const failed = await scoped.store.failRun({
-          runId: run.id,
-          error: new Error(
-            `Workflow run [${run.id}] timed out after [${implementation.workflow.timeout}]`,
-          ),
-        })
-        await wakeParentRun({
-          store: scoped.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          run: failed,
-        })
+      if (
+        await timeoutRun(input, candidate.id, expiredBefore, implementation)
+      ) {
         timedOut += 1
-      } finally {
-        await input.store.releaseRunLease(lease)
       }
     }
   }
 
   return { timedOut }
+}
+
+async function timeoutRun(
+  input: TimeoutExpiredWorkflowRunsInput,
+  runId: string,
+  expiredBefore: Date,
+  implementation: AnyWorkflowImplementation,
+): Promise<boolean> {
+  const { store } = input
+  const lease = await store.acquireRunLease({
+    runId,
+    leaseMs: DEFAULT_LEASE_MS,
+  })
+  if (!lease) return false
+
+  const scoped: TimeoutExpiredWorkflowRunsInput = {
+    ...input,
+    store: createRunLeaseFencedStore(store, lease, DEFAULT_LEASE_MS),
+  }
+  try {
+    const snapshot = await scoped.store.loadRunSnapshot(runId)
+    if (!snapshot) return false
+    const { run } = snapshot
+    if (
+      isTerminalRunStatus(run.status) ||
+      run.activeSince.getTime() >= expiredBefore.getTime()
+    ) {
+      return false
+    }
+
+    await cancelDescendants(scoped, snapshot)
+    await failRunAndWakeParent(scoped, {
+      runId: run.id,
+      error: new Error(
+        `Workflow run [${run.id}] timed out after [${implementation.workflow.timeout}]`,
+      ),
+    })
+    return true
+  } finally {
+    await store.releaseRunLease(lease)
+  }
 }

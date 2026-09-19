@@ -268,12 +268,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
         // name, which no workflow worker claims, so the run would park in
         // `cancelling` forever. Settle it here; a worker still holding the
         // attempt observes the terminal status on its next heartbeat.
-        return await cancelRunAndWakeParent({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: run.id,
-        })
+        return await cancelRunAndWakeParent(input, run.id)
       }
       await input.runCoordinationExecutor.enqueue(continueRun(run))
       return run

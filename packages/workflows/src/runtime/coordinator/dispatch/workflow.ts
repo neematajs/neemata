@@ -11,38 +11,40 @@ export async function dispatchWorkflowNode(
     readonly node: RunnableNodeImplementation
   },
 ): Promise<AdvanceOutcome> {
+  const { node } = input
   const existing = await input.store.createNode({
     runId: input.run.id,
-    name: input.node.name,
+    name: node.name,
     kind: 'workflow',
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
 
+  const nodeInput = node.input
   await input.store.ensureNodeChildren({
     runId: input.run.id,
-    nodeName: input.node.name,
+    nodeName: node.name,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'workflow' }],
   })
   return await dispatchChildWorkflow({
     ...input,
-    nodeName: input.node.name,
+    nodeName: node.name,
     childKey: SELF_CHILD_KEY,
-    workflowName: input.node.target.name,
-    inputSchema: input.node.target.input,
-    inputLabel: `workflow input [${input.workflow.workflow.name}.${input.node.name}]`,
+    workflowName: node.target.name,
+    inputSchema: node.target.input,
+    inputLabel: `workflow input [${input.workflow.workflow.name}.${node.name}]`,
     resolveIdempotencyKey: () =>
       resolveIdempotency(
-        input.node.idempotency,
+        node.idempotency,
         input.workflowCtx,
         input.outputs,
         input.run.input,
       ),
     resolveNodeInput: () => {
       if (hasStoredNodeInput(existing)) return existing.input
-      if (!input.node.input) return input.run.input
+      if (!nodeInput) return input.run.input
 
       return runWorkflowUserCallback(() =>
-        input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+        nodeInput(input.workflowCtx, input.outputs, input.run.input),
       )
     },
   })

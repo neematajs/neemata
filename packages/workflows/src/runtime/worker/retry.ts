@@ -1,101 +1,63 @@
 import type { RetryPolicy } from '../../types/index.ts'
-import type { ActivityAttemptCommand, TaskAttemptCommand } from '../commands.ts'
+import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { parseDurationMs } from '../duration.ts'
 
-type RetryAttemptInput = {
+type RetryDeps = {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
 }
 
-export async function retryActivityAttempt(
-  runtime: RetryAttemptInput,
+export async function retryAttempt(
+  deps: RetryDeps,
   params: {
-    readonly command: ActivityAttemptCommand
+    readonly command: AttemptCommand
     readonly failedAttempt: StoredAttempt
     readonly retry?: RetryPolicy
   },
-): Promise<boolean> {
-  const { command } = params
-  return retryAttempt(runtime, params, async (attempt, options) => {
-    const { workflowName, activityName, runId, nodeName, childKey } = command
-    const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
-    await runtime.attemptExecutor.dispatchActivity(
-      {
-        kind: 'activityAttempt',
-        workflowName,
-        activityName,
-        runId,
-        nodeName,
-        childKey,
-        attemptId,
-        leaseToken: leaseToken!,
-        input,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      },
-      options,
-    )
-  })
-}
-
-export async function retryTaskAttempt(
-  runtime: RetryAttemptInput,
-  params: {
-    readonly command: TaskAttemptCommand
-    readonly failedAttempt: StoredAttempt
-    readonly retry?: RetryPolicy
-  },
-): Promise<boolean> {
-  const { command } = params
-  return retryAttempt(runtime, params, async (attempt, options) => {
-    const { workflowName, taskName, runId, nodeName, childKey, timeout } =
-      command
-    const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
-    await runtime.attemptExecutor.dispatchTask(
-      {
-        kind: 'taskAttempt',
-        workflowName,
-        taskName,
-        runId,
-        nodeName,
-        childKey,
-        attemptId,
-        leaseToken: leaseToken!,
-        input,
-        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-        ...(timeout === undefined ? {} : { timeout }),
-      },
-      options,
-    )
-  })
-}
-
-async function retryAttempt(
-  runtime: RetryAttemptInput,
-  params: {
-    readonly command: ActivityAttemptCommand | TaskAttemptCommand
-    readonly failedAttempt: StoredAttempt
-    readonly retry?: RetryPolicy
-  },
-  dispatch: (
-    attempt: StoredAttempt,
-    options: { readonly runAt?: Date } | undefined,
-  ) => Promise<void>,
 ): Promise<boolean> {
   const { command, failedAttempt: failed, retry } = params
   if (!shouldRetry(failed, retry)) return false
 
-  const attempt = await runtime.store.createAttempt({
-    runId: command.runId,
-    nodeName: command.nodeName,
-    childKey: command.childKey,
+  const { workflowName, runId, nodeName, childKey } = command
+  const attempt = await deps.store.createAttempt({
+    runId,
+    nodeName,
+    childKey,
     input: failed.input,
     idempotencyKey: failed.idempotencyKey,
   })
   const options = dispatchOptions(retry, failed.retryAttemptNumber)
-  await dispatch(attempt, options)
+  const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
+  const base = {
+    workflowName,
+    runId,
+    nodeName,
+    childKey,
+    attemptId,
+    leaseToken: leaseToken!,
+    input,
+    ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+  }
+
+  if (command.kind === 'activityAttempt') {
+    await deps.attemptExecutor.dispatchActivity(
+      { kind: 'activityAttempt', activityName: command.activityName, ...base },
+      options,
+    )
+  } else {
+    await deps.attemptExecutor.dispatchTask(
+      {
+        kind: 'taskAttempt',
+        taskName: command.taskName,
+        ...(command.timeout === undefined ? {} : { timeout: command.timeout }),
+        ...base,
+      },
+      options,
+    )
+  }
   return true
 }
 

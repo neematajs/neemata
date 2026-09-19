@@ -8,6 +8,7 @@ import type {
   TaskAttemptCommand,
 } from './commands.ts'
 import type { RuntimeRunStatus } from './status.ts'
+import type { WorkflowStore } from './store.ts'
 
 /**
  * Single home for the fallback lease duration so the worker loop and both
@@ -15,6 +16,16 @@ import type { RuntimeRunStatus } from './status.ts'
  * expired lease counts as a lost delivery.
  */
 export const DEFAULT_LEASE_MS = 30_000
+
+/**
+ * The persistence + queueing triple every coordinator and worker operation
+ * needs. Passed as one value so an atomic scope can swap all three at once.
+ */
+export type RuntimeDeps = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+}
 
 export type CommandReleaseOptions = {
   readonly error?: unknown

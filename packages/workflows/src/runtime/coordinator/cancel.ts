@@ -1,66 +1,31 @@
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
-import type { WorkflowStore } from '../store.ts'
+import { continueRun } from '../commands.ts'
 import { isTerminalRunStatus } from '../status.ts'
 
-export async function cancelRunTree(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-}): Promise<StoredRun | undefined> {
-  const snapshot = await input.store.loadRunSnapshot(input.runId)
+export async function cancelRunTree(
+  deps: RuntimeDeps,
+  runId: string,
+): Promise<StoredRun | undefined> {
+  const snapshot = await deps.store.loadRunSnapshot(runId)
   if (!snapshot) return undefined
   if (isTerminalRunStatus(snapshot.run.status)) return snapshot.run
 
-  await input.store.requestRunCancellation({ runId: input.runId })
-  await input.store.cancelNonTerminalRunNodes({ runId: input.runId })
+  await deps.store.requestRunCancellation({ runId })
+  await deps.store.cancelNonTerminalRunNodes({ runId })
 
   for (const child of snapshot.children) {
     if (child.childRunId === undefined) continue
-    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
+    const childSnapshot = await deps.store.loadRunSnapshot(child.childRunId)
     if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
       continue
-    await input.store.requestRunCancellation({ runId: child.childRunId })
+    await deps.store.requestRunCancellation({ runId: child.childRunId })
     if (childSnapshot.run.kind === 'workflow') {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childSnapshot.run.workflowName,
-      })
+      await deps.runCoordinationExecutor.enqueue(continueRun(childSnapshot.run))
     }
-    await cancelRunTree({ ...input, runId: child.childRunId })
+    await cancelRunTree(deps, child.childRunId)
   }
 
-  await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
-  return await input.store.cancelRun({ runId: input.runId })
-}
-
-export async function cancelNodeChildRunsAndCommands(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-  readonly nodeName: string
-}) {
-  const children = await input.store.loadNodeChildren({
-    runId: input.runId,
-    nodeName: input.nodeName,
-  })
-  for (const child of children.children) {
-    if (child.childRunId === undefined) continue
-    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
-    if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
-      continue
-    await input.store.requestRunCancellation({ runId: child.childRunId })
-    if (childSnapshot.run.kind === 'workflow') {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childSnapshot.run.workflowName,
-      })
-    }
-    await cancelRunTree({ ...input, runId: child.childRunId })
-  }
-  await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
+  await deps.attemptExecutor.deleteUnclaimed({ runId })
+  return await deps.store.cancelRun({ runId })
 }

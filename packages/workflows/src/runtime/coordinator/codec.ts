@@ -1,6 +1,6 @@
 import type {
+  AnyWorkflowImplementation,
   MapNodeImplementation,
-  WorkflowImplementation,
 } from '../../implement/index.ts'
 import type {
   ResolvedRunUnique,
@@ -10,10 +10,15 @@ import type {
 } from '../../types/index.ts'
 import { runWorkflowUserCallback } from './context.ts'
 
+/**
+ * Key absence, not `undefined`, is the "input already derived" marker: a node
+ * input may legitimately be `undefined`, so both store adapters must omit the
+ * key entirely until `setNodeInput` has run for the node.
+ */
 export function hasStoredNodeInput(node: {
   readonly input?: unknown
 }): boolean {
-  return Object.prototype.hasOwnProperty.call(node, 'input')
+  return Object.hasOwn(node, 'input')
 }
 
 export function decodeSchemaValue(
@@ -49,7 +54,7 @@ export function decodeMapItems(
 }
 
 export function getWorkflowNodeDeclaration(
-  workflow: WorkflowImplementation,
+  workflow: AnyWorkflowImplementation,
   nodeName: string,
 ): WorkflowNode {
   const node = workflow.workflow.nodes.find(
@@ -63,28 +68,31 @@ export function getWorkflowNodeDeclaration(
   return node
 }
 
+type KeyCallback = (...args: readonly unknown[]) => readonly unknown[]
+
+/** Both `idempotency` and `unique` accept the key callback bare or as `{ key }`. */
+function keyCallback(definition: unknown): KeyCallback | undefined {
+  if (typeof definition === 'function') return definition as KeyCallback
+  if (
+    typeof definition === 'object' &&
+    definition !== null &&
+    'key' in definition &&
+    typeof definition.key === 'function'
+  ) {
+    return definition.key as KeyCallback
+  }
+  return undefined
+}
+
 export function resolveIdempotency(
   idempotency: unknown,
   ...args: readonly unknown[]
 ): readonly unknown[] | undefined {
   if (!idempotency) return undefined
-  if (typeof idempotency === 'function') {
-    return runWorkflowUserCallback(
-      () => idempotency(...args) as readonly unknown[],
-    )
-  }
+  const key = keyCallback(idempotency)
+  if (!key) throw new Error('Invalid idempotency definition')
 
-  if (
-    typeof idempotency === 'object' &&
-    idempotency !== null &&
-    'key' in idempotency &&
-    typeof idempotency.key === 'function'
-  ) {
-    const key = idempotency.key
-    return runWorkflowUserCallback(() => key(...args) as readonly unknown[])
-  }
-
-  throw new Error('Invalid idempotency definition')
+  return runWorkflowUserCallback(() => key(...args))
 }
 
 export function resolveUnique(
@@ -92,31 +100,21 @@ export function resolveUnique(
   ...args: readonly unknown[]
 ): RunUniqueConstraint | undefined {
   if (!unique) return undefined
-  if (typeof unique === 'function') {
-    return {
-      key: runWorkflowUserCallback(() => unique(...args) as readonly unknown[]),
-    }
-  }
+  const key = keyCallback(unique)
+  if (!key) throw new Error('Invalid unique definition')
 
-  if (
-    typeof unique === 'object' &&
-    unique !== null &&
-    'key' in unique &&
-    typeof unique.key === 'function'
-  ) {
-    const { key, scope, behavior } = unique as {
-      key: (...args: readonly unknown[]) => readonly unknown[]
-      scope?: RunUniqueConstraint['scope']
-      behavior?: RunUniqueConstraint['behavior']
-    }
-    return {
-      key: runWorkflowUserCallback(() => key(...args)),
-      ...(scope === undefined ? {} : { scope }),
-      ...(behavior === undefined ? {} : { behavior }),
-    }
-  }
+  const resolved = runWorkflowUserCallback(() => key(...args))
+  if (typeof unique === 'function') return { key: resolved }
 
-  throw new Error('Invalid unique definition')
+  const { scope, behavior } = unique as Pick<
+    RunUniqueConstraint,
+    'scope' | 'behavior'
+  >
+  return {
+    key: resolved,
+    ...(scope === undefined ? {} : { scope }),
+    ...(behavior === undefined ? {} : { behavior }),
+  }
 }
 
 export function normalizeRunUnique(

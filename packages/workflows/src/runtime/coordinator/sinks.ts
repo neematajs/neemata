@@ -1,113 +1,84 @@
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
-import type { WorkflowStore } from '../store.ts'
+import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
 import { wakeParentRun } from '../wake.ts'
 import { cancelRunTree } from './cancel.ts'
 
-export async function completeRunAndWakeParent(input: {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-  readonly output: unknown
-}) {
-  const completed = await input.store.completeRun({
-    runId: input.runId,
-    output: input.output,
-  })
-  await wakeParentRun({
-    store: input.store,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    run: completed,
-  })
+export async function completeRunAndWakeParent(
+  deps: RuntimeDeps,
+  params: { readonly runId: string; readonly output: unknown },
+) {
+  const completed = await deps.store.completeRun(params)
+  await wakeParentRun(deps, completed)
 }
 
-export async function failRunAndWakeParent(input: {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-  readonly error: unknown
-}) {
-  const failed = await input.store.failRun({
-    runId: input.runId,
-    error: input.error,
-  })
-  await wakeParentRun({
-    store: input.store,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    run: failed,
-  })
+export async function failRunAndWakeParent(
+  deps: RuntimeDeps,
+  params: { readonly runId: string; readonly error: unknown },
+) {
+  const failed = await deps.store.failRun(params)
+  await wakeParentRun(deps, failed)
 }
 
-export async function cancelRunAndWakeParent(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-}): Promise<StoredRun | undefined> {
-  const cancelled = await cancelRunTree(input)
-  await wakeParentRun({
-    store: input.store,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    run: cancelled,
-  })
+export async function cancelRunAndWakeParent(
+  deps: RuntimeDeps,
+  runId: string,
+): Promise<StoredRun | undefined> {
+  const cancelled = await cancelRunTree(deps, runId)
+  await wakeParentRun(deps, cancelled)
   return cancelled
 }
 
-export async function failNodeAndRun(input: {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-  readonly nodeName: string
-  readonly error: unknown
-}) {
-  await input.store.failNode({
-    runId: input.runId,
-    nodeName: input.nodeName,
-    error: input.error,
-  })
-  await failRunAndWakeParent({
-    store: input.store,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    runId: input.runId,
-    error: input.error,
+export async function failNodeAndRun(
+  deps: RuntimeDeps,
+  params: {
+    readonly runId: string
+    readonly nodeName: string
+    readonly error: unknown
+  },
+) {
+  await deps.store.failNode(params)
+  await failRunAndWakeParent(deps, {
+    runId: params.runId,
+    error: params.error,
   })
 }
 
-export async function cancelNodeAndRun(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly runId: string
-  readonly nodeName: string
-}) {
-  await input.store.cancelNode({
-    runId: input.runId,
-    nodeName: input.nodeName,
-  })
-  await cancelRunAndWakeParent({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    runId: input.runId,
-  })
+export async function cancelNodeAndRun(
+  deps: RuntimeDeps,
+  params: { readonly runId: string; readonly nodeName: string },
+) {
+  await deps.store.cancelNode(params)
+  await cancelRunAndWakeParent(deps, params.runId)
 }
 
-export async function failMissingChildRun(input: {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly parentRunId: string
-  readonly nodeName: string
-  readonly childKind: 'task' | 'workflow'
-  readonly childRunId: string
-}) {
+export async function failMissingChildRun(
+  deps: RuntimeDeps,
+  params: {
+    readonly parentRunId: string
+    readonly nodeName: string
+    readonly childKind: 'task' | 'workflow'
+    readonly childRunId: string
+  },
+) {
   const error = new Error(
-    `Missing child ${input.childKind} run [${input.childRunId}]`,
+    `Missing child ${params.childKind} run [${params.childRunId}]`,
   )
-  await failNodeAndRun({
-    store: input.store,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    runId: input.parentRunId,
-    nodeName: input.nodeName,
+  await failNodeAndRun(deps, {
+    runId: params.parentRunId,
+    nodeName: params.nodeName,
     error,
+  })
+}
+
+export async function completeNodeAndAdvance(
+  ctx: AdvanceCtx,
+  nodeName: string,
+  output: unknown,
+): Promise<AdvanceOutcome> {
+  await ctx.store.completeNode({ runId: ctx.run.id, nodeName, output })
+  return await ctx.advance({
+    ...ctx,
+    outputs: { ...ctx.outputs, [nodeName]: output },
   })
 }

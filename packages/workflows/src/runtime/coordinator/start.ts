@@ -7,7 +7,6 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
-  IdempotencyKey,
   RunUniqueConstraint,
   TaskDecodedInput,
   TaskInput,
@@ -26,48 +25,36 @@ import {
   resolveUnique,
 } from './codec.ts'
 
-export type StartTaskRunInput<
-  Task extends AnyTaskDefinition,
-  Deps extends Dependencies = Dependencies,
-  Connection = never,
-> = {
+type StartRunCommon<Connection> = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
-  readonly task: Task
-  readonly implementation?: TaskImplementation<Task, Deps>
-  readonly input: TaskInput<Task>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: RunUniqueConstraint
   readonly startAt?: Date
   readonly connection?: Connection
+}
+
+export type StartTaskRunInput<
+  Task extends AnyTaskDefinition,
+  Deps extends Dependencies = Dependencies,
+  Connection = never,
+> = StartRunCommon<Connection> & {
+  readonly attemptExecutor: AttemptExecutor
+  readonly task: Task
+  readonly implementation?: TaskImplementation<Task, Deps>
+  readonly input: TaskInput<Task>
 }
 
 export type StartWorkflowRunInput<
   Workflow extends AnyWorkflowDefinition,
   Deps extends Dependencies = Dependencies,
   Connection = never,
-> = {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
+> = StartRunCommon<Connection> & {
   readonly workflow: Workflow
   readonly implementation?: WorkflowImplementation<Workflow, Deps>
   readonly input: WorkflowInput<Workflow>
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
-  readonly unique?: RunUniqueConstraint
-  readonly startAt?: Date
-  readonly connection?: Connection
-}
-
-type WorkflowStartMetadataInput<Workflow extends AnyWorkflowDefinition> = {
-  readonly workflow: Workflow
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
-  readonly input: WorkflowDecodedInput<Workflow>
 }
 
 export type WorkflowRuntimeAtomicStart<Connection = never> = {
@@ -103,10 +90,10 @@ export async function startWorkflowRun<
     input.input,
     `workflow input [${input.workflow.name}]`,
   ) as WorkflowDecodedInput<Workflow>
-  const metadata = resolveWorkflowStartMetadata({
-    ...input,
-    input: workflowInput,
-  })
+  const tags = input.tags ?? resolveTags(input.workflow.tags, workflowInput)
+  const idempotencyKey =
+    input.idempotencyKey ??
+    resolveIdempotency(input.workflow.idempotency, workflowInput)
   const unique = normalizeRunUnique(
     input.unique ?? resolveUnique(input.workflow.unique, workflowInput),
   )
@@ -115,8 +102,8 @@ export async function startWorkflowRun<
     name: input.workflow.name,
     workflowName: input.workflow.name,
     input: workflowInput,
-    tags: metadata.tags,
-    idempotencyKey: metadata.idempotencyKey,
+    tags,
+    idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
   }
 
@@ -176,6 +163,7 @@ export async function startTaskRun<
   const unique = normalizeRunUnique(
     input.unique ?? resolveUnique(input.task.unique, taskInput),
   )
+  const tags = input.tags ?? resolveTags(input.task.tags, taskInput)
 
   const runInput: CreateRunInput = {
     kind: 'task',
@@ -183,7 +171,7 @@ export async function startTaskRun<
     workflowName: input.task.name,
     taskName: input.task.name,
     input: taskInput,
-    tags: input.tags ?? resolveTags(input.task.tags, taskInput),
+    tags,
     idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
   }
@@ -204,34 +192,17 @@ export async function startTaskRun<
 
   const run = await input.store.createRun(runInput)
 
-  await dispatchTaskRunAttempt({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
+  await dispatchTaskRunAttempt(input, {
     taskName: input.task.name,
     taskRunId: run.id,
     taskInput,
     idempotencyKey,
     timeout: input.task.timeout,
     startAt: input.startAt,
-    throwOnDispatchFailure: true,
+    failRunOnDispatchFailure: true,
   })
 
   return run
-}
-
-function resolveWorkflowStartMetadata<Workflow extends AnyWorkflowDefinition>(
-  input: WorkflowStartMetadataInput<Workflow>,
-): {
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: IdempotencyKey
-} {
-  return {
-    tags: input.tags ?? resolveTags(input.workflow.tags, input.input),
-    idempotencyKey:
-      input.idempotencyKey ??
-      resolveIdempotency(input.workflow.idempotency, input.input),
-  }
 }
 
 function assertNoStartConnection(connection: unknown) {

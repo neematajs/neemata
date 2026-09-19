@@ -1,96 +1,77 @@
 import type { DurationString } from '../../types/index.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { RuntimeDeps } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
-import type { WorkflowStore } from '../store.ts'
-import { SELF_CHILD_KEY } from '../child-key.ts'
+import { SELF_CHILD_KEY, TASK_RUN_NODE_NAME } from '../child-key.ts'
 import { failNodeAndRun } from './sinks.ts'
 
-const TASK_RUN_NODE_NAME = '$task'
-
-export async function dispatchTaskRunAttempt(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly taskName: string
-  readonly taskRunId: string
-  readonly taskInput: unknown
+type AttemptParams = {
+  readonly workflowName: string
+  readonly runId: string
+  readonly nodeName: string
+  readonly childKey: string
+  readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
-  readonly timeout?: DurationString
-  readonly startAt?: Date
-  readonly throwOnDispatchFailure?: boolean
-}) {
-  await input.store.createNode({
-    runId: input.taskRunId,
+  /** Settle the attempt, node and run before rethrowing a dispatch failure. */
+  readonly failRunOnDispatchFailure?: boolean
+}
+
+export async function dispatchTaskRunAttempt(
+  deps: RuntimeDeps,
+  params: {
+    readonly taskName: string
+    readonly taskRunId: string
+    readonly taskInput: unknown
+    readonly idempotencyKey?: readonly unknown[]
+    readonly timeout?: DurationString
+    readonly startAt?: Date
+    readonly failRunOnDispatchFailure?: boolean
+  },
+) {
+  await deps.store.createNode({
+    runId: params.taskRunId,
     name: TASK_RUN_NODE_NAME,
     kind: 'task',
   })
-  await input.store.setNodeInput({
-    runId: input.taskRunId,
+  await deps.store.setNodeInput({
+    runId: params.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
-    input: input.taskInput,
+    input: params.taskInput,
   })
-  await input.store.ensureNodeChildren({
-    runId: input.taskRunId,
+  await deps.store.ensureNodeChildren({
+    runId: params.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
   })
 
-  await dispatchTaskAttempt({
-    store: input.store,
-    attemptExecutor: input.attemptExecutor,
-    runCoordinationExecutor: input.runCoordinationExecutor,
-    workflowName: input.taskName,
-    taskName: input.taskName,
-    runId: input.taskRunId,
+  await dispatchTaskAttempt(deps, {
+    workflowName: params.taskName,
+    taskName: params.taskName,
+    runId: params.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
     childKey: SELF_CHILD_KEY,
-    timeout: input.timeout,
-    runAt: input.startAt,
-    throwOnDispatchFailure: input.throwOnDispatchFailure,
-    prepareAttempt: async () => {
-      const result = await input.store.ensureChildAttempt({
-        runId: input.taskRunId,
-        nodeName: TASK_RUN_NODE_NAME,
-        childKey: SELF_CHILD_KEY,
-        input: input.taskInput,
-        idempotencyKey: input.idempotencyKey,
-      })
-      return {
-        attempt: result.attempt,
-        commandInput: result.attempt.input,
-        created: result.created,
-      }
-    },
+    input: params.taskInput,
+    idempotencyKey: params.idempotencyKey,
+    timeout: params.timeout,
+    runAt: params.startAt,
+    failRunOnDispatchFailure: params.failRunOnDispatchFailure,
   })
 }
 
-export async function dispatchActivityAttempt(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly workflowName: string
-  readonly activityName: string
-  readonly runId: string
-  readonly nodeName: string
-  readonly childKey: string
-  readonly throwOnDispatchFailure?: boolean
-  readonly prepareAttempt: () => Promise<{
-    readonly attempt: StoredAttempt
-    readonly commandInput: unknown
-    readonly created: boolean
-  }>
-}) {
-  await dispatchPreparedAttempt(input, async (attempt, commandInput) => {
-    await input.attemptExecutor.dispatchActivity({
+export async function dispatchActivityAttempt(
+  deps: RuntimeDeps,
+  params: AttemptParams & { readonly activityName: string },
+) {
+  await dispatchPreparedAttempt(deps, params, async (attempt) => {
+    await deps.attemptExecutor.dispatchActivity({
       kind: 'activityAttempt',
-      workflowName: input.workflowName,
-      activityName: input.activityName,
-      runId: input.runId,
-      nodeName: input.nodeName,
-      childKey: input.childKey,
+      workflowName: params.workflowName,
+      activityName: params.activityName,
+      runId: params.runId,
+      nodeName: params.nodeName,
+      childKey: params.childKey,
       attemptId: attempt.id,
       leaseToken: attempt.leaseToken!,
-      input: commandInput,
+      input: attempt.input,
       ...(attempt.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: attempt.idempotencyKey }),
@@ -98,79 +79,63 @@ export async function dispatchActivityAttempt(input: {
   })
 }
 
-export async function dispatchTaskAttempt(input: {
-  readonly store: WorkflowStore
-  readonly attemptExecutor: AttemptExecutor
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly workflowName: string
-  readonly taskName: string
-  readonly runId: string
-  readonly nodeName: string
-  readonly childKey: string
-  readonly timeout?: DurationString
-  readonly runAt?: Date
-  readonly throwOnDispatchFailure?: boolean
-  readonly prepareAttempt: () => Promise<{
-    readonly attempt: StoredAttempt
-    readonly commandInput: unknown
-    readonly created: boolean
-  }>
-}) {
-  await dispatchPreparedAttempt(input, async (attempt, commandInput) => {
-    await input.attemptExecutor.dispatchTask(
+export async function dispatchTaskAttempt(
+  deps: RuntimeDeps,
+  params: AttemptParams & {
+    readonly taskName: string
+    readonly timeout?: DurationString
+    readonly runAt?: Date
+  },
+) {
+  await dispatchPreparedAttempt(deps, params, async (attempt) => {
+    await deps.attemptExecutor.dispatchTask(
       {
         kind: 'taskAttempt',
-        workflowName: input.workflowName,
-        taskName: input.taskName,
-        runId: input.runId,
-        nodeName: input.nodeName,
-        childKey: input.childKey,
+        workflowName: params.workflowName,
+        taskName: params.taskName,
+        runId: params.runId,
+        nodeName: params.nodeName,
+        childKey: params.childKey,
         attemptId: attempt.id,
         leaseToken: attempt.leaseToken!,
-        input: commandInput,
+        input: attempt.input,
         ...(attempt.idempotencyKey === undefined
           ? {}
           : { idempotencyKey: attempt.idempotencyKey }),
-        ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+        ...(params.timeout === undefined ? {} : { timeout: params.timeout }),
       },
-      input.runAt === undefined ? undefined : { runAt: input.runAt },
+      params.runAt === undefined ? undefined : { runAt: params.runAt },
     )
   })
 }
 
 async function dispatchPreparedAttempt(
-  input: {
-    readonly store: WorkflowStore
-    readonly runCoordinationExecutor: RunCoordinationExecutor
-    readonly runId: string
-    readonly nodeName: string
-    readonly throwOnDispatchFailure?: boolean
-    readonly prepareAttempt: () => Promise<{
-      readonly attempt: StoredAttempt
-      readonly commandInput: unknown
-      readonly created: boolean
-    }>
-  },
-  dispatch: (attempt: StoredAttempt, commandInput: unknown) => Promise<void>,
+  deps: RuntimeDeps,
+  params: AttemptParams,
+  dispatch: (attempt: StoredAttempt) => Promise<void>,
 ) {
-  const { attempt, commandInput, created } = await input.prepareAttempt()
+  const { attempt, created } = await deps.store.ensureChildAttempt({
+    runId: params.runId,
+    nodeName: params.nodeName,
+    childKey: params.childKey,
+    input: params.input,
+    idempotencyKey: params.idempotencyKey,
+  })
 
   if (!created && attempt.status !== 'started') return
 
   try {
-    await dispatch(attempt, commandInput)
+    await dispatch(attempt)
   } catch (error) {
-    if (input.throwOnDispatchFailure) {
-      await input.store.failCurrentAttempt({
+    if (params.failRunOnDispatchFailure) {
+      await deps.store.failCurrentAttempt({
         attemptId: attempt.id,
         leaseToken: attempt.leaseToken!,
         error,
       })
-      await failNodeAndRun({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        runId: input.runId,
-        nodeName: input.nodeName,
+      await failNodeAndRun(deps, {
+        runId: params.runId,
+        nodeName: params.nodeName,
         error,
       })
     }

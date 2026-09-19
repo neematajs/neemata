@@ -8,8 +8,11 @@ import type {
   WorkflowStore,
 } from '../store.ts'
 import { parseDurationMs } from '../duration.ts'
+import { AttemptLeaseLostError, StaleAckError } from '../errors.ts'
 
-export { DEFAULT_LEASE_MS } from '../executors.ts'
+const DEFAULT_IDLE_DELAY_MS = 250
+const DEFAULT_RETENTION_EVERY_MS = 60_000
+const DEFAULT_SCHEDULING_EVERY_MS = 1_000
 
 export type WorkerLoopResult = {
   readonly processed: number
@@ -80,11 +83,7 @@ export function serveWorkerPool<Claimed>(
 
 type WorkerMode = 'drain' | 'serve'
 
-type PeriodicTask = {
-  readonly everyMs: number
-  readonly run: (now: Date) => Promise<void>
-  nextAt: number
-}
+type PeriodicTask = WorkerMaintenanceHook & { nextAt: number }
 
 async function runWorkerPool<Claimed>(
   options: WorkerLoopOptions,
@@ -97,11 +96,11 @@ async function runWorkerPool<Claimed>(
     assertNonNegative(options.idleDelayMs, 'Idle delay')
   }
 
+  const idleDelayMs = Math.max(1, options.idleDelayMs ?? DEFAULT_IDLE_DELAY_MS)
   const periodicTasks = resolvePeriodicTasks(options)
 
   let processed = 0
-  let failed = false
-  let firstError: unknown
+  let failure: { readonly error: unknown } | undefined
   const lifecycle = new AbortController()
   const executions = new AbortController()
   const wake = createWakeSignal(options.onWake)
@@ -115,8 +114,7 @@ async function runWorkerPool<Claimed>(
 
   const active = new Set<Promise<void>>()
   const fail = (error: unknown) => {
-    if (!failed) firstError = error
-    failed = true
+    failure ??= { error }
     // Claimed siblings finish normally so their leases are not needlessly
     // abandoned and redelivered after an unrelated execution fails.
     lifecycle.abort(error)
@@ -178,10 +176,7 @@ async function runWorkerPool<Claimed>(
       if (queueEmpty) {
         if (active.size > 0) {
           // Polling still discovers due work when an adapter has no wake source.
-          await wake.wait(
-            Math.max(1, options.idleDelayMs ?? 250),
-            lifecycle.signal,
-          )
+          await wake.wait(idleDelayMs, lifecycle.signal)
           continue
         }
 
@@ -195,10 +190,7 @@ async function runWorkerPool<Claimed>(
           continue
         }
 
-        await wake.wait(
-          Math.max(1, options.idleDelayMs ?? 250),
-          lifecycle.signal,
-        )
+        await wake.wait(idleDelayMs, lifecycle.signal)
         continue
       }
 
@@ -214,47 +206,43 @@ async function runWorkerPool<Claimed>(
     options.signal?.removeEventListener('abort', forwardAbort)
   }
 
-  if (failed) throw firstError
+  if (failure) throw failure.error
   return { processed }
 }
 
 function resolvePeriodicTasks(options: WorkerLoopOptions): PeriodicTask[] {
   const tasks: PeriodicTask[] = []
-  if (options.retention && options.retentionPruner) {
-    const everyMs = options.retention.everyMs ?? 60_000
+  const { retention, retentionPruner, scheduling, scheduler } = options
+  if (retention && retentionPruner) {
+    const everyMs = retention.everyMs ?? DEFAULT_RETENTION_EVERY_MS
     assertNonNegative(everyMs, 'Retention everyMs')
-    const olderThanMs = parseDurationMs(options.retention.olderThan)
+    const olderThanMs = parseDurationMs(retention.olderThan)
     if (olderThanMs === undefined) {
       throw new Error(
-        `Invalid retention olderThan duration [${options.retention.olderThan}]`,
+        `Invalid retention olderThan duration [${retention.olderThan}]`,
       )
     }
     tasks.push({
       everyMs,
       nextAt: 0,
-      run: (now) =>
-        options
-          .retentionPruner!.pruneTerminalRuns({
-            olderThan: new Date(now.getTime() - olderThanMs),
-            batchSize: options.retention!.batchSize,
-            statuses: options.retention!.statuses,
-          })
-          .then(() => undefined),
+      run: async (now) => {
+        await retentionPruner.pruneTerminalRuns({
+          olderThan: new Date(now.getTime() - olderThanMs),
+          batchSize: retention.batchSize,
+          statuses: retention.statuses,
+        })
+      },
     })
   }
-  if (options.scheduling && options.scheduler) {
-    const everyMs = options.scheduling.everyMs ?? 1_000
+  if (scheduling && scheduler) {
+    const everyMs = scheduling.everyMs ?? DEFAULT_SCHEDULING_EVERY_MS
     assertNonNegative(everyMs, 'Scheduling everyMs')
     tasks.push({
       everyMs,
       nextAt: 0,
-      run: (now) =>
-        options
-          .scheduler!.fireDue({
-            now,
-            limit: options.scheduling!.batchSize,
-          })
-          .then(() => undefined),
+      run: async (now) => {
+        await scheduler.fireDue({ now, limit: scheduling.batchSize })
+      },
     })
   }
   for (const hook of options.maintenance ?? []) {
@@ -289,13 +277,13 @@ async function runDuePeriodicTasks(
   report: (error: unknown) => void,
 ): Promise<void> {
   for (const task of tasks) {
-    const date = Date.now()
-    if (date < task.nextAt) continue
-    task.nextAt = date + task.everyMs
+    const nowMs = Date.now()
+    if (nowMs < task.nextAt) continue
+    task.nextAt = nowMs + task.everyMs
     // A failed pass is retried on its next tick; one transient error must
     // not take the whole worker down with it.
     try {
-      await task.run(new Date(date))
+      await task.run(new Date(nowMs))
     } catch (error) {
       report(error)
     }
@@ -380,15 +368,19 @@ function assertNonNegative(value: number, label: string): void {
   }
 }
 
+// The message fallbacks stay: store/queue adapters living outside this repo
+// still throw plain Errors with these exact texts.
 export function isStaleWorkflowCommandAck(error: unknown): boolean {
   return (
-    error instanceof Error && error.message === 'Stale workflow command ack'
+    error instanceof StaleAckError ||
+    (error instanceof Error && error.message === 'Stale workflow command ack')
   )
 }
 
 export function isAttemptHeartbeatLeaseLost(error: unknown): boolean {
   return (
-    error instanceof Error &&
-    error.message === 'Workflow attempt heartbeat lease lost'
+    error instanceof AttemptLeaseLostError ||
+    (error instanceof Error &&
+      error.message === 'Workflow attempt heartbeat lease lost')
   )
 }
