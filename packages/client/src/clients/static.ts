@@ -18,8 +18,11 @@ const buildCallers = (
 ): Record<string, unknown> => {
   const createProxy = <T extends object>(target: T, current: string[]) => {
     return new Proxy(target, {
-      get: (obj, prop) => {
-        if (prop === 'then') return obj
+      get: (_obj, prop) => {
+        // callers must not look thenable: awaiting one (or returning it from
+        // an async function) would otherwise invoke it with `resolve` as the
+        // payload and fire a real RPC
+        if (prop === 'then') return undefined
 
         const path = [...current, String(prop)]
         const caller = (

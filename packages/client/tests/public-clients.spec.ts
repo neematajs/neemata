@@ -118,6 +118,25 @@ describe('public clients', () => {
     })
   })
 
+  it('StaticClient caller proxies are not thenable', async () => {
+    const call = vi.fn()
+    const { factory } = createMockUnidirectionalTransport(call)
+    const client = new StaticClient(
+      createBaseOptions({ contract: staticContract }),
+      factory,
+      {},
+    )
+
+    const caller = await (async () => client.call.users.profile)()
+    const namespace = await (async () => client.call.users)()
+    const root = await (async () => client.call)()
+
+    expect(call).not.toHaveBeenCalled()
+    expect(typeof caller).toBe('function')
+    expect(namespace).toBeDefined()
+    expect(root).toBeDefined()
+  })
+
   it('StaticClient exposes nested stream procedures through the public stream API', async () => {
     const transport = createMockBidirectionalTransport()
     const client = new StaticClient(
