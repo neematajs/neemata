@@ -30,52 +30,48 @@ export function applyMetricsServerEnvOverrides(
   const pushName = pickEnv(env, 'NEEM_METRICS_PUSH_NAME')
   const pushInterval = pickEnv(env, 'NEEM_METRICS_PUSH_INTERVAL')
 
+  // keeps the caller's config object (and its absence) untouched when the
+  // environment has nothing to say
   if (!port && !host && !path && !pushUrl && !pushName && !pushInterval)
     return { config, applied, warnings }
 
+  const record = (
+    entry: EnvValue | undefined,
+    target: string,
+    from: string | number | undefined,
+    to: string | number | undefined,
+  ) => {
+    if (!entry || to === undefined || to === from) return
+    applied.push({ source: entry.source, path: target, from, to })
+  }
+
+  const push = config?.push
   const next: MetricsServerConfig = { ...config }
 
   if (port) {
     const value = parsePort(port.value, port.source)
-    if (value !== next.port) {
-      applied.push({
-        source: port.source,
-        path: 'server.port',
-        from: next.port,
-        to: value,
-      })
-      next.port = value
-    }
+    record(port, 'server.port', next.port, value)
+    next.port = value
   }
 
-  if (host && host.value !== next.host) {
-    applied.push({
-      source: host.source,
-      path: 'server.host',
-      from: next.host,
-      to: host.value,
-    })
+  if (host) {
+    record(host, 'server.host', next.host, host.value)
     next.host = host.value
   }
 
-  if (path && path.value !== next.path) {
-    applied.push({
-      source: path.source,
-      path: 'server.path',
-      from: next.path,
-      to: path.value,
-    })
+  if (path) {
+    record(path, 'server.path', next.path, path.value)
     next.path = path.value
   }
 
   // Push activates from env alone (NEEM_METRICS_PUSH_URL) so a built image
   // can opt into pushgateway delivery per deployment.
-  if (config?.push || pushUrl) {
-    const url = pushUrl?.value ?? config?.push?.url
-    const name = pushName?.value ?? config?.push?.name
+  if (push || pushUrl) {
+    const url = pushUrl?.value ?? push?.url
+    const name = pushName?.value ?? push?.name
     const interval = pushInterval
       ? parseInterval(pushInterval.value, pushInterval.source)
-      : config?.push?.interval
+      : push?.interval
 
     if (!name) {
       throw new Error(
@@ -88,30 +84,9 @@ export function applyMetricsServerEnvOverrides(
       )
     }
 
-    if (pushUrl && pushUrl.value !== config?.push?.url) {
-      applied.push({
-        source: pushUrl.source,
-        path: 'server.push.url',
-        from: config?.push?.url,
-        to: pushUrl.value,
-      })
-    }
-    if (pushName && pushName.value !== config?.push?.name) {
-      applied.push({
-        source: pushName.source,
-        path: 'server.push.name',
-        from: config?.push?.name,
-        to: pushName.value,
-      })
-    }
-    if (pushInterval && interval !== config?.push?.interval) {
-      applied.push({
-        source: pushInterval.source,
-        path: 'server.push.interval',
-        from: config?.push?.interval,
-        to: interval,
-      })
-    }
+    record(pushUrl, 'server.push.url', push?.url, pushUrl?.value)
+    record(pushName, 'server.push.name', push?.name, pushName?.value)
+    record(pushInterval, 'server.push.interval', push?.interval, interval)
 
     next.push = url === undefined ? { name, interval } : { url, name, interval }
   } else if (pushName || pushInterval) {

@@ -1,6 +1,8 @@
 import type { NeemPluginHooks, NeemRuntimeServerHealth } from '@nmtjs/neem'
 import { Counter, Gauge, Registry } from '@nmtjs/prom-client'
 
+const POOL_STATES = ['ready', 'failed', 'stopped', 'starting'] as const
+
 export type NeemMetricsObserver = { recordHealth(): void }
 
 export type NeemMetricsLifecycle = NeemMetricsObserver & {
@@ -42,7 +44,7 @@ export function createNeemMetricsLifecycle(options: {
       const ready = pool.state === 'ready' ? 1 : 0
       runtimeReady.set({ runtime }, ready)
 
-      for (const state of ['ready', 'failed', 'stopped', 'starting'] as const) {
+      for (const state of POOL_STATES) {
         runtimePoolThreads.set({ runtime, state }, pool[state])
       }
     }

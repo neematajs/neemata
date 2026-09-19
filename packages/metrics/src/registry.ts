@@ -9,7 +9,8 @@ import {
 export const metricsRegistry = register
 export const metricsWorkerRegistry = createMetricsWorkerRegistry()
 
-let defaultMetricsRegistered = false
+// collectDefaultMetrics throws on a registry that already holds them
+const withDefaultMetrics = new WeakSet<Registry>()
 
 export function createMetricsRegistry(): Registry {
   return new Registry()
@@ -17,7 +18,7 @@ export function createMetricsRegistry(): Registry {
 
 export function createMetricsWorkerRegistry(
   options: { primary?: boolean; contentType?: RegistryContentType } = {},
-): WorkerRegistry<any> {
+): WorkerRegistry<RegistryContentType> {
   // @nmtjs/prom-client's typings declare no constructor for WorkerRegistry, so
   // the inferred zero-arg signature rejects the (contentType, primary) arguments
   // the runtime constructor actually accepts. Assert the real signature.
@@ -31,9 +32,7 @@ export function createMetricsWorkerRegistry(
 export function registerDefaultMetrics(
   registry: Registry = metricsRegistry,
 ): void {
-  if (registry === metricsRegistry) {
-    if (defaultMetricsRegistered) return
-    defaultMetricsRegistered = true
-  }
+  if (withDefaultMetrics.has(registry)) return
+  withDefaultMetrics.add(registry)
   collectDefaultMetrics({ register: registry })
 }

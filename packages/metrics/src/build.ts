@@ -2,35 +2,32 @@ import { fileURLToPath } from 'node:url'
 
 import type { RolldownPluginOption } from '@nmtjs/neem'
 
-const PackageNotFoundError = new Error(
-  '"@nmtjs/metrics" package is not found. Make sure it is installed as package.json dependency',
-)
-
 export function createDefaultMetricsRolldownPlugin(): RolldownPluginOption {
   return {
     name: 'nmtjs-metrics-default-loader',
     async transform(this, code, id) {
-      if (this.getModuleInfo?.(id)?.isEntry) {
-        const metricsPackage =
-          (await this.resolve('@nmtjs/metrics')) ??
-          fileURLToPath(new URL('./index.js', import.meta.url))
-        if (!metricsPackage) throw PackageNotFoundError
-        const file = await this.load({
-          id:
-            typeof metricsPackage === 'string'
-              ? metricsPackage
-              : metricsPackage.id,
-        })
-        const lines = [
-          `import { registerDefaultMetrics } from ${JSON.stringify(file.id)}`,
-          'registerDefaultMetrics()',
-          code,
-        ]
-        const map = this.getCombinedSourcemap()
-        return {
-          code: lines.join('\n'),
-          map: { ...map, mappings: `;;${map.mappings}` },
-        }
+      if (!this.getModuleInfo?.(id)?.isEntry) return
+
+      const resolved =
+        (await this.resolve('@nmtjs/metrics')) ??
+        fileURLToPath(new URL('./index.js', import.meta.url))
+      const file = await this.load({
+        id: typeof resolved === 'string' ? resolved : resolved.id,
+      })
+      const injected = [
+        `import { registerDefaultMetrics } from ${JSON.stringify(file.id)}`,
+        'registerDefaultMetrics()',
+      ]
+      const map = this.getCombinedSourcemap()
+
+      return {
+        code: [...injected, code].join('\n'),
+        // one empty mapping group per injected line keeps the original code
+        // aligned with its own mappings
+        map: {
+          ...map,
+          mappings: `${';'.repeat(injected.length)}${map.mappings}`,
+        },
       }
     },
   }

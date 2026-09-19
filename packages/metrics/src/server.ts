@@ -1,4 +1,4 @@
-import type { Server } from 'node:http'
+import type { Server, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
@@ -7,12 +7,14 @@ import { Pushgateway, WorkerRegistry } from '@nmtjs/prom-client'
 
 import { metricsWorkerRegistry } from './registry.ts'
 
+const DEFAULT_HOST = '0.0.0.0'
+const DEFAULT_PORT = 9187
+const DEFAULT_PATH = '/metrics'
+const DEFAULT_PUSH_URL = 'http://127.0.0.1:9091'
+
 /**
- * When used via the Neem plugin, options are baked into the manifest at build
- * time; deploy-time env vars resolved at start override them:
- * `NEEM_METRICS_PORT`, `NEEM_METRICS_HOST`, `NEEM_METRICS_PATH`,
- * `NEEM_METRICS_PUSH_URL` (enables push when not configured here),
- * `NEEM_METRICS_PUSH_NAME`, `NEEM_METRICS_PUSH_INTERVAL` (milliseconds).
+ * Deploy-time `NEEM_METRICS_*` env vars override these when the Neem plugin
+ * is used; see `neem/env.ts`.
  */
 export type MetricsServerConfig = {
   path?: string
@@ -38,18 +40,28 @@ export function createMetricsServer(options: {
   const logger = options.logger
   const config = options.config ?? {}
   const registry = options.registry ?? metricsWorkerRegistry
-  const host = config.host ?? '0.0.0.0'
-  const port = config.port ?? 9187
-  const path = config.path ?? '/metrics'
+  const host = config.host ?? DEFAULT_HOST
+  const port = config.port ?? DEFAULT_PORT
+  const path = config.path ?? DEFAULT_PATH
   let server: Server | undefined
-  let pushGateway: Pushgateway<RegistryContentType> | undefined
-  let pushJobName: string | undefined
-  let pushInterval: NodeJS.Timeout | undefined
+  let push: MetricsPush | undefined
+
+  async function respond(response: ServerResponse) {
+    try {
+      const metrics = await collectMetrics(registry)
+      response.writeHead(200)
+      response.end(metrics)
+    } catch (cause) {
+      logger.error(new Error('Metrics collection error', { cause }))
+      response.writeHead(500)
+      response.end('Internal Server Error')
+    }
+  }
 
   return {
     async start() {
       if (server) return
-      server = createServer((request, response) => {
+      const httpServer = createServer((request, response) => {
         const url = new URL(
           request.url ?? '/',
           `http://${request.headers.host ?? 'localhost'}`,
@@ -61,42 +73,24 @@ export function createMetricsServer(options: {
         }
 
         response.setHeader('content-type', registry.contentType)
-        Promise.resolve()
-          .then(() => collectMetrics(registry))
-          .then((metrics) => {
-            response.writeHead(200)
-            response.end(metrics)
-          })
-          .catch((cause) => {
-            logger.error(new Error('Metrics collection error', { cause }))
-            response.writeHead(500)
-            response.end('Internal Server Error')
-          })
+        void respond(response)
       })
+      server = httpServer
 
       if (config.push) {
-        pushJobName = config.push.name
-        pushGateway = new Pushgateway(
-          config.push.url ?? 'http://127.0.0.1:9091',
-          {},
-          createPushGatewayRegistry(registry),
-        )
-        pushInterval = setInterval(() => {
-          void pushMetrics(pushGateway, pushJobName, logger)
-        }, config.push.interval)
+        push = createPush(config.push, registry, logger)
+        push.start()
       }
 
       await new Promise<void>((resolve) => {
-        server!.listen({ host, port }, resolve)
+        httpServer.listen({ host, port }, resolve)
       })
-      logger.debug(getMetricsServerListenMessage(server, path))
+      logger.debug(getMetricsServerListenMessage(httpServer, path))
     },
     async stop() {
-      if (pushInterval) clearInterval(pushInterval)
-      pushInterval = undefined
-      await pushMetrics(pushGateway, pushJobName, logger)
-      pushGateway = undefined
-      pushJobName = undefined
+      const pending = push
+      push = undefined
+      await pending?.stop()
 
       const current = server
       server = undefined
@@ -111,15 +105,37 @@ export function createMetricsServer(options: {
   }
 }
 
-async function pushMetrics(
-  gateway: Pushgateway<RegistryContentType> | undefined,
-  jobName: string | undefined,
+type MetricsPush = { start(): void; stop(): Promise<void> }
+
+function createPush(
+  config: NonNullable<MetricsServerConfig['push']>,
+  registry: MetricsRegistry,
   logger: Logger,
-): Promise<void> {
-  if (!gateway || !jobName) return
-  await gateway.pushAdd({ jobName }).catch((cause) => {
-    logger.error(new Error('Metrics push error', { cause }))
-  })
+): MetricsPush {
+  const { name: jobName, interval } = config
+  const gateway = new Pushgateway(
+    config.url ?? DEFAULT_PUSH_URL,
+    {},
+    createPushGatewayRegistry(registry),
+  )
+  let timer: NodeJS.Timeout | undefined
+
+  const flush = () =>
+    gateway.pushAdd({ jobName }).catch((cause) => {
+      logger.error(new Error('Metrics push error', { cause }))
+    })
+
+  return {
+    start() {
+      timer = setInterval(() => void flush(), interval)
+    },
+    async stop() {
+      if (timer) clearInterval(timer)
+      timer = undefined
+      // a final push so the last scrape window is not lost
+      await flush()
+    },
+  }
 }
 
 function getMetricsServerListenMessage(server: Server, path: string): string {
@@ -161,6 +177,8 @@ function collectMetrics(registry: MetricsRegistry) {
     : registry.metrics()
 }
 
+// Pushgateway only ever calls `.metrics()`, so a collector stands in for a
+// full Registry here.
 function createPushGatewayRegistry(registry: MetricsRegistry): Registry {
   return { metrics: () => collectMetrics(registry) } as Registry
 }

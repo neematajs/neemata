@@ -18,10 +18,12 @@ import { createNeemMetricsLifecycle } from './observer.ts'
 type MetricsPluginOptions = { server?: MetricsServerConfig }
 
 export default definePluginHooks((ctx) => {
-  const options = parseOptions(ctx.options)
+  // the manifest only ever carries what this package's own metrics() factory
+  // wrote, so the shape is ours to trust
+  const options = ctx.options as MetricsPluginOptions | undefined
   // Options were frozen into the manifest at build time; the factory runs at
   // start, so the live environment gets the final say on server/push knobs.
-  const overrides = applyMetricsServerEnvOverrides(options.server, process.env)
+  const overrides = applyMetricsServerEnvOverrides(options?.server, process.env)
   for (const override of overrides.applied)
     ctx.logger.info(formatAppliedMetricsEnvOverride(override))
   for (const warning of overrides.warnings) ctx.logger.warn(warning)
@@ -49,16 +51,3 @@ export default definePluginHooks((ctx) => {
     },
   }
 })
-
-function parseOptions(options: unknown): MetricsPluginOptions {
-  if (!isRecord(options)) return {}
-  return {
-    server: isRecord(options.server)
-      ? (options.server as MetricsServerConfig)
-      : undefined,
-  }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
