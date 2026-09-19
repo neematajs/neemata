@@ -66,10 +66,8 @@ export async function resolveEnvConfig<Variables extends EnvConfigVariables>(
     // Awaited unconditionally: Standard Schema allows async validation, and
     // `instanceof Promise` would misclassify cross-realm promises/thenables.
     const result = await schema['~standard'].validate(source[name])
-    // Collect issues across all variables instead of failing on the first
-    // one, so a misconfigured environment is reported in a single pass.
-    // Merged rather than assigned: multiple config keys may read the same
-    // environment variable, and each schema's issues must survive.
+    // Collected rather than thrown so one pass reports the whole environment,
+    // and merged because several keys may read the same variable.
     if (result.issues) {
       issues[name] = [...(issues[name] ?? []), ...result.issues]
     } else {
