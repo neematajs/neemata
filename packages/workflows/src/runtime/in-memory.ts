@@ -22,9 +22,10 @@ import {
   createRunCoordinationExecutor,
 } from './in-memory/executors.ts'
 import { inspectQueueItem } from './in-memory/queue.ts'
+import { createRun } from './in-memory/records.ts'
 import { createScheduler } from './in-memory/scheduler.ts'
 import { createState } from './in-memory/state.ts'
-import { createRun, createStore } from './in-memory/store.ts'
+import { createStore } from './in-memory/store.ts'
 
 const DEFAULT_MAX_DELIVERIES = 20
 

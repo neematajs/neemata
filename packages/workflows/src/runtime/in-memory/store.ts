@@ -1,18 +1,13 @@
 import type {
-  RunSnapshot,
   StoredAttempt,
-  StoredError,
   StoredNode,
   StoredNodeChild,
   StoredRun,
 } from '../state.ts'
-import type { RuntimeNodeStatus, RuntimeRunStatus } from '../status.ts'
 import type {
   AttemptSummary,
-  CreateRunInput,
   DeadWorkflowCommand,
   ListRunsFilter,
-  NodeChildRef,
   NodeChildSummary,
   NodeSummary,
   RunFamilyEntry,
@@ -20,22 +15,13 @@ import type {
   WorkflowStore,
 } from '../store.ts'
 import type { State } from './state.ts'
-import { SELF_CHILD_KEY, TASK_RUN_NODE_NAME } from '../child-key.ts'
-import { continueRun } from '../commands.ts'
-import { WorkflowRunConflictError, toStoredError } from '../errors.ts'
-import { jsonContains, sameValue, valueKey } from '../json.ts'
+import { toStoredError } from '../errors.ts'
+import { jsonContains, sameValue } from '../json.ts'
 import { normalizeBatchSize, normalizePruneStatuses } from '../limits.ts'
-import { validateFailedRunRetry } from '../retry-validation.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../status.ts'
-import {
-  NODE_TRANSITIONS,
-  RUN_TRANSITIONS,
-  canTransition,
-} from '../transitions.ts'
+import { ATTEMPT_TRANSITIONS, canTransition } from '../transitions.ts'
 import {
   commandQueues,
-  dispatchAttempt,
-  enqueueContinue,
   findDeadIndex,
   liveContinueIndex,
   mergeContinue,
@@ -44,6 +30,19 @@ import {
   revive,
   toDeadCommand,
 } from './queue.ts'
+import {
+  createChildAttempt,
+  createRun,
+  fencedCurrentAttempt,
+  requireChild,
+  settleAttempt,
+  transitionChild,
+  transitionNode,
+  transitionRun,
+  writeChild,
+  writeNode,
+} from './records.ts'
+import { reopenFailedRun } from './retry.ts'
 import {
   childMapKey,
   compareAttempts,
@@ -60,276 +59,8 @@ import {
   sortedChildren,
 } from './state.ts'
 
-type RunPatch = {
-  readonly status: RuntimeRunStatus
-  readonly output?: unknown
-  readonly error?: StoredError
-}
-
-type NodePatch = {
-  readonly status?: RuntimeNodeStatus
-  readonly input?: unknown
-  readonly output?: unknown
-  readonly error?: StoredError
-  readonly selectedCase?: string
-}
-
-type ChildPatch = {
-  readonly status?: RuntimeNodeStatus
-  readonly output?: unknown
-  readonly error?: StoredError
-  readonly childRunId?: string
-  readonly currentAttemptId?: string
-  readonly attemptCount?: number
-}
-
-type AttemptPatch = {
-  readonly status: StoredAttempt['status']
-  readonly output?: unknown
-  readonly error?: StoredError
-}
-
-/**
- * Creates the run, or returns the existing one an idempotency key or a
- * joinable unique constraint points at.
- */
-export function createRun(
-  state: State,
-  input: CreateRunInput,
-): { readonly run: StoredRun; readonly created: boolean } {
-  if (input.idempotencyKey) {
-    const existingId = state.runIdempotencyKeys.get(
-      valueKey(input.idempotencyKey),
-    )
-    if (existingId) {
-      const existing = state.runs.get(existingId)
-      if (existing && matchesCreateInput(existing, input)) {
-        return { run: existing, created: false }
-      }
-
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
-    }
-  }
-
-  if (input.unique) {
-    const uniqueKeys =
-      input.unique.scope === 'all'
-        ? state.allUniqueRunKeys
-        : state.activeUniqueRunKeys
-    const conflictingId = uniqueKeys.get(valueKey(input.unique.key))
-    const conflicting =
-      conflictingId === undefined ? undefined : state.runs.get(conflictingId)
-    if (conflicting) {
-      if (input.unique.behavior === 'join') {
-        return { run: conflicting, created: false }
-      }
-      throw new WorkflowRunConflictError({
-        runId: conflicting.id,
-        status: conflicting.status,
-        key: input.unique.key,
-        scope: input.unique.scope,
-      })
-    }
-  }
-
-  const at = state.now()
-  const runId = state.newId('run')
-  const run: StoredRun = {
-    id: runId,
-    kind: input.kind ?? 'workflow',
-    name: runnableName(input),
-    workflowName: input.workflowName,
-    ...(input.taskName === undefined ? {} : { taskName: input.taskName }),
-    status: 'queued',
-    input: input.input,
-    ...(input.parentRunId === undefined
-      ? {}
-      : { parentRunId: input.parentRunId }),
-    ...(input.parentNodeName === undefined
-      ? {}
-      : { parentNodeName: input.parentNodeName }),
-    rootRunId: input.rootRunId ?? runId,
-    tags: input.tags ?? {},
-    ...(input.idempotencyKey === undefined
-      ? {}
-      : { idempotencyKey: input.idempotencyKey }),
-    ...(input.unique === undefined ? {} : { unique: input.unique }),
-    version: 1,
-    activeSince: at,
-    createdAt: at,
-    updatedAt: at,
-  }
-  state.runs.set(run.id, run)
-  if (input.idempotencyKey) {
-    state.runIdempotencyKeys.set(valueKey(input.idempotencyKey), run.id)
-  }
-  if (input.unique) {
-    const uniqueKeys =
-      input.unique.scope === 'all'
-        ? state.allUniqueRunKeys
-        : state.activeUniqueRunKeys
-    uniqueKeys.set(valueKey(input.unique.key), run.id)
-  }
-  state.emitRunEvent(run)
-
-  return { run, created: true }
-}
-
 export function createStore(state: State): WorkflowStore {
   const { runs, nodes, children, attempts, now, newId } = state
-
-  // mirrors the partial index predicate: a terminal run leaves the active
-  // uniqueness scope and frees its key
-  const releaseUniqueKey = (run: StoredRun) => {
-    if (run.unique?.scope !== 'active') return
-    const key = valueKey(run.unique.key)
-    if (state.activeUniqueRunKeys.get(key) === run.id) {
-      state.activeUniqueRunKeys.delete(key)
-    }
-  }
-
-  const transitionRun = (runId: string, patch: RunPatch) => {
-    const run = runs.get(runId)
-    if (!run) return undefined
-    if (!canTransition(RUN_TRANSITIONS, run.status, patch.status)) return run
-
-    const updated: StoredRun = {
-      ...run,
-      ...patch,
-      version: run.version + 1,
-      updatedAt: now(),
-    }
-    runs.set(runId, updated)
-    if (isTerminalRunStatus(updated.status)) releaseUniqueKey(updated)
-    state.emitRunEvent(updated)
-    return updated
-  }
-
-  const writeNode = (node: StoredNode, patch: NodePatch) => {
-    const updated: StoredNode = {
-      ...node,
-      ...patch,
-      version: node.version + 1,
-      updatedAt: now(),
-    }
-    nodes.set(nodeKey(node.runId, node.name), updated)
-    state.emitStatusChange(node, updated)
-    return updated
-  }
-
-  const transitionNode = (
-    runId: string,
-    nodeName: string,
-    patch: NodePatch & { readonly status: RuntimeNodeStatus },
-  ) => {
-    const node = nodes.get(nodeKey(runId, nodeName))
-    if (!node) return undefined
-    if (!canTransition(NODE_TRANSITIONS, node.status, patch.status)) return node
-
-    return writeNode(node, patch)
-  }
-
-  const writeChild = (child: StoredNodeChild, patch: ChildPatch) => {
-    const updated: StoredNodeChild = {
-      ...child,
-      ...patch,
-      version: child.version + 1,
-      updatedAt: now(),
-    }
-    children.set(childMapKey(child), updated)
-    state.emitStatusChange(child, updated)
-    return updated
-  }
-
-  const transitionChild = (
-    ref: NodeChildRef,
-    patch: ChildPatch & { readonly status: RuntimeNodeStatus },
-  ) => {
-    const child = children.get(childMapKey(ref))
-    if (!child) return undefined
-    if (!canTransition(NODE_TRANSITIONS, child.status, patch.status)) {
-      return child
-    }
-
-    return writeChild(child, patch)
-  }
-
-  const requireChild = (ref: NodeChildRef) => {
-    const child = children.get(childMapKey(ref))
-    if (!child) {
-      throw new Error(`Missing node child [${describeChild(ref)}]`)
-    }
-    return child
-  }
-
-  const settleAttempt = (attempt: StoredAttempt, patch: AttemptPatch) => {
-    const updated: StoredAttempt = { ...attempt, ...patch, completedAt: now() }
-    attempts.set(attempt.id, updated)
-    state.emitStatusChange(attempt, updated)
-    return updated
-  }
-
-  const createChildAttempt = (
-    child: StoredNodeChild,
-    input: unknown,
-    idempotencyKey: readonly unknown[] | undefined,
-  ): StoredAttempt => {
-    const previous =
-      child.currentAttemptId === undefined
-        ? undefined
-        : attempts.get(child.currentAttemptId)
-    const attempt: StoredAttempt = {
-      id: newId('attempt'),
-      runId: child.runId,
-      nodeName: child.nodeName,
-      childKey: child.childKey,
-      status: 'started',
-      leaseToken: newId('attempt-lease'),
-      attemptNumber: child.attemptCount + 1,
-      retryAttemptNumber: (previous?.retryAttemptNumber ?? 0) + 1,
-      input,
-      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      dispatchedAt: now(),
-    }
-    attempts.set(attempt.id, attempt)
-    state.emitStatusChange(undefined, attempt)
-    writeChild(child, {
-      status: 'running',
-      currentAttemptId: attempt.id,
-      attemptCount: child.attemptCount + 1,
-    })
-
-    // Aggregate hint only: the node mirrors "some child is executing" so
-    // observers see progress without deriving it from child rows.
-    const node = nodes.get(nodeKey(child.runId, child.nodeName))
-    // Self-inclusive like the postgres guard, so version bumps stay in
-    // lockstep across adapters even when the node is already running.
-    if (
-      node &&
-      (node.status === 'running' ||
-        canTransition(NODE_TRANSITIONS, node.status, 'running'))
-    ) {
-      writeNode(node, { status: 'running' })
-    }
-
-    return attempt
-  }
-
-  const fencedCurrentAttempt = (attemptId: string, leaseToken: string) => {
-    const attempt = attempts.get(attemptId)
-    if (!attempt || attempt.leaseToken !== leaseToken) return undefined
-    if (attempt.status !== 'started') return undefined
-
-    const child = children.get(childMapKey(attempt))
-    if (
-      !child ||
-      isTerminalNodeStatus(child.status) ||
-      child.currentAttemptId !== attemptId
-    ) {
-      return undefined
-    }
-    return { attempt, child }
-  }
 
   const runSummary = (run: StoredRun): RunSummary => {
     const { input: _input, output: _output, ...summary } = run
@@ -358,166 +89,6 @@ export function createStore(state: State): WorkflowStore {
   const attemptSummary = (attempt: StoredAttempt): AttemptSummary => {
     const { input: _input, output: _output, ...summary } = attempt
     return summary
-  }
-
-  const familySnapshots = (runId: string) => {
-    const snapshots: RunSnapshot[] = []
-
-    for (const run of runs.values()) {
-      if (run.rootRunId !== runId && run.id !== runId) continue
-      snapshots.push({
-        run,
-        nodes: runNodes(state, run.id),
-        children: runChildren(state, run.id).sort(
-          (left, right) => left.ordinal - right.ordinal,
-        ),
-        attempts: runAttempts(state, run.id),
-      })
-    }
-
-    return snapshots
-  }
-
-  /** A run with a live lease or an unexpired claim is still executing. */
-  const assertIdle = (run: StoredRun) => {
-    const at = new Date()
-    const lease = state.runLeases.get(run.id)
-    if (lease && lease.expiresAt > at) {
-      throw new Error(`Run [${run.id}] is busy`)
-    }
-
-    for (const claimed of [
-      ...state.claimedAttemptCommands.values(),
-      ...state.claimedContinueCommands.values(),
-    ]) {
-      if (claimed.payload.runId === run.id && claimed.leaseExpiresAt > at) {
-        throw new Error(`Run [${run.id}] has an active attempt`)
-      }
-    }
-
-    if (!run.unique) return
-
-    const uniqueKeys =
-      run.unique.scope === 'all'
-        ? state.allUniqueRunKeys
-        : state.activeUniqueRunKeys
-    const holder = uniqueKeys.get(valueKey(run.unique.key))
-    if (holder && holder !== run.id) {
-      throw new WorkflowRunConflictError({
-        runId: holder,
-        status: runs.get(holder)!.status,
-        key: run.unique.key,
-        scope: run.unique.scope,
-      })
-    }
-  }
-
-  const reopenFamilyRun = (snapshot: RunSnapshot, at: Date) => {
-    const { run } = snapshot
-    const updated: StoredRun = {
-      ...run,
-      status: 'queued',
-      error: undefined,
-      output: undefined,
-      activeSince: at,
-      updatedAt: at,
-      version: run.version + 1,
-    }
-    runs.set(run.id, updated)
-    state.runLeases.delete(run.id)
-
-    for (const queue of commandQueues(state)) {
-      for (let index = queue.length - 1; index >= 0; index--) {
-        const item = queue[index]!
-        if (item.payload.runId !== run.id) continue
-        if (item.deadAt) {
-          queue[index] = { ...item, reapedAt: at }
-        } else {
-          queue.splice(index, 1)
-        }
-      }
-    }
-    for (const [commandId, claimed] of state.claimedAttemptCommands) {
-      if (claimed.payload.runId === run.id) {
-        state.claimedAttemptCommands.delete(commandId)
-      }
-    }
-    for (const [commandId, claimed] of state.claimedContinueCommands) {
-      if (claimed.payload.runId === run.id) {
-        state.claimedContinueCommands.delete(commandId)
-      }
-    }
-
-    if (run.unique) {
-      const uniqueKeys =
-        run.unique.scope === 'all'
-          ? state.allUniqueRunKeys
-          : state.activeUniqueRunKeys
-      uniqueKeys.set(valueKey(run.unique.key), run.id)
-    }
-
-    for (const node of snapshot.nodes) {
-      if (node.status === 'completed') continue
-      nodes.set(nodeKey(run.id, node.name), {
-        ...node,
-        status: 'pending',
-        error: undefined,
-        output: undefined,
-        updatedAt: at,
-        version: node.version + 1,
-      })
-    }
-
-    for (const child of snapshot.children) {
-      if (child.status === 'completed') continue
-      const node = snapshot.nodes.find(({ name }) => name === child.nodeName)
-      if (node?.status === 'completed') continue
-      children.set(childMapKey(child), {
-        ...child,
-        currentAttemptId: undefined,
-        status: 'pending',
-        error: undefined,
-        output: undefined,
-        updatedAt: at,
-        version: child.version + 1,
-      })
-    }
-
-    state.emitRunEvent(updated)
-  }
-
-  /** Puts the reopened root back on a queue, as its original start did. */
-  const redispatchRoot = (root: StoredRun) => {
-    if (root.kind !== 'task') {
-      enqueueContinue(state, continueRun(root))
-      return
-    }
-
-    const child = children.get(
-      childMapKey({
-        runId: root.id,
-        nodeName: TASK_RUN_NODE_NAME,
-        childKey: SELF_CHILD_KEY,
-      }),
-    )!
-    const previous = latestAttempt(state, child)!
-    const attempt = createChildAttempt(
-      child,
-      previous.input,
-      previous.idempotencyKey,
-    )
-    dispatchAttempt(state, {
-      kind: 'taskAttempt',
-      runId: root.id,
-      workflowName: root.workflowName,
-      taskName: root.taskName ?? root.name,
-      nodeName: TASK_RUN_NODE_NAME,
-      childKey: child.childKey,
-      attemptId: attempt.id,
-      leaseToken: attempt.leaseToken!,
-      input: attempt.input,
-      idempotencyKey: attempt.idempotencyKey,
-    })
   }
 
   const collectRunTreeIds = (rootIds: readonly string[]) => {
@@ -612,20 +183,7 @@ export function createStore(state: State): WorkflowStore {
       return createRun(state, input).run
     },
     async reopenFailedRun(params) {
-      const reopening = validateFailedRunRetry(
-        familySnapshots(params.runId),
-        params,
-      )
-      for (const { run } of reopening) assertIdle(run)
-      const at = now()
-
-      // No await between validation, reopening and enqueue: observers only see
-      // the committed family, and duplicate retries cannot interleave.
-      for (const snapshot of reopening) reopenFamilyRun(snapshot, at)
-
-      const root = runs.get(params.runId)!
-      redispatchRoot(root)
-      return root
+      return reopenFailedRun(state, params)
     },
     async listRuns(filter = {}) {
       const limit = filter.limit ?? Number.POSITIVE_INFINITY
@@ -930,7 +488,7 @@ export function createStore(state: State): WorkflowStore {
       if (!node) throw new Error(`Missing node [${runId}.${nodeName}]`)
       if (isTerminalNodeStatus(node.status)) return node
 
-      return writeNode(node, { input })
+      return writeNode(state, node, { input })
     },
     async selectNodeCase({ runId, nodeName, caseKey }) {
       const node = nodes.get(nodeKey(runId, nodeName))
@@ -941,58 +499,61 @@ export function createStore(state: State): WorkflowStore {
         throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
       }
 
-      return writeNode(node, { selectedCase: caseKey })
+      return writeNode(state, node, { selectedCase: caseKey })
     },
     async createAttempt(input) {
-      const child = requireChild(input)
+      const child = requireChild(state, input)
       if (isTerminalNodeStatus(child.status)) {
         throw new Error(
           `Terminal node child [${describeChild(input)}] cannot create attempt`,
         )
       }
 
-      return createChildAttempt(child, input.input, input.idempotencyKey)
+      return createChildAttempt(state, child, input.input, input.idempotencyKey)
     },
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
-      const fenced = fencedCurrentAttempt(attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
       if (!fenced) return undefined
 
-      const updated = settleAttempt(fenced.attempt, {
+      const updated = settleAttempt(state, fenced.attempt, {
         status: 'completed',
         output,
       })
-      writeChild(fenced.child, { status: 'completed', output })
+      writeChild(state, fenced.child, { status: 'completed', output })
       return updated
     },
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
-      const fenced = fencedCurrentAttempt(attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
       if (!fenced) return undefined
 
-      return settleAttempt(fenced.attempt, {
+      return settleAttempt(state, fenced.attempt, {
         status: 'failed',
         error: toStoredError(error),
       })
     },
     async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
-      const fenced = fencedCurrentAttempt(attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
       if (!fenced) return undefined
 
-      return settleAttempt(fenced.attempt, {
+      return settleAttempt(state, fenced.attempt, {
         status: 'timedOut',
         error: toStoredError(error),
       })
     },
     async completeNode({ runId, nodeName, output }) {
-      return transitionNode(runId, nodeName, { status: 'completed', output })
+      return transitionNode(state, runId, nodeName, {
+        status: 'completed',
+        output,
+      })
     },
     async failNode({ runId, nodeName, error }) {
-      return transitionNode(runId, nodeName, {
+      return transitionNode(state, runId, nodeName, {
         status: 'failed',
         error: toStoredError(error),
       })
     },
     async cancelNode({ runId, nodeName }) {
-      return transitionNode(runId, nodeName, { status: 'cancelled' })
+      return transitionNode(state, runId, nodeName, { status: 'cancelled' })
     },
     async waitNode({ runId, nodeName }) {
       const node = nodes.get(nodeKey(runId, nodeName))
@@ -1001,29 +562,29 @@ export function createStore(state: State): WorkflowStore {
         return node
       }
 
-      return writeNode(node, { status: 'waiting' })
+      return writeNode(state, node, { status: 'waiting' })
     },
     async markRunRunning({ runId }) {
-      return transitionRun(runId, { status: 'running' })
+      return transitionRun(state, runId, { status: 'running' })
     },
     async markRunWaiting({ runId }) {
-      return transitionRun(runId, { status: 'waiting' })
+      return transitionRun(state, runId, { status: 'waiting' })
     },
     async completeRun({ runId, output }) {
-      return transitionRun(runId, { status: 'completed', output })
+      return transitionRun(state, runId, { status: 'completed', output })
     },
     async failRun({ runId, error }) {
-      return transitionRun(runId, {
+      return transitionRun(state, runId, {
         status: 'failed',
         error: toStoredError(error),
       })
     },
     async cancelRun({ runId }) {
-      return transitionRun(runId, { status: 'cancelled' })
+      return transitionRun(state, runId, { status: 'cancelled' })
     },
     async requestRunCancellation({ runId }) {
       const before = runs.get(runId)
-      const updated = transitionRun(runId, { status: 'cancelling' })
+      const updated = transitionRun(state, runId, { status: 'cancelling' })
       if (updated && updated !== before) {
         state.fire(state.cancellationWakeListeners.get(runId))
       }
@@ -1034,15 +595,17 @@ export function createStore(state: State): WorkflowStore {
 
       for (const node of runNodes(state, runId)) {
         if (isTerminalNodeStatus(node.status)) continue
-        cancelled.push(writeNode(node, { status: 'cancelled' }))
+        cancelled.push(writeNode(state, node, { status: 'cancelled' }))
       }
       for (const child of runChildren(state, runId)) {
         if (isTerminalNodeStatus(child.status)) continue
-        writeChild(child, { status: 'cancelled' })
+        writeChild(state, child, { status: 'cancelled' })
       }
       for (const attempt of runAttempts(state, runId)) {
-        if (attempt.status !== 'started') continue
-        settleAttempt(attempt, { status: 'cancelled' })
+        if (!canTransition(ATTEMPT_TRANSITIONS, attempt.status, 'cancelled')) {
+          continue
+        }
+        settleAttempt(state, attempt, { status: 'cancelled' })
       }
 
       return cancelled
@@ -1099,7 +662,7 @@ export function createStore(state: State): WorkflowStore {
       return { children: sortedChildren(created), created: true }
     },
     async ensureChildRun(params) {
-      const child = requireChild(params)
+      const child = requireChild(state, params)
 
       if (child.childRunId !== undefined) {
         const childRun = runs.get(child.childRunId)
@@ -1148,14 +711,14 @@ export function createStore(state: State): WorkflowStore {
           ? {}
           : { idempotencyKey: params.idempotencyKey }),
       })
-      const linked = writeChild(child, {
+      const linked = writeChild(state, child, {
         childRunId: childRun.id,
         status: 'running',
       })
       return { child: linked, childRun, created: true }
     },
     async ensureChildAttempt(params) {
-      const child = requireChild(params)
+      const child = requireChild(state, params)
 
       if (child.attemptCount > 0) {
         const current = latestAttempt(state, child)
@@ -1170,6 +733,7 @@ export function createStore(state: State): WorkflowStore {
         ) {
           return {
             attempt: createChildAttempt(
+              state,
               child,
               current.input,
               current.idempotencyKey,
@@ -1187,18 +751,25 @@ export function createStore(state: State): WorkflowStore {
       }
 
       return {
-        attempt: createChildAttempt(child, params.input, params.idempotencyKey),
+        attempt: createChildAttempt(
+          state,
+          child,
+          params.input,
+          params.idempotencyKey,
+        ),
         created: true,
       }
     },
     async completeNodeChild({ runId, nodeName, childKey, output }) {
       return transitionChild(
+        state,
         { runId, nodeName, childKey },
         { status: 'completed', output },
       )
     },
     async failNodeChild({ runId, nodeName, childKey, error }) {
       return transitionChild(
+        state,
         { runId, nodeName, childKey },
         { status: 'failed', error: toStoredError(error) },
       )
@@ -1212,23 +783,6 @@ export function createStore(state: State): WorkflowStore {
   }
 
   return store
-}
-
-function runnableName(input: CreateRunInput) {
-  return input.name ?? input.taskName ?? input.workflowName
-}
-
-function matchesCreateInput(run: StoredRun, input: CreateRunInput) {
-  return (
-    run.kind === (input.kind ?? 'workflow') &&
-    run.name === runnableName(input) &&
-    run.workflowName === input.workflowName &&
-    run.taskName === input.taskName &&
-    run.parentRunId === input.parentRunId &&
-    run.parentNodeName === input.parentNodeName &&
-    run.rootRunId === (input.rootRunId ?? run.id) &&
-    sameValue(run.input, input.input)
-  )
 }
 
 function matchesFilter(run: StoredRun, filter: ListRunsFilter) {

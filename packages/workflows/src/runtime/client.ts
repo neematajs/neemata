@@ -18,6 +18,7 @@ import type { WorkflowRuntimeAtomicStart } from './coordinator/start.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { WorkflowScheduler } from './scheduler.ts'
 import type { RunSnapshot, StoredError, StoredRun } from './state.ts'
+import type { RuntimeRunStatus } from './status.ts'
 import type {
   DeadWorkflowCommand,
   DeleteRunResult,
@@ -99,7 +100,7 @@ export type WatchEvent =
   | { readonly kind: 'change' }
   | {
       readonly kind: 'run'
-      readonly status: StoredRun['status']
+      readonly status: RuntimeRunStatus
       readonly error?: StoredError
     }
 
@@ -363,7 +364,7 @@ async function* watchRun(params: {
   // peek reads themselves are deliberately uncapped (one cheap PK read per
   // wake, bounded by the window) — capping them would trade terminal latency
   // for savings on the wrong side of the debounce.
-  let lastStatus: StoredRun['status'] | undefined
+  let lastStatus: RuntimeRunStatus | undefined
   let lastWakeConsumedAt = 0
   const waitForChange = async (): Promise<boolean> => {
     if (!wakePending) await sleep(pollIntervalMs)
