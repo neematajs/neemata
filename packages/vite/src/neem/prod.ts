@@ -10,7 +10,7 @@ import type { Server, ServerMiddleware } from 'srvx'
 import { FastResponse, serve } from 'srvx/node'
 import { serveStatic } from 'srvx/static'
 
-import type { NeemViteRuntimeFactory } from '../types.ts'
+import type { NeemViteProdOptions, NeemViteRuntimeFactory } from '../types.ts'
 import { APP_DIR } from '../constants.ts'
 
 /**
@@ -19,9 +19,12 @@ import { APP_DIR } from '../constants.ts'
  * The app directory is found relative to the bundle itself and srvx is
  * bundled in, so the artifact stays relocatable and self-contained.
  */
-const createViteProdRuntime: NeemViteRuntimeFactory = (ctx, options) => {
+const createViteProdRuntime: NeemViteRuntimeFactory<NeemViteProdOptions> = (
+  ctx,
+  options,
+) => {
   const appDir = fileURLToPath(new URL(`./${APP_DIR}/`, import.meta.url))
-  const base = options.base ?? '/'
+  const { base } = options
   // A path-routed proxy already strips the base prefix upstream; any other
   // routing forwards it verbatim, so the static layer must strip it to match
   // the on-disk layout (vite build writes to the outDir root regardless of
@@ -108,12 +111,12 @@ function withStaticPolicy(
   stripPrefix: string | undefined,
 ): ServerMiddleware {
   return async (request, next) => {
-    let pathname = new URL(request.url).pathname
+    const url = new URL(request.url)
+    let { pathname } = url
     if (
       stripPrefix &&
       (pathname === stripPrefix || pathname.startsWith(`${stripPrefix}/`))
     ) {
-      const url = new URL(request.url)
       pathname = pathname.slice(stripPrefix.length) || '/'
       url.pathname = pathname
       // ServerRequest#_url is srvx's documented parsed-URL slot and

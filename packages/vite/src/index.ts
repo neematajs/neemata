@@ -2,8 +2,8 @@ import type { NeemMarkedRuntimeDeclaration } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
 import type { NeemViteRuntimeOptions } from './types.ts'
+import { normalizeBase } from './base.ts'
 import { neemViteArtifactPlugin } from './plugin.ts'
-import { normalizeBase } from './vite-loader.ts'
 
 export type {
   NeemViteBakedOptions,
@@ -42,8 +42,8 @@ export function createViteRuntime(
   }
 
   return defineRuntime({
-    ...(options.name ? { name: options.name } : {}),
-    ...(options.proxy ? { proxy: options.proxy } : {}),
+    name: options.name,
+    proxy: options.proxy,
     planner: '@nmtjs/vite/neem/planner',
     worker: {
       entry: '@nmtjs/vite/neem/worker',

@@ -4,6 +4,9 @@ import { pathToFileURL } from 'node:url'
 
 import type * as Vite from 'vite'
 
+import { normalizeBase } from './base.ts'
+import { HMR_ENDPOINT_KEYS } from './constants.ts'
+
 export type ViteModule = typeof Vite
 
 /**
@@ -80,6 +83,11 @@ export async function loadAppViteConfig(
   return { config, base, warnings, dependencies }
 }
 
+/**
+ * Drops the topology options the proxy contract owns. The port is left unset
+ * on purpose: the dev implementation allocates it and must rebind the same
+ * one across vite's self-restarts, so it owns both `port` and `strictPort`.
+ */
 function sanitizeServer(
   server: Vite.ServerOptions | undefined,
   warnings: string[],
@@ -111,13 +119,10 @@ function sanitizeServer(
     )
   }
 
-  const sanitizedHmr = sanitizeHmr(hmr, warnings)
   return {
     ...rest,
     host: '127.0.0.1',
-    port: 0,
-    strictPort: false,
-    hmr: sanitizedHmr,
+    hmr: sanitizeHmr(hmr, warnings),
   }
 }
 
@@ -128,20 +133,20 @@ function sanitizeHmr(
   warnings: string[],
 ): Vite.ServerOptions['hmr'] {
   if (hmr === undefined || hmr === false) return hmr
-  const options = hmr === true ? {} : hmr
-  const { host, port, clientPort, server, protocol, ...rest } = options
-  if (
-    host !== undefined ||
-    port !== undefined ||
-    clientPort !== undefined ||
-    server !== undefined ||
-    protocol !== undefined
-  ) {
+  const sanitized = { ...(hmr === true ? {} : hmr) }
+  let dropped = false
+
+  for (const key of HMR_ENDPOINT_KEYS) {
+    if (sanitized[key] !== undefined) dropped = true
+    delete sanitized[key]
+  }
+  if (dropped) {
     warnings.push(
       'vite config server.hmr endpoint overrides (host/port/clientPort/server/protocol) would bypass the Neem proxy — options dropped',
     )
   }
-  return rest
+
+  return sanitized
 }
 
 function sanitizeBuild(
@@ -195,29 +200,4 @@ function sanitizeRollupOptions(
     )
   }
   return { ...rollupOptions, output: sanitized }
-}
-
-export function assertRoutingBase(
-  routing: 'path' | 'subdomain' | 'default' | undefined,
-  base: string,
-): void {
-  if (routing === 'path' && base === '/') {
-    throw new Error(
-      'Path-routed Neem proxy strips the "/<route>/" prefix upstream, so the Vite app must be built ' +
-        'with a matching base: set base to the proxy route (e.g. "/web/") or use default/subdomain routing',
-    )
-  }
-}
-
-// Vite also accepts relative ('', './') and full-URL bases, but neither can
-// describe an app hosted behind the Neem proxy — reject instead of silently
-// mangling them into broken absolute paths.
-export function normalizeBase(base: string): string {
-  if (base === '/') return '/'
-  if (base === '' || base === './' || !base.startsWith('/')) {
-    throw new Error(
-      `neem-vite supports absolute path bases only (e.g. "/app/"); received [${base}]`,
-    )
-  }
-  return base.endsWith('/') ? base : `${base}/`
 }

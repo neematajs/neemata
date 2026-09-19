@@ -2,17 +2,13 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { RolldownPluginOption } from '@nmtjs/neem'
-import type { Plugin as RolldownPlugin } from 'rolldown'
+import type { RolldownPlugin } from '@nmtjs/neem'
 
-import type { NeemViteRoutingKind } from './types.ts'
+import type { NeemViteBakedOptions, NeemViteRoutingKind } from './types.ts'
 import type { LoadedAppViteConfig } from './vite-loader.ts'
+import { assertRoutingBase } from './base.ts'
 import { APP_DIR } from './constants.ts'
-import {
-  assertRoutingBase,
-  importViteFrom,
-  loadAppViteConfig,
-} from './vite-loader.ts'
+import { importViteFrom, loadAppViteConfig } from './vite-loader.ts'
 
 const VIRTUAL_OPTIONS = 'neem-vite:options'
 const RESOLVED_OPTIONS = '\0neem-vite:options'
@@ -36,7 +32,7 @@ export type NeemViteArtifactPluginOptions = {
  */
 export function neemViteArtifactPlugin(
   options: NeemViteArtifactPluginOptions,
-): RolldownPluginOption {
+): RolldownPlugin {
   // The app config is needed twice in a build (baked options + vite build);
   // load it once per compile.
   let buildConfig: Promise<LoadedAppViteConfig> | undefined
@@ -51,7 +47,7 @@ export function neemViteArtifactPlugin(
     return buildConfig
   }
 
-  const plugin: RolldownPlugin = {
+  return {
     name: 'neem-vite:artifact',
     resolveId(id) {
       if (id === VIRTUAL_OPTIONS) return RESOLVED_OPTIONS
@@ -64,6 +60,7 @@ export function neemViteArtifactPlugin(
       if (id !== RESOLVED_OPTIONS) return null
       if (this.meta.watchMode) {
         return bakedOptionsModule({
+          mode: 'dev',
           root: options.root,
           base: options.base,
           routing: options.routing,
@@ -71,7 +68,11 @@ export function neemViteArtifactPlugin(
       }
       const { base } = await loadBuildConfig()
       assertRoutingBase(options.routing, base)
-      return bakedOptionsModule({ base, routing: options.routing })
+      return bakedOptionsModule({
+        mode: 'prod',
+        base,
+        routing: options.routing,
+      })
     },
     async writeBundle(output) {
       if (this.meta.watchMode) return
@@ -106,14 +107,9 @@ export function neemViteArtifactPlugin(
       }
     },
   }
-  return plugin
 }
 
-function bakedOptionsModule(options: {
-  root?: string
-  base?: string
-  routing?: NeemViteRoutingKind
-}): string {
+function bakedOptionsModule(options: NeemViteBakedOptions): string {
   return `export default ${JSON.stringify(options)}`
 }
 

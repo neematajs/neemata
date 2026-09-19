@@ -7,11 +7,9 @@ import type {
 import { getRandomPort } from 'get-port-please'
 
 import type { NeemViteRuntimeFactory, NeemViteWorkerContext } from '../types.ts'
-import {
-  assertRoutingBase,
-  importViteFrom,
-  loadAppViteConfig,
-} from '../vite-loader.ts'
+import { assertRoutingBase, restoreBase } from '../base.ts'
+import { HMR_ENDPOINT_KEYS } from '../constants.ts'
+import { importViteFrom, loadAppViteConfig } from '../vite-loader.ts'
 
 /**
  * Development implementation behind `neem-vite:impl`: boots Vite's own dev
@@ -28,12 +26,12 @@ const createViteDevRuntime: NeemViteRuntimeFactory = (ctx, options) => {
 
   return {
     async start() {
-      const root = options.root
-      if (!root) {
+      if (options.mode !== 'dev') {
         throw new Error(
           'Vite dev runtime options are missing the app root; the artifact was not produced by "neem dev"',
         )
       }
+      const { root } = options
 
       const vite = await importViteFrom(root)
       const loaded = await loadAppViteConfig(vite, {
@@ -97,32 +95,22 @@ const createViteDevRuntime: NeemViteRuntimeFactory = (ctx, options) => {
 }
 
 /**
- * A path-routed Neem proxy strips the `/<route>/` prefix before forwarding,
- * while Vite (configured with that prefix as `base`) expects it — restore it
- * for proxied requests. Registered in configureServer so it runs ahead of
- * Vite's internal middleware stack. Direct (unproxied) requests that already
- * carry the base pass through untouched.
+ * Restores the base prefix a path-routed Neem proxy stripped. Registered in
+ * configureServer so it runs ahead of Vite's internal middleware stack.
  */
 function proxyBasePlugin(base: string): VitePlugin {
-  const prefix = base.slice(0, -1)
-  const restore = (req: { url?: string }) => {
-    const url = req.url ?? '/'
-    if (url !== prefix && !url.startsWith(base)) {
-      req.url = prefix + url
-    }
-  }
   return {
     name: 'neem-vite:proxy-base',
     configureServer(devServer) {
       devServer.middlewares.use((req, _res, next) => {
-        restore(req)
+        restoreBase(req, base)
         next()
       })
       // Vite's HMR WebSocket upgrade handler checks the request path against
       // the base too, and connect middleware never sees upgrades — restore
       // the prefix on the raw request before Vite's listener reads it.
       devServer.httpServer?.prependListener('upgrade', (req) => {
-        restore(req)
+        restoreBase(req, base)
       })
     },
   }
@@ -153,9 +141,12 @@ function createViteLoggerBridge(
     },
     error(msg, errorOptions) {
       const error = errorOptions?.error
-      if (error) loggedErrors.add(error)
-      if (error) logger.error({ err: error }, msg)
-      else logger.error(msg)
+      if (error) {
+        loggedErrors.add(error)
+        logger.error({ err: error }, msg)
+      } else {
+        logger.error(msg)
+      }
     },
     clearScreen() {},
     hasErrorLogged(error) {
@@ -191,14 +182,7 @@ function assertProxySafeResolvedConfig(
   }
   const hmr = config.server.hmr
   if (typeof hmr === 'object' && hmr !== null) {
-    const overrides = [
-      'host',
-      'port',
-      'clientPort',
-      'server',
-      'protocol',
-    ] as const
-    for (const key of overrides) {
+    for (const key of HMR_ENDPOINT_KEYS) {
       if (hmr[key] !== undefined) {
         throw new Error(
           `A vite plugin set server.hmr.${key}, which would make the browser HMR client bypass the Neem proxy`,
