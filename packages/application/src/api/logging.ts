@@ -48,9 +48,7 @@ export const LoggingCallContextMiddleware = (
     dependencies: { builder },
     handler: async ({ builder }, call, next, payload) => {
       const loggingContext = await builder(call, payload)
-      return loggerLocalStorage.run(loggingContext, async () => {
-        return next()
-      })
+      return loggerLocalStorage.run(loggingContext, next)
     },
   })
 
@@ -61,6 +59,14 @@ export type LoggingCallMiddlewareOptions = {
   includeResponse?: boolean
   includeStreamChunks?: boolean
 }
+
+const DEFAULT_LOGGING_OPTIONS = Object.freeze({
+  level: 'info',
+  errorLevel: 'error',
+  includePayload: true,
+  includeResponse: true,
+  includeStreamChunks: true,
+} satisfies Required<LoggingCallMiddlewareOptions>)
 
 export const LoggingCallMiddleware = (
   options: AnyInjectable<LoggingCallMiddlewareOptions>,
@@ -77,49 +83,39 @@ export const LoggingCallMiddleware = (
         includeStreamChunks,
         level,
         errorLevel,
-      } = {
-        level: 'info' as const,
-        errorLevel: 'error' as const,
-        includePayload: true,
-        includeResponse: true,
-        includeStreamChunks: true,
-        ...options,
-      }
+      } = { ...DEFAULT_LOGGING_OPTIONS, ...options }
 
       const logFn = logger[level].bind(logger)
       const errorLogFn = logger[errorLevel].bind(logger)
+      const { callId } = call
+      const procedure = call.procedure.contract.name
+      const isStream = IsStreamContract(call.procedure.contract)
 
-      logFn(
-        includePayload
-          ? { procedure: call.procedure.contract.name, payload: payload }
-          : { procedure: call.procedure.contract.name },
-        'RPC call',
-      )
-
-      const isIterableProcedure = IsStreamContract(call.procedure.contract)
+      logFn(includePayload ? { procedure, payload } : { procedure }, 'RPC call')
 
       try {
         const response = await next()
-        if (includeResponse) {
-          if (isIterableProcedure) {
-            logFn({ result: 'success', response: 'Stream' }, 'RPC response')
-          } else {
-            logFn({ result: 'success', response }, 'RPC response')
-          }
-        } else {
-          logFn({ result: 'success' }, 'RPC response')
-        }
 
-        if (isIterableProcedure && includeStreamChunks) {
+        let responseLog: { result: 'success'; response?: unknown }
+        if (!includeResponse) {
+          responseLog = { result: 'success' }
+        } else if (isStream) {
+          responseLog = { result: 'success', response: 'Stream' }
+        } else {
+          responseLog = { result: 'success', response }
+        }
+        logFn(responseLog, 'RPC response')
+
+        if (isStream && includeStreamChunks) {
           return async function* (...args: any[]) {
             try {
               for await (const chunk of response(...args)) {
-                logFn({ callId: call.callId, chunk }, 'RPC stream chunk')
+                logFn({ callId, chunk }, 'RPC stream chunk')
                 yield chunk
               }
-              logFn({ callId: call.callId }, 'RPC stream end')
+              logFn({ callId }, 'RPC stream end')
             } catch (error) {
-              errorLogFn({ callId: call.callId, error }, 'RPC stream error')
+              errorLogFn({ callId, error }, 'RPC stream error')
               throw error
             }
           }

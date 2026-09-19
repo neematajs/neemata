@@ -1,7 +1,8 @@
 import type { AnyInjectable, Container, Logger } from '@nmtjs/core'
 import type {
   ConnectionIdentity,
-  GatewayOptions,
+  GatewayHost,
+  GatewayTransports,
   Transport,
 } from '@nmtjs/gateway'
 import { Lifecycle, TeardownStack } from '@nmtjs/common'
@@ -12,7 +13,7 @@ import type { ApplicationResolvedProcedure } from './api/api.ts'
 import type {
   AnyApplicationConfig,
   ApplicationConfig,
-  ApplicationTransport,
+  ApplicationTransports,
 } from './config.ts'
 import { kApplicationHostDefinition } from './constants.ts'
 import { NeemataApplication } from './runtime.ts'
@@ -21,7 +22,7 @@ export type TransportOptionsOf<T> =
   T extends Transport<infer Options, any, any, any> ? Options : never
 
 export type ApplicationHostTransportConfig<
-  Transports extends Record<string, ApplicationTransport>,
+  Transports extends ApplicationTransports,
 > = {
   [K in keyof Transports]: {
     transport: Transports[K]
@@ -37,12 +38,9 @@ export type ApplicationHostTransportConfig<
 
 export interface ApplicationHostDefinition<
   App extends ApplicationConfig = ApplicationConfig,
-  Transports extends Record<string, ApplicationTransport> = Record<
-    string,
-    ApplicationTransport
-  >,
+  Transports extends ApplicationTransports = ApplicationTransports,
 > {
-  [kApplicationHostDefinition]: any
+  [kApplicationHostDefinition]: true
   application: App
   transports: Transports
   identity?: ConnectionIdentity
@@ -54,17 +52,11 @@ export type AnyApplicationHostDefinition = ApplicationHostDefinition<
 >
 
 export type ApplicationHostDefinitionOptions<
-  Transports extends Record<string, ApplicationTransport>,
-> = {
-  transports: Transports
-  identity?: ConnectionIdentity
-}
+  Transports extends ApplicationTransports,
+> = Pick<ApplicationHostDefinition<any, Transports>, 'transports' | 'identity'>
 
 export interface ApplicationHostOptions<
-  Transports extends Record<string, ApplicationTransport> = Record<
-    string,
-    ApplicationTransport
-  >,
+  Transports extends ApplicationTransports = ApplicationTransports,
 > {
   name?: string
   logger: Logger
@@ -74,17 +66,12 @@ export interface ApplicationHostOptions<
 }
 
 export class ApplicationHost<
-  Transports extends Record<string, ApplicationTransport> = Record<
-    string,
-    ApplicationTransport
-  >,
+  Transports extends ApplicationTransports = ApplicationTransports,
 > {
   application!: NeemataApplication
   gateway!: Gateway<ApplicationResolvedProcedure>
-  transports!: GatewayOptions<ApplicationResolvedProcedure>['transports']
-  readonly #lifecycle = new Lifecycle<
-    Awaited<ReturnType<Gateway<ApplicationResolvedProcedure>['start']>>
-  >('application host')
+  transports!: GatewayTransports<ApplicationResolvedProcedure>
+  readonly #lifecycle = new Lifecycle<GatewayHost[]>('application host')
 
   constructor(
     protected appConfig: ApplicationConfig,
@@ -189,11 +176,9 @@ export class ApplicationHost<
   }
 
   protected async createTransports() {
-    const transports: GatewayOptions<ApplicationResolvedProcedure>['transports'] =
-      {}
+    const transports: GatewayTransports<ApplicationResolvedProcedure> = {}
 
-    for (const key in this.options.transports) {
-      const config = this.options.transports[key]
+    for (const [key, config] of Object.entries(this.options.transports)) {
       const options = await this.application.container.resolve(config.options)
       const transport = await config.transport.factory(options)
       transports[key] = {
@@ -206,9 +191,7 @@ export class ApplicationHost<
   }
 }
 
-export function createApplicationHost<
-  Transports extends Record<string, ApplicationTransport>,
->(
+export function createApplicationHost<Transports extends ApplicationTransports>(
   appConfig: ApplicationConfig,
   options: ApplicationHostOptions<Transports>,
 ): ApplicationHost<Transports> {
@@ -217,7 +200,7 @@ export function createApplicationHost<
 
 export function defineApplicationHost<
   const App extends ApplicationConfig,
-  const Transports extends Record<string, ApplicationTransport>,
+  const Transports extends ApplicationTransports,
 >(
   application: App,
   options: ApplicationHostDefinitionOptions<Transports>,
@@ -226,7 +209,7 @@ export function defineApplicationHost<
     [kApplicationHostDefinition]: true,
     application,
     ...options,
-  })
+  } satisfies ApplicationHostDefinition<App, Transports>)
 }
 
 export function isApplicationHostDefinition(

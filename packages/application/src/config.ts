@@ -1,13 +1,15 @@
 import type {
   ExecutionEnvironmentLifecycleHooks,
   ExecutionEnvironmentPlugin,
-  LazyInjectable,
-  Scope,
 } from '@nmtjs/core'
-import type { ProxyableTransportType, Transport } from '@nmtjs/gateway'
+import type {
+  Transport,
+  TransportInjections,
+  TransportProxyable,
+} from '@nmtjs/gateway'
 import { assertUniqueMetaBindings } from '@nmtjs/core'
 
-import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
+import type { ApplicationResolvedProcedure } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
@@ -19,12 +21,8 @@ export type AnyApplicationConfig = ApplicationConfig<AnyRootRouter>
 
 export type ApplicationTransport<
   TransportOptions = any,
-  Injections extends {
-    [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call>
-  } = { [key: string]: LazyInjectable<any, Scope.Connection | Scope.Call> },
-  Proxyable extends readonly ProxyableTransportType[] | undefined =
-    | readonly ProxyableTransportType[]
-    | undefined,
+  Injections extends TransportInjections = TransportInjections,
+  Proxyable extends TransportProxyable = TransportProxyable,
 > = Transport<
   TransportOptions,
   Injections,
@@ -32,12 +30,14 @@ export type ApplicationTransport<
   ApplicationResolvedProcedure
 >
 
+export type ApplicationTransports = Record<string, ApplicationTransport>
+
 export interface ApplicationConfig<
   Router extends AnyRootRouter = AnyRootRouter,
 > {
-  [kApplicationConfig]: any
+  [kApplicationConfig]: true
   router: Router
-  api: Pick<ApiOptions, 'timeout'>
+  api: { timeout?: number }
   plugins: ExecutionEnvironmentPlugin[]
   filters: AnyFilter[]
   middlewares: AnyMiddleware[]

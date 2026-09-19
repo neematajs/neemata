@@ -55,7 +55,6 @@ describe('application resolve descriptor', () => {
     ])
 
     const api = new ApplicationApi({
-      container,
       logger,
       timeout: undefined,
       meta: [],

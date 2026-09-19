@@ -29,7 +29,6 @@ function createCall(middleware = false) {
     handler: () => response,
   })
   const api = new ApplicationApi({
-    container,
     logger,
     procedures: new Map([['cases/update', { procedure, path: [] }]]),
     meta: [],

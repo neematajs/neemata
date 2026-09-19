@@ -4,9 +4,10 @@ import {
   ExecutionEnvironment,
   ExecutionEnvironmentLifecycleHook,
   forkLogger,
+  Hooks,
 } from '@nmtjs/core'
 
-import type { ApiOptions, ApplicationResolvedProcedure } from './api/api.ts'
+import type { ApplicationResolvedProcedure } from './api/api.ts'
 import type { AnyFilter } from './api/filters.ts'
 import type { AnyGuard } from './api/guards.ts'
 import type { AnyMiddleware } from './api/middlewares.ts'
@@ -17,7 +18,6 @@ import { ApplicationApi } from './api/api.ts'
 import { kRootRouterSources } from './api/constants.ts'
 import { isProcedure } from './api/procedure.ts'
 import { isRootRouter, isRouter } from './api/router.ts'
-import { ApplicationHooks } from './hooks.ts'
 
 const ROUTE_KEY_PATTERN = /^[a-zA-Z0-9-]+$/
 
@@ -29,7 +29,7 @@ export interface NeemataApplicationOptions {
 
 export class NeemataApplication {
   protected readonly execution: ExecutionEnvironment
-  readonly applicationHooks = new ApplicationHooks()
+  readonly applicationHooks = new Hooks()
   readonly api: GatewayApi<ApplicationResolvedProcedure>
 
   readonly routers = new Set<AnyRouter>()
@@ -60,14 +60,13 @@ export class NeemataApplication {
 
     this.api = new ApplicationApi({
       timeout: this.appConfig.api.timeout,
-      container: this.container,
       logger: this.logger,
       meta: this.appConfig.meta,
       filters: this.filters,
       middlewares: this.middlewares,
       guards: this.guards,
       procedures: this.procedures,
-    } satisfies ApiOptions)
+    })
   }
 
   get logger() {
@@ -84,12 +83,12 @@ export class NeemataApplication {
 
   async initialize(): Promise<void> {
     this.registerApi()
-    await this.initializeExecutionEnv()
+    await this.execution.initialize(this.dependents())
     await this.lifecycleHooks.callHook(
       ExecutionEnvironmentLifecycleHook.BeforeInitialize,
       this,
     )
-    await this.initializeApplicationHooks()
+    this.registerApplicationHooks()
     await this.lifecycleHooks.callHook(
       ExecutionEnvironmentLifecycleHook.AfterInitialize,
       this,
@@ -106,7 +105,7 @@ export class NeemataApplication {
       ExecutionEnvironmentLifecycleHook.AfterDispose,
       this,
     )
-    await this.disposeExecutionEnv()
+    await this.execution.dispose()
     this.filters.clear()
     this.middlewares.clear()
     this.guards.clear()
@@ -114,21 +113,13 @@ export class NeemataApplication {
     this.procedures.clear()
   }
 
-  protected async initializeApplicationHooks(): Promise<void> {
+  protected registerApplicationHooks(): void {
     for (const hook of this.appConfig.hooks) {
       this.applicationHooks.hook(hook.name, async (...args: any[]) => {
         const ctx = await this.container.createContext(hook.dependencies)
         await hook.handler(ctx, ...args)
       })
     }
-  }
-
-  protected async initializeExecutionEnv(): Promise<void> {
-    await this.execution.initialize(this.dependents())
-  }
-
-  protected async disposeExecutionEnv(): Promise<void> {
-    await this.execution.dispose()
   }
 
   protected *dependents(): Generator<Dependant> {
@@ -162,7 +153,9 @@ export class NeemataApplication {
     }
 
     if (!isRootRouter(router)) {
-      throw new Error('Root router must be a root router')
+      throw new Error(
+        'Application router must be created with createRootRouter()/implement()',
+      )
     }
 
     this.routers.add(router)
@@ -174,26 +167,9 @@ export class NeemataApplication {
   }
 
   protected registerRootRouter(router: AnyRootRouter): void {
-    this.warnDuplicateRootRoutes(router)
     for (const source of router[kRootRouterSources]) {
       this.routers.add(source)
       this.registerRouter(source, [router])
-    }
-  }
-
-  protected warnDuplicateRootRoutes(router: AnyRootRouter): void {
-    const routes = new Set<string>()
-    const duplicates = new Set<string>()
-
-    for (const source of router[kRootRouterSources]) {
-      for (const route of Object.keys(source.routes)) {
-        if (routes.has(route)) duplicates.add(route)
-        else routes.add(route)
-      }
-    }
-
-    for (const route of duplicates) {
-      this.logger.warn({ route }, 'Duplicate root router route')
     }
   }
 

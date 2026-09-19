@@ -1,4 +1,3 @@
-import type { Callback } from '@nmtjs/common'
 import type {
   TAnyCallableContract,
   TAnyRouterContract,
@@ -31,29 +30,26 @@ export interface AnyRouter {
   middlewares: Set<AnyMiddleware>
   meta: readonly AnyRouterMetaBinding[]
   timeout?: number
-  [kRouter]: any
+  [kRouter]: true
 }
 
 export interface AnyRootRouter extends AnyRouter {
-  [kRootRouter]: any
+  [kRootRouter]: true
   [kRootRouterSources]: readonly AnyRouter[]
   contract: TAnyRouterContract<Record<string, TRouteContract>, undefined>
 }
 
+export type RouterRoutes<Contract extends TAnyRouterContract> = {
+  [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
+    ? Router<Contract['routes'][K]>
+    : Contract['routes'][K] extends TAnyCallableContract
+      ? AnyProcedure<Contract['routes'][K]>
+      : never
+}
+
 export interface Router<Contract extends TAnyRouterContract> extends AnyRouter {
   contract: Contract
-  routes: {
-    [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
-      ? Router<Contract['routes'][K]>
-      : Contract['routes'][K] extends TAnyCallableContract
-        ? AnyProcedure<Contract['routes'][K]>
-        : never
-  }
-  guards: Set<AnyGuard>
-  middlewares: Set<AnyMiddleware>
-  meta: readonly AnyRouterMetaBinding[]
-  timeout?: number
-  [kRouter]: any
+  routes: RouterRoutes<Contract>
 }
 
 export interface RootRouter<
@@ -62,7 +58,7 @@ export interface RootRouter<
     undefined
   >,
 > extends Router<Contract> {
-  [kRootRouter]: any
+  [kRootRouter]: true
   [kRootRouterSources]: readonly AnyRouter[]
 }
 
@@ -72,14 +68,8 @@ export type MergeRoutersRoutesContracts<
   infer First extends TAnyRouterContract,
   ...infer Rest extends TAnyRouterContract[],
 ]
-  ? {
-      [K in keyof First['routes']]: First['routes'][K]
-    } & MergeRoutersRoutesContracts<Rest>
-  : Routers extends [infer First extends TAnyRouterContract]
-    ? {
-        [K in keyof First['routes']]: First['routes'][K]
-      }
-    : {}
+  ? First['routes'] & MergeRoutersRoutesContracts<Rest>
+  : {}
 
 export type ExtractRouterContracts<
   Routers extends readonly { contract: TAnyRouterContract }[],
@@ -121,12 +111,18 @@ export function createRootRouter<Routers extends readonly AnyRouter[]>(
       routes[name] = route
     }
   }
-  const router = createRouter({ routes })
+  return markRootRouter(createRouter({ routes }), routers) as any
+}
+
+export function markRootRouter<Contract extends TAnyRouterContract>(
+  router: Router<Contract>,
+  sources: readonly AnyRouter[],
+): Router<Contract> & RootRouter<any> {
   return Object.freeze({
     ...router,
     [kRootRouter]: true,
-    [kRootRouterSources]: routers,
-  }) as any
+    [kRootRouterSources]: sources,
+  }) as Router<Contract> & RootRouter<any>
 }
 
 export type FlattenRouterContractInput<Routes extends AnyRouterContractRoutes> =
@@ -154,20 +150,13 @@ export interface CreateRouterParams<Routes extends AnyRouterRoutes> {
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
   meta?: RouterMetaBinding<RouterDecodedInput<Routes>>[]
-  hooks?: Record<string, Callback[]>
   timeout?: number
 }
 
 export interface CreateContractRouterParams<
   Contract extends TAnyRouterContract,
 > {
-  routes: {
-    [K in keyof Contract['routes']]: Contract['routes'][K] extends TAnyRouterContract
-      ? Router<Contract['routes'][K]>
-      : Contract['routes'][K] extends TAnyCallableContract
-        ? AnyProcedure<Contract['routes'][K]>
-        : never
-  }
+  routes: RouterRoutes<Contract>
   guards?: AnyGuard[]
   middlewares?: AnyMiddleware[]
   meta?: RouterMetaBinding<RouterContractDecodedInput<Contract>>[]
@@ -188,10 +177,8 @@ export function createRouter<const Routes extends AnyRouterRoutes>(
 
   const contract = c.router({ routes: contracts, timeout })
 
-  assignRouteContracts(routes, contract)
-
   return createContractRouter(contract, {
-    routes: routes as any,
+    routes: withRouteContracts(routes, contract) as any,
     guards,
     middlewares,
     meta,
@@ -226,13 +213,36 @@ export const isRouter = (value: any): value is AnyRouter =>
 export const isRootRouter = (value: any): value is AnyRootRouter =>
   Boolean(value?.[kRootRouter])
 
-function assignRouteContracts(
+/**
+ * `c.router()` renames every nested contract, so each route is re-attached to
+ * its renamed contract in a fresh record, leaving the caller's input untouched.
+ */
+function withRouteContracts(
   routes: Record<string, any>,
   contract: TAnyRouterContract,
-) {
-  for (const [key, routeContract] of Object.entries(contract.routes)) {
-    routes[key] = { ...routes[key], contract: routeContract }
-    if (IsRouterContract(routeContract))
-      assignRouteContracts(routes[key].routes, routeContract)
+): AnyRouterRoutes {
+  // null prototype so a route literally named "__proto__" is stored as an
+  // own property instead of going through the legacy prototype setter
+  const named: AnyRouterRoutes = Object.create(null)
+
+  // seeded from the input: `c.router()` drops routes its own plain-object
+  // accumulator cannot hold (again, "__proto__"), and those must survive
+  for (const [key, route] of Object.entries(routes)) {
+    named[key] = route
   }
+
+  for (const [key, routeContract] of Object.entries(contract.routes)) {
+    const route = routes[key]
+    if (IsRouterContract(routeContract)) {
+      named[key] = {
+        ...route,
+        contract: routeContract,
+        routes: withRouteContracts(route.routes, routeContract),
+      }
+    } else {
+      named[key] = { ...route, contract: routeContract }
+    }
+  }
+
+  return named
 }

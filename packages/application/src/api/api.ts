@@ -1,4 +1,3 @@
-import assert from 'node:assert'
 import { randomUUID } from 'node:crypto'
 import { inspect } from 'node:util'
 
@@ -14,12 +13,11 @@ import type {
   GatewayApi,
   GatewayApiCallOptions,
   GatewayApiCallResult,
-  GatewayConnection,
   GatewayResolvedProcedure,
   GatewayResolveOptions,
   GatewayStaticMetaView,
 } from '@nmtjs/gateway'
-import { withTimeout } from '@nmtjs/common'
+import { isAsyncIterable, withTimeout } from '@nmtjs/common'
 import { IsStreamContract } from '@nmtjs/contract'
 import {
   getMetaBindingMeta,
@@ -29,7 +27,6 @@ import {
 } from '@nmtjs/core'
 import {
   createGatewayStaticMetaView,
-  isAsyncIterable,
   rpcStreamAbortSignal,
   rpcTimeoutSignal,
 } from '@nmtjs/gateway'
@@ -48,17 +45,9 @@ import type { AnyRouter } from './router.ts'
 import type { ApiCallContext } from './types.ts'
 import { config, defaultRuntimeConfig } from './config.ts'
 
+// zod messages are locale-driven; without a registered locale prettifyError()
+// renders empty strings in the input validation errors below
 registerDefaultLocale()
-
-export type ApiCallOptions<T extends AnyProcedure = AnyProcedure> = Readonly<{
-  callId: string
-  connection: GatewayConnection
-  path: AnyRouter[]
-  procedure: T
-  container: Container
-  payload: any
-  signal: AbortSignal
-}>
 
 export type ApplicationResolvedRouter = Readonly<{
   contract: TAnyRouterContract
@@ -80,7 +69,6 @@ export interface ApplicationResolvedProcedure extends GatewayResolvedProcedure {
 
 export type ApiOptions = {
   timeout?: number
-  container: Container
   logger: Logger
   procedures: Map<string, { procedure: AnyProcedure; path: AnyRouter[] }>
   meta: readonly AnyMetaBinding[]
@@ -102,9 +90,6 @@ export class ApiError extends ProtocolError {
   }
 }
 
-const NotFound = (procedureName: string) =>
-  new ApiError(ErrorCode.NotFound, `Procedure not found: ${procedureName}`)
-
 export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> {
   constructor(public options: ApiOptions) {}
 
@@ -112,7 +97,10 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     const procedure = this.options.procedures.get(procedureName)
     if (procedure) return procedure
 
-    throw NotFound(procedureName)
+    throw new ApiError(
+      ErrorCode.NotFound,
+      `Procedure not found: ${procedureName}`,
+    )
   }
 
   async resolve(
@@ -146,59 +134,57 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   }
 
   async call(options: GatewayApiCallOptions): Promise<GatewayApiCallResult> {
-    const callId = randomUUID()
+    const { payload, container, connection } = options
 
-    const { payload, container, signal, connection } = options
-
-    assert(
-      container.scope === Scope.Call,
-      'Invalid container scope, expected to be Scope.Call',
-    )
+    if (container.scope !== Scope.Call) {
+      throw new Error('Invalid container scope, expected to be Scope.Call')
+    }
 
     const { procedure, path } = this.find(options.procedure)
 
     const metaBindings = this.resolveMetaBindings(path, procedure)
 
-    const callOptions: ApiCallOptions = Object.freeze({
-      callId,
-      payload,
-      container,
-      signal,
+    const ctx: ApiCallContext = Object.freeze({
+      callId: randomUUID(),
       connection,
-      procedure,
+      container,
       path,
+      procedure,
     })
 
-    const timeout = procedure.contract.timeout ?? this.options.timeout
-    // paired with the timeout so a timed out handler is actually aborted,
-    // not just raced away
-    const timeoutController =
-      timeout && timeout > 0 ? new AbortController() : undefined
-    const streamTimeoutSignal = procedure.streamTimeout
-      ? AbortSignal.timeout(procedure.streamTimeout)
-      : undefined
+    const timeoutMs = procedure.contract.timeout ?? this.options.timeout
+    // the controller is paired with the timeout so a timed out handler is
+    // actually aborted, not just raced away
+    const timeout =
+      timeoutMs && timeoutMs > 0
+        ? { ms: timeoutMs, controller: new AbortController() }
+        : undefined
 
-    if (streamTimeoutSignal) {
-      container.provide(rpcStreamAbortSignal, streamTimeoutSignal)
+    if (procedure.streamTimeout) {
+      container.provide(
+        rpcStreamAbortSignal,
+        AbortSignal.timeout(procedure.streamTimeout),
+      )
     }
 
-    if (timeoutController) {
-      container.provide(rpcTimeoutSignal, timeoutController.signal)
+    if (timeout) {
+      container.provide(rpcTimeoutSignal, timeout.controller.signal)
     }
 
     try {
-      const handle = await this.createProcedureHandler(
-        callOptions,
-        metaBindings,
+      const handle = await this.createProcedureHandler(ctx, metaBindings)
+      if (!timeout) return await handle(payload)
+      return await withTimeout(
+        handle(payload),
+        timeout.ms,
+        new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
+        timeout.controller,
       )
-      return timeoutController
-        ? await this.withTimeout(handle(payload), timeout!, timeoutController)
-        : await handle(payload)
     } catch (error) {
-      const handled = await this.handleFilters(callOptions, error)
+      const handled = await this.handleFilters(container, error)
       // plain Errors are not wire-safe: log them and respond with a generic
       // server error instead of leaking internals
-      if (handled instanceof ProtocolError === false) {
+      if (!(handled instanceof ProtocolError)) {
         const logError = new Error('Unhandled error', { cause: handled })
         this.options.logger.error(logError)
         throw new ApiError(
@@ -211,47 +197,42 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   }
 
   private async createProcedureHandler(
-    callOptions: ApiCallOptions,
+    ctx: ApiCallContext,
     metaBindings: ResolvedMetaBindings,
   ) {
-    const { callId, connection, procedure, container, path } = callOptions
-
-    const callCtx: ApiCallContext = Object.freeze({
-      callId,
-      connection,
-      container,
-      path,
-      procedure,
-    })
-
+    const { procedure, container } = ctx
     const stream = IsStreamContract(procedure.contract)
 
     this.applyStaticMetaBindings(container, metaBindings.static)
 
-    const handlers = this.resolveMiddlewares(callOptions)
+    // awaited inside dispatch, not here, so middleware dependency resolution
+    // stays inside the call timeout window
+    const middlewares = this.resolveMiddlewares(ctx)
 
-    const handleProcedure = async (payload: any) => {
-      const middleware = (await handlers).next().value
+    const dispatch = async (index: number, payload: any) => {
+      const middleware = (await middlewares)[index]
       if (middleware) {
+        // next() forwards the payload the middleware received; next(value) —
+        // next(undefined) included — replaces it
         const next = (...args: any[]) =>
-          handleProcedure(args.length === 0 ? payload : args[0])
-        return middleware.handler(middleware.ctx, callCtx, next, payload)
+          dispatch(index + 1, args.length === 0 ? payload : args[0])
+        return middleware.handler(middleware.context, ctx, next, payload)
       }
 
       await this.applyFactoryMetaBindings(
         container,
         metaBindings.beforeDecode,
-        callCtx,
+        ctx,
         payload,
       )
       const input = this.handleInput(procedure, payload)
       await this.applyFactoryMetaBindings(
         container,
         metaBindings.afterDecode,
-        callCtx,
+        ctx,
         input,
       )
-      await this.handleGuards(callOptions, callCtx, input)
+      await this.handleGuards(ctx, input)
       const { dependencies, handler } = procedure
       const context = await container.createContext(dependencies)
       const result = await handler(context, input)
@@ -261,7 +242,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
       return this.handleOutput(procedure, result, metaBindings.config)
     }
 
-    return handleProcedure
+    return (payload: any) => dispatch(0, payload)
   }
 
   private resolveMetaBindings(
@@ -320,59 +301,39 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     }
   }
 
-  private async resolveMiddlewares(callOptions: ApiCallOptions) {
-    const { path, procedure, container } = callOptions
+  private async resolveMiddlewares(ctx: ApiCallContext) {
+    const { path, procedure, container } = ctx
     const middlewares = [
       ...this.options.middlewares,
       ...path.flatMap((router) => [...router.middlewares]),
       ...procedure.middlewares,
     ]
-    const result = await Promise.all(
+    return await Promise.all(
       middlewares.map(async (middleware) => {
-        const ctx = await container.createContext(middleware.dependencies)
-        return { handler: middleware.handler, ctx }
+        const context = await container.createContext(middleware.dependencies)
+        return { handler: middleware.handler, context }
       }),
     )
-    return result[Symbol.iterator]()
   }
 
-  private withTimeout(
-    response: any,
-    timeout: number,
-    controller: AbortController,
-  ): unknown {
-    const applyTimeout = response instanceof Promise && timeout > 0
-    if (!applyTimeout) return response
-    return withTimeout(
-      response,
-      timeout,
-      new ApiError(ErrorCode.RequestTimeout, 'Request Timeout'),
-      controller,
-    )
-  }
-
-  private async handleGuards(
-    callOptions: ApiCallOptions,
-    callCtx: ApiCallContext,
-    payload: any,
-  ) {
-    const { path, procedure, container } = callOptions
+  private async handleGuards(ctx: ApiCallContext, payload: any) {
+    const { path, procedure, container } = ctx
     const guards = [
       ...this.options.guards,
       ...path.flatMap((router) => [...router.guards]),
       ...procedure.guards,
     ]
+    if (!guards.length) return
+
+    const guardCtx = Object.freeze({ ...ctx, payload })
     for (const guard of guards) {
-      const ctx = await container.createContext(guard.dependencies)
-      const result = await guard.handler(
-        ctx,
-        Object.freeze({ ...callCtx, payload }),
-      )
+      const context = await container.createContext(guard.dependencies)
+      const result = await guard.handler(context, guardCtx)
       if (result === false) throw new ApiError(ErrorCode.Forbidden)
     }
   }
 
-  private async handleFilters({ container }: ApiCallOptions, error: any) {
+  private async handleFilters(container: Container, error: any) {
     for (const filter of this.options.filters) {
       if (!(error instanceof filter.errorClass)) continue
 
@@ -414,11 +375,12 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')
 
+    const encode =
+      runtimeConfig.serializeOutput && !(chunkType instanceof type.AnyType)
+
     return async function* (onDone?: () => void) {
       try {
-        if (runtimeConfig.serializeOutput === false) {
-          yield* response
-        } else if (chunkType instanceof type.AnyType === false) {
+        if (encode) {
           for await (const chunk of response) {
             yield chunkType.encode(chunk)
           }
@@ -438,7 +400,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   ) {
     const { output } = procedure.contract
     if (output instanceof type.NeverType) return undefined
-    if (runtimeConfig.serializeOutput === false) return response
+    if (!runtimeConfig.serializeOutput) return response
     return output.encode(response)
   }
 }

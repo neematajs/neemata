@@ -25,7 +25,6 @@ function createTestApi(options: {
 
   const api = new ApplicationApi({
     timeout: options.timeout,
-    container,
     logger,
     procedures: new Map([['test', { procedure: options.procedure, path: [] }]]),
     meta: [],

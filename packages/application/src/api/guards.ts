@@ -4,6 +4,7 @@ import type {
   HandlerFn,
   HandlerInput,
 } from '@nmtjs/core'
+import { createHandler } from '@nmtjs/core'
 
 import type { ApiGuardContext } from './types.ts'
 import { kGuard } from './constants.ts'
@@ -31,14 +32,8 @@ export type AnyGuard = Guard<any>
 export function createGuard<Deps extends Dependencies = {}>(
   paramsOrHandler: GuardParams<Deps>,
 ): Guard<Deps> {
-  const { dependencies = {} as Deps, handler } =
-    typeof paramsOrHandler === 'function'
-      ? { handler: paramsOrHandler }
-      : paramsOrHandler
-
   return Object.freeze({
-    dependencies,
-    handler,
+    ...createHandler(paramsOrHandler),
     [kGuard]: true,
   } satisfies Guard<Deps>)
 }

@@ -1,9 +1,7 @@
 import { basename, dirname, join } from 'node:path'
 
-import type { NeemRuntimeDeclaration, RolldownOptions } from '@nmtjs/neem'
+import type { RolldownOptions } from '@nmtjs/neem'
 import { createRuntime } from '@nmtjs/neem'
-
-export type NeemataRuntimeConfig = NeemRuntimeDeclaration
 
 export function createNeemataRuntime() {
   return createRuntime({

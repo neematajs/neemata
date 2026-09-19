@@ -17,13 +17,6 @@ import type {
 } from './types.ts'
 import { createApplicationHost } from '../host.ts'
 
-export type {
-  NeemataRuntimeContext,
-  NeemataRuntimeThreadOptions,
-  NeemataRuntimeTransportOptions,
-  NeemataWorker,
-} from './types.ts'
-
 export class NeemataApplicationRuntime<
   THost extends AnyApplicationHostDefinition = AnyApplicationHostDefinition,
 > implements NeemRuntime {
@@ -69,6 +62,7 @@ function createHostTransportConfig<
 ): ApplicationHostTransportConfig<Transports> {
   const config = {} as ApplicationHostTransportConfig<Transports>
 
+  // for...in keeps the mapped-type key; Object.entries would widen it to string
   for (const key in transports) {
     // Neem thread options cross a worker boundary as plain values; the host
     // config expects injectables, so wrap them here

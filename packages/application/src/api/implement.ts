@@ -22,9 +22,8 @@ import type {
   RootRouter,
   Router,
 } from './router.ts'
-import { kRootRouter, kRootRouterSources } from './constants.ts'
 import { createContractProcedure, createContractStream } from './procedure.ts'
-import { createContractRouter } from './router.ts'
+import { createContractRouter, markRootRouter } from './router.ts'
 
 export type ProcedureImplementer<Contract extends TAnyProcedureContract> = <
   Deps extends Dependencies,
@@ -87,12 +86,12 @@ export function implement(
   | RouterImplementer<any, true>
   | ProcedureImplementer<any>
   | StreamImplementer<any> {
-  return createImplementer(contract, true) as any
+  return createImplementer(contract, { root: true }) as any
 }
 
 function createImplementer(
   contract: TAnyRouterContract | TAnyProcedureContract | TAnyStreamContract,
-  isRoot: boolean,
+  { root }: { root: boolean },
 ) {
   if (IsProcedureContract(contract)) {
     return (paramsOrHandler: CreateProcedureParams<any, any>) =>
@@ -112,12 +111,12 @@ function createImplementer(
   ) => {
     validateRoutes(contract, routes)
     const router = createContractRouter<any>(contract, { ...params, routes })
-    return isRoot ? createRootRouter(router) : router
+    return root ? markRootRouter(router, [router]) : router
   }
 
   for (const [routeName, routeContract] of Object.entries(contract.routes)) {
     Object.defineProperty(builder, routeName, {
-      value: createImplementer(routeContract, false),
+      value: createImplementer(routeContract, { root: false }),
       enumerable: true,
       configurable: true,
     })
@@ -126,27 +125,15 @@ function createImplementer(
   return Object.freeze(builder)
 }
 
-function createRootRouter<Contract extends TAnyRouterContract>(
-  router: Router<Contract>,
-): Router<Contract> & RootRouter<any> {
-  return Object.freeze({
-    ...router,
-    [kRootRouter]: true,
-    [kRootRouterSources]: [router],
-  }) as Router<Contract> & RootRouter<any>
-}
-
 function validateRoutes(contract: TAnyRouterContract, routes: AnyRouterRoutes) {
-  const expectedKeys = new Set(Object.keys(contract.routes))
-
-  for (const routeName of expectedKeys) {
+  for (const routeName of Object.keys(contract.routes)) {
     if (!Object.hasOwn(routes, routeName)) {
       throw new Error(`Missing implementation for route [${routeName}]`)
     }
   }
 
   for (const routeName of Object.keys(routes)) {
-    if (!expectedKeys.has(routeName)) {
+    if (!Object.hasOwn(contract.routes, routeName)) {
       throw new Error(`Unknown implementation route [${routeName}]`)
     }
   }
