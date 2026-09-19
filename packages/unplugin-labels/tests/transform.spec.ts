@@ -102,6 +102,25 @@ describe('transformLabels', () => {
       }
     `
     expect(transform(shadowed)).toBeUndefined()
+
+    const shadowedByFunctionParam = `
+      import { lazy } from 'nmtjs'
+      function run(lazy) {
+        const db = lazy()
+        return db
+      }
+    `
+    expect(transform(shadowedByFunctionParam)).toBeUndefined()
+
+    const shadowedByCatchParam = `
+      import { lazy } from 'nmtjs'
+      try {
+        run()
+      } catch (lazy) {
+        const db = lazy()
+      }
+    `
+    expect(transform(shadowedByCatchParam)).toBeUndefined()
   })
 
   it('ignores unnamed usages', () => {

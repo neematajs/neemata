@@ -142,16 +142,22 @@ function dropShadowed(program: Program, tracked: Tracked): void {
 
   walk(program, (node) => {
     switch (node.type) {
-      case 'FunctionDeclaration':
       case 'ClassDeclaration':
         drop(node.id?.name)
         break
       case 'VariableDeclarator':
         dropBound(node.id)
         break
+      case 'FunctionDeclaration':
+        drop(node.id?.name)
+        for (const param of node.params) dropBound(param)
+        break
       case 'FunctionExpression':
       case 'ArrowFunctionExpression':
         for (const param of node.params) dropBound(param)
+        break
+      case 'CatchClause':
+        if (node.param) dropBound(node.param)
         break
     }
   })
