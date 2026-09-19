@@ -1,10 +1,9 @@
 import type { BaseType } from '@nmtjs/type'
-import type { NeverType } from '@nmtjs/type/never'
 import { t } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import { Kind } from '../constants.ts'
-import { createSchema } from '../utils.ts'
+import { freeze } from '../utils.ts'
 
 export type TAnyProcedureContract = TProcedureContract<
   BaseType,
@@ -38,8 +37,8 @@ export const ProcedureContract = <
 >(
   options: Options,
 ): TProcedureContract<
-  Options['input'] extends BaseType ? Options['input'] : NeverType,
-  Options['output'] extends BaseType ? Options['output'] : NeverType,
+  Options['input'] extends BaseType ? Options['input'] : t.NeverType,
+  Options['output'] extends BaseType ? Options['output'] : t.NeverType,
   Options['name'] extends string ? Options['name'] : undefined
 > => {
   const {
@@ -49,7 +48,7 @@ export const ProcedureContract = <
     timeout,
     schemaOptions = {},
   } = options
-  return createSchema({
+  return freeze({
     ...schemaOptions,
     [Kind]: ProcedureKind,
     type: 'neemata:procedure',

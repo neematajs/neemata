@@ -3,7 +3,7 @@ import { t } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import { Kind } from '../constants.ts'
-import { createSchema } from '../utils.ts'
+import { freeze } from '../utils.ts'
 
 export const EventKind = Symbol('NeemataEvent')
 
@@ -23,7 +23,7 @@ export const EventContract = <
 }) => {
   const { payload = t.never() as unknown as Payload, schemaOptions = {} } =
     options ?? {}
-  return createSchema<TEventContract<Payload>>({
+  return freeze<TEventContract<Payload>>({
     ...schemaOptions,
     [Kind]: EventKind,
     type: 'neemata:event',

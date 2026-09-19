@@ -2,7 +2,7 @@ import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyProcedureContract, TProcedureContract } from './procedure.ts'
 import type { TAnyStreamContract, TStreamContract } from './stream.ts'
 import { Kind } from '../constants.ts'
-import { concatFullName, createSchema } from '../utils.ts'
+import { concatFullName, freeze } from '../utils.ts'
 import { IsProcedureContract } from './procedure.ts'
 import { IsStreamContract } from './stream.ts'
 
@@ -72,15 +72,13 @@ export const RouterContract = <
 >(
   options: Options,
 ) => {
-  const {
-    name = undefined as any,
-    timeout,
-    schemaOptions = {} as ContractSchemaOptions,
-  } = options
+  const { name = undefined as any, timeout, schemaOptions = {} } = options
 
+  // the declared `routes` shape is a mapped type over the literal route
+  // record; the name-rewritten copy cannot be expressed in those terms
   const routes: any = processNestedRoutes(options.routes, name)
 
-  return createSchema<
+  return freeze<
     TRouterContract<
       Options['routes'],
       Options['name'] extends string ? Options['name'] : undefined
@@ -101,19 +99,17 @@ function processNestedRoutes(
 ): Record<string, TRouteContract> {
   const processed: Record<string, any> = {}
 
-  for (const routeName in routes) {
-    const route = routes[routeName]
+  for (const [routeName, route] of Object.entries(routes)) {
+    const name = concatFullName(parentName, routeName)
 
     if (IsRouterContract(route)) {
-      const nestedName = concatFullName(parentName, routeName)
-      processed[routeName] = createSchema({
+      processed[routeName] = freeze({
         ...route,
-        name: nestedName,
-        routes: processNestedRoutes(route.routes, nestedName),
+        name,
+        routes: processNestedRoutes(route.routes, name),
       })
     } else if (IsCallableContract(route)) {
-      const fullName = concatFullName(parentName, routeName)
-      processed[routeName] = createSchema({ ...route, name: fullName })
+      processed[routeName] = freeze({ ...route, name })
     } else {
       throw new Error(`Invalid route type for ${routeName}`)
     }

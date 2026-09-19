@@ -1,10 +1,10 @@
-import type { AnyCompatibleType, BaseType, BaseTypeAny, t } from '@nmtjs/type'
-import { t as types } from '@nmtjs/type'
+import type { AnyCompatibleType, BaseType, BaseTypeAny } from '@nmtjs/type'
+import { t } from '@nmtjs/type'
 
 import type { ContractSchemaOptions } from '../utils.ts'
 import type { TAnyEventContract, TEventContract } from './event.ts'
 import { Kind } from '../constants.ts'
-import { createSchema } from '../utils.ts'
+import { freeze } from '../utils.ts'
 
 export const SubscriptionKind = Symbol('NeemataSubscription')
 
@@ -132,9 +132,9 @@ export function SubscriptionContract(options: {
   schemaOptions?: ContractSchemaOptions
 }) {
   const { schemaOptions = {} } = options
-  const params = options.params ?? types.never()
+  const params = options.params ?? t.never()
   const events = {} as Record<string, TAnySubscriptionEventContract>
-  const subscription = createSchema<any>({
+  const subscription = freeze<any>({
     ...schemaOptions,
     [Kind]: SubscriptionKind,
     type: 'neemata:subscription',
@@ -144,9 +144,10 @@ export function SubscriptionContract(options: {
     events,
   })
 
-  for (const eventName in options.events) {
-    const event = options.events[eventName]
-    events[eventName] = createSchema<TAnySubscriptionEventContract>({
+  // events are filled after freezing the subscription so each one can hold a
+  // back-reference to it
+  for (const [eventName, event] of Object.entries(options.events)) {
+    events[eventName] = freeze<TAnySubscriptionEventContract>({
       ...event,
       event: eventName,
       subscription,
