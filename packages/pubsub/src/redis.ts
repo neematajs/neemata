@@ -3,7 +3,7 @@ import EventEmitter, { on } from 'node:events'
 import type { AnyInjectable, Logger } from '@nmtjs/core'
 import type { Redis } from 'ioredis'
 import type { Redis as Valkey } from 'iovalkey'
-import { isAbortError } from '@nmtjs/common'
+import { anyAbortSignal, isAbortError } from '@nmtjs/common'
 import {
   CoreInjectables,
   createFactoryInjectable,
@@ -16,10 +16,14 @@ import type { PubSubAdapter, PubSubMessage } from './adapter.ts'
 
 export type RedisPubSubClient = Redis | Valkey
 
+// One entry per broker subscription, shared by every listener on the channel.
+type ChannelSubscription = { count: number; ready: Promise<unknown> }
+
 export class RedisPubSubAdapter implements PubSubAdapter {
-  protected readonly events = new EventEmitter<{ [key: string]: [any] }>()
-  protected readonly listeners = new Map<string, number>()
-  protected readonly subscribtions = new Map<string, Promise<any>>()
+  protected readonly events = new EventEmitter<
+    Record<string, [PubSubMessage['data']]>
+  >()
+  protected readonly subscriptions = new Map<string, ChannelSubscription>()
   protected readonly logger?: Logger
   protected subClient?: RedisPubSubClient
   protected controller?: AbortController
@@ -34,14 +38,13 @@ export class RedisPubSubAdapter implements PubSubAdapter {
   async initialize() {
     this.logger?.debug('Initializing adapter')
 
-    // Create a dedicated subscriber client (Redis requires separate clients for pub/sub)
+    // Redis requires separate clients for pub/sub
     this.subClient = this.client.duplicate({ lazyConnect: true })
 
     await this.subClient.connect()
 
     this.controller = new AbortController()
 
-    // Set up message handler
     this.subClient.on('message', (channel: string, message: string) => {
       try {
         const parsed = JSON.parse(message)
@@ -87,53 +90,31 @@ export class RedisPubSubAdapter implements PubSubAdapter {
     channel: string,
     signal?: AbortSignal,
   ): AsyncGenerator<PubSubMessage> {
-    if (!this.subClient) throw new Error('Redis client not initialized')
+    if (!this.subClient || !this.controller) {
+      throw new Error('Redis client not initialized')
+    }
 
     this.logger?.debug({ channel }, 'Opening channel listener')
 
-    let registered = false
+    let acquired = false
 
     try {
-      const controllerSignal = this.controller?.signal
-      const finalSignal =
-        signal && controllerSignal
-          ? AbortSignal.any([signal, controllerSignal])
-          : controllerSignal
+      const listenerSignal = anyAbortSignal(signal, this.controller.signal)
 
-      finalSignal?.throwIfAborted()
+      listenerSignal.throwIfAborted()
 
       // Attach the local listener before Redis confirms SUBSCRIBE; otherwise a
       // message delivered immediately after broker readiness can be dropped.
-      const messages = on(this.events, channel, {
-        signal: finalSignal,
-      })
+      const messages = on(this.events, channel, { signal: listenerSignal })
 
-      if (!this.listeners.has(channel)) {
-        this.listeners.set(channel, 1)
-        const promise = this.subClient.subscribe(channel)
-        this.subscribtions.set(channel, promise)
-        await promise
-        this.logger?.debug(
-          { channel, listeners: this.listeners.get(channel) },
-          'Subscribed channel',
-        )
-      } else {
-        const listeners = this.listeners.get(channel)! + 1
-        this.listeners.set(channel, listeners)
-        await this.subscribtions.get(channel)
-        this.logger?.trace(
-          { channel, listeners },
-          'Reusing channel subscription',
-        )
-      }
-
-      registered = true
+      await this.acquire(channel, this.subClient)
+      acquired = true
 
       for await (const args of messages) {
         this.logger?.trace({ channel }, 'Delivering message')
         yield { channel, data: args[0] }
       }
-    } catch (error: any) {
+    } catch (error) {
       if (isAbortError(error)) {
         this.logger?.trace({ channel }, 'Channel listener gracefully aborted')
         return
@@ -141,25 +122,53 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       this.logger?.warn({ channel, error }, 'Channel listener error')
       throw error
     } finally {
-      const count = registered ? this.listeners.get(channel) : undefined
-      if (count !== undefined) {
-        if (count > 1) {
-          const listeners = count - 1
-          this.listeners.set(channel, listeners)
-          this.logger?.trace(
-            { channel, listeners },
-            'Channel listener detached',
-          )
-        } else {
-          await this.subClient?.unsubscribe(channel)
-          this.listeners.delete(channel)
-          this.logger?.debug(
-            { channel, listeners: 0 },
-            'Channel listener unsubscribed',
-          )
-        }
-      }
+      if (acquired) await this.release(channel)
     }
+  }
+
+  private async acquire(channel: string, subClient: RedisPubSubClient) {
+    const existing = this.subscriptions.get(channel)
+
+    if (existing) {
+      existing.count++
+      await existing.ready
+      this.logger?.trace(
+        { channel, listeners: existing.count },
+        'Reusing channel subscription',
+      )
+      return
+    }
+
+    const subscription: ChannelSubscription = {
+      count: 1,
+      ready: subClient.subscribe(channel),
+    }
+    this.subscriptions.set(channel, subscription)
+    await subscription.ready
+    this.logger?.debug({ channel, listeners: 1 }, 'Subscribed channel')
+  }
+
+  private async release(channel: string) {
+    const subscription = this.subscriptions.get(channel)
+    if (!subscription) return
+
+    if (subscription.count > 1) {
+      subscription.count--
+      this.logger?.trace(
+        { channel, listeners: subscription.count },
+        'Channel listener detached',
+      )
+      return
+    }
+
+    // the entry survives until UNSUBSCRIBE resolves, so a listener arriving
+    // meanwhile joins it instead of racing a second SUBSCRIBE
+    await this.subClient?.unsubscribe(channel)
+    this.subscriptions.delete(channel)
+    this.logger?.debug(
+      { channel, listeners: 0 },
+      'Channel listener unsubscribed',
+    )
   }
 }
 
@@ -180,8 +189,6 @@ export const createRedisAdapter = (
       await adapter.initialize()
       return adapter
     },
-    dispose: async (adapter) => {
-      return await adapter.dispose()
-    },
+    dispose: (adapter) => adapter.dispose(),
   })
 }
