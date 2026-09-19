@@ -29,6 +29,10 @@ const LEVELS: Record<number, { label: string; bg: number; fg: number }> = {
   [Number.POSITIVE_INFINITY]: { label: 'SILENT', bg: 0, fg: 0 },
 }
 
+// pino's customLevels can emit numbers missing from the table
+const levelStyle = (level: number) =>
+  LEVELS[level] ?? { label: ` ${level} `, bg: 0, fg: 0 }
+
 export const loggerLocalStorage = new AsyncLocalStorage<object | undefined>({
   defaultValue: undefined,
   name: 'NeemataAsyncLocalStorage',
@@ -113,12 +117,15 @@ export const createConsolePrettyDestination: CreateConsolePrettyDestination = (
     errorLikeObjectKeys: ['err', 'error', 'cause'],
     messageFormat: (log, messageKey) => {
       const group = fg(`[${String(log.$label)}]`, 11)
-      const msg = fg(String(log[messageKey]), LEVELS[log.level as number].fg)
+      const msg = fg(String(log[messageKey]), levelStyle(Number(log.level)).fg)
       const thread = fg(`(T-${String(log.$threadId)})`, 89)
       return `\x1b[0m${thread} ${group} ${msg}`
     },
     customPrettifiers: {
-      level: (level: any) => bg(LEVELS[level].label, LEVELS[level].bg),
+      level: (level: any) => {
+        const style = levelStyle(Number(level))
+        return bg(style.label, style.bg)
+      },
     },
     sync,
   }),

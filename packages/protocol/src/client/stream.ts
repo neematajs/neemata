@@ -80,9 +80,9 @@ export class ProtocolClientBlobStream
     if (this.#queue.byteLength === 0) {
       const { done, value } = await this.#reader.read()
       if (done) return null
-      // the source may hand out any view or an ArrayBuffer; copying is only
-      // needed to normalize those
-      this.#queue = value instanceof Uint8Array ? value : concat(value)
+      // copy: the tail waits here for upload credit, and the producer is free
+      // to reuse its buffer in the meantime
+      this.#queue = concat(value)
     }
 
     const chunkSize = Math.min(size, this.#queue.byteLength)

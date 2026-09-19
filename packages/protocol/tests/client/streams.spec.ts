@@ -43,6 +43,24 @@ describe('ProtocolClientBlobStream', () => {
     expect(chunk3).toBeNull()
   })
 
+  it('keeps buffered bytes intact when the producer reuses its buffer', async () => {
+    const produced = new Uint8Array([1, 2, 3, 4])
+    const stream = new ProtocolClientBlobStream(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(produced)
+          controller.close()
+        },
+      }),
+      1,
+      { type: 'application/octet-stream' },
+    )
+
+    expect(Array.from((await stream.read(2))!)).toEqual([1, 2])
+    produced.fill(9)
+    expect(Array.from((await stream.read(2))!)).toEqual([3, 4])
+  })
+
   it('returns up to requested size without waiting to accumulate', async () => {
     const stream = new ProtocolClientBlobStream(
       readableFrom(['hello', 'world']),
