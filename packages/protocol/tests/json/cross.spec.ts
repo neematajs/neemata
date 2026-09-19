@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ProtocolClientBlobStream } from '../../src/client/index.ts'
+import type {
+  EncodeRPCContext,
+  ProtocolClientBlobStream,
+} from '../../src/client/index.ts'
 import { ProtocolBlob } from '../../src/common/index.ts'
 import { JsonCodec as ClientJsonCodec } from '../../src/json/client.ts'
 import { JsonCodec as ServerJsonCodec } from '../../src/json/server.ts'
@@ -240,9 +243,12 @@ describe('JsonCodec', () => {
       const metadata = { type: 'text/plain', size: 3 }
       const streamId = 7
       const blob = ProtocolBlob.from(new Uint8Array([1, 2, 3]), metadata)
+      const encodeCtx: EncodeRPCContext = {
+        addStream: vi.fn(() => ({ id: streamId, metadata })),
+      }
       const clientFramed = clientCodec.encodeRPC(
         { file: blob, ...data },
-        { addStream: vi.fn(() => ({ id: streamId, metadata })) },
+        encodeCtx,
       )
       const serverFramed = serverCodec.encodeRPC(
         { file: serverCodec.encodeBlob(streamId), ...data },

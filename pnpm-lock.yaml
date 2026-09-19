@@ -137,9 +137,6 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/type':
-        specifier: workspace:*
-        version: link:../type
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2

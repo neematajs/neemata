@@ -8,6 +8,8 @@ import type {
   Dependant,
   Dependencies,
   DependencyContext,
+  FactoryInjectable,
+  PositionalScope,
   Provision,
   ProvisionValue,
   ResolveInjectableType,
@@ -16,9 +18,8 @@ import type { Logger } from './logger.ts'
 import { Scope } from './enums.ts'
 import {
   CoreInjectables,
-  compareScope,
   createValueInjectable,
-  getDepedencencyInjectable,
+  getDependencyInjectable,
   getEffectiveInjectableScope,
   isFactoryInjectable,
   isInjectable,
@@ -26,6 +27,7 @@ import {
   isOptionalInjectable,
   isValueInjectable,
   provision,
+  scopeRank,
 } from './injectables.ts'
 
 /**
@@ -48,7 +50,7 @@ type ProvisionEntry =
 
 export type ResolutionEvent = {
   injectable: AnyInjectable
-  scope: Exclude<Scope, Scope.Transient>
+  scope: PositionalScope
   durationMs: number
   error?: unknown
 }
@@ -87,7 +89,7 @@ export class Container {
 
   constructor(
     protected readonly runtime: ContainerOptions,
-    public readonly scope: Exclude<Scope, Scope.Transient> = Scope.Global,
+    public readonly scope: PositionalScope = Scope.Global,
     protected readonly parent?: Container,
   ) {
     if ((scope as Scope) === Scope.Transient) throw new Error('Invalid scope')
@@ -103,7 +105,7 @@ export class Container {
     const traverse = (dependencies: Dependencies) => {
       for (const key in dependencies) {
         const dependency = dependencies[key]
-        const injectable = getDepedencencyInjectable(dependency)
+        const injectable = getDependencyInjectable(dependency)
         if (injectable.scope === this.scope) {
           optionality.set(
             injectable,
@@ -128,16 +130,13 @@ export class Container {
     )
   }
 
-  fork(scope: Exclude<Scope, Scope.Transient>) {
+  fork(scope: PositionalScope) {
     return new Container(this.runtime, scope, this)
   }
 
-  find(scope: Exclude<Scope, Scope.Transient>): Container | undefined {
-    if (this.scope === scope) {
-      return this
-    } else {
-      return this.parent?.find(scope)
-    }
+  find(scope: PositionalScope): Container | undefined {
+    if (this.scope === scope) return this
+    return this.parent?.find(scope)
   }
 
   async [Symbol.asyncDispose]() {
@@ -147,7 +146,6 @@ export class Container {
   async dispose() {
     this.runtime.logger.trace('Disposing [%s] scope context...', this.scope)
 
-    // Prevent new resolutions during disposal
     this.disposing = true
 
     // Let in-flight resolutions settle first, otherwise their instances get
@@ -156,12 +154,9 @@ export class Container {
       await Promise.allSettled(this.pending)
     }
 
-    // Get proper disposal order using topological sort
-    const disposalOrder = this.getDisposalOrder()
-
     try {
-      // Dispose in the correct order
-      for (const injectable of disposalOrder) {
+      // dependants before their dependencies
+      for (const injectable of this.getDisposalOrder()) {
         await this.disposeInjectableInstances(injectable)
       }
     } catch (error) {
@@ -229,22 +224,19 @@ export class Container {
     return this.resolveInjectable(injectable, { chain: [] })
   }
 
-  async createContext<T extends Dependencies>(dependencies: T) {
+  createContext<T extends Dependencies>(dependencies: T) {
     return this.createDependencyContext(dependencies, { chain: [] })
   }
 
-  provide<T extends Provision[]>(provisions: T): void
+  provide(provisions: readonly Provision[]): void
   provide<T extends AnyInjectable>(
     injectable: T,
     value: ProvisionValue<T>,
   ): void
-  provide<T extends AnyInjectable | Provision[]>(
-    injectable: T,
-    ...[value]: T extends AnyInjectable ? [value: ProvisionValue<T>] : []
-  ) {
-    const provisions = Array.isArray(injectable)
-      ? injectable
-      : [provision(injectable, value)]
+  provide(target: AnyInjectable | readonly Provision[], value?: any) {
+    const provisions = isInjectable(target)
+      ? [provision(target, value)]
+      : target
     for (const { token, value } of provisions) {
       this.assertProvidable(token, value)
       this.provisions.set(
@@ -263,10 +255,9 @@ export class Container {
   }
 
   satisfies(injectable: AnyInjectable) {
-    return compareScope(
-      getEffectiveInjectableScope(injectable),
-      '<=',
-      this.scope,
+    return (
+      scopeRank(getEffectiveInjectableScope(injectable)) <=
+      scopeRank(this.scope)
     )
   }
 
@@ -274,11 +265,9 @@ export class Container {
     const handles = this.instances.get(injectable)
     if (!handles) return
     try {
-      const disposals: Promise<void>[] = Array(handles.length)
-      for (let i = 0; i < handles.length; i++) {
-        disposals[i] = this.disposeHandle(handles[i])
-      }
-      const results = await Promise.allSettled(disposals)
+      const results = await Promise.allSettled(
+        handles.map((handle) => this.disposeHandle(handle)),
+      )
       for (const result of results) {
         if (result.status === 'rejected') {
           const error = new Error(
@@ -302,15 +291,16 @@ export class Container {
   }
 
   protected assertProvidable(token: AnyInjectable, value: any) {
+    const containerRank = scopeRank(this.scope)
     const tokenScope = getEffectiveInjectableScope(token)
-    if (compareScope(tokenScope, '>', this.scope)) {
+    if (scopeRank(tokenScope) > containerRank) {
       throw new Error(
         `Cannot provide ${label(token)} injectable: its scope [${tokenScope}] is stricter than the container scope [${this.scope}]`,
       )
     }
     if (isInjectable(value)) {
       const targetScope = getEffectiveInjectableScope(value)
-      if (compareScope(targetScope, '>', this.scope)) {
+      if (scopeRank(targetScope) > containerRank) {
         throw new Error(
           `Cannot provide ${label(value)} injectable for ${label(token)}: its scope [${targetScope}] is stricter than the container scope [${this.scope}]`,
         )
@@ -328,7 +318,7 @@ export class Container {
     for (let i = 0; i < keys.length; i++) {
       const dependency = dependencies[keys[i]]
       resolutions[i] = this.resolveInjectable(
-        getDepedencencyInjectable(dependency),
+        getDependencyInjectable(dependency),
         {
           dependant: request.dependant,
           optional: isOptionalInjectable(dependency),
@@ -361,7 +351,7 @@ export class Container {
     if (request.dependant) {
       const dependantScope = getEffectiveInjectableScope(request.dependant)
       const injectableScope = getEffectiveInjectableScope(injectable)
-      if (compareScope(dependantScope, '<', injectableScope)) {
+      if (scopeRank(dependantScope) < scopeRank(injectableScope)) {
         return Promise.reject(
           new Error(
             `Invalid scope: ${label(request.dependant)} injectable [${dependantScope}] cannot depend on ${label(injectable)} injectable with stricter scope [${injectableScope}]`,
@@ -393,7 +383,7 @@ export class Container {
       this.parent &&
       (this.parent.contains(injectable) ||
         (this.parent.satisfies(injectable) &&
-          compareScope(this.parent.scope, '<', this.scope)))
+          scopeRank(this.parent.scope) < scopeRank(this.scope)))
     ) {
       return this.parent.resolveInjectable(injectable, request)
     }
@@ -420,6 +410,7 @@ export class Container {
       if (request.optional) return Promise.resolve(undefined as any)
       return Promise.reject(
         new Error(
+          // reads "for an injectable" when unlabeled, so no label() here
           `No instance provided for ${injectable.label || 'an'} injectable${this.describePath(request)}${injectable.stack ? `\n${injectable.stack}` : ''}`,
         ),
       )
@@ -458,14 +449,12 @@ export class Container {
     return resolution
   }
 
-  protected async createResolution<T extends AnyInjectable>(
+  protected async createResolution<
+    T extends FactoryInjectable<any, any, Scope>,
+  >(
     injectable: T,
     request: ResolutionRequest,
   ): Promise<ResolveInjectableType<T>> {
-    if (!isFactoryInjectable(injectable)) {
-      throw new Error('Invalid injectable type')
-    }
-
     const context = await this.createDependencyContext(
       injectable.dependencies,
       {
@@ -567,7 +556,7 @@ export class Container {
     const injectTransient = <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
-      scope: Exclude<Scope, Scope.Transient>,
+      scope: PositionalScope,
       anchor: StackTraceAnchor,
     ) => {
       const container = this.find(scope)
@@ -604,13 +593,13 @@ export class Container {
     const inject = <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
-      scope: Exclude<Scope, Scope.Transient> = this.scope,
+      scope: PositionalScope = this.scope,
     ) => injectTransient(injectable, context, scope, inject).instance
 
     const explicit = async <T extends AnyInjectable>(
       injectable: T,
       context: InlineInjectionDependencies<T>,
-      scope: Exclude<Scope, Scope.Transient> = this.scope,
+      scope: PositionalScope = this.scope,
     ) => {
       if ('asyncDispose' in Symbol === false) {
         throw new Error(

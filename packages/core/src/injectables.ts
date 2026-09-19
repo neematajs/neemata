@@ -13,9 +13,12 @@ import {
 import { Scope } from './enums.ts'
 import { forkLogger } from './logger.ts'
 
+/** A scope with a position in the ordering — every scope but Transient. */
+export type PositionalScope = Exclude<Scope, Scope.Transient>
+
 // Transient is a lifetime, not a position in the scope ordering — it is
 // deliberately absent here so it can never silently pass a comparison
-const ScopeOrder: Record<Exclude<Scope, Scope.Transient>, number> = {
+const ScopeOrder: Record<PositionalScope, number> = {
   [Scope.Global]: 1,
   [Scope.Connection]: 2,
   [Scope.Call]: 3,
@@ -28,9 +31,9 @@ export type DependencyOptional<T extends AnyInjectable = AnyInjectable> = {
   injectable: T
 }
 
-export type Depedency = DependencyOptional | AnyInjectable
+export type Dependency = DependencyOptional | AnyInjectable
 
-export type Dependencies = Record<string, Depedency>
+export type Dependencies = Record<string, Dependency>
 
 export type ResolveInjectableType<T extends AnyInjectable> =
   T extends Injectable<infer Type, any, any> ? Type : never
@@ -41,7 +44,7 @@ export interface Dependant<Deps extends Dependencies = Dependencies> {
   stack?: string
 }
 
-export type DependencyInjectable<T extends Depedency> = T extends AnyInjectable
+export type DependencyInjectable<T extends Dependency> = T extends AnyInjectable
   ? T
   : T extends DependencyOptional
     ? T['injectable']
@@ -183,17 +186,9 @@ export const isOptionalInjectable = (
 ): injectable is DependencyOptional<any> =>
   Boolean(injectable?.[kOptionalDependency])
 
-export function getInjectableScope(injectable: AnyInjectable): Scope {
-  if (injectable.scope === Scope.Transient) return Scope.Transient
-  return getEffectiveInjectableScope(injectable)
-}
-
 // dependency records are frozen at creation, so the effective scope of an
 // injectable can never change — safe to memoize for the process lifetime
-const effectiveScopeCache = new WeakMap<
-  AnyInjectable,
-  Exclude<Scope, Scope.Transient>
->()
+const effectiveScopeCache = new WeakMap<AnyInjectable, PositionalScope>()
 
 /**
  * The positional scope an injectable actually requires: the strictest scope
@@ -203,42 +198,36 @@ const effectiveScopeCache = new WeakMap<
  */
 export function getEffectiveInjectableScope(
   injectable: AnyInjectable,
-): Exclude<Scope, Scope.Transient> {
+): PositionalScope {
   const cached = effectiveScopeCache.get(injectable)
   if (cached) return cached
-  let scope: Exclude<Scope, Scope.Transient> =
+  const own =
     injectable.scope === Scope.Transient
       ? Scope.Global
-      : (injectable.scope as Exclude<Scope, Scope.Transient>)
-  const deps = injectable.dependencies as Dependencies
-  for (const key in deps) {
-    const dependencyScope = getEffectiveInjectableScope(
-      getDepedencencyInjectable(deps[key]),
-    )
-    if (compareScope(dependencyScope, '>', scope)) {
-      scope = dependencyScope
-    }
-  }
+      : (injectable.scope as PositionalScope)
+  const scope = strictestScope(own, injectable.dependencies)
   effectiveScopeCache.set(injectable, scope)
   return scope
 }
 
-export function getDepedencencyInjectable(
-  dependency: Depedency,
-): AnyInjectable {
+const strictestScope = (own: PositionalScope, dependencies: Dependencies) => {
+  let scope = own
+  for (const key in dependencies) {
+    const dependencyScope = getEffectiveInjectableScope(
+      getDependencyInjectable(dependencies[key]),
+    )
+    if (scopeRank(dependencyScope) > scopeRank(scope)) {
+      scope = dependencyScope
+    }
+  }
+  return scope
+}
+
+export function getDependencyInjectable(dependency: Dependency): AnyInjectable {
   if (kOptionalDependency in dependency) {
     return dependency.injectable
   }
   return dependency
-}
-
-export function createOptionalInjectable<T extends LazyInjectable<any, any>>(
-  injectable: T,
-) {
-  return Object.freeze({
-    [kOptionalDependency]: true,
-    injectable,
-  }) as DependencyOptional<T>
 }
 
 export function optional<T, S extends Scope>(
@@ -247,7 +236,10 @@ export function optional<T, S extends Scope>(
   if (!isLazyInjectable(injectable)) {
     throw new TypeError('Optional dependencies can only wrap lazy injectables')
   }
-  return createOptionalInjectable(injectable)
+  return Object.freeze({
+    [kOptionalDependency]: true,
+    injectable,
+  }) as DependencyOptional<LazyInjectable<T, S>>
 }
 
 /**
@@ -314,26 +306,45 @@ export function createFactoryInjectable<
   label?: string,
   origin?: InjectableOrigin,
 ): FactoryInjectable<null extends T ? P : T, D, S, P> {
-  const isFactory = typeof paramsOrFactory === 'function'
-  const params = isFactory ? { create: paramsOrFactory } : paramsOrFactory
-  const injectable = {
-    // freezing keeps the dependency graph acyclic by construction and makes
-    // the effective scope safe to memoize
-    dependencies: Object.freeze({ ...params.dependencies }) as D,
-    scope: (params.scope ?? Scope.Global) as S,
+  const params =
+    typeof paramsOrFactory === 'function'
+      ? { create: paramsOrFactory }
+      : paramsOrFactory
+  // freezing keeps the dependency graph acyclic by construction and makes
+  // the effective scope safe to memoize
+  const dependencies = Object.freeze({ ...params.dependencies }) as D
+  const scope = resolveScope(params.scope, dependencies)
+  const pick = params.pick ?? ((instance: P) => instance as unknown as T)
+
+  return Object.freeze({
+    dependencies,
+    scope: scope as S,
     create: params.create,
     dispose: params.dispose,
-    pick: params.pick ?? ((instance: P) => instance as unknown as T),
+    pick,
     label,
     stack: resolveOrigin(origin, createFactoryInjectable),
     [kInjectable]: true,
     [kFactoryInjectable]: true,
+  }) as any
+}
+
+/**
+ * A factory lives in the strictest scope its dependencies require. A scope
+ * declared explicitly must be able to host them.
+ */
+function resolveScope(declared: Scope | undefined, dependencies: Dependencies) {
+  if (declared === Scope.Transient) return Scope.Transient
+  const scope = strictestScope(
+    (declared as PositionalScope) ?? Scope.Global,
+    dependencies,
+  )
+  if (declared !== undefined && scopeRank(scope) > scopeRank(declared)) {
+    throw new Error(
+      `Invalid scope ${declared} for an injectable: dependencies have stricter scope - ${scope}`,
+    )
   }
-  injectable.scope = resolveInjectableScope(
-    typeof params.scope === 'undefined',
-    injectable,
-  ) as S
-  return Object.freeze(injectable) as any
+  return scope
 }
 
 export type DependenciesSubstitution<T extends Dependencies> = {
@@ -347,62 +358,42 @@ export function substitute<T extends FactoryInjectable<any, any, Scope>>(
   substitution: DependenciesSubstitution<T['dependencies']>,
   origin?: InjectableOrigin,
 ): T {
+  if (!isFactoryInjectable(injectable)) {
+    throw new Error('Invalid injectable type')
+  }
+
   // capture once at the API boundary and pass the value down, so nested
   // substitutions all attribute to the original call site
   const stack = resolveOrigin(origin, substitute)
   const dependencies = { ...injectable.dependencies }
-  for (const key in substitution) {
-    const value = substitution[key]!
-    if (key in dependencies) {
-      const original = dependencies[key]
-      if (isInjectable(value)) {
-        dependencies[key] = value
-      } else if (isFactoryInjectable(original)) {
-        dependencies[key] = substitute(original, value, stack)
-      }
+  for (const [key, value] of Object.entries(substitution)) {
+    if (!(key in dependencies)) continue
+    const original = dependencies[key]
+    if (isInjectable(value)) {
+      dependencies[key] = value
+    } else if (isFactoryInjectable(original)) {
+      dependencies[key] = substitute(original, value, stack)
     }
   }
 
-  if (isFactoryInjectable(injectable)) {
-    // @ts-expect-error
-    return createFactoryInjectable(
-      { ...injectable, dependencies },
-      injectable.label,
-      stack,
-    )
-  }
-
-  throw new Error('Invalid injectable type')
+  // the substituted dependencies no longer match T's declared ones, which is
+  // the point of a substitution
+  return createFactoryInjectable(
+    { ...injectable, dependencies },
+    injectable.label,
+    stack,
+  ) as unknown as T
 }
 
-export function compareScope(
-  left: Scope,
-  operator: '>' | '<' | '>=' | '<=' | '=' | '!=',
-  right: Scope,
-) {
-  const leftScope = ScopeOrder[left as Exclude<Scope, Scope.Transient>]
-  const rightScope = ScopeOrder[right as Exclude<Scope, Scope.Transient>]
-  if (leftScope === undefined || rightScope === undefined) {
+/** Position of a scope in the ordering; Transient has none. */
+export function scopeRank(scope: Scope): number {
+  const rank = ScopeOrder[scope as PositionalScope]
+  if (rank === undefined) {
     throw new Error(
       'Transient scope is a lifetime, not a position — it cannot be compared',
     )
   }
-  switch (operator) {
-    case '=':
-      return leftScope === rightScope
-    case '!=':
-      return leftScope !== rightScope
-    case '>':
-      return leftScope > rightScope
-    case '<':
-      return leftScope < rightScope
-    case '>=':
-      return leftScope >= rightScope
-    case '<=':
-      return leftScope <= rightScope
-    default:
-      throw new Error('Invalid operator')
-  }
+  return rank
 }
 
 const loggerInjectable = Object.assign(
@@ -414,6 +405,9 @@ const loggerInjectable = Object.assign(
     })
   },
   createLazyInjectable<Logger>(Scope.Global, 'Logger'),
+  // the options parameter stays off the declared signature: naming pino's
+  // ChildLoggerOptions here makes every consumer's declaration emit depend on
+  // pino's own types
 ) as unknown as ((
   label: string,
 ) => FactoryInjectable<Logger, { logger: LazyInjectable<Logger> }>) &
@@ -428,23 +422,10 @@ const disposeFnInjectable = createLazyInjectable<DisposeFn>(
   'Dispose function',
 )
 
-function resolveInjectableScope(
-  isDefaultScope: boolean,
-  injectable: AnyInjectable,
-) {
-  if (injectable.scope === Scope.Transient) return Scope.Transient
-  const actualScope = getEffectiveInjectableScope(injectable)
-  if (!isDefaultScope && compareScope(actualScope, '>', injectable.scope))
-    throw new Error(
-      `Invalid scope ${injectable.scope} for an injectable: dependencies have stricter scope - ${actualScope}`,
-    )
-  return actualScope
-}
-
-export namespace CoreInjectables {
-  export const logger = loggerInjectable
-  export const inject = injectFnInjectable
-  export const dispose = disposeFnInjectable
+export const CoreInjectables = {
+  logger: loggerInjectable,
+  inject: injectFnInjectable,
+  dispose: disposeFnInjectable,
 }
 
 export type ProvisionValue<T extends AnyInjectable<any, any>> =
@@ -463,7 +444,3 @@ export const provision = <
 ): Provision<T> => {
   return { token, value }
 }
-
-// preferred spellings; the misspelled originals are kept for compatibility
-export type Dependency = Depedency
-export const getDependencyInjectable = getDepedencencyInjectable

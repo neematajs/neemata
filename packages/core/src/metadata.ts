@@ -19,13 +19,11 @@ export type MetaPhase = 'beforeDecode' | 'afterDecode'
 
 type MetaBase<Value> = LazyInjectable<Value, Scope.Call> & { [kMetadata]: true }
 
-type MetaToken<Value> = MetaBase<Value>
-
 type MetaStaticCapability<
   Value,
   Kind extends MetadataKind,
 > = MetadataKind.STATIC extends Kind
-  ? { static(value: Value): StaticMetaBinding<MetaToken<Value>> }
+  ? { static(value: Value): StaticMetaBinding<MetaBase<Value>> }
   : {}
 
 type MetaFactoryCapability<
@@ -100,17 +98,18 @@ export type MetaFactoryMethod<Value, Call = unknown> = {
     dependencies?: Deps
     phase?: 'beforeDecode'
     handler: HandlerFn<Deps, [call: Call, payload: unknown], Value>
-  }): BeforeDecodeMetaBinding<MetaToken<Value>, Deps, Call>
+  }): BeforeDecodeMetaBinding<MetaBase<Value>, Deps, Call>
   <Deps extends Dependencies = {}, Input = unknown>(params: {
     dependencies?: Deps
     phase: 'afterDecode'
     handler: HandlerFn<Deps, [call: Call, input: Input], Value>
-  }): AfterDecodeMetaBinding<MetaToken<Value>, Deps, Call, Input>
+  }): AfterDecodeMetaBinding<MetaBase<Value>, Deps, Call, Input>
 }
 
 export type ResolveMetaBindingMeta<T extends AnyMetaBinding> =
   T[typeof kMetaBinding]
 
+/** The value of the last binding for `meta`: later scopes override earlier. */
 export const getStaticMetaValue = <T extends AnyMeta>(
   bindings: Iterable<StaticMetaBinding>,
   meta: T,
@@ -143,7 +142,7 @@ export function createMeta<
         kind: MetadataKind.STATIC,
         value,
         [kMetaBinding]: meta,
-      }) as StaticMetaBinding<MetaToken<Value>>,
+      }) as StaticMetaBinding<MetaBase<Value>>,
     factory: ((params: {
       dependencies?: Dependencies
       phase?: MetaPhase
@@ -180,13 +179,6 @@ export const getMetaBindingMeta = <T extends AnyMetaBinding>(
   binding: T,
 ): ResolveMetaBindingMeta<T> => binding[kMetaBinding]
 
-export function assertUniqueMetaBindings(
-  bindings: readonly AnyMetaBinding[],
-  label: string,
-): void
-export function assertUniqueMetaBindings<
-  T extends { readonly [kMetaBinding]: AnyMeta },
->(bindings: Iterable<T>, label: string): void
 export function assertUniqueMetaBindings<
   T extends { readonly [kMetaBinding]: AnyMeta },
 >(bindings: Iterable<T>, label: string) {
@@ -197,7 +189,7 @@ export function assertUniqueMetaBindings<
     const meta = binding[kMetaBinding]
     const previousIndex = seen.get(meta)
 
-    if (typeof previousIndex !== 'undefined') {
+    if (previousIndex !== undefined) {
       throw new Error(
         `Duplicate meta registration in ${label}: the same meta token was registered more than once within a single scope (entries ${previousIndex + 1} and ${index + 1}). Register each meta token only once per scope.`,
       )

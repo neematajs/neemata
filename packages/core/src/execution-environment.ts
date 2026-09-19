@@ -1,12 +1,12 @@
-import type { Container } from './container.ts'
+import type { HooksConfig } from './hooks.ts'
 import type { Dependant } from './injectables.ts'
 import type { Logger } from './logger.ts'
 import type { ExecutionEnvironmentPlugin } from './plugin.ts'
 import type { HookTypes } from './types.ts'
-import { Container as CoreContainer } from './container.ts'
+import { Container } from './container.ts'
 import { Scope } from './enums.ts'
 import { Hooks } from './hooks.ts'
-import { CoreInjectables, provision } from './injectables.ts'
+import { CoreInjectables } from './injectables.ts'
 import { forkLogger } from './logger.ts'
 
 export enum ExecutionEnvironmentLifecycleHook {
@@ -40,10 +40,10 @@ export interface ExecutionEnvironmentLifecycleHookTypes extends HookTypes {
   [ExecutionEnvironmentLifecycleHook.Stop]: () => any
 }
 
-export class ExecutionEnvironmentLifecycleHooks<
+export type ExecutionEnvironmentLifecycleHooks<
   HookTypes extends ExecutionEnvironmentLifecycleHookTypes =
     ExecutionEnvironmentLifecycleHookTypes,
-> extends Hooks<HookTypes> {}
+> = Hooks<HookTypes>
 
 export type ExecutionEnvironmentOptions<
   HookTypes extends ExecutionEnvironmentLifecycleHookTypes =
@@ -52,7 +52,7 @@ export type ExecutionEnvironmentOptions<
   logger: Logger
   container?: Container
   label?: string
-  lifecycleHooks?: ExecutionEnvironmentLifecycleHooks<HookTypes>['_']['config']
+  lifecycleHooks?: HooksConfig<HookTypes>
   plugins?: readonly ExecutionEnvironmentPlugin<HookTypes>[]
 }
 
@@ -62,7 +62,8 @@ export class ExecutionEnvironment<
 > {
   readonly logger: Logger
   readonly container: Container
-  readonly lifecycleHooks = new ExecutionEnvironmentLifecycleHooks<HookTypes>()
+  readonly lifecycleHooks: ExecutionEnvironmentLifecycleHooks<HookTypes> =
+    new Hooks<HookTypes>()
 
   constructor(options: ExecutionEnvironmentOptions<HookTypes>) {
     this.logger = options.label
@@ -71,9 +72,9 @@ export class ExecutionEnvironment<
 
     this.container = options.container
       ? options.container.fork(Scope.Global)
-      : new CoreContainer({ logger: this.logger })
+      : new Container({ logger: this.logger })
 
-    this.container.provide([provision(CoreInjectables.logger, this.logger)])
+    this.container.provide(CoreInjectables.logger, this.logger)
 
     if (options.lifecycleHooks) {
       this.lifecycleHooks.addHooks(options.lifecycleHooks)
@@ -81,7 +82,7 @@ export class ExecutionEnvironment<
 
     for (const plugin of options.plugins ?? []) {
       if (plugin.provisions) {
-        this.container.provide([...plugin.provisions])
+        this.container.provide(plugin.provisions)
       }
       if (plugin.hooks) {
         this.lifecycleHooks.addHooks(plugin.hooks)

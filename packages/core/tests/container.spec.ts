@@ -15,6 +15,7 @@ import {
   kFactoryInjectable,
   kInjectable,
   kLazyInjectable,
+  kOptionalDependency,
   kValueInjectable,
 } from '../src/constants.ts'
 import { Container } from '../src/container.ts'
@@ -24,9 +25,8 @@ import {
   createFactoryInjectable,
   createHandler,
   createLazyInjectable,
-  createOptionalInjectable,
   createValueInjectable,
-  getInjectableScope,
+  getEffectiveInjectableScope,
   optional,
   substitute,
 } from '../src/injectables.ts'
@@ -89,7 +89,10 @@ describe('Injectable', () => {
     const injectable = createLazyInjectable<string, Scope.Call>(Scope.Call)
     const dependency = optional(injectable)
 
-    expect(dependency).toStrictEqual(createOptionalInjectable(injectable))
+    expect(dependency).toStrictEqual({
+      [kOptionalDependency]: true,
+      injectable,
+    })
     expectTypeOf(dependency).toEqualTypeOf<
       DependencyOptional<LazyInjectable<string, Scope.Call>>
     >()
@@ -307,7 +310,7 @@ describe('Container', () => {
       dependencies: { injectable, injectable2 },
       create: noopFn,
     })
-    expect(getInjectableScope(injectable3)).toBe(Scope.Call)
+    expect(getEffectiveInjectableScope(injectable3)).toBe(Scope.Call)
   })
 
   it('should correctly resolve injectable pick', async () => {
@@ -462,7 +465,7 @@ describe('Container', () => {
   it('should resolve optional dependency', async () => {
     const lazyInjectable = createLazyInjectable()
     const injectable = createFactoryInjectable({
-      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      dependencies: { dep: optional(lazyInjectable) },
       create: noopFn,
     })
     await expect(container.resolve(injectable)).resolves.toBeUndefined()
@@ -472,7 +475,7 @@ describe('Container', () => {
     const lazyInjectable = createLazyInjectable()
     const injectable = createFactoryInjectable({
       scope: Scope.Call,
-      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      dependencies: { dep: optional(lazyInjectable) },
       create: (deps) => ({ ...deps }),
     })
     const scopeContainer = container.fork(Scope.Call)
@@ -485,7 +488,7 @@ describe('Container', () => {
   it('should not fail initialization on unfulfilled optional dependencies', async () => {
     const lazyInjectable = createLazyInjectable()
     const dependant = createFactoryInjectable({
-      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      dependencies: { dep: optional(lazyInjectable) },
       create: noopFn,
     })
     await expect(container.initialize([dependant])).resolves.toBeUndefined()
@@ -494,7 +497,7 @@ describe('Container', () => {
   it('should fail initialization when an optional dependency is required elsewhere', async () => {
     const lazyInjectable = createLazyInjectable()
     const optionalDependant = createFactoryInjectable({
-      dependencies: { dep: createOptionalInjectable(lazyInjectable) },
+      dependencies: { dep: optional(lazyInjectable) },
       create: noopFn,
     })
     const requiredDependant = createFactoryInjectable({
