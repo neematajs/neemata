@@ -5,7 +5,9 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  IdempotencyKey,
   RunnableDefinition,
+  RunTags,
   RunUniqueConstraint,
   TaskInput,
   TaskRun,
@@ -35,8 +37,10 @@ import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
 } from './worker.ts'
+import { continueRun } from './commands.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
+import { normalizeBatchSize } from './limits.ts'
 import {
   createWorkflowRuntimeRegistry,
   type RegisteredTaskImplementation,
@@ -46,8 +50,8 @@ import {
 import { isTerminalRunStatus } from './status.ts'
 
 export type WorkflowRuntimeStartOptions<Connection = never> = {
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
+  readonly tags?: RunTags
+  readonly idempotencyKey?: IdempotencyKey
   /**
    * Overrides the definition-level `unique` builder. See RunUniqueConstraint;
    * `restart()` re-applies the stored run's constraint unless overridden here.
@@ -272,11 +276,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
           runId: run.id,
         })
       }
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: run.id,
-        workflowName: run.workflowName,
-      })
+      await input.runCoordinationExecutor.enqueue(continueRun(run))
       return run
     },
     get: (runId) => input.store.loadRunSnapshot(runId),
@@ -417,7 +417,7 @@ async function pruneRuns(
   store: WorkflowStore,
   params: PruneTerminalRunsParams,
 ): Promise<PruneTerminalRunsResult> {
-  const batchSize = normalizePruneBatchSize(params.batchSize)
+  const batchSize = normalizeBatchSize(params.batchSize)
   if (batchSize < 1) return { deleted: 0 }
   let deleted = 0
 
@@ -529,12 +529,6 @@ async function restartRun<Connection>(
       })) as StoredRun
     }
   }
-}
-
-function normalizePruneBatchSize(batchSize: number | undefined): number {
-  if (batchSize === undefined) return 100
-  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-  return batchSize
 }
 
 function normalizeDebounce(debounceMs: number | undefined): number {

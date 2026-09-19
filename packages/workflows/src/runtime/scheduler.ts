@@ -3,11 +3,13 @@ import { CronExpressionParser } from 'cron-parser'
 import type {
   AnyScheduleDefinition,
   RunKind,
+  RunTags,
   ScheduleDefinition,
 } from '../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
+import { continueRun } from './commands.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import { decodeSchemaValue, resolveTags } from './coordinator/codec.ts'
 import { parseDurationMs } from './duration.ts'
@@ -18,7 +20,7 @@ export type StoredWorkflowSchedule = {
   readonly runnableKind: RunKind
   readonly runnableName: string
   readonly input: unknown
-  readonly tags: Readonly<Record<string, string>>
+  readonly tags: RunTags
   readonly cron?: string
   readonly everyMs?: number
   readonly enabled: boolean
@@ -47,21 +49,16 @@ export type WorkflowScheduler = {
   setEnabled(name: string, enabled: boolean): Promise<StoredWorkflowSchedule>
 }
 
-export type NormalizedScheduleEntry = {
-  readonly name: string
-  readonly runnableKind: RunKind
-  readonly runnableName: string
-  readonly input: unknown
-  readonly tags: Readonly<Record<string, string>>
-  readonly cron?: string
-  readonly everyMs?: number
-  readonly enabled: boolean
-  readonly nextRunAt: Date
-}
+export type ScheduleCadence = Pick<StoredWorkflowSchedule, 'cron' | 'everyMs'>
+
+export type NormalizedScheduleEntry = Omit<
+  StoredWorkflowSchedule,
+  'id' | 'lastSlotAt' | 'createdAt' | 'updatedAt'
+>
 
 export function normalizeScheduleDefinitions(
   definitions: readonly AnyScheduleDefinition[],
-  now = new Date(),
+  now: Date,
 ): readonly NormalizedScheduleEntry[] {
   const names = new Set<string>()
   return definitions.map((definition) => {
@@ -73,14 +70,15 @@ export function normalizeScheduleDefinitions(
   })
 }
 
-export function normalizeScheduleDefinition(
+function normalizeScheduleDefinition(
   definition: AnyScheduleDefinition,
-  now = new Date(),
+  now: Date,
 ): NormalizedScheduleEntry {
-  const cadence = normalizeScheduleCadence(definition)
-  const runnableKind = definition.runnable.kind
-  const runnableName = definition.runnable.name
+  const cadence = parseScheduleCadence(definition)
+  const { kind: runnableKind, name: runnableName } = definition.runnable
   const input = decodeScheduleInput(definition)
+  const tags =
+    definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {}
   const nextRunAt =
     definition.immediately === true ? now : nextScheduleRunAt(cadence, now, now)
 
@@ -89,7 +87,7 @@ export function normalizeScheduleDefinition(
     runnableKind,
     runnableName,
     input,
-    tags: definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {},
+    tags,
     ...cadence,
     enabled: definition.enabled ?? true,
     nextRunAt,
@@ -140,11 +138,7 @@ export async function startStoredScheduleRun(
     return run
   }
 
-  await runtime.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: run.id,
-    workflowName: schedule.runnableName,
-  })
+  await runtime.runCoordinationExecutor.enqueue(continueRun(run))
   return run
 }
 
@@ -162,41 +156,45 @@ function decodeScheduleInput(definition: ScheduleDefinition): unknown {
   }
 }
 
-function normalizeScheduleCadence(input: {
+/**
+ * Validating parser shared with `defineSchedule`, so a definition rejected at
+ * build time cannot be accepted at reconcile time (or the other way around).
+ */
+export function parseScheduleCadence({
+  name,
+  cron,
+  every,
+}: {
   readonly name: string
   readonly cron?: string
   readonly every?: string
-}): Pick<NormalizedScheduleEntry, 'cron' | 'everyMs'> {
-  const cadenceCount =
-    (input.cron === undefined ? 0 : 1) + (input.every === undefined ? 0 : 1)
-  if (cadenceCount !== 1) {
-    throw new Error(
-      `Schedule [${input.name}] must define exactly one of cron/every`,
-    )
-  }
+}): ScheduleCadence {
+  const exclusive = `Schedule [${name}] must define exactly one of cron/every`
 
-  if (input.every !== undefined) {
-    const everyMs = parseDurationMs(input.every)
-    if (everyMs === undefined || everyMs <= 0) {
-      throw new Error(
-        `Invalid schedule [${input.name}] every duration [${input.every}]`,
-      )
+  if (cron !== undefined) {
+    if (every !== undefined) throw new Error(exclusive)
+    try {
+      // A fixed epoch keeps validation independent of the current time.
+      CronExpressionParser.parse(cron, { currentDate: new Date(0) })
+    } catch (error) {
+      throw new Error(`Invalid schedule [${name}] cron [${cron}]`, {
+        cause: error,
+      })
     }
-    return { everyMs }
+    return { cron }
   }
 
-  try {
-    CronExpressionParser.parse(input.cron!, { currentDate: new Date(0) })
-    return { cron: input.cron! }
-  } catch (error) {
-    throw new Error(`Invalid schedule [${input.name}] cron [${input.cron!}]`, {
-      cause: error,
-    })
+  if (every === undefined) throw new Error(exclusive)
+
+  const everyMs = parseDurationMs(every)
+  if (everyMs === undefined || everyMs <= 0) {
+    throw new Error(`Invalid schedule [${name}] every duration [${every}]`)
   }
+  return { everyMs }
 }
 
 function nextScheduleRunAt(
-  cadence: Pick<StoredWorkflowSchedule, 'cron' | 'everyMs'>,
+  cadence: ScheduleCadence,
   now: Date,
   base: Date,
 ): Date {

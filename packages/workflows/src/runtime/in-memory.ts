@@ -35,7 +35,6 @@ import type {
   RunDetail,
   RunLease,
   RunSummary,
-  TerminalRunStatus,
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
@@ -43,13 +42,19 @@ import type {
   WorkflowCommandWakeKind,
   WorkflowWakeEvents,
 } from './wake-events.ts'
+import { SELF_CHILD_KEY, TASK_RUN_NODE_NAME } from './child-key.ts'
+import { continueRun } from './commands.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import {
+  AttemptLeaseLostError,
   COMMAND_LEASE_EXPIRED_ERROR,
+  StaleAckError,
   WorkflowRunConflictError,
   toStoredError,
 } from './errors.ts'
 import { DEFAULT_LEASE_MS } from './executors.ts'
+import { jsonContains, sameValue, valueKey } from './json.ts'
+import { normalizeBatchSize, normalizePruneStatuses } from './limits.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
@@ -93,12 +98,6 @@ const RELEASE_BACKOFF_MS = 50
 const UNROUTABLE_BACKOFF_MS = 1_000
 const MAX_ERROR_BACKOFF_MS = 300_000
 const DEFAULT_MAX_DELIVERIES = 20
-const DEFAULT_PRUNE_BATCH_SIZE = 100
-const DEFAULT_PRUNE_STATUSES = [
-  'completed',
-  'cancelled',
-  'failed',
-] as const satisfies readonly TerminalRunStatus[]
 
 export type InMemoryWorkflowRuntime = {
   readonly store: WorkflowStore
@@ -237,24 +236,6 @@ export function createInMemoryWorkflowRuntime(
     [...children.values()].filter(
       (child) => child.runId === runId && child.nodeName === nodeName,
     )
-  const stableJsonValue = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(stableJsonValue)
-    if (value && typeof value === 'object') {
-      return Object.fromEntries(
-        Object.entries(value)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, item]) => [key, stableJsonValue(item)]),
-      )
-    }
-    return value
-  }
-  const valueKey = (value: unknown) => JSON.stringify(stableJsonValue(value))
-  const sameValue = (left: unknown, right: unknown) =>
-    valueKey(left) === valueKey(right)
-  const sameOptionalValue = (left: unknown, right: unknown) =>
-    left === undefined && right === undefined
-      ? true
-      : left !== undefined && right !== undefined && sameValue(left, right)
   // mirrors the partial index predicate: a terminal run leaves the active
   // uniqueness scope and frees its key
   const releaseActiveUniqueKey = (run: StoredRun) => {
@@ -264,28 +245,6 @@ export function createInMemoryWorkflowRuntime(
       activeUniqueRunKeys.delete(key)
     }
   }
-  const jsonContains = (target: unknown, expected: unknown): boolean => {
-    if (expected === undefined) return true
-    if (Array.isArray(expected)) {
-      if (!Array.isArray(target)) return false
-      return expected.every((expectedItem) =>
-        target.some((targetItem) => jsonContains(targetItem, expectedItem)),
-      )
-    }
-    if (expected && typeof expected === 'object' && !Array.isArray(expected)) {
-      if (!target || typeof target !== 'object' || Array.isArray(target)) {
-        return false
-      }
-
-      const targetRecord = target as Record<string, unknown>
-      return Object.entries(expected).every(([key, value]) =>
-        jsonContains(targetRecord[key], value),
-      )
-    }
-
-    return Object.is(target, expected)
-  }
-
   const runMatchesFilter = (run: StoredRun, filter: ListRunsFilter) => {
     const statuses = Array.isArray(filter.status)
       ? filter.status
@@ -556,7 +515,9 @@ export function createInMemoryWorkflowRuntime(
       }
       const root = runs.get(params.runId)!
       if (root.kind === 'task') {
-        const child = children.get(childKey(root.id, '$task', '$self'))!
+        const child = children.get(
+          childKey(root.id, TASK_RUN_NODE_NAME, SELF_CHILD_KEY),
+        )!
         const previous = [...attempts.values()].find(
           (attempt) =>
             attempt.runId === root.id &&
@@ -575,7 +536,7 @@ export function createInMemoryWorkflowRuntime(
             runId: root.id,
             workflowName: root.workflowName,
             taskName: root.taskName ?? root.name,
-            nodeName: '$task',
+            nodeName: TASK_RUN_NODE_NAME,
             childKey: child.childKey,
             attemptId: attempt.id,
             leaseToken: attempt.leaseToken!,
@@ -585,11 +546,7 @@ export function createInMemoryWorkflowRuntime(
         )
         fireWake(commandWakeListeners.get('task'))
       } else {
-        enqueueContinue({
-          kind: 'continueRun',
-          runId: root.id,
-          workflowName: root.workflowName,
-        })
+        enqueueContinue(continueRun(root))
       }
       return root
     },
@@ -632,7 +589,7 @@ export function createInMemoryWorkflowRuntime(
       }
     },
     async pruneTerminalRuns(params: PruneTerminalRunsParams) {
-      const batchSize = normalizePruneBatchSize(params.batchSize)
+      const batchSize = normalizeBatchSize(params.batchSize)
       const statuses = normalizePruneStatuses(params.statuses)
       const deadBefore = params.olderThan.getTime()
       if (batchSize < 1 || statuses.length === 0) {
@@ -644,7 +601,8 @@ export function createInMemoryWorkflowRuntime(
         .filter(
           (run) =>
             run.parentRunId === undefined &&
-            statuses.includes(run.status as TerminalRunStatus) &&
+            isTerminalRunStatus(run.status) &&
+            statuses.includes(run.status) &&
             run.updatedAt < params.olderThan,
         )
         .sort((left, right) => {
@@ -1234,7 +1192,7 @@ export function createInMemoryWorkflowRuntime(
               child.kind === input.kind &&
               child.ordinal === (input.ordinal ?? 0) &&
               child.itemKey === input.itemKey &&
-              sameOptionalValue(child.item, input.item)
+              sameValue(child.item, input.item)
             )
           })
         if (!matches) {
@@ -1287,7 +1245,7 @@ export function createInMemoryWorkflowRuntime(
           childRun.kind !== params.childKind ||
           childRun.name !== params.childName ||
           !sameValue(childRun.input, params.input) ||
-          !sameOptionalValue(childRun.idempotencyKey, params.idempotencyKey)
+          !sameValue(childRun.idempotencyKey, params.idempotencyKey)
         ) {
           throw new Error(
             `Conflicting child run [${childRef(params.runId, params.nodeName, params.childKey)}]`,
@@ -1543,25 +1501,6 @@ export function createInMemoryWorkflowRuntime(
     return { attempt, child }
   }
 
-  const normalizePruneBatchSize = (batchSize: number | undefined) => {
-    if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
-    if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-    return batchSize
-  }
-  const normalizeScheduleLimit = (limit: number | undefined) => {
-    if (limit === undefined) return 100
-    if (!Number.isInteger(limit) || limit < 1) return 0
-    return limit
-  }
-  const normalizePruneStatuses = (
-    statuses: PruneTerminalRunsParams['statuses'],
-  ): readonly TerminalRunStatus[] => {
-    const unique = new Set<TerminalRunStatus>()
-    for (const status of statuses ?? DEFAULT_PRUNE_STATUSES) {
-      if (DEFAULT_PRUNE_STATUSES.includes(status)) unique.add(status)
-    }
-    return Array.from(unique)
-  }
   const collectRunTreeIds = (rootIds: readonly string[]) => {
     const treeIds = new Set(rootIds)
     let checkedSize = -1
@@ -1963,7 +1902,7 @@ export function createInMemoryWorkflowRuntime(
     },
     async ack(command) {
       if (!matchesClaim(claimedContinueRunCommands.get(command.id), command)) {
-        throw new Error('Stale workflow command ack')
+        throw new StaleAckError()
       }
       claimedContinueRunCommands.delete(command.id)
     },
@@ -2072,7 +2011,7 @@ export function createInMemoryWorkflowRuntime(
     async heartbeat(attempt, leaseMs = DEFAULT_LEASE_MS) {
       const claimed = claimedAttemptCommands.get(attempt.id)
       if (!claimed || !matchesClaim(claimed, attempt)) {
-        throw new Error('Workflow attempt heartbeat lease lost')
+        throw new AttemptLeaseLostError()
       }
       claimedAttemptCommands.set(attempt.id, {
         ...claimed,
@@ -2082,7 +2021,7 @@ export function createInMemoryWorkflowRuntime(
     },
     async ack(attempt) {
       if (!matchesClaim(claimedAttemptCommands.get(attempt.id), attempt)) {
-        throw new Error('Stale workflow command ack')
+        throw new StaleAckError()
       }
       claimedAttemptCommands.delete(attempt.id)
     },
@@ -2120,11 +2059,7 @@ export function createInMemoryWorkflowRuntime(
       const started = createRunWithState(run)
       if (!started.created) return started.run
 
-      const command = {
-        kind: 'continueRun',
-        runId: started.run.id,
-        workflowName: started.run.workflowName,
-      } as const
+      const command = continueRun(started.run)
       if (startAt) {
         await runCoordinationExecutor.enqueueDelayed(command, startAt)
       } else {
@@ -2194,7 +2129,7 @@ export function createInMemoryWorkflowRuntime(
     },
     async fireDue(options = {}) {
       const date = options.now ?? now()
-      const limit = normalizeScheduleLimit(options.limit)
+      const limit = normalizeBatchSize(options.limit)
       if (limit < 1) return { fired: 0 }
       const due = [...schedules.values()]
         .filter((schedule) => schedule.enabled && schedule.nextRunAt <= date)

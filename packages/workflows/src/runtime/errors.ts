@@ -33,6 +33,25 @@ export class WorkflowRunConflictError extends Error {
 }
 
 /**
+ * The command was acked with a lease token the queue no longer holds: another
+ * worker took the delivery over, so this worker's outcome must be dropped.
+ */
+export class StaleAckError extends Error {
+  constructor() {
+    super('Stale workflow command ack')
+    this.name = 'StaleAckError'
+  }
+}
+
+/** The attempt's claim lease was lost while the handler was still running. */
+export class AttemptLeaseLostError extends Error {
+  constructor() {
+    super('Workflow attempt heartbeat lease lost')
+    this.name = 'AttemptLeaseLostError'
+  }
+}
+
+/**
  * Recorded as `last_error` when a claim takes over an expired lease and no
  * real error is stored yet. The dying worker persisted nothing, so this
  * synthetic error is the only trace of WHY the delivery is being counted.
@@ -47,12 +66,9 @@ export const COMMAND_LEASE_EXPIRED_ERROR: StoredError = {
 
 const MAX_STORED_ERROR_CAUSE_DEPTH = 5
 
-export function toStoredError(
-  error: unknown,
-  depth = MAX_STORED_ERROR_CAUSE_DEPTH,
-): StoredError {
+export function toStoredError(error: unknown): StoredError {
   return serializeError(error, {
-    depth,
+    depth: MAX_STORED_ERROR_CAUSE_DEPTH,
     omitUndefinedStack: true,
     fallback: (value) =>
       isStoredError(value) ? value : { message: String(value) },

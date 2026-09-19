@@ -1,6 +1,8 @@
 import type {
+  IdempotencyKey,
   ResolvedRunUnique,
   RunKind,
+  RunTags,
   WorkflowNodeKind,
 } from '../types/index.ts'
 import type {
@@ -29,8 +31,8 @@ export type StoredRun = {
   readonly parentRunId?: string
   readonly parentNodeName?: string
   readonly rootRunId: string
-  readonly tags: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
+  readonly tags: RunTags
+  readonly idempotencyKey?: IdempotencyKey
   readonly unique?: ResolvedRunUnique
   readonly version: number
   readonly activeSince: Date
@@ -100,7 +102,7 @@ export type StoredAttempt = {
   /** Per-child attempt number since the most recent manual retry. */
   readonly retryAttemptNumber: number
   readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
+  readonly idempotencyKey?: IdempotencyKey
   readonly output?: unknown
   readonly error?: StoredError
   readonly dispatchedAt: Date

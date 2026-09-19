@@ -1,4 +1,7 @@
-import type { DurationString } from '../types/index.ts'
+import type { DurationString, IdempotencyKey } from '../types/index.ts'
+import type { StoredRun } from './state.ts'
+
+export type WorkflowCommandKind = 'continue' | 'activity' | 'task'
 
 export type ContinueRunCommand = {
   readonly kind: 'continueRun'
@@ -6,46 +9,41 @@ export type ContinueRunCommand = {
   readonly workflowName: string
 }
 
-export type ActivityAttemptCommand = {
-  readonly kind: 'activityAttempt'
+type AttemptCommandBase = {
   readonly workflowName: string
-  readonly activityName: string
   readonly runId: string
   readonly nodeName: string
   readonly childKey: string
   readonly attemptId: string
   readonly leaseToken: string
   readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
+  readonly idempotencyKey?: IdempotencyKey
 }
 
-export type TaskAttemptCommand = {
+export type ActivityAttemptCommand = AttemptCommandBase & {
+  readonly kind: 'activityAttempt'
+  readonly activityName: string
+}
+
+export type TaskAttemptCommand = AttemptCommandBase & {
   readonly kind: 'taskAttempt'
-  readonly workflowName: string
   readonly taskName: string
-  readonly runId: string
-  readonly nodeName: string
-  readonly childKey: string
-  readonly attemptId: string
-  readonly leaseToken: string
-  readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString
 }
 
 export type AttemptCommand = ActivityAttemptCommand | TaskAttemptCommand
 
-export type ClaimedCommand = {
+export type WorkflowCommand = ContinueRunCommand | AttemptCommand
+
+export type Claimed<Command extends WorkflowCommand> = {
   readonly id: string
-  readonly command: ContinueRunCommand
+  readonly command: Command
   readonly leaseToken: string
 }
 
-export type ClaimedAttempt = {
-  readonly id: string
-  readonly command: AttemptCommand
-  readonly leaseToken: string
-}
+export type ClaimedCommand = Claimed<ContinueRunCommand>
+
+export type ClaimedAttempt = Claimed<AttemptCommand>
 
 export type RunCoordinationWorkerClaim = {
   readonly workerId: string
@@ -59,4 +57,10 @@ export type ExecutionWorkerClaim = {
   readonly activityNames?: readonly string[]
   readonly taskNames: readonly string[]
   readonly leaseMs: number
+}
+
+export function continueRun(
+  run: Pick<StoredRun, 'id' | 'workflowName'>,
+): ContinueRunCommand {
+  return { kind: 'continueRun', runId: run.id, workflowName: run.workflowName }
 }

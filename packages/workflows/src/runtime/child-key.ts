@@ -5,6 +5,13 @@
  */
 export const SELF_CHILD_KEY = '$self'
 
+/** Task runs execute through one synthetic node holding the self child. */
+export const TASK_RUN_NODE_NAME = '$task'
+
+const CASE_PREFIX = 'case:'
+const MEMBER_PREFIX = 'member:'
+const ITEM_PREFIX = 'item:'
+
 export type ParsedChildKey =
   | { readonly kind: 'self' }
   | { readonly kind: 'case'; readonly caseKey: string }
@@ -12,39 +19,29 @@ export type ParsedChildKey =
   | { readonly kind: 'item'; readonly itemIndex: number }
 
 export function caseChildKey(caseKey: string): string {
-  return `case:${caseKey}`
+  return `${CASE_PREFIX}${caseKey}`
 }
 
 export function memberChildKey(memberKey: string): string {
-  return `member:${memberKey}`
+  return `${MEMBER_PREFIX}${memberKey}`
 }
 
 export function itemChildKey(itemIndex: number): string {
-  return `item:${itemIndex}`
+  return `${ITEM_PREFIX}${itemIndex}`
 }
 
 export function parseChildKey(childKey: string): ParsedChildKey | undefined {
   if (childKey === SELF_CHILD_KEY) return { kind: 'self' }
-  if (childKey.startsWith('case:')) {
-    return { kind: 'case', caseKey: childKey.slice('case:'.length) }
+  if (childKey.startsWith(CASE_PREFIX)) {
+    return { kind: 'case', caseKey: childKey.slice(CASE_PREFIX.length) }
   }
-  if (childKey.startsWith('member:')) {
-    return { kind: 'member', memberKey: childKey.slice('member:'.length) }
+  if (childKey.startsWith(MEMBER_PREFIX)) {
+    return { kind: 'member', memberKey: childKey.slice(MEMBER_PREFIX.length) }
   }
-  if (childKey.startsWith('item:')) {
-    const itemIndex = Number(childKey.slice('item:'.length))
+  if (childKey.startsWith(ITEM_PREFIX)) {
+    const itemIndex = Number(childKey.slice(ITEM_PREFIX.length))
     if (!Number.isInteger(itemIndex) || itemIndex < 0) return undefined
     return { kind: 'item', itemIndex }
   }
   return undefined
-}
-
-export function childKeyMemberKey(childKey: string): string | undefined {
-  const parsed = parseChildKey(childKey)
-  return parsed?.kind === 'member' ? parsed.memberKey : undefined
-}
-
-export function childKeyCaseKey(childKey: string): string | undefined {
-  const parsed = parseChildKey(childKey)
-  return parsed?.kind === 'case' ? parsed.caseKey : undefined
 }

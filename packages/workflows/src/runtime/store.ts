@@ -1,8 +1,11 @@
 import type {
+  IdempotencyKey,
   ResolvedRunUnique,
   RunKind,
+  RunTags,
   WorkflowNodeKind,
 } from '../types/index.ts'
+import type { WorkflowCommandKind } from './commands.ts'
 import type {
   NodeChildKind,
   RunSnapshot,
@@ -12,12 +15,9 @@ import type {
   StoredNodeChild,
   StoredRun,
 } from './state.ts'
-import type { RuntimeRunStatus } from './status.ts'
+import type { RuntimeRunStatus, TerminalRunStatus } from './status.ts'
 
-export type TerminalRunStatus = Extract<
-  RuntimeRunStatus,
-  'completed' | 'cancelled' | 'failed'
->
+export type { TerminalRunStatus }
 
 export type RunLease = {
   readonly runId: string
@@ -34,8 +34,8 @@ export type CreateRunInput = {
   readonly parentRunId?: string
   readonly parentNodeName?: string
   readonly rootRunId?: string
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
+  readonly tags?: RunTags
+  readonly idempotencyKey?: IdempotencyKey
   readonly unique?: ResolvedRunUnique
 }
 
@@ -53,7 +53,7 @@ export type ListRunsFilter = {
   readonly createdBefore?: Date
   readonly parentRunId?: string | null
   readonly rootRunId?: string
-  readonly tags?: Readonly<Record<string, string>>
+  readonly tags?: RunTags
   readonly input?: unknown
   readonly limit?: number
   readonly cursor?: string
@@ -120,7 +120,7 @@ export type WorkflowRetentionPruner = {
 
 export type DeadWorkflowCommand = {
   readonly id: string
-  readonly kind: 'continue' | 'activity' | 'task'
+  readonly kind: WorkflowCommandKind
   readonly runId: string
   readonly workflowName?: string
   readonly taskName?: string
@@ -166,8 +166,8 @@ export type EnsureChildRunParams = {
   readonly childName: string
   readonly input: unknown
   readonly rootRunId: string
-  readonly tags?: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
+  readonly tags?: RunTags
+  readonly idempotencyKey?: IdempotencyKey
 }
 
 export type EnsureChildRunResult = {
@@ -181,7 +181,7 @@ export type EnsureChildAttemptParams = {
   readonly nodeName: string
   readonly childKey: string
   readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
+  readonly idempotencyKey?: IdempotencyKey
 }
 
 export type EnsureChildAttemptResult = {
@@ -194,7 +194,7 @@ export type CreateAttemptInput = {
   readonly nodeName: string
   readonly childKey: string
   readonly input: unknown
-  readonly idempotencyKey?: readonly unknown[]
+  readonly idempotencyKey?: IdempotencyKey
 }
 
 export type NodeChildRef = {

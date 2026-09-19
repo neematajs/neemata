@@ -1,4 +1,6 @@
-export type WorkflowCommandWakeKind = 'continue' | 'activity' | 'task'
+import type { WorkflowCommandKind } from './commands.ts'
+
+export type WorkflowCommandWakeKind = WorkflowCommandKind
 
 /**
  * Optional adapter port for push-style wake-up hints layered over polling.
