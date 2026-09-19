@@ -38,6 +38,20 @@ export const WS_MIN_INBOUND_PAYLOAD = 64 * 1024 + 1024
 
 type OnDisconnect = (connectionId: string) => Promise<void>
 
+/** Closing a peer is best-effort: the socket may already be gone. */
+function closePeer(
+  peer: Peer,
+  connectionId: string,
+  code: number,
+  reason: string,
+) {
+  try {
+    peer.close(code, reason)
+  } catch (error) {
+    console.error(`Failed to close WebSocket connection ${connectionId}`, error)
+  }
+}
+
 /**
  * Single owner of connection teardown. Every path that ends a connection —
  * reap timer, crossws close hook, session-initiated termination (heartbeat
@@ -101,14 +115,12 @@ class WsConnectionRegistry {
     // nothing claimed: teardown already ran (or the id was never admitted)
     if (!pending && !peer) return false
     if (peer && close) {
-      try {
-        peer.close(close.code ?? 1001, close.reason ?? 'Closed')
-      } catch (error) {
-        console.error(
-          `Failed to close WebSocket connection ${connectionId}`,
-          error,
-        )
-      }
+      closePeer(
+        peer,
+        connectionId,
+        close.code ?? 1001,
+        close.reason ?? 'Closed',
+      )
     }
     return true
   }
@@ -147,12 +159,18 @@ export function neemataWebSocket({
         codecs,
         options,
       )
-      handler.unmount = host.mountWebSocket({
+      const unmount = host.mountWebSocket({
         path: options.path,
         hooks: handler.hooks,
         requirements: { minPayloadLength: WS_MIN_INBOUND_PAYLOAD },
       })
-      return handler
+      return {
+        // stop accepting upgrades before tearing the live connections down
+        dispose: async () => {
+          unmount()
+          await handler.dispose()
+        },
+      }
     },
   }
 }
@@ -162,7 +180,6 @@ export class NeemataWebSocketHandler {
   readonly engine: WsSessionEngine
   readonly hooks: Hooks
   readonly #codecs: ProtocolCodecRegistry
-  unmount: () => void = () => {}
   #disposed = false
   #pendingUpgrades = new Set<Promise<unknown>>()
 
@@ -191,7 +208,6 @@ export class NeemataWebSocketHandler {
 
   async dispose(): Promise<void> {
     this.#disposed = true
-    this.unmount()
     // upgrades whose onConnect is in flight either register before the sweep
     // below or observe #disposed and self-clean — no admission can slip past
     await Promise.allSettled(this.#pendingUpgrades)
@@ -235,14 +251,7 @@ export class NeemataWebSocketHandler {
         // gateway side is gone, close the late peer instead of registering
         // a zombie
         if (!this.connections.opened(connectionId, peer)) {
-          try {
-            peer.close(1001, 'Closed')
-          } catch (error) {
-            console.error(
-              `Failed to close late WebSocket connection ${connectionId}`,
-              error,
-            )
-          }
+          closePeer(peer, connectionId, 1001, 'Closed')
         }
       },
       message: async (peer, message) => {

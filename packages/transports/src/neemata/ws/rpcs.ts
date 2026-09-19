@@ -27,8 +27,8 @@ export class RpcManager {
   }
 
   close(connectionId: string) {
-    // Iterate all RPCs and abort those belonging to this connection
-    // Optimization: Maintain a Set<callId> per connectionId
+    // a connection sweep is rare (one per disconnect), so it scans rather
+    // than maintaining a per-connection index
     for (const [key, controller] of this.rpcs) {
       if (key.startsWith(`${connectionId}:`)) {
         controller.abort()

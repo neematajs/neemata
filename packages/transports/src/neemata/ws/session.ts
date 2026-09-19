@@ -21,6 +21,7 @@ import {
   isAsyncIterable,
   MAX_UINT32,
   noopFn,
+  onAbort,
   withTimeout,
 } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
@@ -41,6 +42,7 @@ import { ProtocolError, versions } from '@nmtjs/protocol/server'
 import { RpcManager } from './rpcs.ts'
 import {
   BlobStreamsManager,
+  MAX_TIMER_DELAY,
   STREAM_IDLE_TIMEOUT_REASON,
   STREAM_TRANSPORT_DROP_REASON,
 } from './streams.ts'
@@ -64,9 +66,6 @@ class StreamFlowError extends Error {}
 export const DEFAULT_WS_HEARTBEAT_INTERVAL = 15000
 export const DEFAULT_WS_HEARTBEAT_TIMEOUT = 5000
 export const DEFAULT_STREAM_IDLE_TIMEOUT = 30_000
-// Node clamps larger timer delays to 1ms, which would invert a large credit
-// window into an immediate timeout.
-const MAX_TIMER_DELAY = 2 ** 31 - 1
 /**
  * Upper bound for the RPC stream iterator's return() during cleanup: on
  * async generators it queues behind a stalled next(), so unwinding is only
@@ -124,17 +123,22 @@ type WsSessionCodecs = {
   decoder: BaseServerDecoder
 }
 
+type Heartbeat = {
+  abortController: AbortController
+  pending: Map<number, ReturnType<typeof createFuture<void>>>
+  nonce: number
+}
+
 type WsSession = {
   connection: GatewayConnection
   protocol: ProtocolVersionInterface
   encoder: BaseServerEncoder
-  decoder: BaseServerDecoder
-  nextStreamId: number
-  heartbeat?: {
-    abortController: AbortController
-    pending: Map<number, ReturnType<typeof createFuture<void>>>
-    nonce: number
-  }
+  /**
+   * Built once at open(): the context depends only on session state, so
+   * rebuilding it per inbound message allocates for nothing.
+   */
+  context: MessageContext
+  heartbeat?: Heartbeat
 }
 
 /**
@@ -151,9 +155,9 @@ export class WsSessionEngine {
   readonly sessions = new Map<string, WsSession>()
   /**
    * Chunk-count credits for in-flight RPC streaming responses, keyed by
-   * connectionId:callId. Entries live strictly within the streaming section
-   * of handleRpc (the callId is reserved in RpcManager for that whole span,
-   * so there is no reuse race); teardown also sweeps by connection.
+   * connectionId:callId. Entries live strictly within streamResponse (the
+   * callId is reserved in RpcManager for that whole span, so there is no
+   * reuse race); teardown also sweeps by connection.
    */
   private readonly rpcStreamCredits = new Map<string, RpcStreamCreditState>()
   readonly streamIdleTimeout: number
@@ -187,8 +191,7 @@ export class WsSessionEngine {
       connection,
       protocol,
       encoder: codecs.encoder,
-      decoder: codecs.decoder,
-      nextStreamId: 0,
+      context: this.createMessageContext(connection.id, protocol, codecs),
     }
     this.sessions.set(connection.id, session)
     this.startHeartbeat(session)
@@ -202,7 +205,7 @@ export class WsSessionEngine {
     const session = this.sessions.get(connectionId)
     if (!session) return
     this.sessions.delete(connectionId)
-    this.stopHeartbeat(session, 'close')
+    this.stopHeartbeat(session)
     this.rpcs.close(connectionId)
     this.releaseRpcStreamCredits(connectionId)
     this.blobStreams.cleanupConnection(connectionId)
@@ -214,7 +217,7 @@ export class WsSessionEngine {
   ): Promise<void> {
     const session = this.sessions.get(connectionId)
     if (!session) throw new Error('Session not found')
-    const context = this.createMessageContext(session)
+    const { context } = session
 
     const frame = ArrayBuffer.isView(data)
       ? Buffer.from(data.buffer, data.byteOffset, data.byteLength)
@@ -258,7 +261,6 @@ export class WsSessionEngine {
         try {
           await this.handleRpc(
             session,
-            context,
             { callId, procedure, payload },
             controller.signal,
           )
@@ -279,13 +281,10 @@ export class WsSessionEngine {
         break
       }
       case ClientMessageType.ClientBlobAbort: {
-        // peer-originated: never echo the abort back
-        this.blobStreams.abortClientStream(
-          connectionId,
-          message.streamId,
-          message.reason,
-          false,
-        )
+        this.blobStreams.abortClientStream(connectionId, message.streamId, {
+          reason: message.reason,
+          notifyPeer: false,
+        })
         break
       }
       case ClientMessageType.ClientBlobPush: {
@@ -298,11 +297,9 @@ export class WsSessionEngine {
           this.logger.warn(
             `Client stream ${message.streamId} push exceeds granted credit, aborting stream`,
           )
-          this.blobStreams.abortClientStream(
-            connectionId,
-            message.streamId,
-            STREAM_FLOW_CONTROL_VIOLATION_REASON,
-          )
+          this.blobStreams.abortClientStream(connectionId, message.streamId, {
+            reason: STREAM_FLOW_CONTROL_VIOLATION_REASON,
+          })
         }
         break
       }
@@ -311,13 +308,10 @@ export class WsSessionEngine {
         break
       }
       case ClientMessageType.ServerBlobAbort: {
-        // peer-originated: never echo the abort back
-        this.blobStreams.abortServerStream(
-          connectionId,
-          message.streamId,
-          message.reason,
-          false,
-        )
+        this.blobStreams.abortServerStream(connectionId, message.streamId, {
+          reason: message.reason,
+          notifyPeer: false,
+        })
         break
       }
       case ClientMessageType.ServerBlobPull: {
@@ -327,11 +321,9 @@ export class WsSessionEngine {
           this.logger.warn(
             `Zero-size server stream ${message.streamId} pull, aborting stream`,
           )
-          this.blobStreams.abortServerStream(
-            connectionId,
-            message.streamId,
-            STREAM_FLOW_CONTROL_VIOLATION_REASON,
-          )
+          this.blobStreams.abortServerStream(connectionId, message.streamId, {
+            reason: STREAM_FLOW_CONTROL_VIOLATION_REASON,
+          })
           break
         }
         this.blobStreams.pullServerStream(
@@ -343,7 +335,7 @@ export class WsSessionEngine {
       }
       case ClientMessageType.RpcStreamPull: {
         const credit = this.rpcStreamCredits.get(
-          `${connectionId}:${message.callId}`,
+          creditKey(connectionId, message.callId),
         )
         if (credit) {
           // zero-size pulls are a free keepalive, oversized totals break
@@ -372,11 +364,10 @@ export class WsSessionEngine {
 
   private async handleRpc(
     session: WsSession,
-    context: MessageContext,
     rpc: { callId: number; procedure: string; payload: unknown },
     signal: AbortSignal,
   ): Promise<void> {
-    const { connection, protocol, encoder } = session
+    const { connection, protocol, context } = session
     const connectionId = connection.id
     const { callId } = rpc
 
@@ -385,172 +376,30 @@ export class WsSessionEngine {
         connection,
         { procedure: rpc.procedure, payload: rpc.payload },
         signal,
-        provision(
-          createBlob,
-          this.createBlobFunction(session, context, callId),
-        ),
+        provision(createBlob, this.createBlobFunction(session, callId)),
         provision(consumeBlob, this.consumeBlobFunction(connectionId, callId)),
       )
 
       if (isAsyncIterable(response)) {
         // don't open a stream for a call aborted while dispatching
         signal.throwIfAborted()
-
-        const creditKey = `${connectionId}:${callId}`
-        // Rejects on call abort or a credit violation. Every await in the
-        // streaming loop races against it, so a handler stalled inside
-        // next() cannot outlive the call (client abort, connection teardown).
-        // Deliberately NOT wired to the idle timer: a silent producer with a
-        // live, waiting client is not a fault (sparse streams, e.g. pubsub
-        // subscriptions) — the client controls cancellation and heartbeat
-        // reaps dead connections into the same abort signal.
-        const flow = createFuture<never>()
-        flow.promise.catch(noopFn)
-        const credit: RpcStreamCreditState = {
-          credits: new SendCredits(),
-          idleCredits: 0,
-          notify: null,
-          fail: (error) => flow.reject(error),
-        }
-        // installed BEFORE RpcStreamResponse goes out: a synchronous
-        // transport may deliver the first pull re-entrantly during the send
-        this.rpcStreamCredits.set(creditKey, credit)
-        const onAbort = () => flow.reject(signal.reason)
-        signal.addEventListener('abort', onAbort, { once: true })
-
-        let iterator: AsyncIterator<unknown> | undefined
-        try {
-          const sentResponse = this.send(
-            session,
-            protocol.encodeMessage(
-              context,
-              ServerMessageType.RpcStreamResponse,
-              { callId },
-            ),
-          )
-          if (sentResponse === 'dropped') {
-            // the client never learns this call is a stream; nothing
-            // stream-level can recover it
-            void this.options.terminate(connectionId, TERMINAL_FRAME_DROP_CLOSE)
-            return
-          }
-          signal.throwIfAborted()
-
-          iterator = response[Symbol.asyncIterator]()
-
-          while (true) {
-            // The credit wait comes BEFORE next(): a consumer that never
-            // iterates must not pin the generator, call container and
-            // reservation forever — with zero credit the producer is never
-            // advanced and the wait's idle timer reaps the stream. Sparse
-            // producers stay safe: a waiting consumer has already granted
-            // credit before the silence, and next() races only the abort.
-            while (credit.credits.available <= 0) {
-              // idle detection bounds only consumer inactivity: the producer
-              // is ready but the client isn't pulling
-              const idleTimeout = Math.min(
-                this.streamIdleTimeout * Math.max(credit.idleCredits, 1),
-                MAX_TIMER_DELAY,
-              )
-              credit.idleCredits = 0
-              const grant = createFuture<void>()
-              credit.notify = grant.resolve
-              const idleTimer = setTimeout(
-                () =>
-                  flow.reject(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
-                idleTimeout,
-              )
-              try {
-                await Promise.race([grant.promise, flow.promise])
-              } finally {
-                clearTimeout(idleTimer)
-                credit.notify = null
-              }
-              signal.throwIfAborted()
-            }
-            const result = await Promise.race([iterator.next(), flow.promise])
-            // the last credit is answered by End instead of a chunk: the
-            // consumer's final read resolves done
-            if (result.done) break
-            signal.throwIfAborted()
-            credit.credits.spend(1)
-            const chunkEncoded = encoder.encode(result.value)
-            const sent = this.send(
-              session,
-              protocol.encodeMessage(
-                context,
-                ServerMessageType.RpcStreamChunk,
-                {
-                  callId,
-                  chunk: chunkEncoded,
-                },
-              ),
-            )
-            if (sent === 'dropped') {
-              throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
-            }
-          }
-
-          const sentEnd = this.send(
-            session,
-            protocol.encodeMessage(context, ServerMessageType.RpcStreamEnd, {
-              callId,
-            }),
-          )
-          if (sentEnd === 'dropped') {
-            // terminal frame lost: the client would wait forever
-            void this.options.terminate(connectionId, TERMINAL_FRAME_DROP_CLOSE)
-          }
-        } catch (error) {
-          if (!isAbortError(error) && !(error instanceof StreamFlowError)) {
-            this.logger.error(error)
-          }
-          const sentAbort = this.send(
-            session,
-            protocol.encodeMessage(context, ServerMessageType.RpcStreamAbort, {
-              callId,
-              reason:
-                error instanceof StreamFlowError ? error.message : undefined,
-            }),
-          )
-          if (sentAbort === 'dropped') {
-            void this.options.terminate(connectionId, TERMINAL_FRAME_DROP_CLOSE)
-          }
-        } finally {
-          signal.removeEventListener('abort', onAbort)
-          this.rpcStreamCredits.delete(creditKey)
-          if (iterator) {
-            // cooperative unwind on every exit path; timeboxed because
-            // return() queues behind a stalled next() on async generators
-            try {
-              await withTimeout(
-                Promise.resolve(iterator.return?.()),
-                RPC_STREAM_CLEANUP_TIMEOUT,
-                new Error('RPC stream iterator cleanup timed out'),
-              )
-            } catch (error) {
-              this.logger.warn(
-                `RPC stream iterator cleanup failed for call ${callId}`,
-                error,
-              )
-            }
-          }
-        }
-      } else {
-        const streams = this.blobStreams.getServerStreamsMetadata(
-          connectionId,
-          callId,
-        )
-        this.send(
-          session,
-          protocol.encodeMessage(context, ServerMessageType.RpcResponse, {
-            callId,
-            result: response,
-            streams,
-            error: null,
-          }),
-        )
+        await this.streamResponse(session, callId, response, signal)
+        return
       }
+
+      const streams = this.blobStreams.getServerStreamsMetadata(
+        connectionId,
+        callId,
+      )
+      this.send(
+        session,
+        protocol.encodeMessage(context, ServerMessageType.RpcResponse, {
+          callId,
+          result: response,
+          streams,
+          error: null,
+        }),
+      )
     } catch (error) {
       this.send(
         session,
@@ -565,30 +414,195 @@ export class WsSessionEngine {
     }
   }
 
-  private send(session: WsSession, buffer: ArrayBufferView): SendResult {
+  /**
+   * Pumps an async iterable response as RpcStreamChunk frames, one per
+   * granted chunk credit, and closes it with End or Abort.
+   */
+  private async streamResponse(
+    session: WsSession,
+    callId: number,
+    response: AsyncIterable<unknown>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const { protocol, encoder, context } = session
+    const connectionId = session.connection.id
+    const key = creditKey(connectionId, callId)
+
+    // Rejects on call abort or a credit violation. Every await in the
+    // streaming loop races against it, so a handler stalled inside
+    // next() cannot outlive the call (client abort, connection teardown).
+    // Deliberately NOT wired to the idle timer: a silent producer with a
+    // live, waiting client is not a fault (sparse streams, e.g. pubsub
+    // subscriptions) — the client controls cancellation and heartbeat
+    // reaps dead connections into the same abort signal.
+    const flow = createFuture<never>()
+    flow.promise.catch(noopFn)
+    const credit: RpcStreamCreditState = {
+      credits: new SendCredits(),
+      idleCredits: 0,
+      notify: null,
+      fail: (error) => flow.reject(error),
+    }
+    // installed BEFORE RpcStreamResponse goes out: a synchronous
+    // transport may deliver the first pull re-entrantly during the send
+    this.rpcStreamCredits.set(key, credit)
+    const offAbort = onAbort(signal, (reason) => flow.reject(reason))
+
+    let iterator: AsyncIterator<unknown> | undefined
+    try {
+      const opened = this.sendTerminal(
+        connectionId,
+        protocol.encodeMessage(context, ServerMessageType.RpcStreamResponse, {
+          callId,
+        }),
+      )
+      // the client never learns this call is a stream; nothing
+      // stream-level can recover it
+      if (!opened) return
+      signal.throwIfAborted()
+
+      iterator = response[Symbol.asyncIterator]()
+
+      while (true) {
+        // The credit wait comes BEFORE next(): a consumer that never
+        // iterates must not pin the generator, call container and
+        // reservation forever — with zero credit the producer is never
+        // advanced and the wait's idle timer reaps the stream. Sparse
+        // producers stay safe: a waiting consumer has already granted
+        // credit before the silence, and next() races only the abort.
+        await this.awaitCredit(credit, flow.promise, signal)
+
+        const result = await Promise.race([iterator.next(), flow.promise])
+        // the last credit is answered by End instead of a chunk: the
+        // consumer's final read resolves done
+        if (result.done) break
+        signal.throwIfAborted()
+        credit.credits.spend(1)
+        const chunk = encoder.encode(result.value)
+        const sent = this.send(
+          session,
+          protocol.encodeMessage(context, ServerMessageType.RpcStreamChunk, {
+            callId,
+            chunk,
+          }),
+        )
+        if (sent === 'dropped') {
+          throw new StreamFlowError(STREAM_TRANSPORT_DROP_REASON)
+        }
+      }
+
+      this.sendTerminal(
+        connectionId,
+        protocol.encodeMessage(context, ServerMessageType.RpcStreamEnd, {
+          callId,
+        }),
+      )
+    } catch (error) {
+      if (!isAbortError(error) && !(error instanceof StreamFlowError)) {
+        this.logger.error(error)
+      }
+      this.sendTerminal(
+        connectionId,
+        protocol.encodeMessage(context, ServerMessageType.RpcStreamAbort, {
+          callId,
+          reason: error instanceof StreamFlowError ? error.message : undefined,
+        }),
+      )
+    } finally {
+      offAbort()
+      this.rpcStreamCredits.delete(key)
+      if (iterator) {
+        // cooperative unwind on every exit path; timeboxed because
+        // return() queues behind a stalled next() on async generators
+        try {
+          await withTimeout(
+            Promise.resolve(iterator.return?.()),
+            RPC_STREAM_CLEANUP_TIMEOUT,
+            new Error('RPC stream iterator cleanup timed out'),
+          )
+        } catch (error) {
+          this.logger.warn(
+            `RPC stream iterator cleanup failed for call ${callId}`,
+            error,
+          )
+        }
+      }
+    }
+  }
+
+  /**
+   * Blocks until the consumer grants chunk credit. The idle timer bounds
+   * only consumer inactivity — the producer is ready but the client isn't
+   * pulling — and its allowance scales with the credit granted since the
+   * previous wait, so a batched grant does not shrink the time each chunk
+   * gets to be consumed.
+   */
+  private async awaitCredit(
+    credit: RpcStreamCreditState,
+    flow: Promise<never>,
+    signal: AbortSignal,
+  ): Promise<void> {
+    while (credit.credits.available <= 0) {
+      const idleTimeout = Math.min(
+        this.streamIdleTimeout * Math.max(credit.idleCredits, 1),
+        MAX_TIMER_DELAY,
+      )
+      credit.idleCredits = 0
+      const grant = createFuture<void>()
+      credit.notify = grant.resolve
+      const idleTimer = setTimeout(
+        () => credit.fail(new StreamFlowError(STREAM_IDLE_TIMEOUT_REASON)),
+        idleTimeout,
+      )
+      try {
+        await Promise.race([grant.promise, flow])
+      } finally {
+        clearTimeout(idleTimer)
+        credit.notify = null
+      }
+      signal.throwIfAborted()
+    }
+  }
+
+  private send(
+    session: Pick<WsSession, 'connection'>,
+    buffer: ArrayBufferView,
+  ): SendResult {
     return this.options.send(session.connection.id, buffer)
   }
 
-  private createMessageContext(session: WsSession): MessageContext {
-    const { protocol, decoder, encoder } = session
-    const connectionId = session.connection.id
+  /**
+   * Sends a frame whose loss cannot be repaired at stream level: the peer
+   * would wait forever for it, so a drop closes the connection instead.
+   * Returns false when the frame was dropped.
+   */
+  private sendTerminal(connectionId: string, buffer: ArrayBufferView): boolean {
+    if (this.options.send(connectionId, buffer) !== 'dropped') return true
+    void this.options.terminate(connectionId, TERMINAL_FRAME_DROP_CLOSE)
+    return false
+  }
+
+  private createMessageContext(
+    connectionId: string,
+    protocol: ProtocolVersionInterface,
+    codecs: WsSessionCodecs,
+  ): MessageContext {
+    let nextStreamId = 0
 
     const context: MessageContext = {
       connectionId,
       protocol,
-      encoder,
-      decoder,
+      encoder: codecs.encoder,
+      decoder: codecs.decoder,
       transport: { send: this.options.send },
       streamId: () => {
-        let streamId = session.nextStreamId
-        if (streamId >= MAX_UINT32) streamId = 0
-        session.nextStreamId = streamId + 1
-        return streamId
+        if (nextStreamId >= MAX_UINT32) nextStreamId = 0
+        return nextStreamId++
       },
       addClientStream: ({ streamId, callId, metadata }) => {
         const sendGrant = (size: number) => {
-          const sent = this.send(
-            session,
+          const sent = this.options.send(
+            connectionId,
             protocol.encodeMessage(context, ServerMessageType.ClientBlobPull, {
               streamId,
               size,
@@ -602,11 +616,9 @@ export class WsSessionEngine {
               streamId,
               size,
             )
-            this.blobStreams.abortClientStream(
-              connectionId,
-              streamId,
-              STREAM_TRANSPORT_DROP_REASON,
-            )
+            this.blobStreams.abortClientStream(connectionId, streamId, {
+              reason: STREAM_TRANSPORT_DROP_REASON,
+            })
           }
         }
 
@@ -625,20 +637,14 @@ export class WsSessionEngine {
             },
           },
           (reason) => {
-            const sent = this.send(
-              session,
+            this.sendTerminal(
+              connectionId,
               protocol.encodeMessage(
                 context,
                 ServerMessageType.ClientBlobAbort,
                 { streamId, reason },
               ),
             )
-            if (sent === 'dropped') {
-              void this.options.terminate(
-                connectionId,
-                TERMINAL_FRAME_DROP_CLOSE,
-              )
-            }
           },
         )
 
@@ -651,10 +657,9 @@ export class WsSessionEngine {
 
   private createBlobFunction(
     session: WsSession,
-    context: MessageContext,
     callId: number,
   ): ResolveInjectableType<typeof GatewayInjectables.createBlob> {
-    const { protocol, encoder } = session
+    const { protocol, encoder, context } = session
     const connectionId = session.connection.id
 
     return (source, metadata) => {
@@ -683,37 +688,25 @@ export class WsSessionEngine {
               ),
             )
           },
+          // a dropped terminal frame lands after local state removal: the
+          // client would wait forever, only a connection close can recover
           end: () => {
-            const sent = this.send(
-              session,
+            this.sendTerminal(
+              connectionId,
               protocol.encodeMessage(context, ServerMessageType.ServerBlobEnd, {
                 streamId,
               }),
             )
-            if (sent === 'dropped') {
-              // terminal frame lost after local state removal: the client
-              // would wait forever, only a connection close can recover
-              void this.options.terminate(
-                connectionId,
-                TERMINAL_FRAME_DROP_CLOSE,
-              )
-            }
           },
           error: (error) => {
-            const sent = this.send(
-              session,
+            this.sendTerminal(
+              connectionId,
               protocol.encodeMessage(
                 context,
                 ServerMessageType.ServerBlobAbort,
                 { streamId, reason: error.message },
               ),
             )
-            if (sent === 'dropped') {
-              void this.options.terminate(
-                connectionId,
-                TERMINAL_FRAME_DROP_CLOSE,
-              )
-            }
           },
         },
       )
@@ -750,30 +743,32 @@ export class WsSessionEngine {
     const abortController = new AbortController()
     const signal = abortController.signal
 
-    const state = {
+    const state: Heartbeat = {
       abortController,
-      pending: new Map<number, ReturnType<typeof createFuture<void>>>(),
+      pending: new Map(),
       nonce: 0,
     }
     session.heartbeat = state
 
     const loop = async () => {
-      while (!signal.aborted && this.sessions.get(connectionId) === session) {
-        await new Promise((resolve) => setTimeout(resolve, config.interval))
-        if (signal.aborted || this.sessions.get(connectionId) !== session) break
+      while (!signal.aborted) {
+        // abortable so a closed session releases its timer at once instead
+        // of pinning the loop for a full interval
+        await sleep(config.interval, signal)
+        if (signal.aborted) break
 
-        const context = this.createMessageContext(session)
         const nonce = state.nonce++
-
         const future = createFuture<void>()
         state.pending.set(nonce, future)
 
         try {
           this.send(
             session,
-            session.protocol.encodeMessage(context, ServerMessageType.Ping, {
-              nonce,
-            }),
+            session.protocol.encodeMessage(
+              session.context,
+              ServerMessageType.Ping,
+              { nonce },
+            ),
           )
 
           await withTimeout(
@@ -797,14 +792,14 @@ export class WsSessionEngine {
     loop().catch(noopFn)
   }
 
-  private stopHeartbeat(session: WsSession, reason?: any) {
+  private stopHeartbeat(session: WsSession) {
     const state = session.heartbeat
     if (!state) return
     session.heartbeat = undefined
-    state.abortController.abort(reason)
+    state.abortController.abort()
 
     if (state.pending.size) {
-      const error = new Error('Heartbeat stopped', { cause: reason })
+      const error = new Error('Heartbeat stopped')
       for (const pending of state.pending.values()) pending.reject(error)
       state.pending.clear()
     }
@@ -819,4 +814,24 @@ export class WsSessionEngine {
       }
     }
   }
+}
+
+const creditKey = (connectionId: string, callId: number) =>
+  `${connectionId}:${callId}`
+
+/**
+ * Global setTimeout rather than node:timers/promises: the engine runs on
+ * every supported runtime, and test fake timers only patch the global.
+ */
+function sleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      off()
+      resolve()
+    }, ms)
+    const off = onAbort(signal, (reason) => {
+      clearTimeout(timer)
+      reject(reason)
+    })
+  })
 }

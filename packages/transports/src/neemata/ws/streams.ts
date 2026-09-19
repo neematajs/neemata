@@ -22,14 +22,26 @@ export const STREAM_IDLE_TIMEOUT_REASON = 'stream idle timeout'
 export const STREAM_TRANSPORT_DROP_REASON =
   'transport backpressure overflow (frame dropped)'
 
-const MAX_TIMER_DELAY = 2 ** 31 - 1
+/**
+ * Node clamps larger timer delays to 1ms, which would invert a large credit
+ * window into an immediate timeout.
+ */
+export const MAX_TIMER_DELAY = 2 ** 31 - 1
 
 export type StreamConfig = {
   idleTimeout: number
   clientStreamWindow: CreditWindowOptions
 }
 
+/** How a local abort should treat the peer. */
+export type AbortStreamOptions = {
+  reason?: string
+  /** False for peer-originated aborts: they must never be echoed back. */
+  notifyPeer?: boolean
+}
+
 type ClientStreamState = {
+  kind: 'client'
   connectionId: string
   callId: number
   stream: ProtocolClientStream
@@ -42,6 +54,7 @@ type ClientStreamState = {
 }
 
 type ServerStreamState = {
+  kind: 'server'
   connectionId: string
   callId: number
   stream: ProtocolServerStream
@@ -75,7 +88,8 @@ export class BlobStreamsManager {
   readonly clientStreams = new Map<string, ClientStreamState>()
   readonly serverStreams = new Map<string, ServerStreamState>()
 
-  // Index for quick lookup by callId (connectionId:callId -> Set<streamId>)
+  // Secondary indexes for the two sweeps: per call (abort unconsumed
+  // uploads) and per connection (teardown).
   readonly connectionClientStreams = new Map<string, Set<number>>()
   readonly connectionServerStreams = new Map<string, Set<number>>()
   readonly clientCallStreams = new Map<string, Set<number>>()
@@ -102,8 +116,8 @@ export class BlobStreamsManager {
     const stream = new ProtocolClientStream(streamId, metadata, options)
     stream.on('error', noopFn)
 
-    const key = this.getKey(connectionId, streamId)
     const state: ClientStreamState = {
+      kind: 'client',
       connectionId,
       callId,
       stream,
@@ -113,9 +127,9 @@ export class BlobStreamsManager {
       notify,
       notified: false,
     }
-    this.clientStreams.set(key, state)
-    this.trackClientCall(connectionId, callId, streamId)
-    this.trackConnectionClientStream(connectionId, streamId)
+    this.clientStreams.set(key(connectionId, streamId), state)
+    addToIndex(this.clientCallStreams, key(connectionId, callId), streamId)
+    addToIndex(this.connectionClientStreams, connectionId, streamId)
 
     this.touch(state)
 
@@ -124,8 +138,7 @@ export class BlobStreamsManager {
 
   /** Returns the next upload grant, or zero while demand is below refill. */
   requestClientStreamCredit(connectionId: string, streamId: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
+    const state = this.clientStreams.get(key(connectionId, streamId))
     if (!state) return 0
 
     const grant = state.credits.onDemand(state.acceptedSinceDemand)
@@ -140,8 +153,7 @@ export class BlobStreamsManager {
     streamId: number,
     size: number,
   ) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
+    const state = this.clientStreams.get(key(connectionId, streamId))
     state?.credits.revoke(size)
   }
 
@@ -155,8 +167,7 @@ export class BlobStreamsManager {
     streamId: number,
     chunk: ArrayBufferView,
   ): boolean {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
+    const state = this.clientStreams.get(key(connectionId, streamId))
     if (!state) return true
     if (!state.credits.accept(chunk.byteLength)) return false
     state.acceptedSinceDemand = Math.min(
@@ -169,44 +180,39 @@ export class BlobStreamsManager {
   }
 
   endClientStream(connectionId: string, streamId: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
-    if (state) {
-      state.stream.end(null)
-      this.removeClientStream(connectionId, streamId)
-    }
+    const state = this.clientStreams.get(key(connectionId, streamId))
+    if (!state) return
+    state.stream.end(null)
+    this.removeClientStream(connectionId, streamId)
   }
 
   abortClientStream(
     connectionId: string,
     streamId: number,
-    error = 'Aborted',
-    notifyPeer = true,
+    { reason = 'Aborted', notifyPeer = true }: AbortStreamOptions = {},
   ) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
-    if (state) {
-      if (notifyPeer && !state.notified) {
-        state.notified = true
-        state.notify?.(error)
-      }
-      state.stream.destroy(new Error(error))
-      this.removeClientStream(connectionId, streamId)
+    const state = this.clientStreams.get(key(connectionId, streamId))
+    if (!state) return
+    if (notifyPeer && !state.notified) {
+      state.notified = true
+      state.notify?.(reason)
     }
+    state.stream.destroy(new Error(reason))
+    this.removeClientStream(connectionId, streamId)
   }
 
+  /** A consumed upload is the handler's to finish; drop the call's claim. */
   consumeClientStream(connectionId: string, callId: number, streamId: number) {
-    this.untrackClientCall(connectionId, callId, streamId)
+    removeFromIndex(this.clientCallStreams, key(connectionId, callId), streamId)
   }
 
   getClientCallStreamIds(connectionId: string, callId: number) {
-    const key = this.getCallKey(connectionId, callId)
-    return [...(this.clientCallStreams.get(key) ?? [])]
+    const streamIds = this.clientCallStreams.get(key(connectionId, callId))
+    return streamIds ? Array.from(streamIds) : []
   }
 
   getClientStream(connectionId: string, streamId: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
+    const state = this.clientStreams.get(key(connectionId, streamId))
     if (!state) {
       throw new Error('Stream not found')
     }
@@ -215,27 +221,28 @@ export class BlobStreamsManager {
   }
 
   private removeClientStream(connectionId: string, streamId: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.clientStreams.get(key)
-    if (state) {
-      this.clientStreams.delete(key)
-      this.clearIdleTimer(state)
-      this.untrackClientCall(connectionId, state.callId, streamId)
-      this.untrackConnectionClientStream(connectionId, streamId)
-    }
+    const streamKey = key(connectionId, streamId)
+    const state = this.clientStreams.get(streamKey)
+    if (!state) return
+    this.clientStreams.delete(streamKey)
+    this.clearIdleTimer(state)
+    removeFromIndex(
+      this.clientCallStreams,
+      key(connectionId, state.callId),
+      streamId,
+    )
+    removeFromIndex(this.connectionClientStreams, connectionId, streamId)
   }
 
   // --- Server Streams (Download) ---
 
   getServerStreamsMetadata(connectionId: string, callId: number) {
-    const key = this.getCallKey(connectionId, callId)
-    const streamIds = this.serverCallStreams.get(key)
+    const streamIds = this.serverCallStreams.get(key(connectionId, callId))
     const streams: EncodeRPCStreams = {}
 
     if (streamIds) {
       for (const streamId of streamIds) {
-        const streamKey = this.getKey(connectionId, streamId)
-        const state = this.serverStreams.get(streamKey)
+        const state = this.serverStreams.get(key(connectionId, streamId))
         if (state) {
           streams[streamId] = state.stream.metadata
         }
@@ -252,18 +259,16 @@ export class BlobStreamsManager {
     blob: ProtocolBlob,
     sink: ProtocolServerStreamSink,
   ) {
-    const key = this.getKey(connectionId, streamId)
+    const streamKey = key(connectionId, streamId)
 
     const stream = new ProtocolServerStream(streamId, blob, {
       chunk: (chunk) => {
-        const state = this.serverStreams.get(key)
+        const state = this.serverStreams.get(streamKey)
         const sent = sink.chunk(chunk)
         if (sent === 'dropped') {
-          this.abortServerStream(
-            connectionId,
-            streamId,
-            STREAM_TRANSPORT_DROP_REASON,
-          )
+          this.abortServerStream(connectionId, streamId, {
+            reason: STREAM_TRANSPORT_DROP_REASON,
+          })
         } else if (state) {
           state.pendingConsumerChunks++
           this.touch(state, state.pendingConsumerChunks)
@@ -275,7 +280,7 @@ export class BlobStreamsManager {
         sink.end()
       },
       error: (error) => {
-        const state = this.serverStreams.get(key)
+        const state = this.serverStreams.get(streamKey)
         const suppress = state?.suppressNotify ?? false
         this.removeServerStream(connectionId, streamId)
         if (!suppress) sink.error(error)
@@ -283,6 +288,7 @@ export class BlobStreamsManager {
     })
 
     const state: ServerStreamState = {
+      kind: 'server',
       connectionId,
       callId,
       stream,
@@ -291,9 +297,9 @@ export class BlobStreamsManager {
       suppressNotify: false,
     }
 
-    this.serverStreams.set(key, state)
-    this.trackServerCall(connectionId, callId, streamId)
-    this.trackConnectionServerStream(connectionId, streamId)
+    this.serverStreams.set(streamKey, state)
+    addToIndex(this.serverCallStreams, key(connectionId, callId), streamId)
+    addToIndex(this.connectionServerStreams, connectionId, streamId)
 
     this.touch(state)
 
@@ -301,73 +307,64 @@ export class BlobStreamsManager {
   }
 
   pullServerStream(connectionId: string, streamId: number, size: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.serverStreams.get(key)
-    if (state) {
-      const acknowledgedChunks = Math.ceil(size / DEFAULT_BLOB_CHUNK_SIZE)
-      state.pendingConsumerChunks = Math.max(
-        state.pendingConsumerChunks - acknowledgedChunks,
-        0,
-      )
-      this.touch(state, Math.max(state.pendingConsumerChunks, 1))
-      const granted = state.stream.grant(size)
-      if (!granted) {
-        this.abortServerStream(
-          connectionId,
-          streamId,
-          STREAM_FLOW_CONTROL_VIOLATION_REASON,
-        )
-      }
+    const state = this.serverStreams.get(key(connectionId, streamId))
+    if (!state) return
+    const acknowledgedChunks = Math.ceil(size / DEFAULT_BLOB_CHUNK_SIZE)
+    state.pendingConsumerChunks = Math.max(
+      state.pendingConsumerChunks - acknowledgedChunks,
+      0,
+    )
+    this.touch(state, Math.max(state.pendingConsumerChunks, 1))
+    if (!state.stream.grant(size)) {
+      this.abortServerStream(connectionId, streamId, {
+        reason: STREAM_FLOW_CONTROL_VIOLATION_REASON,
+      })
     }
   }
 
   abortServerStream(
     connectionId: string,
     streamId: number,
-    error = 'Aborted',
-    notifyPeer = true,
+    { reason = 'Aborted', notifyPeer = true }: AbortStreamOptions = {},
   ) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.serverStreams.get(key)
-    if (state) {
-      if (!notifyPeer) state.suppressNotify = true
-      // destroy(error) reports through the stream sink, which removes the
-      // state and notifies the peer (unless suppressed)
-      state.stream.destroy(new Error(error))
-      this.removeServerStream(connectionId, streamId)
-    }
+    const state = this.serverStreams.get(key(connectionId, streamId))
+    if (!state) return
+    if (!notifyPeer) state.suppressNotify = true
+    // destroy(error) reports through the stream sink, which removes the state
+    // and notifies the peer (unless suppressed) — but only while the stream
+    // is still live. The explicit removal below is what clears an already
+    // finished stream, whose sink will never fire again.
+    state.stream.destroy(new Error(reason))
+    this.removeServerStream(connectionId, streamId)
   }
 
-  removeServerStream(connectionId: string, streamId: number) {
-    const key = this.getKey(connectionId, streamId)
-    const state = this.serverStreams.get(key)
-    if (state) {
-      this.serverStreams.delete(key)
-      this.clearIdleTimer(state)
-      this.untrackServerCall(connectionId, state.callId, streamId)
-      this.untrackConnectionServerStream(connectionId, streamId)
-    }
+  private removeServerStream(connectionId: string, streamId: number) {
+    const streamKey = key(connectionId, streamId)
+    const state = this.serverStreams.get(streamKey)
+    if (!state) return
+    this.serverStreams.delete(streamKey)
+    this.clearIdleTimer(state)
+    removeFromIndex(
+      this.serverCallStreams,
+      key(connectionId, state.callId),
+      streamId,
+    )
+    removeFromIndex(this.connectionServerStreams, connectionId, streamId)
   }
 
   // --- Idle timeout ---
 
   private touch(state: StreamState, timeoutMultiplier = 1) {
     this.clearIdleTimer(state)
+    const { kind, connectionId, stream } = state
     state.idleTimer = setTimeout(
       () => {
         state.idleTimer = undefined
-        if (state.stream instanceof ProtocolClientStream) {
-          this.abortClientStream(
-            state.connectionId,
-            state.stream.id,
-            STREAM_IDLE_TIMEOUT_REASON,
-          )
+        const options = { reason: STREAM_IDLE_TIMEOUT_REASON }
+        if (kind === 'client') {
+          this.abortClientStream(connectionId, stream.id, options)
         } else {
-          this.abortServerStream(
-            state.connectionId,
-            state.stream.id,
-            STREAM_IDLE_TIMEOUT_REASON,
-          )
+          this.abortServerStream(connectionId, stream.id, options)
         }
       },
       Math.min(this.idleTimeout * timeoutMultiplier, MAX_TIMER_DELAY),
@@ -381,118 +378,6 @@ export class BlobStreamsManager {
     }
   }
 
-  // --- Helpers ---
-
-  private getKey(connectionId: string, streamId: number) {
-    return `${connectionId}:${streamId}`
-  }
-
-  private getCallKey(connectionId: string, callId: number) {
-    return `${connectionId}:${callId}`
-  }
-
-  private trackClientCall(
-    connectionId: string,
-    callId: number,
-    streamId: number,
-  ) {
-    const key = this.getCallKey(connectionId, callId)
-    let set = this.clientCallStreams.get(key)
-    if (!set) {
-      set = new Set()
-      this.clientCallStreams.set(key, set)
-    }
-    set.add(streamId)
-  }
-
-  private untrackClientCall(
-    connectionId: string,
-    callId: number,
-    streamId: number,
-  ) {
-    const key = this.getCallKey(connectionId, callId)
-    const set = this.clientCallStreams.get(key)
-    if (set) {
-      set.delete(streamId)
-      if (set.size === 0) {
-        this.clientCallStreams.delete(key)
-      }
-    }
-  }
-
-  private trackServerCall(
-    connectionId: string,
-    callId: number,
-    streamId: number,
-  ) {
-    const key = this.getCallKey(connectionId, callId)
-    let set = this.serverCallStreams.get(key)
-    if (!set) {
-      set = new Set()
-      this.serverCallStreams.set(key, set)
-    }
-    set.add(streamId)
-  }
-
-  private untrackServerCall(
-    connectionId: string,
-    callId: number,
-    streamId: number,
-  ) {
-    const key = this.getCallKey(connectionId, callId)
-    const set = this.serverCallStreams.get(key)
-    if (set) {
-      set.delete(streamId)
-      if (set.size === 0) {
-        this.serverCallStreams.delete(key)
-      }
-    }
-  }
-
-  private trackConnectionClientStream(connectionId: string, streamId: number) {
-    let set = this.connectionClientStreams.get(connectionId)
-    if (!set) {
-      set = new Set()
-      this.connectionClientStreams.set(connectionId, set)
-    }
-    set.add(streamId)
-  }
-
-  private untrackConnectionClientStream(
-    connectionId: string,
-    streamId: number,
-  ) {
-    const set = this.connectionClientStreams.get(connectionId)
-    if (set) {
-      set.delete(streamId)
-      if (set.size === 0) {
-        this.connectionClientStreams.delete(connectionId)
-      }
-    }
-  }
-
-  private trackConnectionServerStream(connectionId: string, streamId: number) {
-    let set = this.connectionServerStreams.get(connectionId)
-    if (!set) {
-      set = new Set()
-      this.connectionServerStreams.set(connectionId, set)
-    }
-    set.add(streamId)
-  }
-
-  private untrackConnectionServerStream(
-    connectionId: string,
-    streamId: number,
-  ) {
-    const set = this.connectionServerStreams.get(connectionId)
-    if (set) {
-      set.delete(streamId)
-      if (set.size === 0) {
-        this.connectionServerStreams.delete(connectionId)
-      }
-    }
-  }
-
   // --- Cleanup ---
 
   abortClientCallStreams(
@@ -500,39 +385,55 @@ export class BlobStreamsManager {
     callId: number,
     reason = 'Call aborted',
   ) {
-    const key = this.getCallKey(connectionId, callId)
-    const clientStreamIds = this.clientCallStreams.get(key)
-    if (clientStreamIds) {
-      for (const streamId of Array.from(clientStreamIds)) {
-        this.abortClientStream(connectionId, streamId, reason)
-      }
+    const streamIds = this.clientCallStreams.get(key(connectionId, callId))
+    if (!streamIds) return
+    for (const streamId of Array.from(streamIds)) {
+      this.abortClientStream(connectionId, streamId, { reason })
     }
   }
 
   cleanupConnection(connectionId: string) {
+    // the connection is being torn down: peer notifications go nowhere
+    const options = { reason: 'Connection closed', notifyPeer: false }
+
     const clientStreamIds = this.connectionClientStreams.get(connectionId)
     if (clientStreamIds) {
       for (const streamId of Array.from(clientStreamIds)) {
-        // the connection is being torn down: peer notifications go nowhere
-        this.abortClientStream(
-          connectionId,
-          streamId,
-          'Connection closed',
-          false,
-        )
+        this.abortClientStream(connectionId, streamId, options)
       }
     }
 
     const serverStreamIds = this.connectionServerStreams.get(connectionId)
     if (serverStreamIds) {
       for (const streamId of Array.from(serverStreamIds)) {
-        this.abortServerStream(
-          connectionId,
-          streamId,
-          'Connection closed',
-          false,
-        )
+        this.abortServerStream(connectionId, streamId, options)
       }
     }
   }
+}
+
+const key = (connectionId: string, id: number) => `${connectionId}:${id}`
+
+function addToIndex(
+  index: Map<string, Set<number>>,
+  indexKey: string,
+  id: number,
+) {
+  let ids = index.get(indexKey)
+  if (!ids) {
+    ids = new Set()
+    index.set(indexKey, ids)
+  }
+  ids.add(id)
+}
+
+function removeFromIndex(
+  index: Map<string, Set<number>>,
+  indexKey: string,
+  id: number,
+) {
+  const ids = index.get(indexKey)
+  if (!ids) return
+  ids.delete(id)
+  if (ids.size === 0) index.delete(indexKey)
 }

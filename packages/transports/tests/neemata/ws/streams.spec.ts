@@ -262,7 +262,7 @@ describe('BlobStreamsManager', () => {
 
         const destroySpy = vi.spyOn(stream, 'destroy')
 
-        manager.abortClientStream('conn-1', 100, 'Custom error')
+        manager.abortClientStream('conn-1', 100, { reason: 'Custom error' })
 
         expect(destroySpy).toHaveBeenCalledWith(
           expect.objectContaining({ message: 'Custom error' }),
@@ -302,12 +302,10 @@ describe('BlobStreamsManager', () => {
           notify,
         )
 
-        manager.abortClientStream(
-          'conn-1',
-          100,
-          STREAM_FLOW_CONTROL_VIOLATION_REASON,
-        )
-        manager.abortClientStream('conn-1', 100, 'again')
+        manager.abortClientStream('conn-1', 100, {
+          reason: STREAM_FLOW_CONTROL_VIOLATION_REASON,
+        })
+        manager.abortClientStream('conn-1', 100, { reason: 'again' })
 
         expect(notify).toHaveBeenCalledTimes(1)
         expect(notify).toHaveBeenCalledWith(
@@ -326,7 +324,10 @@ describe('BlobStreamsManager', () => {
           notify,
         )
 
-        manager.abortClientStream('conn-1', 100, 'client cancelled', false)
+        manager.abortClientStream('conn-1', 100, {
+          reason: 'client cancelled',
+          notifyPeer: false,
+        })
 
         expect(notify).not.toHaveBeenCalled()
         expect(manager.clientStreams.size).toBe(0)
@@ -631,7 +632,7 @@ describe('BlobStreamsManager', () => {
           test.sink,
         )
 
-        manager.abortServerStream('conn-1', 100, 'Custom error')
+        manager.abortServerStream('conn-1', 100, { reason: 'Custom error' })
 
         expect(test.sink.error).toHaveBeenCalledWith(
           expect.objectContaining({ message: 'Custom error' }),

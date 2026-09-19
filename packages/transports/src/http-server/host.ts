@@ -154,7 +154,6 @@ export abstract class BaseServerHost<
     try {
       return await route.handler(request)
     } catch (err) {
-      // TODO: proper logging
       console.error(err)
       return internalServerErrorResponse()
     }
