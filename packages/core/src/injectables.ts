@@ -159,25 +159,29 @@ export type AnyInjectable<T = any, S extends Scope = Scope> = Injectable<
   S
 >
 
+// these run on arbitrary user values (inline injections), so they must
+// answer false for nullish input instead of throwing
 export const isLazyInjectable = (
   injectable: any,
-): injectable is LazyInjectable<any> => injectable[kLazyInjectable]
+): injectable is LazyInjectable<any> => Boolean(injectable?.[kLazyInjectable])
 
 export const isFactoryInjectable = (
   injectable: any,
-): injectable is FactoryInjectable<any> => injectable[kFactoryInjectable]
+): injectable is FactoryInjectable<any> =>
+  Boolean(injectable?.[kFactoryInjectable])
 
 export const isValueInjectable = (
   injectable: any,
-): injectable is ValueInjectable<any> => injectable[kValueInjectable]
+): injectable is ValueInjectable<any> => Boolean(injectable?.[kValueInjectable])
 
 export const isInjectable = (
   injectable: any,
-): injectable is AnyInjectable<any> => injectable[kInjectable]
+): injectable is AnyInjectable<any> => Boolean(injectable?.[kInjectable])
 
 export const isOptionalInjectable = (
   injectable: any,
-): injectable is DependencyOptional<any> => injectable[kOptionalDependency]
+): injectable is DependencyOptional<any> =>
+  Boolean(injectable?.[kOptionalDependency])
 
 export function getInjectableScope(injectable: AnyInjectable): Scope {
   if (injectable.scope === Scope.Transient) return Scope.Transient

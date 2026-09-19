@@ -529,6 +529,15 @@ describe('Container', () => {
     ).resolves.toHaveProperty('instance', value)
   })
 
+  it('should inject a nullish inline dependency as a value', async () => {
+    const inject = container.get(CoreInjectables.inject)
+    const injectable = createFactoryInjectable({
+      dependencies: { dep: createValueInjectable<string | null>('dep') },
+      create: (deps) => deps.dep,
+    })
+    await expect(inject(injectable, { dep: null })).resolves.toBeNull()
+  })
+
   describe('Explicit Injection Disposal', () => {
     it('should dispose the injected instance via the explicit handle', async () => {
       const disposeSpy = vi.fn()
