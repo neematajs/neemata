@@ -26,6 +26,9 @@ export class TupleType<
     const encode = elements.map((el) => el.encodeZodType)
     const decode = elements.map((el) => el.decodeZodType)
     return new TupleType<T, R>({
+      // zodTuple's overloads need a concrete tuple literal, and the field's
+      // `R extends BaseType ? … : …` type stays unresolved while R is generic,
+      // so neither side can be matched up here — a cast would not help either
       // @ts-expect-error
       encodeZodType: zodTuple(encode, rest?.encodeZodType),
       // @ts-expect-error

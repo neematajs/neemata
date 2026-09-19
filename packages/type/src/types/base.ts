@@ -1,67 +1,31 @@
 import type {
-  ZodMiniAny,
-  ZodMiniArray,
-  ZodMiniBoolean,
-  ZodMiniDefault,
-  ZodMiniEnum,
-  ZodMiniIntersection,
-  ZodMiniLiteral,
-  ZodMiniNever,
   ZodMiniNullable,
-  ZodMiniNumber,
-  ZodMiniObject,
   ZodMiniOptional,
   ZodMiniPrefault,
-  ZodMiniRecord,
-  ZodMiniString,
   ZodMiniType,
-  ZodMiniUnion,
 } from 'zod/mini'
 import { core, nullable, optional, prefault } from 'zod/mini'
 
 import type { TypeMetadata } from './_metadata.ts'
-import { standard } from '../standart-schema.ts'
+import { standard } from '../standard-schema.ts'
 import { typesRegistry } from './_metadata.ts'
 
 export type PrimitiveValueType = string | number | boolean | null
 
-export type PrimitiveZodType =
-  | ZodMiniNever
-  | ZodMiniDefault
-  | ZodMiniNullable
-  | ZodMiniOptional
-  | ZodMiniPrefault
-  | ZodMiniString
-  | ZodMiniObject
-  | ZodMiniAny
-  | ZodMiniArray
-  | ZodMiniBoolean
-  | ZodMiniNumber
-  | ZodMiniEnum<any>
-  | ZodMiniLiteral<PrimitiveValueType>
-  | ZodMiniUnion
-  | ZodMiniIntersection
-  | ZodMiniRecord
-
 export type SimpleZodType = ZodMiniType<any, any, any>
 
-export type ZodType = SimpleZodType | ZodMiniType<any, any, any>
+export type ZodType = SimpleZodType
 
 export type TypeProps = Record<string, any>
 
 export type TypeParams = {
-  metadata?: TypeMetadata
   checks: Array<core.CheckFn<any> | core.$ZodCheck<any>>
 }
 
-export type DefaultTypeParams = {
-  metadata?: TypeMetadata
-}
-
 export type BaseTypeAny<
-  EncodedZodType extends SimpleZodType = SimpleZodType,
-  DecodedZodType extends ZodType = ZodMiniType,
-> = BaseType<EncodedZodType, DecodedZodType, any>
+  EncodeZodType extends SimpleZodType = SimpleZodType,
+  DecodeZodType extends ZodType = ZodMiniType,
+> = BaseType<EncodeZodType, DecodeZodType, any>
 
 export const NeemataTypeError = core.$ZodError
 export type NeemataTypeError = core.$ZodError

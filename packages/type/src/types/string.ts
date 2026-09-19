@@ -35,70 +35,73 @@ export class StringType extends BaseType<
   }
 
   max(value: number) {
-    return StringType.factory(...this.params.checks, maxLength(value))
+    return this.#check(maxLength(value))
   }
 
   min(value: number) {
-    return StringType.factory(...this.params.checks, minLength(value))
+    return this.#check(minLength(value))
   }
 
   pattern(pattern: string | RegExp) {
-    return StringType.factory(
-      ...this.params.checks,
+    return this.#check(
       regex(typeof pattern === 'string' ? new RegExp(pattern) : pattern),
     )
   }
 
   email(options?: core.$ZodEmailParams) {
-    return StringType.factory(...this.params.checks, email(options))
+    return this.#check(email(options))
   }
 
   url(options?: core.$ZodURLParams) {
-    return StringType.factory(...this.params.checks, url(options))
+    return this.#check(url(options))
   }
 
   ipv4(options?: core.$ZodIPv4Params) {
-    return StringType.factory(...this.params.checks, ipv4(options))
+    return this.#check(ipv4(options))
   }
 
   ipv6(options?: core.$ZodIPv6Params) {
-    return StringType.factory(...this.params.checks, ipv6(options))
+    return this.#check(ipv6(options))
   }
 
   uuid(options?: core.$ZodUUIDParams) {
-    return StringType.factory(...this.params.checks, uuid(options))
+    return this.#check(uuid(options))
   }
 
   emoji(options?: core.$ZodEmojiParams) {
-    return StringType.factory(...this.params.checks, emoji(options))
+    return this.#check(emoji(options))
   }
 
   nanoid(options?: core.$ZodNanoIDParams) {
-    return StringType.factory(...this.params.checks, nanoid(options))
+    return this.#check(nanoid(options))
   }
 
   cuid(options?: core.$ZodCUIDParams) {
-    return StringType.factory(...this.params.checks, cuid(options))
+    return this.#check(cuid(options))
   }
 
   cuid2(options?: core.$ZodCUID2Params) {
-    return StringType.factory(...this.params.checks, cuid2(options))
+    return this.#check(cuid2(options))
   }
 
   e164(options?: core.$ZodE164Params) {
-    return StringType.factory(...this.params.checks, e164(options))
+    return this.#check(e164(options))
   }
 
   jwt(options?: core.$ZodJWTParams) {
-    return StringType.factory(...this.params.checks, jwt(options))
+    return this.#check(jwt(options))
   }
 
   base64(options?: core.$ZodBase64Params) {
-    return StringType.factory(...this.params.checks, base64(options))
+    return this.#check(base64(options))
   }
 
   base64URL(options?: core.$ZodBase64URLParams) {
-    return StringType.factory(...this.params.checks, base64url(options))
+    return this.#check(base64url(options))
+  }
+
+  #check(check: Check) {
+    return StringType.factory(...this.params.checks, check)
   }
 }
 

@@ -111,9 +111,9 @@ export type PickObjectType<
 export function pick<
   T extends AnyObjectLikeType,
   P extends { [K in keyof T['props']['properties']]?: true },
->(source: T, pick: P): PickObjectType<T, P> {
+>(source: T, keys: P): PickObjectType<T, P> {
   const properties = Object.fromEntries(
-    Object.entries(source.props.properties).filter(([key]) => pick[key]),
+    Object.entries(source.props.properties).filter(([key]) => keys[key]),
   )
   return ObjectType.factory(properties) as PickObjectType<T, P>
 }
@@ -129,9 +129,9 @@ export type OmitObjectType<
 export function omit<
   T extends AnyObjectLikeType,
   P extends { [K in keyof T['props']['properties']]?: true },
->(source: T, omit: P): OmitObjectType<T, P> {
+>(source: T, keys: P): OmitObjectType<T, P> {
   const properties = Object.fromEntries(
-    Object.entries(source.props.properties).filter(([key]) => !omit[key]),
+    Object.entries(source.props.properties).filter(([key]) => !keys[key]),
   )
   return ObjectType.factory(properties) as OmitObjectType<T, P>
 }

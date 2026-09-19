@@ -20,25 +20,18 @@ export class ArrayType<T extends BaseType = BaseType> extends BaseType<
   }
 
   min(value: number) {
-    const check = minLength(value)
-    return ArrayType.factory<T>(
-      this.props.element,
-      ...this.params.checks,
-      check,
-    )
+    return this.#check(minLength(value))
   }
 
   max(value: number) {
-    const check = maxLength(value)
-    return ArrayType.factory<T>(
-      this.props.element,
-      ...this.params.checks,
-      check,
-    )
+    return this.#check(maxLength(value))
   }
 
   length(value: number) {
-    const check = length(value)
+    return this.#check(length(value))
+  }
+
+  #check(check: Check) {
     return ArrayType.factory<T>(
       this.props.element,
       ...this.params.checks,

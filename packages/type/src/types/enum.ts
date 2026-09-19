@@ -12,6 +12,8 @@ export class EnumType<
   ): EnumType<core.util.ToEnum<T[number]>>
   static factory<T extends core.util.EnumLike | string[]>(values: T) {
     return new EnumType({
+      // zodEnum's overloads take either shape, but neither matches the union
+      // this implementation signature accepts
       encodeZodType: zodEnum(values as any),
       props: { values },
     })

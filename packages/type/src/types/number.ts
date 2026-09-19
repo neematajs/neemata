@@ -33,27 +33,31 @@ export class NumberType extends BaseType<
   }
 
   positive() {
-    return NumberType.factory(...this.params.checks, gte(0))
+    return this.#check(gte(0))
   }
 
   negative() {
-    return NumberType.factory(...this.params.checks, lte(0))
+    return this.#check(lte(0))
   }
 
   lt(value: number) {
-    return NumberType.factory(...this.params.checks, lt(value))
+    return this.#check(lt(value))
   }
 
   lte(value: number) {
-    return NumberType.factory(...this.params.checks, lte(value))
+    return this.#check(lte(value))
   }
 
   gte(value: number) {
-    return NumberType.factory(...this.params.checks, gte(value))
+    return this.#check(gte(value))
   }
 
   gt(value: number) {
-    return NumberType.factory(...this.params.checks, gt(value))
+    return this.#check(gt(value))
+  }
+
+  #check(check: Check) {
+    return NumberType.factory(...this.params.checks, check)
   }
 }
 

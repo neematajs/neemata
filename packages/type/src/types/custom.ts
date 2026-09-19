@@ -5,8 +5,6 @@ import { NEVER, any, codec, invertCodec, superRefine } from 'zod/mini'
 import type { SimpleZodType, ZodType } from './base.ts'
 import { BaseType } from './base.ts'
 
-export type CustomTransformFn<I, O> = (value: I) => O
-
 type CustomValidation<Type extends ZodType> = (
   value: Type['_zod']['output'],
   payload: core.$RefinementCtx<Type['_zod']['output']>,
@@ -46,26 +44,39 @@ const refinementContext = <T>(
   })
 }
 
+type CustomError = string | core.$ZodErrorMap<core.$ZodIssueBase>
+
+const resolveMessage = (
+  error: CustomError | undefined,
+  issue: core.$ZodRawIssue,
+  cause: unknown,
+) => {
+  if (typeof error === 'string') return error
+
+  const mapped = typeof error === 'function' ? error(issue) : undefined
+  if (typeof mapped === 'string') return mapped
+
+  return (
+    mapped?.message ??
+    (cause instanceof Error ? cause.message : 'Invalid input')
+  )
+}
+
 const addTransformIssue = (
   payload: core.ParsePayload,
   value: unknown,
-  error: string | core.$ZodErrorMap<core.$ZodIssueBase> | undefined,
+  error: CustomError | undefined,
   cause: unknown,
 ) => {
   const issue = {
     code: 'custom',
     input: value,
   } as const satisfies core.$ZodRawIssue
-  const mappedError = typeof error === 'function' ? error(issue) : undefined
-  const message =
-    typeof error === 'string'
-      ? error
-      : typeof mappedError === 'string'
-        ? mappedError
-        : (mappedError?.message ??
-          (cause instanceof Error ? cause.message : 'Invalid input'))
 
-  payload.issues.push({ ...issue, message })
+  payload.issues.push({
+    ...issue,
+    message: resolveMessage(error, issue, cause),
+  })
 }
 
 export class CustomType<
@@ -86,32 +97,25 @@ export class CustomType<
     decodedType = any() as unknown as DecodeType,
     prototype,
   }: {
-    decode: CustomTransformFn<
-      EncodeType['_zod']['output'],
-      DecodeType['_zod']['input']
-    >
-    encode: CustomTransformFn<
-      DecodeType['_zod']['output'],
-      EncodeType['_zod']['input']
-    >
+    decode: (value: EncodeType['_zod']['output']) => DecodeType['_zod']['input']
+    encode: (value: DecodeType['_zod']['output']) => EncodeType['_zod']['input']
     validation?:
       | CustomValidation<DecodeType>
       | {
           encode?: CustomValidation<DecodeType>
           decode?: CustomValidation<DecodeType>
         }
-    error?: string | core.$ZodErrorMap<core.$ZodIssueBase>
+    error?: CustomError
     /** Schema for the encoded/wire representation. */
     type?: EncodeType
     /** Schema for the decoded/runtime representation. */
     decodedType?: DecodeType
     prototype?: object
   }): CustomType<Type, EncodeType, DecodeType> {
-    const _validation = validation
-      ? typeof validation === 'function'
+    const validators =
+      typeof validation === 'function'
         ? { encode: validation, decode: validation }
         : validation
-      : undefined
 
     const decodeZodType = codec(type, decodedType, {
       decode: (value, payload) => {
@@ -133,15 +137,15 @@ export class CustomType<
             return NEVER
           }
         }
-        const result = _validation?.encode?.(value, refinementContext(payload))
+        const result = validators?.encode?.(value, refinementContext(payload))
 
         return result instanceof Promise ? result.then(transform) : transform()
       },
     })
     const encodeZodType = invertCodec(decodeZodType)
 
-    if (_validation?.decode) {
-      decodeZodType.check(superRefine(_validation.decode))
+    if (validators?.decode) {
+      decodeZodType.check(superRefine(validators.decode))
     }
 
     const instance = new CustomType<Type, EncodeType, DecodeType>({

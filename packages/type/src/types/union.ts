@@ -11,7 +11,6 @@ import {
 } from 'zod/mini'
 
 import type { BaseTypeAny } from './base.ts'
-import type { LiteralType } from './literal.ts'
 import type { ObjectType, ObjectTypeProps } from './object.ts'
 import { BaseType } from './base.ts'
 
@@ -47,7 +46,7 @@ export class UnionType<
   }
 }
 
-export class IntersactionType<
+export class IntersectionType<
   T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
 > extends BaseType<
   ZodMiniIntersection<T[0]['encodeZodType'], T[1]['encodeZodType']>,
@@ -58,18 +57,12 @@ export class IntersactionType<
     T extends readonly [BaseType, BaseType] = readonly [BaseType, BaseType],
   >(...options: T) {
     const [first, second] = options
-    return new IntersactionType<T>({
+    return new IntersectionType<T>({
       encodeZodType: zodIntersection(first.encodeZodType, second.encodeZodType),
       decodeZodType: zodIntersection(first.decodeZodType, second.decodeZodType),
       props: { options },
     })
   }
-}
-
-export type DiscriminatedUnionProperties<K extends string = string> = {
-  [OK in K]: LiteralType<string>
-} & {
-  [OK in string]: any
 }
 
 export type DiscriminatedUnionOptionType<K extends string> = ObjectType<
@@ -99,6 +92,9 @@ export class DiscriminatedUnionType<
       'decodeZodType'
     >
     return new DiscriminatedUnionType<K, T>({
+      // zod demands a concrete `[$ZodTypeDiscriminable<K>, ...]` tuple; the
+      // mapped `ArrayMap<T, …>` stays opaque to TS, both as the argument and
+      // as the resulting union's option list
       // @ts-expect-error
       encodeZodType: zodDiscriminatedUnion(key, encode),
       // @ts-expect-error
@@ -110,6 +106,6 @@ export class DiscriminatedUnionType<
 
 export const union = UnionType.factory
 export const or = UnionType.factory
-export const intersection = IntersactionType.factory
-export const and = IntersactionType.factory
+export const intersection = IntersectionType.factory
+export const and = IntersectionType.factory
 export const discriminatedUnion = DiscriminatedUnionType.factory
