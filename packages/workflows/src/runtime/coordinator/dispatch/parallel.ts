@@ -216,12 +216,19 @@ async function dispatchMember(
       return { kind: 'pending' }
     }
 
+    // hoisted for narrowing; invoked with .call so a mapper written as a method
+    // still sees its node as `this`
     const memberInput = member.input
     const nodeInput = decodeWorkflowUserSchemaValue(
       member.target.input,
       memberInput
         ? runWorkflowUserCallback(() =>
-            memberInput(input.workflowCtx, input.outputs, input.run.input),
+            memberInput.call(
+              member,
+              input.workflowCtx,
+              input.outputs,
+              input.run.input,
+            ),
           )
         : input.run.input,
       `${member.kind} input [${input.workflow.workflow.name}.${nodeName}.${memberKey}]`,
@@ -279,7 +286,12 @@ async function dispatchMember(
   if (!hasAttempt) {
     const value = memberInput
       ? runWorkflowUserCallback(() =>
-          memberInput(input.workflowCtx, input.outputs, input.run.input),
+          memberInput.call(
+            member,
+            input.workflowCtx,
+            input.outputs,
+            input.run.input,
+          ),
         )
       : input.run.input
     nodeInput = decodeWorkflowUserSchemaValue(

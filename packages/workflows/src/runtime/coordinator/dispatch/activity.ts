@@ -28,12 +28,14 @@ export async function dispatchActivityNode(
   if (declaration.kind !== 'activity') {
     throw new Error(`Workflow node [${node.name}] is not an activity`)
   }
+  // hoisted for narrowing; invoked with .call so a mapper written as a method
+  // still sees its node as `this`
   const inputFn = node.input
   let nodeInput = existing.input
   if (!hasStoredNodeInput(existing)) {
     const rawInput = inputFn
       ? runWorkflowUserCallback(() =>
-          inputFn(input.workflowCtx, input.outputs, input.run.input),
+          inputFn.call(node, input.workflowCtx, input.outputs, input.run.input),
         )
       : input.run.input
     nodeInput = decodeWorkflowUserSchemaValue(

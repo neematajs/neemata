@@ -29,6 +29,8 @@ export async function dispatchTaskNode(
   }
 
   const target = node.target as AnyTaskDefinition
+  // hoisted for narrowing; invoked with .call so a mapper written as a method
+  // still sees its node as `this`
   const nodeInput = node.input
   await input.store.ensureNodeChildren({
     runId: input.run.id,
@@ -56,7 +58,7 @@ export async function dispatchTaskNode(
       if (!nodeInput) return input.run.input
 
       return runWorkflowUserCallback(() =>
-        nodeInput(input.workflowCtx, input.outputs, input.run.input),
+        nodeInput.call(node, input.workflowCtx, input.outputs, input.run.input),
       )
     },
   })

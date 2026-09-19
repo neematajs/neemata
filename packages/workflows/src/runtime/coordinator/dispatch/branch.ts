@@ -91,13 +91,20 @@ export async function dispatchBranchNode(
     return 'terminal'
   }
 
+  // hoisted for narrowing; invoked with .call so a mapper written as a method
+  // still sees its node as `this`
   const caseInput = selected.input
   const resolveNodeInput = () => {
     if (hasStoredNodeInput(existing)) return existing.input
     if (!caseInput) return input.run.input
 
     return runWorkflowUserCallback(() =>
-      caseInput(input.workflowCtx, input.outputs, input.run.input),
+      caseInput.call(
+        selected,
+        input.workflowCtx,
+        input.outputs,
+        input.run.input,
+      ),
     )
   }
   const resolveIdempotencyKey = () =>
@@ -161,7 +168,12 @@ export async function dispatchBranchNode(
   if (!hasAttempt) {
     const rawInput = caseInput
       ? runWorkflowUserCallback(() =>
-          caseInput(input.workflowCtx, input.outputs, input.run.input),
+          caseInput.call(
+            selected,
+            input.workflowCtx,
+            input.outputs,
+            input.run.input,
+          ),
         )
       : input.run.input
     nodeInput = decodeWorkflowUserSchemaValue(

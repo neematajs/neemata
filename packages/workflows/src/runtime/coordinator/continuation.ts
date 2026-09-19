@@ -107,10 +107,13 @@ async function coordinateRun(
   const workflowCtx = await input.container.createContext(
     implementation.dependencies,
   )
-  const outputs: Record<string, unknown> = {}
-  for (const node of snapshot.nodes) {
-    if (node.status === 'completed') outputs[node.name] = node.output
-  }
+  // fromEntries defines own properties, so a node named `__proto__` stays
+  // visible to the Object.hasOwn checks that decide what is already done
+  const outputs: Record<string, unknown> = Object.fromEntries(
+    snapshot.nodes
+      .filter((node) => node.status === 'completed')
+      .map((node) => [node.name, node.output]),
+  )
 
   // The run has coordination work from here on; queued/waiting → running
   // before dispatching so status filters see live runs as such.

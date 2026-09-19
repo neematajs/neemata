@@ -23,7 +23,9 @@ export type WorkflowPostgresListenerClient = {
   query(sql: string): Promise<unknown>
   on(
     event: 'notification' | 'error' | 'end',
-    listener: (arg?: unknown) => void,
+    // `any` keeps handlers with a typed argument assignable, as pg's own
+    // overloads allow
+    listener: (arg?: any) => void,
   ): unknown
   end(): Promise<void> | void
 }

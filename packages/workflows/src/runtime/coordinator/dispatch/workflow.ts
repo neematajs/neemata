@@ -19,6 +19,8 @@ export async function dispatchWorkflowNode(
   })
   if (isTerminalNodeStatus(existing.status)) return 'parked'
 
+  // hoisted for narrowing; invoked with .call so a mapper written as a method
+  // still sees its node as `this`
   const nodeInput = node.input
   await input.store.ensureNodeChildren({
     runId: input.run.id,
@@ -44,7 +46,7 @@ export async function dispatchWorkflowNode(
       if (!nodeInput) return input.run.input
 
       return runWorkflowUserCallback(() =>
-        nodeInput(input.workflowCtx, input.outputs, input.run.input),
+        nodeInput.call(node, input.workflowCtx, input.outputs, input.run.input),
       )
     },
   })
