@@ -4,6 +4,7 @@ import type {
   ServerMessageType,
 } from '../common/enums.ts'
 import type {
+  DecodedMessage,
   EncodeRPCStreams,
   SharedClientPayload,
   SharedServerPayload,
@@ -17,11 +18,7 @@ export abstract class ProtocolVersionInterface {
   abstract decodeMessage(
     context: MessageContext,
     buffer: ArrayBufferView,
-  ): {
-    [K in keyof ClientMessageTypePayload]: {
-      type: K
-    } & ClientMessageTypePayload[K]
-  }[keyof ClientMessageTypePayload]
+  ): DecodedMessage<ClientMessageTypePayload>
   abstract encodeMessage<T extends ServerMessageType = ServerMessageType>(
     context: MessageContext,
     messageType: T,

@@ -15,6 +15,11 @@ export interface DecodeRPCContext<T = unknown> {
   addStream: (id: number, metadata: ProtocolBlobMetadata) => T
 }
 
+/** A decoded frame: its payload tagged with the message type it came from. */
+export type DecodedMessage<Payloads> = {
+  [K in keyof Payloads]: { type: K } & Payloads[K]
+}[keyof Payloads]
+
 /**
  * Frames both halves agree on verbatim. Only the RPC call and its response
  * carry side-specific payloads, so each half declares just those on top.

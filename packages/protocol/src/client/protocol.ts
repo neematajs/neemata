@@ -10,6 +10,7 @@ import type {
 } from '../common/enums.ts'
 import type {
   BaseProtocolError,
+  DecodedMessage,
   EncodeRPCStreams,
   SharedClientPayload,
   SharedServerPayload,
@@ -53,11 +54,7 @@ export abstract class ProtocolVersionInterface {
   abstract decodeMessage(
     context: MessageContext,
     buffer: ArrayBufferView,
-  ): {
-    [K in keyof ServerMessageTypePayload]: {
-      type: K
-    } & ServerMessageTypePayload[K]
-  }[keyof ServerMessageTypePayload]
+  ): DecodedMessage<ServerMessageTypePayload>
   abstract encodeMessage<T extends ClientMessageType>(
     context: MessageContext,
     messageType: T,
