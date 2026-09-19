@@ -1,7 +1,7 @@
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
 import type { WorkflowScheduler } from '../../runtime/scheduler.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
-import { DEFAULT_BATCH_SIZE, normalizeBatchSize } from '../../runtime/limits.ts'
+import { normalizeBatchSize } from '../../runtime/limits.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
@@ -132,7 +132,7 @@ export function createPostgresWorkflowScheduler(
     },
     async fireDue(options = {}) {
       const now = options.now ?? new Date()
-      const limit = normalizeBatchSize(options.limit, DEFAULT_BATCH_SIZE)
+      const limit = normalizeBatchSize(options.limit)
       if (limit < 1) return { fired: 0 }
 
       return db.transaction(async (tx) => {
