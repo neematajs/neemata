@@ -6,7 +6,7 @@ import {
   WORKFLOW_CANCELLATIONS_CHANNEL,
   WORKFLOW_COMMANDS_CHANNEL,
   WORKFLOW_RUN_EVENTS_CHANNEL,
-} from './sql.ts'
+} from './constants.ts'
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000
 
@@ -23,7 +23,7 @@ export type WorkflowPostgresListenerClient = {
   query(sql: string): Promise<unknown>
   on(
     event: 'notification' | 'error' | 'end',
-    listener: (arg?: any) => void,
+    listener: (arg?: unknown) => void,
   ): unknown
   end(): Promise<void> | void
 }
@@ -100,9 +100,7 @@ export function createPostgresWorkflowWakeEvents(
       void connect()
     }, reconnectDelayMs)
     // don't hold the process open just to keep a wake-up hint alive
-    if (typeof reconnectTimer === 'object' && 'unref' in reconnectTimer) {
-      reconnectTimer.unref()
-    }
+    reconnectTimer.unref()
   }
 
   const connect = async () => {
@@ -123,7 +121,9 @@ export function createPostgresWorkflowWakeEvents(
         client = undefined
         scheduleReconnect()
       }
-      connected.on('notification', handleNotification)
+      connected.on('notification', (message) =>
+        handleNotification(message as WorkflowPostgresNotification),
+      )
       connected.on('error', onLost)
       connected.on('end', () => onLost())
       await connected.query(

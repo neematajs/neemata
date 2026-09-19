@@ -18,8 +18,11 @@ function raceOnChildRead(
 ): WorkflowPostgresConnection {
   let pending: (() => Promise<void>) | undefined = interfere
   return {
-    async query(sql, params) {
-      const result = await connection.query(sql, params)
+    async query<T extends Record<string, unknown>>(
+      sql: string,
+      params?: readonly unknown[],
+    ) {
+      const result = await connection.query<T>(sql, params)
       if (pending && sql.includes('FROM workflow_node_children')) {
         const run = pending
         pending = undefined

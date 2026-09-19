@@ -1,41 +1,28 @@
-import type {
-  StoredNode,
-  StoredNodeChild,
-  StoredRun,
-} from '../../runtime/state.ts'
-import type { CreateRunInput, WorkflowStore } from '../../runtime/store.ts'
+import type { WorkflowStore } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import type { AttemptRow, ChildRow, NodeRow } from './rows.ts'
 import { toStoredError } from '../../runtime/errors.ts'
 import { isTerminalNodeStatus } from '../../runtime/status.ts'
+import { sameOptionalValue, sameValue } from './compare.ts'
+import { TERMINAL_NODE_STATUSES_SQL } from './fragments.ts'
+import { isUniqueViolation, json, many, one } from './query.ts'
 import {
-  emitStatusChangeNotifySql,
-  isUniqueViolation,
-  json,
-  many,
+  loadChild,
+  loadNode,
+  loadOrderedChildren,
+  loadRun,
   mapAttempt,
   mapNode,
   mapNodeChild,
   mapRun,
-  nodeStatusSourcesSql,
-  notifyRunStatusEventColumnsSql,
-  one,
-  sameOptionalValue,
-  sameValue,
-} from './sql.ts'
-import { createPostgresWorkflowNodeStore } from './store-nodes.ts'
-import { WorkflowRunInsertConflict } from './store-runs.ts'
-
-type CreateStoredRun = (
-  connection: WorkflowPostgresConnection,
-  input: CreateRunInput,
-  options?: { readonly recoverUniqueViolation?: boolean },
-) => Promise<StoredRun>
-
-type PostgresWorkflowChildStoreContext = {
-  readonly db: WorkflowPostgresConnection
-  readonly ready: Promise<void>
-  readonly createStoredRun: CreateStoredRun
-}
+} from './rows.ts'
+import { createAttempt } from './store-nodes.ts'
+import { insertRun, WorkflowRunInsertConflict } from './store-runs.ts'
+import {
+  transitionChild,
+  transitionChildRow,
+  transitionNode,
+} from './transitions.ts'
 
 type PostgresWorkflowChildStore = Pick<
   WorkflowStore,
@@ -52,518 +39,352 @@ type PostgresWorkflowChildStore = Pick<
 const childRef = (runId: string, nodeName: string, childKey: string) =>
   `${runId}.${nodeName}.${childKey}`
 
+const missingChild = (runId: string, nodeName: string, childKey: string) =>
+  new Error(`Missing node child [${childRef(runId, nodeName, childKey)}]`)
+
+const loadLatestChildAttempt = (
+  db: WorkflowPostgresConnection,
+  runId: string,
+  nodeName: string,
+  childKey: string,
+) =>
+  one<AttemptRow>(
+    db,
+    `
+    SELECT *
+    FROM workflow_attempts
+    WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+    ORDER BY attempt_number DESC
+    LIMIT 1
+  `,
+    [runId, nodeName, childKey],
+  )
+
 export const createPostgresWorkflowChildStore = (
-  ctx: PostgresWorkflowChildStoreContext,
-): PostgresWorkflowChildStore => {
-  const { db, ready, createStoredRun } = ctx
+  db: WorkflowPostgresConnection,
+): PostgresWorkflowChildStore => ({
+  async ensureNodeChildren({ runId, nodeName, children }) {
+    const node = await loadNode(db, runId, nodeName)
+    if (!node) throw new Error(`Missing node [${runId}.${nodeName}]`)
 
-  const loadChild = (
-    connection: WorkflowPostgresConnection,
-    runId: string,
-    nodeName: string,
-    childKey: string,
-  ) =>
-    one(
-      connection,
-      `
-      SELECT *
-      FROM workflow_node_children
-      WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-    `,
-      [runId, nodeName, childKey],
-    )
-
-  const loadOrderedChildren = (
-    connection: WorkflowPostgresConnection,
-    runId: string,
-    nodeName: string,
-  ) =>
-    many(
-      connection,
-      `
-      SELECT *
-      FROM workflow_node_children
-      WHERE run_id = $1 AND node_name = $2
-      ORDER BY ordinal ASC, child_key ASC
-    `,
-      [runId, nodeName],
-    )
-
-  const loadLatestChildAttempt = (
-    connection: WorkflowPostgresConnection,
-    runId: string,
-    nodeName: string,
-    childKey: string,
-  ) =>
-    one(
-      connection,
-      `
-      SELECT *
-      FROM workflow_attempts
-      WHERE run_id = $1 AND node_name = $2 AND child_key = $3
-      ORDER BY attempt_number DESC
-      LIMIT 1
-    `,
-      [runId, nodeName, childKey],
-    )
-
-  const childStore: PostgresWorkflowChildStore = {
-    async ensureNodeChildren({ runId, nodeName, children }) {
-      await ready
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [runId, nodeName],
-      )
-      if (!node) throw new Error(`Missing node [${runId}.${nodeName}]`)
-
-      const loadExisting = async (connection: WorkflowPostgresConnection) => {
-        const rows = await loadOrderedChildren(connection, runId, nodeName)
-        if (rows.length === 0) return undefined
-        const existing = rows.map(mapNodeChild)
-        const matches =
-          existing.length === children.length &&
-          children.every((requested) => {
-            const stored = existing.find(
-              (child) => child.childKey === requested.childKey,
-            )
-            return (
-              stored !== undefined &&
-              stored.kind === requested.kind &&
-              stored.ordinal === (requested.ordinal ?? 0) &&
-              stored.itemKey === requested.itemKey &&
-              sameOptionalValue(stored.item, requested.item)
-            )
-          })
-        if (!matches) {
-          throw new Error(`Conflicting node children [${runId}.${nodeName}]`)
-        }
-        return { children: existing, created: false }
-      }
-      const existing = await loadExisting(db)
-      if (existing) return existing
-
-      try {
-        return await db.transaction(async (tx) => {
-          const raced = await loadExisting(tx)
-          if (raced) return raced
-
-          for (const child of children) {
-            await tx.query(
-              `
-              INSERT INTO workflow_node_children (
-                run_id, node_name, child_key, kind, status, ordinal,
-                item_key, item, attempt_count, version, created_at, updated_at
-              )
-              VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7::jsonb, 0, 1, now(), now())
-            `,
-              [
-                runId,
-                nodeName,
-                child.childKey,
-                child.kind,
-                child.ordinal ?? 0,
-                child.itemKey ?? null,
-                child.item === undefined ? null : json(child.item),
-              ],
-            )
-          }
-          const rows = await loadOrderedChildren(tx, runId, nodeName)
-          return { children: rows.map(mapNodeChild), created: true }
+    const loadExisting = async (connection: WorkflowPostgresConnection) => {
+      const rows = await loadOrderedChildren(connection, runId, nodeName)
+      if (rows.length === 0) return undefined
+      const existing = rows.map(mapNodeChild)
+      const matches =
+        existing.length === children.length &&
+        children.every((requested) => {
+          const stored = existing.find(
+            (child) => child.childKey === requested.childKey,
+          )
+          return (
+            stored !== undefined &&
+            stored.kind === requested.kind &&
+            stored.ordinal === (requested.ordinal ?? 0) &&
+            stored.itemKey === requested.itemKey &&
+            sameOptionalValue(stored.item, requested.item)
+          )
         })
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          const raced = await loadExisting(db)
-          if (raced) return raced
-        }
-        throw error
+      if (!matches) {
+        throw new Error(`Conflicting node children [${runId}.${nodeName}]`)
       }
-    },
-    async ensureChildRun(params) {
-      await ready
-      const { runId, nodeName, childKey } = params
-      const loadExistingChildRun = async (
-        connection: WorkflowPostgresConnection,
-      ) => {
-        const childRow = await loadChild(connection, runId, nodeName, childKey)
-        if (!childRow) {
-          throw new Error(
-            `Missing node child [${childRef(runId, nodeName, childKey)}]`,
-          )
-        }
-        const child = mapNodeChild(childRow)
-        if (!child.childRunId) return undefined
-        const runRow = await one(
-          connection,
-          'SELECT * FROM workflow_runs WHERE id = $1',
-          [child.childRunId],
-        )
-        if (!runRow) {
-          throw new Error(`Missing child run [${child.childRunId}]`)
-        }
-        const childRun = mapRun(runRow)
-        if (
-          childRun.kind !== params.childKind ||
-          childRun.name !== params.childName ||
-          !sameValue(childRun.input, params.input) ||
-          !sameOptionalValue(childRun.idempotencyKey, params.idempotencyKey)
-        ) {
-          throw new Error(
-            `Conflicting child run [${childRef(runId, nodeName, childKey)}]`,
-          )
-        }
-        if (child.status === 'pending') {
-          const updated = await one(
-            connection,
-            "UPDATE workflow_node_children SET status = 'running', version = version + 1, updated_at = now() WHERE run_id = $1 AND node_name = $2 AND child_key = $3 AND status = 'pending' RETURNING *",
-            [runId, nodeName, childKey],
-          )
-          if (updated)
-            return { child: mapNodeChild(updated), childRun, created: false }
-        }
-        return { child, childRun, created: false }
-      }
-      const existing = await loadExistingChildRun(db)
-      if (existing) return existing
+      return { children: existing, created: false }
+    }
+    const existing = await loadExisting(db)
+    if (existing) return existing
 
-      // The link UPDATE requires child_run_id IS NULL, so losing a race to
-      // another coordinator rolls back our freshly created run instead of
-      // persisting a duplicate child run.
-      const linkRaced = Symbol('child-run-link-raced')
-      try {
-        return await db.transaction(async (tx) => {
-          const raced = await loadExistingChildRun(tx)
-          if (raced) return raced
+    try {
+      return await db.transaction(async (tx) => {
+        const raced = await loadExisting(tx)
+        if (raced) return raced
 
-          const childRun = await createStoredRun(
-            tx,
-            {
-              kind: params.childKind,
-              name: params.childName,
-              workflowName: params.childName,
-              ...(params.childKind === 'task'
-                ? { taskName: params.childName }
-                : {}),
-              input: params.input,
-              parentRunId: runId,
-              parentNodeName: nodeName,
-              rootRunId: params.rootRunId,
-              tags: params.tags,
-              idempotencyKey: params.idempotencyKey,
-            },
-            { recoverUniqueViolation: false },
-          )
-          const updated = await one(
-            tx,
+        for (const child of children) {
+          await tx.query(
             `
-            WITH candidate AS (
-              SELECT c.run_id, c.node_name, c.child_key,
-                c.status::text AS old_status, r.root_run_id
-              FROM workflow_node_children c
-              JOIN workflow_runs r ON r.id = c.run_id
-              WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
-            ),
-            updated AS (
-            UPDATE workflow_node_children
-            SET child_run_id = $4,
-                status = 'running',
-                version = version + 1,
-                updated_at = now()
-            FROM candidate
-            WHERE workflow_node_children.run_id = candidate.run_id
-              AND workflow_node_children.node_name = candidate.node_name
-              AND workflow_node_children.child_key = candidate.child_key
-              AND workflow_node_children.child_run_id IS NULL
-              AND workflow_node_children.status IN (${nodeStatusSourcesSql('running', { self: true })})
-            RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
-            ),
-            ${emitStatusChangeNotifySql('updated', 'child_run_linked')}
-            SELECT updated.*${notifyRunStatusEventColumnsSql('child_run_linked')}
-            FROM updated
+            INSERT INTO workflow_node_children (
+              run_id, node_name, child_key, kind, status, ordinal,
+              item_key, item, attempt_count, version, created_at, updated_at
+            )
+            VALUES ($1, $2, $3, $4, 'pending', $5, $6, $7::jsonb, 0, 1, now(), now())
           `,
-            [runId, nodeName, childKey, childRun.id],
-          )
-          if (!updated) throw linkRaced
-          return { child: mapNodeChild(updated), childRun, created: true }
-        })
-      } catch (error) {
-        if (
-          error === linkRaced ||
-          error instanceof WorkflowRunInsertConflict ||
-          isUniqueViolation(error)
-        ) {
-          const raced = await loadExistingChildRun(db)
-          if (raced) return raced
-          throw new Error(
-            `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
+            [
+              runId,
+              nodeName,
+              child.childKey,
+              child.kind,
+              child.ordinal ?? 0,
+              child.itemKey ?? null,
+              child.item === undefined ? null : json(child.item),
+            ],
           )
         }
-        throw error
+        const rows = await loadOrderedChildren(tx, runId, nodeName)
+        return { children: rows.map(mapNodeChild), created: true }
+      })
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const raced = await loadExisting(db)
+        if (raced) return raced
       }
-    },
-    async ensureChildAttempt({
-      runId,
-      nodeName,
-      childKey,
-      input,
-      idempotencyKey,
-    }) {
-      await ready
-      try {
-        return await db.transaction(async (tx) => {
-          const childRow = await one(
-            tx,
-            'SELECT * FROM workflow_node_children WHERE run_id = $1 AND node_name = $2 AND child_key = $3 FOR UPDATE',
-            [runId, nodeName, childKey],
-          )
-          if (!childRow) {
-            throw new Error(
-              `Missing node child [${childRef(runId, nodeName, childKey)}]`,
-            )
-          }
-          const child = mapNodeChild(childRow)
-          if (child.attemptCount > 0) {
-            const current = child.currentAttemptId
-              ? await one(tx, 'SELECT * FROM workflow_attempts WHERE id = $1', [
-                  child.currentAttemptId,
-                ])
-              : await loadLatestChildAttempt(tx, runId, nodeName, childKey)
-            if (!current) {
-              throw new Error(
-                `Missing attempt for node child [${childRef(runId, nodeName, childKey)}]`,
-              )
-            }
-            if (
-              child.status === 'pending' &&
-              child.currentAttemptId === undefined
-            ) {
-              const previous = mapAttempt(current)
-              const nodeStore = createPostgresWorkflowNodeStore({
-                db: tx,
-                ready,
-              })
-              const attempt = await nodeStore.createAttempt({
-                runId,
-                nodeName,
-                childKey,
-                input: previous.input,
-                idempotencyKey: previous.idempotencyKey,
-              })
-              return { attempt, created: true }
-            }
-            return { attempt: mapAttempt(current), created: false }
-          }
-          if (isTerminalNodeStatus(child.status)) {
-            throw new Error(
-              `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot create attempt`,
-            )
-          }
+      throw error
+    }
+  },
+  async ensureChildRun(params) {
+    const { runId, nodeName, childKey } = params
+    const loadExistingChildRun = async (
+      connection: WorkflowPostgresConnection,
+    ) => {
+      const childRow = await loadChild(connection, runId, nodeName, childKey)
+      if (!childRow) throw missingChild(runId, nodeName, childKey)
+      const child = mapNodeChild(childRow)
+      if (!child.childRunId) return undefined
+      const runRow = await loadRun(connection, child.childRunId)
+      if (!runRow) throw new Error(`Missing child run [${child.childRunId}]`)
+      const childRun = mapRun(runRow)
+      if (
+        childRun.kind !== params.childKind ||
+        childRun.name !== params.childName ||
+        !sameValue(childRun.input, params.input) ||
+        !sameOptionalValue(childRun.idempotencyKey, params.idempotencyKey)
+      ) {
+        throw new Error(
+          `Conflicting child run [${childRef(runId, nodeName, childKey)}]`,
+        )
+      }
+      // Re-entry after the link committed but before the child started: no
+      // status event is wanted, the link write already published one.
+      if (child.status === 'pending') {
+        const updated = await one<ChildRow>(
+          connection,
+          `
+          UPDATE workflow_node_children
+          SET status = 'running', version = version + 1, updated_at = now()
+          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+            AND status = 'pending'
+          RETURNING *
+        `,
+          [runId, nodeName, childKey],
+        )
+        if (updated) {
+          return { child: mapNodeChild(updated), childRun, created: false }
+        }
+      }
+      return { child, childRun, created: false }
+    }
+    const existing = await loadExistingChildRun(db)
+    if (existing) return existing
 
-          const nodeStore = createPostgresWorkflowNodeStore({ db: tx, ready })
-          const attempt = await nodeStore.createAttempt({
-            runId,
-            nodeName,
-            childKey,
-            input,
-            idempotencyKey,
-          })
-          return { attempt, created: true }
-        })
-      } catch (error) {
-        if (isUniqueViolation(error)) {
-          const raced = await loadLatestChildAttempt(
-            db,
-            runId,
-            nodeName,
-            childKey,
-          )
-          if (raced) return { attempt: mapAttempt(raced), created: false }
+    // The link UPDATE requires child_run_id IS NULL, so losing a race to
+    // another coordinator rolls back our freshly created run instead of
+    // persisting a duplicate child run.
+    const linkRaced = Symbol('child-run-link-raced')
+    try {
+      return await db.transaction(async (tx) => {
+        const raced = await loadExistingChildRun(tx)
+        if (raced) return raced
+
+        const { run: childRun } = await insertRun(
+          tx,
+          {
+            kind: params.childKind,
+            name: params.childName,
+            workflowName: params.childName,
+            ...(params.childKind === 'task'
+              ? { taskName: params.childName }
+              : {}),
+            input: params.input,
+            parentRunId: runId,
+            parentNodeName: nodeName,
+            rootRunId: params.rootRunId,
+            tags: params.tags,
+            idempotencyKey: params.idempotencyKey,
+          },
+          { inlineRaceRecovery: false },
+        )
+        const updated = await transitionChildRow(
+          tx,
+          runId,
+          nodeName,
+          childKey,
+          'running',
+          {
+            event: 'child_run_linked',
+            self: true,
+            set: 'child_run_id = $4',
+            values: [childRun.id],
+            where: 'AND workflow_node_children.child_run_id IS NULL',
+          },
+        )
+        if (!updated) throw linkRaced
+        return { child: mapNodeChild(updated), childRun, created: true }
+      })
+    } catch (error) {
+      if (
+        error === linkRaced ||
+        error instanceof WorkflowRunInsertConflict ||
+        isUniqueViolation(error)
+      ) {
+        const raced = await loadExistingChildRun(db)
+        if (raced) return raced
+        throw new Error(
+          `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
+        )
+      }
+      throw error
+    }
+  },
+  async ensureChildAttempt({
+    runId,
+    nodeName,
+    childKey,
+    input,
+    idempotencyKey,
+  }) {
+    try {
+      return await db.transaction(async (tx) => {
+        const childRow = await one<ChildRow>(
+          tx,
+          `
+          SELECT *
+          FROM workflow_node_children
+          WHERE run_id = $1 AND node_name = $2 AND child_key = $3
+          FOR UPDATE
+        `,
+          [runId, nodeName, childKey],
+        )
+        if (!childRow) throw missingChild(runId, nodeName, childKey)
+        const child = mapNodeChild(childRow)
+        if (child.attemptCount > 0) {
+          const current = child.currentAttemptId
+            ? await one<AttemptRow>(
+                tx,
+                'SELECT * FROM workflow_attempts WHERE id = $1',
+                [child.currentAttemptId],
+              )
+            : await loadLatestChildAttempt(tx, runId, nodeName, childKey)
+          if (!current) {
+            throw new Error(
+              `Missing attempt for node child [${childRef(runId, nodeName, childKey)}]`,
+            )
+          }
+          if (
+            child.status === 'pending' &&
+            child.currentAttemptId === undefined
+          ) {
+            const previous = mapAttempt(current)
+            const attempt = await createAttempt(tx, {
+              runId,
+              nodeName,
+              childKey,
+              input: previous.input,
+              idempotencyKey: previous.idempotencyKey,
+            })
+            return { attempt, created: true }
+          }
+          return { attempt: mapAttempt(current), created: false }
         }
-        throw error
+        if (isTerminalNodeStatus(child.status)) {
+          throw new Error(
+            `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot create attempt`,
+          )
+        }
+
+        const attempt = await createAttempt(tx, {
+          runId,
+          nodeName,
+          childKey,
+          input,
+          idempotencyKey,
+        })
+        return { attempt, created: true }
+      })
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        const raced = await loadLatestChildAttempt(
+          db,
+          runId,
+          nodeName,
+          childKey,
+        )
+        if (raced) return { attempt: mapAttempt(raced), created: false }
       }
-    },
-    async selectNodeCase({ runId, nodeName, caseKey }) {
-      await ready
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [runId, nodeName],
-      )
-      if (!node) return undefined
-      if (isTerminalNodeStatus(node.status as StoredNode['status'])) {
-        return mapNode(node)
-      }
-      if (node.selected_case === caseKey) return mapNode(node)
-      if (node.selected_case !== null) {
+      throw error
+    }
+  },
+  async selectNodeCase({ runId, nodeName, caseKey }) {
+    // A node that is terminal or already carries the case is settled; any
+    // other stored case is a definition conflict.
+    const resolve = (row: NodeRow) => {
+      if (isTerminalNodeStatus(row.status)) return mapNode(row)
+      if (row.selected_case === caseKey) return mapNode(row)
+      if (row.selected_case !== null) {
         throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
       }
-      const row = await one(
-        db,
-        `
-        UPDATE workflow_nodes
-        SET selected_case = $3, version = version + 1, updated_at = now()
-        WHERE run_id = $1 AND name = $2
-          AND status NOT IN ('completed', 'failed', 'cancelled')
-          AND selected_case IS NULL
-        RETURNING *
-      `,
-        [runId, nodeName, caseKey],
-      )
-      if (row) return mapNode(row)
-      const current = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [runId, nodeName],
-      )
-      if (!current) return undefined
-      if (isTerminalNodeStatus(current.status as StoredNode['status'])) {
-        return mapNode(current)
-      }
-      if (current.selected_case === caseKey) return mapNode(current)
-      throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
-    },
-    async completeNodeChild({ runId, nodeName, childKey, output }) {
-      await ready
-      const childRow = await loadChild(db, runId, nodeName, childKey)
-      if (!childRow) return undefined
-      if (isTerminalNodeStatus(childRow.status as StoredNodeChild['status'])) {
-        return mapNodeChild(childRow)
-      }
-      const row = await one(
-        db,
-        `
-        WITH candidate AS (
-          SELECT c.run_id, c.node_name, c.child_key,
-            c.status::text AS old_status, r.root_run_id
-          FROM workflow_node_children c
-          JOIN workflow_runs r ON r.id = c.run_id
-          WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
-        ),
-        updated AS (
-        UPDATE workflow_node_children
-        SET status = 'completed',
-            output = $4::jsonb,
-            version = version + 1,
-            updated_at = now()
-        FROM candidate
-        WHERE workflow_node_children.run_id = candidate.run_id
-          AND workflow_node_children.node_name = candidate.node_name
-          AND workflow_node_children.child_key = candidate.child_key
-          AND workflow_node_children.status IN (${nodeStatusSourcesSql('completed')})
-        RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
-        ),
-        ${emitStatusChangeNotifySql('updated', 'child_completed')}
-        SELECT updated.*${notifyRunStatusEventColumnsSql('child_completed')}
-        FROM updated
-      `,
-        [runId, nodeName, childKey, json(output)],
-      )
-      if (row) return mapNodeChild(row)
-      const current = await loadChild(db, runId, nodeName, childKey)
-      return current ? mapNodeChild(current) : undefined
-    },
-    async failNodeChild({ runId, nodeName, childKey, error }) {
-      await ready
-      const childRow = await loadChild(db, runId, nodeName, childKey)
-      if (!childRow) return undefined
-      if (isTerminalNodeStatus(childRow.status as StoredNodeChild['status'])) {
-        return mapNodeChild(childRow)
-      }
-      const row = await one(
-        db,
-        `
-        WITH candidate AS (
-          SELECT c.run_id, c.node_name, c.child_key,
-            c.status::text AS old_status, r.root_run_id
-          FROM workflow_node_children c
-          JOIN workflow_runs r ON r.id = c.run_id
-          WHERE c.run_id = $1 AND c.node_name = $2 AND c.child_key = $3
-        ),
-        updated AS (
-        UPDATE workflow_node_children
-        SET status = 'failed',
-            error = $4::jsonb,
-            version = version + 1,
-            updated_at = now()
-        FROM candidate
-        WHERE workflow_node_children.run_id = candidate.run_id
-          AND workflow_node_children.node_name = candidate.node_name
-          AND workflow_node_children.child_key = candidate.child_key
-          AND workflow_node_children.status IN (${nodeStatusSourcesSql('failed')})
-        RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
-        ),
-        ${emitStatusChangeNotifySql('updated', 'child_failed')}
-        SELECT updated.*${notifyRunStatusEventColumnsSql('child_failed')}
-        FROM updated
-      `,
-        [runId, nodeName, childKey, json(toStoredError(error))],
-      )
-      if (row) return mapNodeChild(row)
-      const current = await loadChild(db, runId, nodeName, childKey)
-      return current ? mapNodeChild(current) : undefined
-    },
-    async waitNode({ runId, nodeName }) {
-      await ready
-      const node = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [runId, nodeName],
-      )
-      if (!node) return undefined
-      if (
-        isTerminalNodeStatus(node.status as StoredNode['status']) ||
-        node.status === 'waiting'
-      ) {
-        return mapNode(node)
-      }
-      const row = await one(
-        db,
-        `
-        WITH candidate AS (
-          SELECT n.run_id, n.name, n.status::text AS old_status, r.root_run_id
-          FROM workflow_nodes n
-          JOIN workflow_runs r ON r.id = n.run_id
-          WHERE n.run_id = $1 AND n.name = $2
-        ),
-        updated AS (
-        UPDATE workflow_nodes
-        SET status = 'waiting', version = version + 1, updated_at = now()
-        FROM candidate
-        WHERE workflow_nodes.run_id = candidate.run_id
-          AND workflow_nodes.name = candidate.name
-          AND workflow_nodes.status IN (${nodeStatusSourcesSql('waiting', { self: true })})
-        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
-        ),
-        ${emitStatusChangeNotifySql('updated', 'node_waiting')}
-        SELECT updated.*${notifyRunStatusEventColumnsSql('node_waiting')}
-        FROM updated
-      `,
-        [runId, nodeName],
-      )
-      if (row) return mapNode(row)
-      const current = await one(
-        db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
-        [runId, nodeName],
-      )
-      return current ? mapNode(current) : undefined
-    },
-    async loadNodeChildren({ runId, nodeName }) {
-      await ready
-      const [children, attempts] = await Promise.all([
-        loadOrderedChildren(db, runId, nodeName),
-        many(
-          db,
-          'SELECT * FROM workflow_attempts WHERE run_id = $1 AND node_name = $2',
-          [runId, nodeName],
-        ),
-      ])
-      return {
-        children: children.map(mapNodeChild),
-        attempts: attempts.map(mapAttempt),
-      }
-    },
-  }
+      return undefined
+    }
 
-  return childStore
-}
+    const node = await loadNode(db, runId, nodeName)
+    if (!node) return undefined
+    const settled = resolve(node)
+    if (settled) return settled
+
+    const row = await one<NodeRow>(
+      db,
+      `
+      UPDATE workflow_nodes
+      SET selected_case = $3, version = version + 1, updated_at = now()
+      WHERE run_id = $1 AND name = $2
+        AND status NOT IN (${TERMINAL_NODE_STATUSES_SQL})
+        AND selected_case IS NULL
+      RETURNING *
+    `,
+      [runId, nodeName, caseKey],
+    )
+    if (row) return mapNode(row)
+    const current = await loadNode(db, runId, nodeName)
+    if (!current) return undefined
+    const raced = resolve(current)
+    if (raced) return raced
+    throw new Error(`Conflicting selected case for [${runId}.${nodeName}]`)
+  },
+  async completeNodeChild({ runId, nodeName, childKey, output }) {
+    const childRow = await loadChild(db, runId, nodeName, childKey)
+    if (!childRow) return undefined
+    if (isTerminalNodeStatus(childRow.status)) return mapNodeChild(childRow)
+    return transitionChild(db, runId, nodeName, childKey, 'completed', {
+      set: 'output = $4::jsonb',
+      values: [json(output)],
+    })
+  },
+  async failNodeChild({ runId, nodeName, childKey, error }) {
+    const childRow = await loadChild(db, runId, nodeName, childKey)
+    if (!childRow) return undefined
+    if (isTerminalNodeStatus(childRow.status)) return mapNodeChild(childRow)
+    return transitionChild(db, runId, nodeName, childKey, 'failed', {
+      set: 'error = $4::jsonb',
+      values: [json(toStoredError(error))],
+    })
+  },
+  async waitNode({ runId, nodeName }) {
+    const node = await loadNode(db, runId, nodeName)
+    if (!node) return undefined
+    if (isTerminalNodeStatus(node.status) || node.status === 'waiting') {
+      return mapNode(node)
+    }
+    return transitionNode(db, runId, nodeName, 'waiting', { self: true })
+  },
+  async loadNodeChildren({ runId, nodeName }) {
+    const [children, attempts] = await Promise.all([
+      loadOrderedChildren(db, runId, nodeName),
+      many<AttemptRow>(
+        db,
+        'SELECT * FROM workflow_attempts WHERE run_id = $1 AND node_name = $2',
+        [runId, nodeName],
+      ),
+    ])
+    return {
+      children: children.map(mapNodeChild),
+      attempts: attempts.map(mapAttempt),
+    }
+  },
+})

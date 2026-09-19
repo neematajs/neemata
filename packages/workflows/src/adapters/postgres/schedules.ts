@@ -1,17 +1,17 @@
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
 import type { WorkflowScheduler } from '../../runtime/scheduler.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import { DEFAULT_BATCH_SIZE, normalizeBatchSize } from '../../runtime/limits.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
   startStoredScheduleRun,
   type StoredWorkflowSchedule,
 } from '../../runtime/scheduler.ts'
-import { id, json, many, one, parseJsonColumn } from './sql.ts'
+import { id, json, many, one, optional, parseJsonColumn } from './query.ts'
 
 type PostgresWorkflowSchedulerContext = {
   readonly db: WorkflowPostgresConnection
-  readonly ready: Promise<void>
   readonly createRuntime: (
     connection: WorkflowPostgresConnection,
   ) => WorkflowRuntimeAdapter
@@ -36,7 +36,7 @@ type ScheduleRow = {
 export function createPostgresWorkflowScheduler(
   ctx: PostgresWorkflowSchedulerContext,
 ): WorkflowScheduler {
-  const { db, ready } = ctx
+  const { db } = ctx
   let lastTriggerTimestamp = 0
   const triggerSlot = () => {
     const current = Date.now()
@@ -46,18 +46,13 @@ export function createPostgresWorkflowScheduler(
 
   return {
     async reconcile(entries) {
-      await ready
       const date = new Date()
       const normalized = normalizeScheduleDefinitions(entries, date)
       await db.transaction(async (tx) => {
         await tx.query(
           `SELECT pg_advisory_xact_lock(hashtext('workflow_schedules_reconcile'))`,
         )
-        if (normalized.length === 0) {
-          await tx.query(`DELETE FROM workflow_schedules`)
-          return
-        }
-
+        // `<> ALL('{}')` matches every row, so the empty case needs no branch.
         await tx.query(
           `
             DELETE FROM workflow_schedules
@@ -136,9 +131,8 @@ export function createPostgresWorkflowScheduler(
       })
     },
     async fireDue(options = {}) {
-      await ready
       const now = options.now ?? new Date()
-      const limit = normalizeScheduleLimit(options.limit)
+      const limit = normalizeBatchSize(options.limit, DEFAULT_BATCH_SIZE)
       if (limit < 1) return { fired: 0 }
 
       return db.transaction(async (tx) => {
@@ -156,10 +150,10 @@ export function createPostgresWorkflowScheduler(
           [now, limit],
         )
 
+        const runtime = ctx.createRuntime(tx)
         for (const row of rows) {
           const schedule = mapSchedule(row)
           const slot = schedule.nextRunAt
-          const runtime = ctx.createRuntime(tx)
           await startStoredScheduleRun(runtime, schedule, slot)
           await tx.query(
             `
@@ -177,7 +171,6 @@ export function createPostgresWorkflowScheduler(
       })
     },
     async list() {
-      await ready
       const rows = await many<ScheduleRow>(
         db,
         `
@@ -189,19 +182,8 @@ export function createPostgresWorkflowScheduler(
       return rows.map(mapSchedule)
     },
     async trigger(name) {
-      await ready
       return db.transaction(async (tx) => {
-        const row = await one<ScheduleRow>(
-          tx,
-          `
-            SELECT *
-            FROM workflow_schedules
-            WHERE name = $1
-            FOR UPDATE
-          `,
-          [name],
-        )
-        if (!row) throw new Error(`Unknown workflow schedule [${name}]`)
+        const row = await lockSchedule(tx, name)
         const slot = triggerSlot()
         const schedule = mapSchedule(row)
         const run = await startStoredScheduleRun(
@@ -222,19 +204,8 @@ export function createPostgresWorkflowScheduler(
       })
     },
     async setEnabled(name, enabled) {
-      await ready
       return db.transaction(async (tx) => {
-        const row = await one<ScheduleRow>(
-          tx,
-          `
-            SELECT *
-            FROM workflow_schedules
-            WHERE name = $1
-            FOR UPDATE
-          `,
-          [name],
-        )
-        if (!row) throw new Error(`Unknown workflow schedule [${name}]`)
+        const row = await lockSchedule(tx, name)
         const date = new Date()
         const schedule = mapSchedule(row)
         const nextRunAt =
@@ -259,6 +230,21 @@ export function createPostgresWorkflowScheduler(
   }
 }
 
+async function lockSchedule(tx: WorkflowPostgresConnection, name: string) {
+  const row = await one<ScheduleRow>(
+    tx,
+    `
+      SELECT *
+      FROM workflow_schedules
+      WHERE name = $1
+      FOR UPDATE
+    `,
+    [name],
+  )
+  if (!row) throw new Error(`Unknown workflow schedule [${name}]`)
+  return row
+}
+
 function mapSchedule(row: ScheduleRow): StoredWorkflowSchedule {
   return {
     id: row.id,
@@ -267,24 +253,22 @@ function mapSchedule(row: ScheduleRow): StoredWorkflowSchedule {
     runnableName: row.runnable_name,
     input: parseJsonColumn(row.input),
     tags: parseJsonColumn(row.tags) as Readonly<Record<string, string>>,
-    ...(row.cron === null ? {} : { cron: row.cron }),
-    ...(row.every_ms === null ? {} : { everyMs: Number(row.every_ms) }),
+    ...optional('cron', row.cron),
+    ...optional(
+      'everyMs',
+      row.every_ms === null ? undefined : Number(row.every_ms),
+    ),
     enabled: row.enabled,
-    nextRunAt: dateColumn(row.next_run_at),
-    ...(row.last_slot_at === null
-      ? {}
-      : { lastSlotAt: dateColumn(row.last_slot_at) }),
-    createdAt: dateColumn(row.created_at),
-    updatedAt: dateColumn(row.updated_at),
+    nextRunAt: toDate(row.next_run_at),
+    ...optional(
+      'lastSlotAt',
+      row.last_slot_at === null ? undefined : toDate(row.last_slot_at),
+    ),
+    createdAt: toDate(row.created_at),
+    updatedAt: toDate(row.updated_at),
   }
 }
 
-function dateColumn(value: Date | string): Date {
+function toDate(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value)
-}
-
-function normalizeScheduleLimit(limit: number | undefined) {
-  if (limit === undefined) return 100
-  if (!Number.isInteger(limit) || limit < 1) return 0
-  return limit
 }

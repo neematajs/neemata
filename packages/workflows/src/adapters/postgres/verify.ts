@@ -1,6 +1,6 @@
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { WORKFLOW_POSTGRES_SCHEMA_MANIFEST } from './manifest.ts'
-import { many, one } from './sql.ts'
+import { many, one } from './query.ts'
 
 const stringArray = (value: unknown): readonly string[] => {
   if (Array.isArray(value)) return value.map(String)

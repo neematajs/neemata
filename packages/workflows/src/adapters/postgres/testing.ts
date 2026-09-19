@@ -1,5 +1,5 @@
-import type { WorkflowPostgresConnection } from '../postgres.ts'
-import { WORKFLOW_POSTGRES_SCHEMA_MANIFEST } from '../postgres.ts'
+import type { WorkflowPostgresConnection } from './connection.ts'
+import { WORKFLOW_POSTGRES_SCHEMA_MANIFEST } from './manifest.ts'
 
 export async function installPostgresWorkflowSchemaForTesting(
   db: WorkflowPostgresConnection,

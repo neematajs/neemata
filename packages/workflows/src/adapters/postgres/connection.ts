@@ -1,17 +1,7 @@
-type JsonRecord = Record<string, unknown>
+export type JsonRecord = Record<string, unknown>
 
 export type WorkflowPostgresQueryResult<T extends JsonRecord = JsonRecord> = {
   readonly rows: readonly T[]
-}
-
-export type WorkflowPostgresConnection = {
-  query<T extends JsonRecord = JsonRecord>(
-    sql: string,
-    params?: readonly unknown[],
-  ): Promise<WorkflowPostgresQueryResult<T>>
-  transaction<T>(
-    handler: (connection: WorkflowPostgresConnection) => Promise<T>,
-  ): Promise<T>
 }
 
 export type WorkflowPostgresQueryClient = {
@@ -19,6 +9,12 @@ export type WorkflowPostgresQueryClient = {
     sql: string,
     params?: readonly unknown[],
   ): Promise<WorkflowPostgresQueryResult<T>>
+}
+
+export type WorkflowPostgresConnection = WorkflowPostgresQueryClient & {
+  transaction<T>(
+    handler: (connection: WorkflowPostgresConnection) => Promise<T>,
+  ): Promise<T>
 }
 
 export type WorkflowPostgresPoolClient = WorkflowPostgresQueryClient & {
@@ -45,6 +41,8 @@ const hasTransactionApi = (
 ): client is WorkflowPostgresTransactionClient =>
   'transaction' in client && typeof client.transaction === 'function'
 
+// A pg Client also exposes connect(), so the pool counters are what tell the
+// two apart — only a pool can hand out a second client for a transaction.
 const hasConnectApi = (
   client: WorkflowPostgresExternalClient,
 ): client is WorkflowPostgresPool =>
@@ -52,12 +50,15 @@ const hasConnectApi = (
   typeof client.connect === 'function' &&
   ('totalCount' in client || 'idleCount' in client || 'waitingCount' in client)
 
+// Copied because drivers may retain the params array past the call.
 const queryPostgresClient = <T extends JsonRecord>(
   client: WorkflowPostgresQueryClient,
   sql: string,
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
 
+// Postgres has no real nested transactions here: an inner transaction() joins
+// the open one so callers can compose stores without savepoint bookkeeping.
 const createTransactionConnection = (
   client: WorkflowPostgresQueryClient,
 ): WorkflowPostgresConnection => ({

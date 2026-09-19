@@ -7,16 +7,14 @@ import type {
   WorkflowRuntimeAtomicContinuation,
 } from '../../runtime/worker.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
-import { SELF_CHILD_KEY } from '../../runtime/child-key.ts'
-import { createAttemptExecutor } from './executor.ts'
-import { createRunCoordinationExecutor } from './queue.ts'
+import { SELF_CHILD_KEY, TASK_RUN_NODE_NAME } from '../../runtime/child-key.ts'
+import { createAttemptExecutor } from './attempt-executor.ts'
+import { createRunCoordinationExecutor } from './commands.ts'
+import { DEFAULT_MAX_DELIVERIES } from './constants.ts'
+import { one, optional } from './query.ts'
 import { createPostgresWorkflowScheduler } from './schedules.ts'
-import { DEFAULT_MAX_DELIVERIES, TASK_RUN_NODE_NAME, one } from './sql.ts'
-import {
-  createPostgresWorkflowStore,
-  createStoredRunWithState,
-  pruneTerminalRunsInTransaction,
-} from './store.ts'
+import { insertRun, pruneTerminalRunsInTransaction } from './store-runs.ts'
+import { createPostgresWorkflowStore } from './store.ts'
 
 type PostgresWorkflowRuntime =
   WorkflowRuntimeAdapter<WorkflowPostgresConnection> & {
@@ -33,12 +31,11 @@ export function createPostgresWorkflowRuntime(params: {
   readonly wakeEvents?: WorkflowWakeEvents
 }): PostgresWorkflowRuntime {
   const db = params.connection
-  const ready = Promise.resolve()
   const maxDeliveries = params.maxDeliveries ?? DEFAULT_MAX_DELIVERIES
 
-  const store = createPostgresWorkflowStore({ db, ready, maxDeliveries })
+  const store = createPostgresWorkflowStore({ db, maxDeliveries })
 
-  const commandContext = { db, ready, maxDeliveries }
+  const commandContext = { db, maxDeliveries }
   const runCoordinationExecutor = createRunCoordinationExecutor(commandContext)
   const attemptExecutor = createAttemptExecutor(commandContext)
 
@@ -53,10 +50,7 @@ export function createPostgresWorkflowRuntime(params: {
           connection: tx,
           maxDeliveries,
         })
-        const { run: started, created } = await createStoredRunWithState(
-          tx,
-          run,
-        )
+        const { run: started, created } = await insertRun(tx, run)
         if (!created) return started
 
         const command = {
@@ -84,10 +78,7 @@ export function createPostgresWorkflowRuntime(params: {
           connection: tx,
           maxDeliveries,
         })
-        const { run: started, created } = await createStoredRunWithState(
-          tx,
-          run,
-        )
+        const { run: started, created } = await insertRun(tx, run)
         if (!created) return started
 
         await runtime.store.createNode({
@@ -123,9 +114,7 @@ export function createPostgresWorkflowRuntime(params: {
             attemptId: result.attempt.id,
             leaseToken: result.attempt.leaseToken!,
             input: result.attempt.input,
-            ...(result.attempt.idempotencyKey === undefined
-              ? {}
-              : { idempotencyKey: result.attempt.idempotencyKey }),
+            ...optional('idempotencyKey', result.attempt.idempotencyKey),
           },
           startAt === undefined ? undefined : { runAt: startAt },
         )
@@ -179,7 +168,6 @@ export function createPostgresWorkflowRuntime(params: {
 
   const scheduler = createPostgresWorkflowScheduler({
     db,
-    ready,
     createRuntime: (connection) =>
       createPostgresWorkflowRuntime({ connection, maxDeliveries }),
   })

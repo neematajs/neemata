@@ -30,7 +30,7 @@ describe('postgres max deliveries', () => {
     })
     expect(claimed).not.toBeNull()
 
-    await runtime.atomicCompletion.run(async (scoped) => {
+    await runtime.atomicCompletion!.run(async (scoped) => {
       await scoped.runCoordinationExecutor.release(claimed!, {
         error: new Error('boom'),
       })

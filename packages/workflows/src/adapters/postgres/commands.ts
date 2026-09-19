@@ -6,6 +6,7 @@ import type {
 import type { WorkflowPostgresConnection } from './connection.ts'
 import {
   COMMAND_LEASE_EXPIRED_ERROR,
+  StaleAckError,
   toStoredError,
 } from '../../runtime/errors.ts'
 import {
@@ -13,14 +14,11 @@ import {
   RELEASE_BACKOFF_MS,
   UNROUTABLE_BACKOFF_MS,
   WORKFLOW_COMMANDS_CHANNEL,
-  id,
-  json,
-  one,
-} from './sql.ts'
+} from './constants.ts'
+import { id, json, one } from './query.ts'
 
 export type PostgresWorkflowCommandContext = {
   readonly db: WorkflowPostgresConnection
-  readonly ready: Promise<void>
   readonly maxDeliveries: number
 }
 
@@ -30,6 +28,83 @@ type ReleasedCommandRow = {
   readonly last_error: unknown
   readonly run_at: Date
 }
+
+export type ClaimedCommandRow = {
+  readonly id: string
+  readonly payload: unknown
+  readonly lease_token: string
+}
+
+export type ClaimWorker = {
+  readonly workerId: string
+  readonly leaseMs: number
+}
+
+/**
+ * Parks a continue command outside the live-command partial unique index
+ * without losing its history, so a requeued copy can take its place.
+ */
+export const DEAD_LEASE_PREFIX = 'dead:'
+
+/**
+ * Copies a continue command into a fresh row, coalescing with whatever live
+ * wake-up already exists for the run, then consumes the source. The source
+ * must still be outside the dedup index (leased or `dead:`-parked) while this
+ * runs, or it would collide with its own copy.
+ */
+export const coalesceContinueSql = (params: {
+  /** Predicate selecting the source row, also used by the DELETE. */
+  readonly source: string
+  readonly newId: string
+  readonly runAt: string
+  readonly deliveryCount: string
+  readonly lastError: string
+}) => `
+  WITH coalesced AS (
+    INSERT INTO workflow_commands (
+      id,
+      kind,
+      run_id,
+      workflow_name,
+      payload,
+      run_at,
+      priority,
+      delivery_count,
+      last_error,
+      created_at
+    )
+    SELECT
+      ${params.newId},
+      kind,
+      run_id,
+      workflow_name,
+      payload,
+      ${params.runAt},
+      priority,
+      ${params.deliveryCount},
+      ${params.lastError},
+      created_at
+    FROM workflow_commands
+    WHERE ${params.source}
+    ON CONFLICT (run_id)
+      WHERE kind = 'continue' AND lease_token IS NULL
+    DO UPDATE
+    SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
+        delivery_count = GREATEST(
+          workflow_commands.delivery_count,
+          EXCLUDED.delivery_count
+        ),
+        last_error = CASE
+          WHEN EXCLUDED.delivery_count > workflow_commands.delivery_count
+            THEN EXCLUDED.last_error
+          ELSE workflow_commands.last_error
+        END
+    RETURNING id
+  )
+  DELETE FROM workflow_commands
+  WHERE ${params.source}
+    AND EXISTS (SELECT 1 FROM coalesced)
+`
 
 // One source for the dead-letter threshold so the release path and the
 // claim-time takeover cannot drift apart.
@@ -51,13 +126,13 @@ export const createPostgresWorkflowCommandHelpers = (
     commandId: string,
     leaseToken: string,
     options: CommandReleaseOptions | undefined,
-    clearLease: boolean,
+    { keepLease }: { readonly keepLease: boolean },
   ) => {
-    const leaseAssignments = clearLease
-      ? `lease_owner = NULL,
+    const leaseAssignments = keepLease
+      ? ''
+      : `lease_owner = NULL,
          lease_token = NULL,
          lease_expires_at = NULL,`
-      : ''
 
     if (options?.error === undefined && options?.reason === undefined) {
       return one<ReleasedCommandRow>(
@@ -147,7 +222,9 @@ export const createPostgresWorkflowCommandHelpers = (
     leaseToken: string,
     options?: CommandReleaseOptions,
   ) => {
-    await releaseCommandRow(db, commandId, leaseToken, options, true)
+    await releaseCommandRow(db, commandId, leaseToken, options, {
+      keepLease: false,
+    })
   }
 
   const releaseContinueCommand = async (
@@ -161,7 +238,7 @@ export const createPostgresWorkflowCommandHelpers = (
         commandId,
         leaseToken,
         options,
-        false,
+        { keepLease: true },
       )
       if (!released || released.dead_at !== null) return
 
@@ -171,7 +248,7 @@ export const createPostgresWorkflowCommandHelpers = (
       await tx.query(
         `
         UPDATE workflow_commands AS dead
-        SET lease_token = 'dead:' || dead.id::text
+        SET lease_token = '${DEAD_LEASE_PREFIX}' || dead.id::text
         WHERE dead.id <> $1
           AND kind = 'continue'
           AND dead_at IS NOT NULL
@@ -190,65 +267,23 @@ export const createPostgresWorkflowCommandHelpers = (
       // and only carries forward earlier scheduling or newer retry metadata;
       // the claimed row is deleted only after one live wake-up is guaranteed.
       await tx.query(
-        `
-        WITH coalesced AS (
-          INSERT INTO workflow_commands (
-            id,
-            kind,
-            run_id,
-            workflow_name,
-            payload,
-            run_at,
-            priority,
-            delivery_count,
-            last_error,
-            created_at
-          )
-          SELECT
-            $3,
-            kind,
-            run_id,
-            workflow_name,
-            payload,
-            run_at,
-            priority,
-            delivery_count,
-            last_error,
-            created_at
-          FROM workflow_commands
-          WHERE id = $1 AND lease_token = $2
-          ON CONFLICT (run_id)
-            WHERE kind = 'continue' AND lease_token IS NULL
-          DO UPDATE
-          SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
-              delivery_count = GREATEST(
-                workflow_commands.delivery_count,
-                EXCLUDED.delivery_count
-              ),
-              last_error = CASE
-                WHEN EXCLUDED.delivery_count > workflow_commands.delivery_count
-                  THEN EXCLUDED.last_error
-                ELSE workflow_commands.last_error
-              END
-          RETURNING id
-        )
-        DELETE FROM workflow_commands
-        WHERE id = $1
-          AND lease_token = $2
-          AND EXISTS (SELECT 1 FROM coalesced)
-      `,
+        coalesceContinueSql({
+          source: 'id = $1 AND lease_token = $2',
+          newId: '$3',
+          runAt: 'run_at',
+          deliveryCount: 'delivery_count',
+          lastError: 'last_error',
+        }),
         [commandId, leaseToken, id()],
       )
     })
   }
 
   const claimCommand = async (
-    where: string | readonly string[],
-    params: unknown[],
-    workerId: string,
-    leaseMs: number,
+    conditions: readonly string[],
+    params: readonly unknown[],
+    worker: ClaimWorker,
   ) => {
-    const conditions = typeof where === 'string' ? [where] : where
     const candidateQuery = (condition: string) => `
       SELECT id, priority, run_at, created_at
       FROM workflow_commands
@@ -297,33 +332,44 @@ export const createPostgresWorkflowCommandHelpers = (
     // last_error only fills a gap — a real error from a prior release is
     // better dead-letter diagnostics than the synthetic lease message.
     const takeover = 'lease_token IS NOT NULL'
-    const takeoverDead = `${takeover} AND ${atDeadLetterThreshold(`$${params.length + 4}`)}`
+    const owner = `$${params.length + 1}`
+    const token = `$${params.length + 2}`
+    const lease = `$${params.length + 3}`
+    const threshold = `$${params.length + 4}`
+    const leaseError = `$${params.length + 5}`
     const claimSql = `
       WITH ${candidateSql}
       UPDATE workflow_commands
       SET delivery_count = delivery_count
             + CASE WHEN ${takeover} THEN 1 ELSE 0 END,
           last_error = CASE
-            WHEN ${takeover} AND last_error IS NULL THEN $${params.length + 5}::jsonb
+            WHEN ${takeover} AND last_error IS NULL THEN ${leaseError}::jsonb
             ELSE last_error
           END,
-          dead_at = CASE WHEN ${takeoverDead} THEN now() ELSE dead_at END,
-          lease_owner = $${params.length + 1},
-          lease_token = $${params.length + 2},
-          lease_expires_at = now() + ($${params.length + 3}::int * interval '1 millisecond')
+          dead_at = CASE
+            WHEN ${takeover} AND ${atDeadLetterThreshold(threshold)} THEN now()
+            ELSE dead_at
+          END,
+          lease_owner = ${owner},
+          lease_token = ${token},
+          lease_expires_at = now() + (${lease}::int * interval '1 millisecond')
       WHERE id = (SELECT id FROM candidate)
       RETURNING *
     `
     const leaseExpiredErrorJson = json(COMMAND_LEASE_EXPIRED_ERROR)
     for (let drained = 0; drained <= MAX_DEAD_LETTERED_PER_CLAIM; drained++) {
-      const claimed = await one(db, claimSql, [
-        ...params,
-        workerId,
-        id(),
-        leaseMs,
-        maxDeliveries,
-        leaseExpiredErrorJson,
-      ])
+      const claimed = await one<ClaimedCommandRow & { dead_at: Date | null }>(
+        db,
+        claimSql,
+        [
+          ...params,
+          worker.workerId,
+          id(),
+          worker.leaseMs,
+          maxDeliveries,
+          leaseExpiredErrorJson,
+        ],
+      )
       if (!claimed) return null
       if (claimed.dead_at == null) return claimed
       // The candidate was dead-lettered, not delivered — keep claiming so a
@@ -343,7 +389,7 @@ export const createPostgresWorkflowCommandHelpers = (
       [commandId, leaseToken],
     )
 
-    if (!deleted) throw new Error('Stale workflow command ack')
+    if (!deleted) throw new StaleAckError()
   }
 
   return {
@@ -358,7 +404,6 @@ export const createPostgresWorkflowCommandHelpers = (
 export const createRunCoordinationExecutor = (
   ctx: PostgresWorkflowCommandContext,
 ): RunCoordinationExecutor => {
-  const { ready } = ctx
   const {
     insertContinueCommand,
     releaseContinueCommand,
@@ -367,40 +412,27 @@ export const createRunCoordinationExecutor = (
   } = createPostgresWorkflowCommandHelpers(ctx)
 
   return {
-    async enqueue(command) {
-      await ready
-      await insertContinueCommand(command)
-    },
-    async enqueueDelayed(command, runAt) {
-      await ready
-      await insertContinueCommand(command, runAt)
-    },
+    enqueue: (command) => insertContinueCommand(command),
+    enqueueDelayed: (command, runAt) => insertContinueCommand(command, runAt),
     async claim(worker) {
-      await ready
       if (worker.workflowNames.length === 0) return null
-      const workflowList = worker.workflowNames
+      const names = worker.workflowNames
         .map((_, index) => `$${index + 1}`)
         .join(', ')
       const claimed = await claimCommand(
-        `kind = 'continue' AND workflow_name IN (${workflowList})`,
-        [...worker.workflowNames],
-        worker.workerId,
-        worker.leaseMs,
+        [`kind = 'continue' AND workflow_name IN (${names})`],
+        worker.workflowNames,
+        worker,
       )
       if (!claimed) return null
       return {
-        id: claimed.id as string,
+        id: claimed.id,
         command: claimed.payload as ContinueRunCommand,
-        leaseToken: claimed.lease_token as string,
+        leaseToken: claimed.lease_token,
       }
     },
-    async ack(command) {
-      await ready
-      await ackCommand(command.id, command.leaseToken)
-    },
-    async release(command, options) {
-      await ready
-      await releaseContinueCommand(command.id, command.leaseToken, options)
-    },
+    ack: (command) => ackCommand(command.id, command.leaseToken),
+    release: (command, options) =>
+      releaseContinueCommand(command.id, command.leaseToken, options),
   }
 }
