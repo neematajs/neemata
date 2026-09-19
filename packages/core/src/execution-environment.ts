@@ -1,16 +1,12 @@
 import type { Container } from './container.ts'
-import type { AnyInjectable, Dependant } from './injectables.ts'
+import type { Dependant } from './injectables.ts'
 import type { Logger } from './logger.ts'
 import type { ExecutionEnvironmentPlugin } from './plugin.ts'
 import type { HookTypes } from './types.ts'
 import { Container as CoreContainer } from './container.ts'
 import { Scope } from './enums.ts'
 import { Hooks } from './hooks.ts'
-import {
-  CoreInjectables,
-  getDepedencencyInjectable,
-  provision,
-} from './injectables.ts'
+import { CoreInjectables, provision } from './injectables.ts'
 import { forkLogger } from './logger.ts'
 
 export enum ExecutionEnvironmentLifecycleHook {
@@ -94,15 +90,7 @@ export class ExecutionEnvironment<
   }
 
   async initialize(dependants: Iterable<Dependant> = []): Promise<void> {
-    const dependencies = new Set<AnyInjectable>()
-
-    for (const dependant of dependants) {
-      for (const dependency of Object.values(dependant.dependencies)) {
-        dependencies.add(getDepedencencyInjectable(dependency))
-      }
-    }
-
-    await this.container.initialize(dependencies)
+    await this.container.initialize(dependants)
   }
 
   async dispose(): Promise<void> {

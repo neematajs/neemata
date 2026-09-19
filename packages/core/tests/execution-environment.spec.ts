@@ -12,6 +12,7 @@ import {
   createFactoryInjectable,
   createLazyInjectable,
   createValueInjectable,
+  optional,
   provision,
 } from '../src/injectables.ts'
 import { createPlugin } from '../src/plugin.ts'
@@ -65,6 +66,38 @@ describe('ExecutionEnvironment', () => {
     }
 
     expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('resolves a direct global dependency of a dependant', async () => {
+    const create = vi.fn(() => ({}))
+    const dependency = createFactoryInjectable({ create })
+    const environment = new ExecutionEnvironment({ logger: testLogger() })
+
+    try {
+      await environment.initialize([{ dependencies: { dependency } }])
+
+      expect(create).toHaveBeenCalledOnce()
+    } finally {
+      await environment.dispose()
+    }
+  })
+
+  it('keeps an unfulfilled direct dependency optional', async () => {
+    const missing = createLazyInjectable<string>()
+    const environment = new ExecutionEnvironment({ logger: testLogger() })
+
+    try {
+      await expect(
+        environment.initialize([
+          { dependencies: { missing: optional(missing) } },
+        ]),
+      ).resolves.toBeUndefined()
+      await expect(
+        environment.initialize([{ dependencies: { missing } }]),
+      ).rejects.toThrow('No instance provided')
+    } finally {
+      await environment.dispose()
+    }
   })
 
   it('registers plugin provisions and lifecycle hooks', async () => {

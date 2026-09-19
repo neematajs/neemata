@@ -5,6 +5,7 @@ import { tryCaptureStackTrace } from '@nmtjs/common'
 
 import type {
   AnyInjectable,
+  Dependant,
   Dependencies,
   DependencyContext,
   Provision,
@@ -94,7 +95,7 @@ export class Container {
     this.provide(CoreInjectables.dispose, this.createDisposeFunction())
   }
 
-  async initialize(injectables: Iterable<AnyInjectable>) {
+  async initialize(dependants: Iterable<Dependant>) {
     // an injectable is preloaded as optional only if no dependant requires it
     const optionality = new Map<AnyInjectable, boolean>()
     const visited = new Set<AnyInjectable>()
@@ -116,7 +117,7 @@ export class Container {
       }
     }
 
-    for (const dependant of injectables) {
+    for (const dependant of dependants) {
       traverse(dependant.dependencies)
     }
 
