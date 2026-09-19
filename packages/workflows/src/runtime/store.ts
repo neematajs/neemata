@@ -6,6 +6,7 @@ import type {
   WorkflowNodeKind,
 } from '../types/index.ts'
 import type { WorkflowCommandKind } from './commands.ts'
+import type { RetryParams } from './retry-validation.ts'
 import type {
   NodeChildKind,
   RunSnapshot,
@@ -18,6 +19,12 @@ import type {
 import type { RuntimeRunStatus, TerminalRunStatus } from './status.ts'
 
 export type { TerminalRunStatus }
+
+/** Fences an attempt write to the lease the worker still holds. */
+export type AttemptFence = {
+  readonly attemptId: string
+  readonly leaseToken: string
+}
 
 export type RunLease = {
   readonly runId: string
@@ -112,11 +119,7 @@ export type PruneTerminalRunsResult = {
 
 export type DeleteRunResult = { readonly deleted: boolean }
 
-export type WorkflowRetentionPruner = {
-  pruneTerminalRuns(
-    params: PruneTerminalRunsParams,
-  ): Promise<PruneTerminalRunsResult>
-}
+export type WorkflowRetentionPruner = Pick<WorkflowStore, 'pruneTerminalRuns'>
 
 export type DeadWorkflowCommand = {
   readonly id: string
@@ -147,9 +150,7 @@ export type EnsureNodeChildInput = {
   readonly item?: unknown
 }
 
-export type EnsureNodeChildrenParams = {
-  readonly runId: string
-  readonly nodeName: string
+export type EnsureNodeChildrenParams = NodeRef & {
   readonly children: readonly EnsureNodeChildInput[]
 }
 
@@ -158,10 +159,7 @@ export type EnsureNodeChildrenResult = {
   readonly created: boolean
 }
 
-export type EnsureChildRunParams = {
-  readonly runId: string
-  readonly nodeName: string
-  readonly childKey: string
+export type EnsureChildRunParams = NodeChildRef & {
   readonly childKind: RunKind
   readonly childName: string
   readonly input: unknown
@@ -176,10 +174,7 @@ export type EnsureChildRunResult = {
   readonly created: boolean
 }
 
-export type EnsureChildAttemptParams = {
-  readonly runId: string
-  readonly nodeName: string
-  readonly childKey: string
+export type EnsureChildAttemptParams = NodeChildRef & {
   readonly input: unknown
   readonly idempotencyKey?: IdempotencyKey
 }
@@ -189,12 +184,12 @@ export type EnsureChildAttemptResult = {
   readonly created: boolean
 }
 
-export type CreateAttemptInput = {
+export type RunRef = {
   readonly runId: string
+}
+
+export type NodeRef = RunRef & {
   readonly nodeName: string
-  readonly childKey: string
-  readonly input: unknown
-  readonly idempotencyKey?: IdempotencyKey
 }
 
 export type NodeChildRef = {
@@ -203,47 +198,31 @@ export type NodeChildRef = {
   readonly childKey: string
 }
 
-export type SelectNodeCaseParams = {
-  readonly runId: string
-  readonly nodeName: string
+export type CreateAttemptInput = EnsureChildAttemptParams
+
+export type SelectNodeCaseParams = NodeRef & {
   readonly caseKey: string
 }
 
-export type LoadNodeChildrenParams = {
-  readonly runId: string
-  readonly nodeName: string
-}
+export type LoadNodeChildrenParams = NodeRef
 
 export type NodeChildrenSnapshot = {
   readonly children: readonly StoredNodeChild[]
   readonly attempts: readonly StoredAttempt[]
 }
 
-export type WaitNodeParams = {
-  readonly runId: string
-  readonly nodeName: string
-}
+export type WaitNodeParams = NodeRef
 
-export type RequestRunCancellationParams = {
-  readonly runId: string
-}
+export type RequestRunCancellationParams = RunRef
 
-export type CancelNodeParams = {
-  readonly runId: string
-  readonly nodeName: string
-}
+export type CancelNodeParams = NodeRef
 
-export type CancelNonTerminalRunNodesParams = {
-  readonly runId: string
-}
+export type CancelNonTerminalRunNodesParams = RunRef
 
 export type WorkflowStore = {
   createRun(input: CreateRunInput): Promise<StoredRun>
   /** Atomically reopens failed work and enqueues continuation for the same root. */
-  reopenFailedRun(params: {
-    readonly runId: string
-    readonly expectedVersion: number
-  }): Promise<StoredRun>
+  reopenFailedRun(params: RetryParams): Promise<StoredRun>
   listRuns(filter?: ListRunsFilter): Promise<ListRunsResult>
   listRunSummaries(filter?: ListRunsFilter): Promise<ListRunSummariesResult>
   pruneTerminalRuns(
@@ -268,18 +247,14 @@ export type WorkflowStore = {
   }): Promise<readonly DeadWorkflowCommand[]>
   markDeadCommandReaped(id: string): Promise<void>
   requeueDeadCommand(id: string): Promise<void>
-  acquireRunLease(params: {
-    runId: string
-    leaseMs: number
-  }): Promise<RunLease | undefined>
+  acquireRunLease(
+    params: RunRef & { readonly leaseMs: number },
+  ): Promise<RunLease | undefined>
   renewRunLease(lease: RunLease, leaseMs: number): Promise<RunLease | undefined>
   releaseRunLease(lease: RunLease): Promise<void>
   loadRunSnapshot(runId: string): Promise<RunSnapshot | undefined>
   loadRunDetail(runId: string): Promise<RunDetail | undefined>
-  loadNodeSnapshot(params: {
-    runId: string
-    nodeName: string
-  }): Promise<NodeSnapshot | undefined>
+  loadNodeSnapshot(params: NodeRef): Promise<NodeSnapshot | undefined>
   listRunFamily(runId: string): Promise<readonly RunFamilyEntry[]>
   /**
    * Loads run rows in first-occurrence order of `runIds`; unknown ids are
@@ -287,11 +262,9 @@ export type WorkflowStore = {
    */
   loadRuns(runIds: readonly string[]): Promise<readonly StoredRun[]>
   createNode(input: CreateNodeInput): Promise<StoredNode>
-  setNodeInput(params: {
-    runId: string
-    nodeName: string
-    input: unknown
-  }): Promise<StoredNode>
+  setNodeInput(
+    params: NodeRef & { readonly input: unknown },
+  ): Promise<StoredNode>
   selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
   /**
    * Idempotently creates the node's child set. Re-entry with an equal set
@@ -323,55 +296,43 @@ export type WorkflowStore = {
    * Completes the attempt AND its child record atomically, fenced by the
    * child's current attempt and the attempt lease.
    */
-  completeCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    output: unknown
-  }): Promise<StoredAttempt | undefined>
-  failCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    error: unknown
-  }): Promise<StoredAttempt | undefined>
-  timeoutCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    error: unknown
-  }): Promise<StoredAttempt | undefined>
+  completeCurrentAttempt(
+    params: AttemptFence & { readonly output: unknown },
+  ): Promise<StoredAttempt | undefined>
+  failCurrentAttempt(
+    params: AttemptFence & { readonly error: unknown },
+  ): Promise<StoredAttempt | undefined>
+  timeoutCurrentAttempt(
+    params: AttemptFence & { readonly error: unknown },
+  ): Promise<StoredAttempt | undefined>
   completeNodeChild(
-    params: NodeChildRef & { output: unknown },
+    params: NodeChildRef & { readonly output: unknown },
   ): Promise<StoredNodeChild | undefined>
   failNodeChild(
-    params: NodeChildRef & { error: unknown },
+    params: NodeChildRef & { readonly error: unknown },
   ): Promise<StoredNodeChild | undefined>
   loadNodeChildren(
     params: LoadNodeChildrenParams,
   ): Promise<NodeChildrenSnapshot>
-  completeNode(params: {
-    runId: string
-    nodeName: string
-    output: unknown
-  }): Promise<StoredNode | undefined>
-  failNode(params: {
-    runId: string
-    nodeName: string
-    error: unknown
-  }): Promise<StoredNode | undefined>
+  completeNode(
+    params: NodeRef & { readonly output: unknown },
+  ): Promise<StoredNode | undefined>
+  failNode(
+    params: NodeRef & { readonly error: unknown },
+  ): Promise<StoredNode | undefined>
   waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
-  markRunRunning(params: { runId: string }): Promise<StoredRun | undefined>
-  markRunWaiting(params: { runId: string }): Promise<StoredRun | undefined>
-  completeRun(params: {
-    runId: string
-    output: unknown
-  }): Promise<StoredRun | undefined>
-  failRun(params: {
-    runId: string
-    error: unknown
-  }): Promise<StoredRun | undefined>
+  markRunRunning(params: RunRef): Promise<StoredRun | undefined>
+  markRunWaiting(params: RunRef): Promise<StoredRun | undefined>
+  completeRun(
+    params: RunRef & { readonly output: unknown },
+  ): Promise<StoredRun | undefined>
+  failRun(
+    params: RunRef & { readonly error: unknown },
+  ): Promise<StoredRun | undefined>
   requestRunCancellation(
     params: RequestRunCancellationParams,
   ): Promise<StoredRun | undefined>
-  cancelRun(params: { runId: string }): Promise<StoredRun | undefined>
+  cancelRun(params: RunRef): Promise<StoredRun | undefined>
   cancelNode(params: CancelNodeParams): Promise<StoredNode | undefined>
   /**
    * Cancels every non-terminal node, child record AND started attempt of the

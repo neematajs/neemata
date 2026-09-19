@@ -43,107 +43,90 @@ export function createWorkflowRuntimeRegistry(options: {
   workflows?: readonly RegisteredWorkflowImplementation[]
   tasks?: readonly RegisteredTaskImplementation[]
 }): WorkflowRuntimeRegistry {
-  const workflows = createWorkflowMap(options.workflows ?? [])
-  const tasks = createTaskMap(options.tasks ?? [])
+  const workflows = indexByName(
+    options.workflows ?? [],
+    (implementation) => implementation.workflow.name,
+    'workflow',
+  )
+  const tasks = indexByName(
+    options.tasks ?? [],
+    (implementation) => implementation.task.name,
+    'task',
+  )
 
-  const registry: WorkflowRuntimeRegistry = Object.freeze({
+  return Object.freeze({
     workflows,
     tasks,
     getWorkflow: (name) => workflows.get(name),
     getTask: (name) => tasks.get(name),
-    validateRouteability: (workflow) => {
+    validateRouteability: (entry) => {
       const missing = new Set<string>()
       const visited = new Set<RegisteredWorkflowImplementation>()
 
-      collectMissingWorkflowRoutes(workflow, workflows, tasks, missing, visited)
+      const visitWorkflow = (workflow: RegisteredWorkflowImplementation) => {
+        if (visited.has(workflow)) return
+        visited.add(workflow)
+        for (const node of workflow.nodes) visitNode(node)
+      }
 
-      return [...missing]
+      const visitNode = (
+        node: WorkflowNodeImplementation | WorkflowCaseImplementation,
+      ) => {
+        switch (node.kind) {
+          case 'task':
+          case 'mapTask': {
+            const { name } = node.target
+            if (tasks.get(name)?.task !== node.target) {
+              missing.add(`task:${name}`)
+            }
+            return
+          }
+
+          case 'workflow':
+          case 'mapWorkflow': {
+            const { name } = node.target
+            const workflow = workflows.get(name)
+            if (workflow?.workflow !== node.target) {
+              missing.add(`workflow:${name}`)
+              return
+            }
+
+            visitWorkflow(workflow)
+            return
+          }
+
+          case 'branch':
+          case 'parallel':
+            for (const branchCase of Object.values(node.cases)) {
+              visitNode(branchCase)
+            }
+            return
+
+          case 'activity':
+            return
+        }
+      }
+
+      visitWorkflow(entry)
+      return Array.from(missing)
     },
   })
-
-  return registry
 }
 
-function createWorkflowMap(
-  workflows: readonly RegisteredWorkflowImplementation[],
+function indexByName<Implementation>(
+  implementations: readonly Implementation[],
+  nameOf: (implementation: Implementation) => string,
+  label: string,
 ) {
-  const map = new Map<string, RegisteredWorkflowImplementation>()
+  const byName = new Map<string, Implementation>()
 
-  for (const workflow of workflows) {
-    const name = workflow.workflow.name
-    if (map.has(name))
-      throw new Error(`Duplicate workflow implementation [${name}]`)
-    map.set(name, workflow)
-  }
-
-  return map
-}
-
-function createTaskMap(tasks: readonly RegisteredTaskImplementation[]) {
-  const map = new Map<string, RegisteredTaskImplementation>()
-
-  for (const task of tasks) {
-    const name = task.task.name
-    if (map.has(name))
-      throw new Error(`Duplicate task implementation [${name}]`)
-    map.set(name, task)
-  }
-
-  return map
-}
-
-function collectMissingWorkflowRoutes(
-  workflow: RegisteredWorkflowImplementation,
-  workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>,
-  tasks: ReadonlyMap<string, RegisteredTaskImplementation>,
-  missing: Set<string>,
-  visited: Set<RegisteredWorkflowImplementation>,
-) {
-  if (visited.has(workflow)) return
-  visited.add(workflow)
-
-  for (const node of workflow.nodes) {
-    collectMissingRoute(node, workflows, tasks, missing, visited)
-  }
-}
-
-function collectMissingRoute(
-  node: WorkflowNodeImplementation | WorkflowCaseImplementation,
-  workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>,
-  tasks: ReadonlyMap<string, RegisteredTaskImplementation>,
-  missing: Set<string>,
-  visited: Set<RegisteredWorkflowImplementation>,
-) {
-  switch (node.kind) {
-    case 'task':
-    case 'mapTask': {
-      const name = node.target.name
-      const task = tasks.get(name)
-      if (task?.task !== node.target) missing.add(`task:${name}`)
-      return
+  for (const implementation of implementations) {
+    const name = nameOf(implementation)
+    if (byName.has(name)) {
+      throw new Error(`Duplicate ${label} implementation [${name}]`)
     }
-
-    case 'workflow':
-    case 'mapWorkflow': {
-      const name = node.target.name
-      const workflow = workflows.get(name)
-      if (workflow?.workflow !== node.target) {
-        missing.add(`workflow:${name}`)
-        return
-      }
-
-      collectMissingWorkflowRoutes(workflow, workflows, tasks, missing, visited)
-      return
-    }
-
-    case 'branch':
-    case 'parallel':
-      for (const branchCase of Object.values(node.cases)) {
-        collectMissingRoute(branchCase, workflows, tasks, missing, visited)
-      }
-      return
-
-    case 'activity':
-      return
+    byName.set(name, implementation)
   }
+
+  return byName
 }

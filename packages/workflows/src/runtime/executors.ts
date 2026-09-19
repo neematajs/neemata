@@ -11,8 +11,8 @@ import type { RuntimeRunStatus } from './status.ts'
 
 /**
  * Single home for the fallback lease duration so the worker loop and both
- * adapters' heartbeat defaults cannot drift apart — the value now decides
- * when an expired lease counts as a lost delivery.
+ * adapters' heartbeat defaults cannot drift apart — it decides when an
+ * expired lease counts as a lost delivery.
  */
 export const DEFAULT_LEASE_MS = 30_000
 

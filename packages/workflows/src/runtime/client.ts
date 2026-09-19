@@ -14,7 +14,7 @@ import type {
   WorkflowInput,
   WorkflowRun,
 } from '../types/index.ts'
-import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
+import type { WorkflowRuntimeAtomicStart } from './coordinator/start.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { WorkflowScheduler } from './scheduler.ts'
 import type { RunSnapshot, StoredError, StoredRun } from './state.ts'
@@ -36,10 +36,10 @@ import type { WorkflowWakeEvents } from './wake-events.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
-} from './worker.ts'
+} from './worker/atomic.ts'
 import { continueRun } from './commands.ts'
-import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
+import { startTaskRun, startWorkflowRun } from './coordinator/start.ts'
 import { normalizeBatchSize } from './limits.ts'
 import {
   createWorkflowRuntimeRegistry,
@@ -92,6 +92,8 @@ export type WatchRunOptions = {
   readonly signal?: AbortSignal
   readonly pollIntervalMs?: number
 }
+
+const DEFAULT_POLL_INTERVAL_MS = 1_000
 
 export type WatchEvent =
   | { readonly kind: 'change' }
@@ -208,36 +210,32 @@ export function createWorkflowRuntimeClient<Connection = never>(
     runnableInput: unknown,
     options?: WorkflowRuntimeStartOptions<Connection>,
   ) => {
+    const shared = {
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      atomicStart: input.atomicStart,
+      input: runnableInput,
+      tags: options?.tags,
+      idempotencyKey: options?.idempotencyKey,
+      unique: options?.unique,
+      startAt: options?.startAt,
+      connection: options?.connection,
+    }
+
     switch (runnable.kind) {
       case 'workflow':
-        return (await startWorkflowRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          atomicStart: input.atomicStart,
+        return await startWorkflowRun({
+          ...shared,
           workflow: runnable,
-          implementation: getWorkflowImplementation(registry, runnable),
-          input: runnableInput,
-          tags: options?.tags,
-          idempotencyKey: options?.idempotencyKey,
-          unique: options?.unique,
-          startAt: options?.startAt,
-          connection: options?.connection,
-        })) as WorkflowRun<typeof runnable>
+          implementation: workflowImplementation(registry, runnable),
+        })
       case 'task':
-        return (await startTaskRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
+        return await startTaskRun({
+          ...shared,
           attemptExecutor: input.attemptExecutor,
-          atomicStart: input.atomicStart,
           task: runnable,
-          implementation: getTaskImplementation(registry, runnable),
-          input: runnableInput,
-          tags: options?.tags,
-          idempotencyKey: options?.idempotencyKey,
-          unique: options?.unique,
-          startAt: options?.startAt,
-          connection: options?.connection,
-        })) as TaskRun<typeof runnable>
+          implementation: taskImplementation(registry, runnable),
+        })
     }
   }) as WorkflowRuntimeClient<Connection>['start']
   const requireScheduler = () => {
@@ -365,7 +363,7 @@ async function* watchRun(params: {
   // peek reads themselves are deliberately uncapped (one cheap PK read per
   // wake, bounded by the window) — capping them would trade terminal latency
   // for savings on the wrong side of the debounce.
-  let lastStatus: string | undefined
+  let lastStatus: StoredRun['status'] | undefined
   let lastWakeConsumedAt = 0
   const waitForChange = async (): Promise<boolean> => {
     if (!wakePending) await sleep(pollIntervalMs)
@@ -453,30 +451,17 @@ function createDefinitionIndex(
     tasks.set(implementation.task.name, implementation.task)
   }
   for (const definition of definitions ?? []) {
+    const known: Map<string, RunnableDefinition> =
+      definition.kind === 'workflow' ? workflows : tasks
     // Two objects under one name would make by-name resolution ambiguous and
     // `start()`'s definition↔implementation identity check a coin toss.
-    switch (definition.kind) {
-      case 'workflow': {
-        const existing = workflows.get(definition.name)
-        if (existing && existing !== definition) {
-          throw new Error(
-            `Conflicting workflow definition [${definition.name}]: another definition or registered implementation uses the same name`,
-          )
-        }
-        workflows.set(definition.name, definition)
-        break
-      }
-      case 'task': {
-        const existing = tasks.get(definition.name)
-        if (existing && existing !== definition) {
-          throw new Error(
-            `Conflicting task definition [${definition.name}]: another definition or registered implementation uses the same name`,
-          )
-        }
-        tasks.set(definition.name, definition)
-        break
-      }
+    const existing = known.get(definition.name)
+    if (existing && existing !== definition) {
+      throw new Error(
+        `Conflicting ${definition.kind} definition [${definition.name}]: another definition or registered implementation uses the same name`,
+      )
     }
+    known.set(definition.name, definition)
   }
 
   return { workflows, tasks }
@@ -498,75 +483,69 @@ async function restartRun<Connection>(
     throw new Error(`Run [${runId}] is not a root run`)
   }
 
-  switch (run.kind) {
-    case 'workflow': {
-      const workflow = definitions.workflows.get(run.workflowName)
-      if (!workflow) {
-        throw new Error(
-          `Cannot restart run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
-        )
-      }
-      return (await start(workflow, run.input as never, {
-        tags: run.tags,
-        // scope 'all' constraints conflict with the terminal run itself on
-        // retry — surfaced honestly; override via options.unique if intended
-        ...(run.unique === undefined ? {} : { unique: run.unique }),
-        ...options,
-      })) as StoredRun
-    }
-    case 'task': {
-      const taskName = run.taskName ?? run.name
-      const task = definitions.tasks.get(taskName)
-      if (!task) {
-        throw new Error(
-          `Cannot restart run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
-        )
-      }
-      return (await start(task, run.input as never, {
-        tags: run.tags,
-        ...(run.unique === undefined ? {} : { unique: run.unique }),
-        ...options,
-      })) as StoredRun
-    }
+  const name =
+    run.kind === 'workflow' ? run.workflowName : (run.taskName ?? run.name)
+  const definition =
+    run.kind === 'workflow'
+      ? definitions.workflows.get(name)
+      : definitions.tasks.get(name)
+  if (!definition) {
+    throw new Error(
+      `Cannot restart run [${runId}]: no ${run.kind} definition [${name}] is known to this client — pass it via 'definitions' (or its implementation via '${run.kind}s') to createWorkflowRuntimeClient`,
+    )
   }
+
+  // Only the runtime value knows which of start's overloads applies.
+  return (await start(definition as AnyWorkflowDefinition, run.input as never, {
+    tags: run.tags,
+    // scope 'all' constraints conflict with the terminal run itself on
+    // retry — surfaced honestly; override via options.unique if intended
+    ...(run.unique === undefined ? {} : { unique: run.unique }),
+    ...options,
+  })) as StoredRun
 }
 
 function normalizeDebounce(debounceMs: number | undefined): number {
-  if (debounceMs === undefined) return 0
-  return Number.isFinite(debounceMs) && debounceMs > 0 ? debounceMs : 0
+  if (debounceMs === undefined || !Number.isFinite(debounceMs)) return 0
+  return debounceMs > 0 ? debounceMs : 0
 }
 
 function normalizePollInterval(intervalMs: number | undefined): number {
-  if (intervalMs === undefined) return 1_000
-  return Number.isFinite(intervalMs) && intervalMs > 0 ? intervalMs : 1_000
+  if (intervalMs === undefined || !Number.isFinite(intervalMs)) {
+    return DEFAULT_POLL_INTERVAL_MS
+  }
+  return intervalMs > 0 ? intervalMs : DEFAULT_POLL_INTERVAL_MS
 }
 
-function getWorkflowImplementation<WorkflowDef extends AnyWorkflowDefinition>(
+function workflowImplementation<Definition extends AnyWorkflowDefinition>(
   registry: WorkflowRuntimeRegistry,
-  workflow: WorkflowDef,
+  workflow: Definition,
 ) {
   const implementation = registry.getWorkflow(workflow.name)
   if (!implementation) return undefined
-  if (implementation.workflow !== workflow) {
-    throw new Error(
-      `Registered workflow implementation [${workflow.name}] does not match declaration`,
-    )
-  }
+  assertDeclaration(implementation.workflow, workflow)
 
-  return implementation as WorkflowImplementation<WorkflowDef, any>
+  return implementation as WorkflowImplementation<Definition, any>
 }
 
-function getTaskImplementation<TaskDef extends AnyTaskDefinition>(
+function taskImplementation<Definition extends AnyTaskDefinition>(
   registry: WorkflowRuntimeRegistry,
-  task: TaskDef,
+  task: Definition,
 ) {
   const implementation = registry.getTask(task.name)
   if (!implementation) return undefined
-  if (implementation.task !== task) {
-    throw new Error(
-      `Registered task implementation [${task.name}] does not match declaration`,
-    )
-  }
+  assertDeclaration(implementation.task, task)
 
-  return implementation as TaskImplementation<TaskDef, any>
+  return implementation as TaskImplementation<Definition, any>
+}
+
+/**
+ * Same name, different object: the caller's definition would decode inputs
+ * the registered implementation never declared.
+ */
+function assertDeclaration(declared: unknown, definition: RunnableDefinition) {
+  if (declared === definition) return
+  throw new Error(
+    `Registered ${definition.kind} implementation [${definition.name}] does not match declaration`,
+  )
 }
