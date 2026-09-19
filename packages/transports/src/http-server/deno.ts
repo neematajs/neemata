@@ -1,3 +1,4 @@
+import type { DenoAdapter } from 'crossws/adapters/deno'
 import createAdapter from 'crossws/adapters/deno'
 
 import type {
@@ -8,24 +9,15 @@ import type {
 } from './types.ts'
 import { BaseServerHost } from './host.ts'
 
-interface DenoNetAddr {
-  transport: 'tcp' | 'udp'
-  hostname: string
-  port: number
-}
+// The `Deno` namespace is an optional peer type the repo's tsconfig does not
+// load, so the shapes this host depends on are spelled out here. The upgrade
+// info is taken from crossws, the only consumer that constrains it.
+type ServeInfo = Parameters<DenoAdapter['handleUpgrade']>[1]
 
-interface DenoUnixAddr {
-  transport: 'unix' | 'unixpacket'
-  path: string
-}
-
-interface DenoVsockAddr {
-  transport: 'vsock'
-  cid: number
-  port: number
-}
-
-type DenoAddr = DenoNetAddr | DenoUnixAddr | DenoVsockAddr
+type DenoAddr =
+  | { transport: 'tcp' | 'udp'; hostname: string; port: number }
+  | { transport: 'unix' | 'unixpacket'; path: string }
+  | { transport: 'vsock'; cid: number; port: number }
 
 class DenoServerHost extends BaseServerHost<'deno'> {
   readonly runtime = 'deno' as const
@@ -63,14 +55,13 @@ class DenoServerHost extends BaseServerHost<'deno'> {
       const server = globalThis.Deno.serve({
         ...this.options.runtime,
         ...options,
-        handler: async (request: Request, info: any) => {
-          const url = new URL(request.url)
-          if (request.headers.get('upgrade') === 'websocket') {
-            if (!adapter) return this.respondToUpgrade(url.pathname)
-            return await adapter.handleUpgrade(request, info as any)
-          }
-          return await this.dispatchFetch(request)
-        },
+        handler: (request: Request, info: ServeInfo) =>
+          this.handleRequest(
+            request,
+            adapter
+              ? (upgrade) => adapter.handleUpgrade(upgrade, info)
+              : undefined,
+          ),
         onListen: (addr: DenoAddr) => {
           this.#server = server
           setTimeout(() => {
@@ -100,7 +91,7 @@ function formatDenoUrl(addr: DenoAddr, secure: boolean): string {
     case 'vsock':
       return `vsock://${addr.cid}:${addr.port}`
     default:
-      throw new Error(`Unsupported address transport`)
+      throw new Error('Unsupported address transport')
   }
 }
 

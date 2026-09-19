@@ -1,3 +1,4 @@
+import type { Server } from 'bun'
 import createAdapter from 'crossws/adapters/bun'
 
 import type {
@@ -12,7 +13,7 @@ const BUN_DEFAULT_WS_MAX_PAYLOAD = 1024 * 1024 * 16
 
 class BunServerHost extends BaseServerHost<'bun'> {
   readonly runtime = 'bun' as const
-  #server: Bun.Server<any> | null = null
+  #server: Server<any> | null = null
 
   get native(): ServerNativeHandles {
     return { bun: this.#server ?? undefined }
@@ -49,10 +50,7 @@ class BunServerHost extends BaseServerHost<'bun'> {
         ? runtime.routes
         : {}
 
-    const dispatchFetch = this.dispatchFetch.bind(this)
-    const respondToUpgrade = this.respondToUpgrade.bind(this)
-
-    this.#server = globalThis.Bun.serve({
+    const options = {
       ...runtime,
       // Bun's own default (128MiB) applies when neither option is set
       maxRequestBodySize:
@@ -71,23 +69,27 @@ class BunServerHost extends BaseServerHost<'bun'> {
       websocket: adapter
         ? { ...this.options.webSocket, ...adapter.websocket }
         : undefined,
-      routes: routes as any,
-      async fetch(request: Request, server: Bun.Server<any>) {
-        const url = new URL(request.url)
-        if (request.headers.get('upgrade') === 'websocket') {
-          if (!adapter) return respondToUpgrade(url.pathname)
-          return await adapter.handleUpgrade(request, server)
-        }
-        return await dispatchFetch(request)
-      },
-    } as any)
+      routes,
+      fetch: (request: Request, server: Server<any>) =>
+        this.handleRequest(
+          request,
+          adapter
+            ? (upgrade) => adapter.handleUpgrade(upgrade, server)
+            : undefined,
+        ),
+    }
+    // Bun's overloads model unix and tcp listening as mutually exclusive
+    // shapes, and typed `routes` per route table; this host passes one
+    // dynamic object covering both.
+    const server = globalThis.Bun.serve(options as any)
+    this.#server = server
 
     // Bun reports unix sockets as `unix:///path`; keep the cross-runtime
     // `proto+unix://` contract instead
     if (listen.unix) {
       return `${tls ? 'https' : 'http'}+unix://${listen.unix}`
     }
-    return this.#server!.url.origin
+    return server.url.origin
   }
 
   protected async close(): Promise<void> {

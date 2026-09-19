@@ -1,3 +1,4 @@
+import type { MaybePromise } from '@nmtjs/common'
 import type { Hooks } from 'crossws'
 
 import type {
@@ -10,9 +11,9 @@ import type {
   ServerWebSocketRegistration,
 } from './types.ts'
 import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
-  OkResponse,
+  internalServerErrorResponse,
+  notFoundResponse,
+  okResponse,
 } from './utils.ts'
 
 export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024 * 128 // 128MiB
@@ -24,7 +25,7 @@ export const DEFAULT_MAX_REQUEST_BODY_SIZE = 1024 * 1024 * 128 // 128MiB
  * on one of the mount/dispatch/upgrade layers.
  */
 const RESERVED_PATHS: ReadonlyMap<string, () => Response> = new Map([
-  ['/healthy', OkResponse],
+  ['/healthy', okResponse],
 ])
 
 /**
@@ -53,33 +54,11 @@ export abstract class BaseServerHost<
   abstract get native(): ServerNativeHandles
 
   mountFetchHandler(registration: ServerFetchRegistration): () => void {
-    this.assertCanMount('fetch', registration.path)
-    if (this.#fetchHandlers.has(registration.path)) {
-      throw new Error(
-        `A fetch handler is already mounted on [${registration.path}]`,
-      )
-    }
-    this.#fetchHandlers.set(registration.path, registration)
-    return () => {
-      if (this.#fetchHandlers.get(registration.path) === registration) {
-        this.#fetchHandlers.delete(registration.path)
-      }
-    }
+    return this.#mount('fetch', this.#fetchHandlers, registration)
   }
 
   mountWebSocket(registration: ServerWebSocketRegistration): () => void {
-    this.assertCanMount('WebSocket', registration.path)
-    if (this.#webSockets.has(registration.path)) {
-      throw new Error(
-        `A WebSocket handler is already mounted on [${registration.path}]`,
-      )
-    }
-    this.#webSockets.set(registration.path, registration)
-    return () => {
-      if (this.#webSockets.get(registration.path) === registration) {
-        this.#webSockets.delete(registration.path)
-      }
-    }
+    return this.#mount('WebSocket', this.#webSockets, registration)
   }
 
   isSendSuccess(_status: number): boolean {
@@ -149,19 +128,35 @@ export abstract class BaseServerHost<
   }
 
   /**
+   * Entry point for Request/Response runtimes. An upgrade request goes to the
+   * runtime's crossws adapter when one is mounted; without an adapter the
+   * shared router still answers reserved paths and 404s the rest.
+   */
+  protected async handleRequest<Upgraded = Response>(
+    request: Request,
+    upgrade?: (request: Request) => MaybePromise<Upgraded>,
+  ): Promise<Response | Upgraded> {
+    if (request.headers.get('upgrade') === 'websocket') {
+      if (!upgrade) return this.respondToUpgrade(new URL(request.url).pathname)
+      return await upgrade(request)
+    }
+    return await this.dispatchFetch(request)
+  }
+
+  /**
    * Full pipeline for plain requests on Request/Response runtimes; the uWS
    * host reuses route() and shapes the response itself.
    */
   protected async dispatchFetch(request: Request): Promise<Response> {
     const route = this.route(new URL(request.url).pathname, false)
     if (route.kind === 'reserved') return route.respond()
-    if (route.kind !== 'fetch') return NotFoundHttpResponse()
+    if (route.kind !== 'fetch') return notFoundResponse()
     try {
       return await route.handler(request)
     } catch (err) {
       // TODO: proper logging
       console.error(err)
-      return InternalServerErrorHttpResponse()
+      return internalServerErrorResponse()
     }
   }
 
@@ -174,7 +169,7 @@ export abstract class BaseServerHost<
   protected respondToUpgrade(pathname: string): Response {
     const route = this.route(pathname, true)
     if (route.kind === 'reserved') return route.respond()
-    return NotFoundHttpResponse()
+    return notFoundResponse()
   }
 
   /**
@@ -192,13 +187,33 @@ export abstract class BaseServerHost<
           const route = this.route(new URL(request.url).pathname, true)
           if (route.kind === 'reserved') return route.respond()
           if (route.kind === 'upgrade') return undefined
-          return NotFoundHttpResponse()
+          return notFoundResponse()
         },
       } as Partial<Hooks>,
       resolve: (request) => {
         const route = this.route(new URL(request.url).pathname, true)
         return route.kind === 'upgrade' ? route.registration.hooks : {}
       },
+    }
+  }
+
+  #mount<T extends { path: string }>(
+    kind: string,
+    registrations: Map<string, T>,
+    registration: T,
+  ): () => void {
+    this.assertCanMount(kind, registration.path)
+    if (registrations.has(registration.path)) {
+      throw new Error(
+        `A ${kind} handler is already mounted on [${registration.path}]`,
+      )
+    }
+    registrations.set(registration.path, registration)
+    return () => {
+      // a stale unmount must not evict a replacement registered since
+      if (registrations.get(registration.path) === registration) {
+        registrations.delete(registration.path)
+      }
     }
   }
 

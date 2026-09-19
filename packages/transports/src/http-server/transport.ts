@@ -136,17 +136,13 @@ export function createServerTransport<
             // close only after every handler has disposed (a live WS peer
             // would otherwise make a graceful runtime stop wait forever);
             // stop() on a never-started host is a no-op
-            defer(async () => {
-              await host.stop()
-            })
+            defer(() => host.stop())
             for (const key in config.handlers) {
               const handler = await config.handlers[key].mount(
                 { host, gateway: params },
                 handlerOptions[key],
               )
-              defer(async () => {
-                await handler.dispose()
-              })
+              defer(() => handler.dispose())
             }
             return await host.start()
           })

@@ -22,7 +22,7 @@ export const JsonRpcErrorCode = {
   ConnectionError: -32008,
 } as const
 
-export const ProtocolToJsonRpcCode: Record<string, number> = {
+export const ProtocolToJsonRpcCode: Partial<Record<ErrorCode, number>> = {
   [ErrorCode.ValidationError]: JsonRpcErrorCode.InvalidParams,
   [ErrorCode.BadRequest]: JsonRpcErrorCode.InvalidRequest,
   [ErrorCode.NotFound]: JsonRpcErrorCode.MethodNotFound,

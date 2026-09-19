@@ -1,12 +1,11 @@
 import { Buffer } from 'node:buffer'
-import { Readable } from 'node:stream'
 
 import type {
   GatewayConnection,
   GatewayResolvedProcedure,
   TransportWorkerParams,
 } from '@nmtjs/gateway'
-import { anyAbortSignal, isAsyncIterable } from '@nmtjs/common'
+import { isAsyncIterable } from '@nmtjs/common'
 import { ProxyableTransportType } from '@nmtjs/gateway'
 import { ProtocolBlob } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
@@ -18,7 +17,11 @@ import type {
   JsonRpcId,
   JsonRpcResponse,
 } from './types.ts'
-import { PayloadTooLargeError } from '../http-server/utils.ts'
+import {
+  assertBodyLimit,
+  PayloadTooLargeError,
+  readCappedBody,
+} from '../http-server/utils.ts'
 import {
   BATCH_CONCURRENCY,
   DEFAULT_MAX_BATCH_SIZE,
@@ -38,15 +41,11 @@ export function jsonRpc(): ServerHandler<
   return {
     proxyable: [ProxyableTransportType.HTTP],
     mount({ host, gateway }, options) {
-      if (
-        options.maxRequestBodySize !== undefined &&
-        options.maxRequestBodySize > host.maxRequestBodySize
-      ) {
-        throw new Error(
-          `JSON-RPC handler maxRequestBodySize (${options.maxRequestBodySize}) ` +
-            `exceeds the host limit (${host.maxRequestBodySize})`,
-        )
-      }
+      assertBodyLimit(
+        'JSON-RPC',
+        options.maxRequestBodySize,
+        host.maxRequestBodySize,
+      )
       const handler = new JsonRpcHandler(
         gateway,
         options,
@@ -100,8 +99,7 @@ export class JsonRpcHandler {
       return new Response(null, { status: 415 })
     }
 
-    const controller = new AbortController()
-    const signal = anyAbortSignal(request.signal, controller.signal)
+    const signal = request.signal
 
     await using connection = await this.params.onConnect({ data: request })
 
@@ -233,21 +231,15 @@ export class JsonRpcHandler {
   private async readBody(request: Request): Promise<Buffer> {
     if (!request.body) return Buffer.alloc(0)
     const declaredSize = request.headers.get('content-length')
+    // Declared size over the cap: reject before reading anything. The read
+    // itself still enforces the cap, in case the declaration lies.
     if (
       declaredSize !== null &&
       Number.parseInt(declaredSize, 10) > this.#maxRequestBodySize
     ) {
       throw new PayloadTooLargeError()
     }
-    const chunks: Buffer[] = []
-    let received = 0
-    for await (const chunk of Readable.fromWeb(request.body as any)) {
-      received += chunk.byteLength
-      // Enforce the cap even when the declared content-length lies
-      if (received > this.#maxRequestBodySize) throw new PayloadTooLargeError()
-      chunks.push(chunk)
-    }
-    return Buffer.concat(chunks)
+    return await readCappedBody(request.body, this.#maxRequestBodySize)
   }
 }
 

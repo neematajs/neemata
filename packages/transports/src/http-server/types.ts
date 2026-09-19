@@ -1,5 +1,7 @@
 import type { MaybePromise, OneOf } from '@nmtjs/common'
-import type { Hooks } from 'crossws'
+import type { Serve, Server, WebSocketHandler } from 'bun'
+import type { Hooks, PeerContext } from 'crossws'
+import type { TemplatedApp, WebSocketBehavior } from 'uWebSockets.js'
 
 export type ServerRuntimeName = 'node' | 'bun' | 'deno'
 
@@ -8,17 +10,11 @@ export type ServerListenOptions = OneOf<
 >
 
 export type ServerTlsOptions = {
-  /**
-   * File path or inlined TLS certificate in PEM format (required).
-   */
+  /** File path or inlined TLS certificate in PEM format. */
   cert?: string
-  /**
-   * File path or inlined TLS private key in PEM format (required).
-   */
+  /** File path or inlined TLS private key in PEM format. */
   key?: string
-  /**
-   * Passphrase for the private key (optional).
-   */
+  /** Passphrase for the private key. */
   passphrase?: string
 }
 
@@ -60,7 +56,7 @@ export type ServerWebSocketRegistration = {
 export type ServerWebSocketRuntimeOptions = {
   node: Partial<
     Pick<
-      import('uWebSockets.js').WebSocketBehavior<import('crossws').PeerContext>,
+      WebSocketBehavior<PeerContext>,
       | 'maxBackpressure'
       | 'maxPayloadLength'
       | 'maxLifetime'
@@ -72,7 +68,7 @@ export type ServerWebSocketRuntimeOptions = {
   >
   bun: Partial<
     Pick<
-      import('bun').WebSocketHandler<import('crossws').PeerContext>,
+      WebSocketHandler<PeerContext>,
       | 'backpressureLimit'
       | 'maxPayloadLength'
       | 'closeOnBackpressureLimit'
@@ -92,10 +88,10 @@ export type ServerRuntimeOptions = {
   node: {}
   bun: Partial<
     Pick<
-      import('bun').Serve.Options<undefined>,
+      Serve.Options<undefined>,
       'development' | 'id' | 'maxRequestBodySize' | 'idleTimeout' | 'ipv6Only'
     > &
-      import('bun').Serve.Routes<any, any>
+      Serve.Routes<any, any>
   >
   deno: {}
 }
@@ -118,8 +114,8 @@ export type ServerHostOptions<R extends ServerRuntimeName = ServerRuntimeName> =
 export type DenoServer = ReturnType<typeof globalThis.Deno.serve>
 
 export type ServerNativeHandles = {
-  node?: import('uWebSockets.js').TemplatedApp
-  bun?: import('bun').Server<any>
+  node?: TemplatedApp
+  bun?: Server<any>
   deno?: DenoServer
 }
 

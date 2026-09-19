@@ -18,7 +18,7 @@ import type {
 } from './types.ts'
 import * as injections from './injectables.ts'
 import { WsSessionEngine } from './session.ts'
-import { InternalServerErrorHttpResponse } from './utils.ts'
+import { internalServerErrorResponse } from './utils.ts'
 
 /**
  * How long an upgraded connection may stay without its `open` hook firing
@@ -307,7 +307,7 @@ export class NeemataWebSocketHandler {
         // never admitted to the registry, so the gateway connection is
         // released directly; the gateway absorbs any duplicate
         await this.params.onDisconnect(connection.id)
-        return InternalServerErrorHttpResponse()
+        return internalServerErrorResponse()
       }
       this.engine.open(connection, {
         protocolVersion: ProtocolVersion.v1,
@@ -325,7 +325,7 @@ export class NeemataWebSocketHandler {
       }
     } catch (error) {
       console.error('Failed to upgrade WebSocket connection', error)
-      return InternalServerErrorHttpResponse()
+      return internalServerErrorResponse()
     }
   }
 }

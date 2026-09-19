@@ -1,8 +1,8 @@
 import { Buffer } from 'node:buffer'
 
-import type { TemplatedApp } from 'uWebSockets.js'
+import type { HttpRequest, HttpResponse, TemplatedApp } from 'uWebSockets.js'
 import createAdapter from 'crossws/adapters/uws'
-import { App, SSLApp, us_socket_local_port } from 'uWebSockets.js'
+import { SSLApp, us_socket_local_port, App } from 'uWebSockets.js'
 
 import type {
   ServerFetchHandler,
@@ -13,10 +13,10 @@ import type {
 } from './types.ts'
 import { BaseServerHost } from './host.ts'
 import {
-  InternalServerErrorHttpResponse,
-  NotFoundHttpResponse,
+  internalServerErrorResponse,
+  notFoundResponse,
+  payloadTooLargeResponse,
   PayloadTooLargeError,
-  PayloadTooLargeHttpResponse,
 } from './utils.ts'
 
 /**
@@ -49,12 +49,11 @@ export function resolveUwsWsOptions(
   }
 }
 
-type UwsResponse = Parameters<
-  Parameters<ReturnType<typeof App>['any']>[1]
->[0] & {
+type UwsResponse = HttpResponse & {
   aborted?: boolean
   wakeWritable?: () => void
   cancelBody?: () => void
+  bodyController?: ReadableStreamDefaultController<Buffer>
 }
 
 class NodeServerHost extends BaseServerHost<'node'> {
@@ -92,7 +91,7 @@ class NodeServerHost extends BaseServerHost<'node'> {
       })
     }
 
-    server.any('/*', (res, req) => this.handleRequest(res as UwsResponse, req))
+    server.any('/*', (res, req) => this.#handle(res as UwsResponse, req))
 
     return new Promise<string>((resolve, reject) => {
       const { listen, tls } = this.options
@@ -127,23 +126,17 @@ class NodeServerHost extends BaseServerHost<'node'> {
     this.#server = null
   }
 
-  private async handleRequest(
-    res: UwsResponse,
-    req: Parameters<Parameters<TemplatedApp['any']>[1]>[1],
-  ) {
-    const requestController = new AbortController()
-    let aborted = false
-    let bodyController: ReadableStreamDefaultController<Buffer> | undefined
+  async #handle(res: UwsResponse, req: HttpRequest) {
+    const controller = new AbortController()
 
     res.onAborted(() => {
-      aborted = true
       res.aborted = true
       res.wakeWritable?.()
       res.cancelBody?.()
-      requestController.abort()
+      controller.abort()
 
       try {
-        bodyController?.error(requestController.signal.reason)
+        res.bodyController?.error(controller.signal.reason)
       } catch {}
     })
 
@@ -160,40 +153,20 @@ class NodeServerHost extends BaseServerHost<'node'> {
     const url = new URL(req.getUrl(), `${proto}://${host}`)
     url.search = req.getQuery() ? `?${req.getQuery()}` : ''
 
-    let response: Response
-    // Upgrade requests reach here only when no WebSocket route is mounted (a
-    // mounted ws route claims them inside uWS) — the shared router still
-    // answers reserved paths and 404s the rest, like the other runtimes
-    if (headers.get('upgrade') === 'websocket') {
-      response = this.respondToUpgrade(url.pathname)
-    } else {
-      const route = this.route(url.pathname, false)
-      if (route.kind === 'reserved') {
-        response = route.respond()
-      } else if (route.kind === 'fetch') {
-        response = await this.handleFetchRequest(
-          route.handler,
-          { url, method, headers },
-          res,
-          requestController.signal,
-          (controller) => {
-            bodyController = controller
-          },
-          () => aborted,
-        )
-      } else {
-        response = NotFoundHttpResponse()
-      }
-    }
+    const response = await this.resolveResponse(
+      res,
+      { url, method, headers },
+      controller.signal,
+    )
 
-    if (aborted) return
+    if (res.aborted) return
 
     const fixedContentLength = response.body
       ? getContentLength(response.headers)
       : undefined
     res.cork(() => {
-      if (aborted) return
-      res.writeStatus(`${response.status.toString()} ${response.statusText}`)
+      if (res.aborted) return
+      res.writeStatus(`${response.status} ${response.statusText}`)
       response.headers.forEach((value, name) => {
         if (
           typeof fixedContentLength === 'number' &&
@@ -206,15 +179,36 @@ class NodeServerHost extends BaseServerHost<'node'> {
       })
     })
     if (!response.body) {
-      if (!aborted) res.cork(() => res.end())
+      if (!res.aborted) res.cork(() => res.end())
       return
     }
 
     try {
-      await handleResponseBody(res, response, fixedContentLength)
+      if (typeof fixedContentLength === 'number') {
+        await writeFixedLengthBody(res, response.body, fixedContentLength)
+      } else {
+        await writeChunkedBody(res, response.body)
+      }
     } catch {
-      if (!aborted) res.cork(() => res.close())
+      if (!res.aborted) res.cork(() => res.close())
     }
+  }
+
+  private async resolveResponse(
+    res: UwsResponse,
+    request: { url: URL; method: string; headers: Headers },
+    signal: AbortSignal,
+  ): Promise<Response> {
+    // Upgrade requests reach here only when no WebSocket route is mounted (a
+    // mounted ws route claims them inside uWS) — the shared router still
+    // answers reserved paths and 404s the rest, like the other runtimes
+    if (request.headers.get('upgrade') === 'websocket') {
+      return this.respondToUpgrade(request.url.pathname)
+    }
+    const route = this.route(request.url.pathname, false)
+    if (route.kind === 'reserved') return route.respond()
+    if (route.kind !== 'fetch') return notFoundResponse()
+    return await this.handleFetchRequest(route.handler, request, res, signal)
   }
 
   private async handleFetchRequest(
@@ -222,10 +216,6 @@ class NodeServerHost extends BaseServerHost<'node'> {
     request: { url: URL; method: string; headers: Headers },
     res: UwsResponse,
     signal: AbortSignal,
-    onBodyController: (
-      controller: ReadableStreamDefaultController<Buffer>,
-    ) => void,
-    isAborted: () => boolean,
   ): Promise<Response> {
     const maxBodySize = this.maxRequestBodySize
     try {
@@ -245,9 +235,9 @@ class NodeServerHost extends BaseServerHost<'node'> {
       let capped = false
       const body = new ReadableStream<Buffer>({
         start(controller) {
-          onBodyController(controller)
+          res.bodyController = controller
           res.onDataV2((chunk, maxRemainingBodyLength) => {
-            if (isAborted() || capped) return
+            if (res.aborted || capped) return
             if (chunk) {
               received += chunk.byteLength
               if (received > maxBodySize) {
@@ -255,6 +245,9 @@ class NodeServerHost extends BaseServerHost<'node'> {
                 controller.error(new PayloadTooLargeError())
                 return
               }
+              // the copy is mandatory, not an optimisation: uWS neuters the
+              // chunk's ArrayBuffer once this callback returns, and the body
+              // is consumed later
               const copy = Buffer.allocUnsafe(chunk.byteLength)
               copy.set(new Uint8Array(chunk))
               controller.enqueue(copy)
@@ -276,31 +269,15 @@ class NodeServerHost extends BaseServerHost<'node'> {
       // a tenant that consumed the capped body without mapping the error
       // itself must still produce a 413, not a generic 500
       if (err instanceof PayloadTooLargeError) {
-        return PayloadTooLargeHttpResponse()
+        return payloadTooLargeResponse()
       }
-      // TODO: proper logging
       console.error(err)
-      return InternalServerErrorHttpResponse()
+      return internalServerErrorResponse()
     }
   }
 }
 
-async function handleResponseBody(
-  res: UwsResponse,
-  response: Response,
-  fixedContentLength?: number,
-): Promise<void> {
-  if (!response.body) return
-
-  if (typeof fixedContentLength === 'number') {
-    await handleFixedLengthStream(res, response.body, fixedContentLength)
-    return
-  }
-
-  await handleChunkedStream(res, response.body)
-}
-
-async function handleFixedLengthStream(
+async function writeFixedLengthBody(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
   totalSize: number,
@@ -317,7 +294,7 @@ async function handleFixedLengthStream(
       const { done, value } = await reader.read()
       if (done) break
       if (value.byteLength === 0) continue
-      responded = await handleFixedChunk(res, value, totalSize)
+      responded = await tryEndChunk(res, value, totalSize)
     }
 
     if (!responded && !res.aborted) res.cork(() => res.close())
@@ -328,7 +305,7 @@ async function handleFixedLengthStream(
 
 // exported for tests: the waiter dispatch is timing-sensitive and needs
 // deterministic coverage against a controlled response double
-export async function handleChunkedStream(
+export async function writeChunkedBody(
   res: UwsResponse,
   body: ReadableStream<Uint8Array>,
 ): Promise<void> {
@@ -377,7 +354,7 @@ export async function handleChunkedStream(
   }
 }
 
-function handleFixedChunk(
+function tryEndChunk(
   res: UwsResponse,
   chunk: Uint8Array,
   totalSize: number,

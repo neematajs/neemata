@@ -12,7 +12,7 @@ import type {
   BaseServerEncoder,
   ProtocolCodecRegistry,
 } from '@nmtjs/protocol/server'
-import { anyAbortSignal, isAbortError, isAsyncIterable } from '@nmtjs/common'
+import { isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
 import { GatewayInjectables, ProxyableTransportType } from '@nmtjs/gateway'
 import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
@@ -32,17 +32,39 @@ import type {
   NeemataHttpRequest,
 } from './types.ts'
 import {
+  assertBodyLimit,
+  PayloadTooLargeError,
+  readCappedBody,
+} from '../../http-server/utils.ts'
+import {
   AllowedHttpMethod,
   DEFAULT_MAX_REQUEST_BODY_SIZE,
-  HttpCodeMap,
   HttpStatus,
   HttpStatusText,
+  ProtocolToHttpStatus,
 } from './constants.ts'
 import * as injections from './injectables.ts'
-import { PayloadTooLargeError } from './utils.ts'
 
 const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
-const DEFAULT_ALLOWED_METHODS = Object.freeze(['post']) as ('get' | 'post')[]
+const DEFAULT_ALLOWED_METHODS: readonly string[] = Object.freeze(['post'])
+
+type CorsParams = Omit<HttpHandlerCorsCustomOptions, 'origin'>
+
+/**
+ * Response header per policy field. `origin` is written separately: the
+ * response always reflects the requesting origin, never the configured value.
+ */
+const CORS_HEADERS: Record<keyof CorsParams, string> = {
+  allowMethods: 'Access-Control-Allow-Methods',
+  allowHeaders: 'Access-Control-Allow-Headers',
+  allowCredentials: 'Access-Control-Allow-Credentials',
+  maxAge: 'Access-Control-Max-Age',
+  exposeHeaders: 'Access-Control-Expose-Headers',
+  requestHeaders: 'Access-Control-Request-Headers',
+  requestMethod: 'Access-Control-Request-Method',
+}
+const CORS_FIELDS = Object.keys(CORS_HEADERS) as (keyof CorsParams)[]
+
 // No allowCredentials here: reflecting arbitrary origins with credentials
 // would let any website make cookie-authed requests
 const DEFAULT_CORS_PARAMS = Object.freeze({
@@ -55,29 +77,14 @@ const DEFAULT_CORS_PARAMS = Object.freeze({
     'Authorization',
     'Transfer-Encoding',
   ],
-  maxAge: undefined,
-  requestMethod: undefined,
   exposeHeaders: [],
   requestHeaders: [],
-}) satisfies Omit<HttpHandlerCorsCustomOptions, 'origin'>
+}) satisfies CorsParams
 // Credentials are safe to allow when the user explicitly vetted the origin
 const EXPLICIT_ORIGIN_CORS_PARAMS = Object.freeze({
   ...DEFAULT_CORS_PARAMS,
   allowCredentials: 'true',
-}) satisfies Omit<HttpHandlerCorsCustomOptions, 'origin'>
-const CORS_HEADERS_MAP: Record<
-  keyof HttpHandlerCorsCustomOptions | 'origin',
-  string
-> = {
-  origin: 'Access-Control-Allow-Origin',
-  allowMethods: 'Access-Control-Allow-Methods',
-  allowHeaders: 'Access-Control-Allow-Headers',
-  allowCredentials: 'Access-Control-Allow-Credentials',
-  maxAge: 'Access-Control-Max-Age',
-  exposeHeaders: 'Access-Control-Expose-Headers',
-  requestHeaders: 'Access-Control-Request-Headers',
-  requestMethod: 'Access-Control-Request-Method',
-}
+}) satisfies CorsParams
 
 export function neemataHttp({
   codecs,
@@ -91,18 +98,11 @@ export function neemataHttp({
     proxyable: [ProxyableTransportType.HTTP],
     injectables: injections,
     mount({ host, gateway }, options) {
-      // A handler cap above the host bound could never take effect (the
-      // host rejects such bodies first) — fail loudly instead of letting
-      // the config lie
-      if (
-        options.maxRequestBodySize !== undefined &&
-        options.maxRequestBodySize > host.maxRequestBodySize
-      ) {
-        throw new Error(
-          `HTTP handler maxRequestBodySize (${options.maxRequestBodySize}) ` +
-            `exceeds the host limit (${host.maxRequestBodySize})`,
-        )
-      }
+      assertBodyLimit(
+        'HTTP',
+        options.maxRequestBodySize,
+        host.maxRequestBodySize,
+      )
       const handler = new NeemataHttpHandler(
         gateway,
         codecs,
@@ -142,59 +142,43 @@ export class NeemataHttpHandler {
     )
     const method = request.method.toLowerCase()
     const origin = request.headers.get('origin')
-    const responseHeaders = new Headers()
+    const headers = new Headers()
     // CORS makes responses origin-dependent (even denials), so shared caches
     // must key on Origin to avoid serving them across origins
-    if (this.#corsOptions) responseHeaders.append('Vary', 'Origin')
-    if (origin) this.applyCors(origin, request, responseHeaders)
+    if (this.#corsOptions) headers.append('Vary', 'Origin')
+    if (origin) this.applyCors(origin, request, headers)
 
     // Handle preflight requests
     if (method === 'options') {
-      return new Response(null, {
-        status: HttpStatus.OK,
-        headers: responseHeaders,
-      })
+      return new Response(null, { status: HttpStatus.OK, headers })
     }
 
-    const controller = new AbortController()
-    const signal = anyAbortSignal(request.signal, controller.signal)
     const canHaveBody = method !== 'get'
-    const isBlob = request.headers.get(NEEMATA_BLOB_HEADER) === 'true'
     const contentType = request.headers.get('content-type')
-    const accept = request.headers.get('accept') || '*/*'
-    // GET endpoints are reachable via browser navigation, which sends HTML
-    // Accept headers; fall back to the default codec only when the client's
-    // Accept can't be negotiated
-    const negotiableAccept =
-      canHaveBody || this.#codecs.supportsEncoder(accept) ? accept : '*/*'
-
     // The handler owns codec negotiation (codecs are a projection
     // capability); the gateway sees only decoded runtime values. An
     // undecodable content-type is not an error: the body is passed through
     // as a raw blob stream payload, so only Accept can fail negotiation.
-    const decodable =
-      !isBlob && contentType !== null
-        ? this.#codecs.supportsDecoder(contentType) !== null
-        : false
+    const rawBody =
+      request.headers.get(NEEMATA_BLOB_HEADER) === 'true' ||
+      !contentType ||
+      !this.#codecs.supportsDecoder(contentType)
+
     let encoder: BaseServerEncoder
     let decoder: BaseServerDecoder
     try {
-      ;({ encoder, decoder } = negotiateCodecs(this.#codecs, {
-        accept: negotiableAccept,
-        contentType: decodable ? contentType : '*/*',
-      }))
+      ;({ encoder, decoder } = this.negotiate(
+        request,
+        canHaveBody,
+        rawBody ? '*/*' : contentType,
+      ))
     } catch (error) {
       if (error instanceof CodecNegotiationError) {
         const status =
           error instanceof UnsupportedContentTypeError
             ? HttpStatus.UnsupportedMediaType
             : HttpStatus.NotAcceptable
-        const text = HttpStatusText[status]
-        return new Response(text, {
-          status,
-          statusText: text,
-          headers: responseHeaders,
-        })
+        return statusResponse(status, headers)
       }
       throw error
     }
@@ -204,56 +188,17 @@ export class NeemataHttpHandler {
     try {
       const resolved = await this.params.resolve(connection, procedure)
 
-      const allowHttpMethod =
+      const allowedMethods: readonly string[] =
         resolved.meta.get(AllowedHttpMethod) ?? DEFAULT_ALLOWED_METHODS
-
-      if (!allowHttpMethod.includes(method as any)) {
+      if (!allowedMethods.includes(method)) {
         throw new ProtocolError(ErrorCode.NotFound)
       }
 
-      let payload: any
-
+      let payload: unknown
       if (canHaveBody && request.body) {
-        const cannotDecode =
-          !contentType || !this.#codecs.supportsDecoder(contentType)
-        if (isBlob || cannotDecode) {
-          const type = contentType || 'application/octet-stream'
-          const contentLength = request.headers.get('content-length')
-          const size = contentLength
-            ? Number.parseInt(contentLength, 10)
-            : undefined
-          // Declared size over the cap: reject before reading anything
-          if (size !== undefined && size > this.#maxRequestBodySize) {
-            throw new PayloadTooLargeError()
-          }
-          const clientStream = new ProtocolClientStream(-1, { size, type })
-          // The rpc may never read the payload; without a handler a capped
-          // upload would crash the process with an unhandled 'error'
-          clientStream.on('error', () => {})
-          payload = clientStream
-          // pipeline (unlike pipe) propagates source errors; the cap error is
-          // re-surfaced on the payload stream so its consumer rejects with it
-          pipeline(
-            Readable.fromWeb(request.body as any),
-            this.createBodySizeGuard(),
-            clientStream,
-          ).catch((error) => clientStream.destroy(error))
-        } else {
-          const chunks: Buffer[] = []
-          let received = 0
-          for await (const chunk of Readable.fromWeb(request.body as any)) {
-            received += chunk.byteLength
-            // Reject mid-stream to avoid buffering unbounded payloads
-            if (received > this.#maxRequestBodySize) {
-              throw new PayloadTooLargeError()
-            }
-            chunks.push(chunk)
-          }
-          const buffer = Buffer.concat(chunks)
-          if (buffer.byteLength > 0) {
-            payload = decoder.decode(buffer)
-          }
-        }
+        payload = rawBody
+          ? this.streamBody(request)
+          : await this.decodeBody(request.body, decoder)
       } else {
         const querystring = url.searchParams.get('payload')
         if (querystring) {
@@ -268,8 +213,8 @@ export class NeemataHttpHandler {
       const result = await this.params.onRpc(
         connection,
         { payload, procedure },
-        signal,
-        provision(injections.httpResponseHeaders, responseHeaders),
+        request.signal,
+        provision(injections.httpResponseHeaders, headers),
         // Blob capabilities are projection-owned: HTTP represents a server
         // blob as the response body, so createBlob is a plain wrapper and
         // consumeBlob has nothing to look up (the request body already
@@ -282,158 +227,175 @@ export class NeemataHttpHandler {
         }),
       )
 
-      if (result instanceof Response) {
-        const { status, statusText, headers, body } = result
-        headers.forEach((value, key) => {
-          // Merge Vary so the cors Origin entry isn't lost to shared caches
-          if (key.toLowerCase() === 'vary') responseHeaders.append(key, value)
-          else responseHeaders.set(key, value)
-        })
-
-        return new Response(body, {
-          status,
-          statusText,
-          headers: responseHeaders,
-        })
-      } else if (result instanceof ProtocolBlob) {
-        const { source, metadata } = result
-        const { type } = metadata
-
-        responseHeaders.set(NEEMATA_BLOB_HEADER, 'true')
-        responseHeaders.set('Content-Type', type)
-        // nullish check — zero is a valid size for empty blobs
-        if (metadata.size !== undefined) {
-          responseHeaders.set('Content-Length', metadata.size.toString())
-        }
-        if (metadata.filename) {
-          responseHeaders.set(
-            'Content-Disposition',
-            `attachment; filename="${metadata.filename}"`,
-          )
-        }
-
-        // Convert source to ReadableStream
-        let stream: ReadableStream
-
-        if (source instanceof ReadableStream) {
-          stream = source
-        } else if (source instanceof Readable || source instanceof Duplex) {
-          stream = Readable.toWeb(source) as unknown as ReadableStream
-        } else {
-          throw new Error('Invalid stream source')
-        }
-
-        return new Response(stream, {
-          status: HttpStatus.OK,
-          statusText: HttpStatusText[HttpStatus.OK],
-          headers: responseHeaders,
-        })
-      } else if (isAsyncIterable(result)) {
-        responseHeaders.set('Content-Type', 'text/event-stream')
-        responseHeaders.set('Cache-Control', 'no-cache, no-transform')
-        responseHeaders.set('X-Stream-Content-Type', encoder.contentType)
-        responseHeaders.set('X-Accel-Buffering', 'no')
-        const stream = new ReadableStream({
-          async start(controller) {
-            const sse = new TextEncoder()
-            try {
-              for await (const chunk of result) {
-                const encoded = encoder.encode(chunk)
-                const base64 = Buffer.from(
-                  encoded.buffer,
-                  encoded.byteOffset,
-                  encoded.byteLength,
-                ).toString('base64')
-                controller.enqueue(sse.encode(`data: ${base64}\n\n`))
-              }
-              controller.close()
-            } catch (error) {
-              if (isAbortError(error)) controller.close()
-              else controller.error(error)
-            }
-          },
-        })
-        return new Response(stream, {
-          status: HttpStatus.OK,
-          statusText: HttpStatusText[HttpStatus.OK],
-          headers: responseHeaders,
-        })
-      } else {
-        // Handle regular responses
-        // void results respond with an empty body — encode rejects undefined
-        const buffer =
-          typeof result === 'undefined' ? undefined : encoder.encode(result)
-        responseHeaders.set('Content-Type', encoder.contentType)
-
-        // @ts-expect-error
-        return new Response(buffer, {
-          status: HttpStatus.OK,
-          statusText: HttpStatusText[HttpStatus.OK],
-          headers: responseHeaders,
-        })
-      }
+      return this.toResponse(result, encoder, headers)
     } catch (error) {
-      if (error instanceof PayloadTooLargeError) {
-        const status = HttpStatus.PayloadTooLarge
-        const text = HttpStatusText[status]
+      return this.toErrorResponse(error, encoder, headers)
+    }
+  }
 
-        return new Response(text, {
-          status,
-          statusText: text,
-          headers: responseHeaders,
-        })
+  /**
+   * GET endpoints are reachable via browser navigation, which sends HTML
+   * Accept headers; fall back to the default codec only when the client's
+   * Accept can't be negotiated.
+   */
+  private negotiate(
+    request: NeemataHttpRequest,
+    canHaveBody: boolean,
+    contentType: string | null,
+  ) {
+    const accept = request.headers.get('accept') || '*/*'
+    const negotiable =
+      canHaveBody || this.#codecs.supportsEncoder(accept) ? accept : '*/*'
+    return negotiateCodecs(this.#codecs, { accept: negotiable, contentType })
+  }
+
+  /** Blob and undecodable bodies reach the rpc as a capped stream payload. */
+  private streamBody(request: NeemataHttpRequest) {
+    const type =
+      request.headers.get('content-type') || 'application/octet-stream'
+    const contentLength = request.headers.get('content-length')
+    const size = contentLength ? Number.parseInt(contentLength, 10) : undefined
+    // Declared size over the cap: reject before reading anything
+    if (size !== undefined && size > this.#maxRequestBodySize) {
+      throw new PayloadTooLargeError()
+    }
+    const stream = new ProtocolClientStream(-1, { size, type })
+    // The rpc may never read the payload; without a handler a capped
+    // upload would crash the process with an unhandled 'error'
+    stream.on('error', () => {})
+    // pipeline (unlike pipe) propagates source errors; the cap error is
+    // re-surfaced on the payload stream so its consumer rejects with it
+    pipeline(
+      Readable.fromWeb(request.body as any),
+      this.createBodySizeGuard(),
+      stream,
+    ).catch((error) => stream.destroy(error))
+    return stream
+  }
+
+  private async decodeBody(
+    body: ReadableStream<Uint8Array>,
+    decoder: BaseServerDecoder,
+  ): Promise<unknown> {
+    const buffer = await readCappedBody(body, this.#maxRequestBodySize)
+    // an empty body stays an absent payload — decode rejects zero bytes
+    if (buffer.byteLength === 0) return undefined
+    return decoder.decode(buffer)
+  }
+
+  private toResponse(
+    result: unknown,
+    encoder: BaseServerEncoder,
+    headers: Headers,
+  ): Response {
+    if (result instanceof Response) {
+      const { status, statusText, body } = result
+      result.headers.forEach((value, key) => {
+        // Merge Vary so the cors Origin entry isn't lost to shared caches
+        if (key.toLowerCase() === 'vary') headers.append(key, value)
+        else headers.set(key, value)
+      })
+      return new Response(body, { status, statusText, headers })
+    }
+
+    if (result instanceof ProtocolBlob) {
+      const { source, metadata } = result
+
+      headers.set(NEEMATA_BLOB_HEADER, 'true')
+      headers.set('Content-Type', metadata.type)
+      // nullish check — zero is a valid size for empty blobs
+      if (metadata.size !== undefined) {
+        headers.set('Content-Length', metadata.size.toString())
+      }
+      if (metadata.filename) {
+        headers.set(
+          'Content-Disposition',
+          `attachment; filename="${metadata.filename}"`,
+        )
       }
 
-      if (error instanceof CodecNegotiationError) {
-        const status =
-          error instanceof UnsupportedContentTypeError
-            ? HttpStatus.UnsupportedMediaType
-            : HttpStatus.NotAcceptable
-        const text = HttpStatusText[status]
-
-        return new Response(text, {
-          status,
-          statusText: text,
-          headers: responseHeaders,
-        })
+      let stream: ReadableStream
+      if (source instanceof ReadableStream) {
+        stream = source
+      } else if (source instanceof Readable || source instanceof Duplex) {
+        stream = Readable.toWeb(source) as unknown as ReadableStream
+      } else {
+        throw new Error('Invalid stream source')
       }
 
-      if (error instanceof ProtocolError) {
-        const status =
-          error.code in HttpCodeMap
-            ? HttpCodeMap[error.code]
-            : HttpStatus.InternalServerError
-        const text = HttpStatusText[status]
-        const payload = encoder.encode(error)
-        responseHeaders.set('Content-Type', encoder.contentType)
-
-        // @ts-expect-error
-        return new Response(payload, {
-          status,
-          statusText: text,
-          headers: responseHeaders,
-        })
-      }
-
-      // Unknown error
-      // this.logError(error, 'Unknown error while processing HTTP request')
-      console.error(error)
-
-      const payload = encoder.encode(
-        new ProtocolError(
-          ErrorCode.InternalServerError,
-          'Internal Server Error',
-        ),
-      )
-      responseHeaders.set('Content-Type', encoder.contentType)
-
-      // @ts-expect-error
-      return new Response(payload, {
-        status: HttpStatus.InternalServerError,
-        statusText: HttpStatusText[HttpStatus.InternalServerError],
-        headers: responseHeaders,
+      return new Response(stream, {
+        status: HttpStatus.OK,
+        statusText: HttpStatusText[HttpStatus.OK],
+        headers,
       })
     }
+
+    if (isAsyncIterable(result)) {
+      headers.set('Content-Type', 'text/event-stream')
+      headers.set('Cache-Control', 'no-cache, no-transform')
+      headers.set('X-Stream-Content-Type', encoder.contentType)
+      headers.set('X-Accel-Buffering', 'no')
+      const stream = new ReadableStream({
+        async start(controller) {
+          const sse = new TextEncoder()
+          try {
+            for await (const chunk of result) {
+              const encoded = encoder.encode(chunk)
+              const base64 = Buffer.from(
+                encoded.buffer,
+                encoded.byteOffset,
+                encoded.byteLength,
+              ).toString('base64')
+              controller.enqueue(sse.encode(`data: ${base64}\n\n`))
+            }
+            controller.close()
+          } catch (error) {
+            if (isAbortError(error)) controller.close()
+            else controller.error(error)
+          }
+        },
+      })
+      return new Response(stream, {
+        status: HttpStatus.OK,
+        statusText: HttpStatusText[HttpStatus.OK],
+        headers,
+      })
+    }
+
+    // void results respond with an empty body — encode rejects undefined
+    const encoded = result === undefined ? undefined : encoder.encode(result)
+    headers.set('Content-Type', encoder.contentType)
+    return encodedResponse(encoded, HttpStatus.OK, headers)
+  }
+
+  private toErrorResponse(
+    error: unknown,
+    encoder: BaseServerEncoder,
+    headers: Headers,
+  ): Response {
+    // CodecNegotiationError cannot surface here: negotiateCodecs runs before
+    // the dispatch this catches, and nothing below it negotiates again
+    if (error instanceof PayloadTooLargeError) {
+      return statusResponse(HttpStatus.PayloadTooLarge, headers)
+    }
+
+    let status: HttpStatus
+    let body: ProtocolError
+    if (error instanceof ProtocolError) {
+      status =
+        ProtocolToHttpStatus[error.code] ?? HttpStatus.InternalServerError
+      body = error
+    } else {
+      console.error(error)
+      status = HttpStatus.InternalServerError
+      body = new ProtocolError(
+        ErrorCode.InternalServerError,
+        'Internal Server Error',
+      )
+    }
+
+    headers.set('Content-Type', encoder.contentType)
+    return encodedResponse(encoder.encode(body), status, headers)
   }
 
   private createBodySizeGuard() {
@@ -454,60 +416,76 @@ export class NeemataHttpHandler {
     request: NeemataHttpRequest,
     headers: Headers,
   ) {
-    const options = this.#corsOptions
-    if (!options) return
+    const params = this.resolveCors(origin, request)
+    if (!params) return
 
-    let params: Omit<HttpHandlerCorsCustomOptions, 'origin'> | null = null
-
-    if (options === true) {
-      params = { ...DEFAULT_CORS_PARAMS }
-    } else if (Array.isArray(options)) {
-      if (options.includes(origin)) {
-        params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-      }
-    } else {
-      const policy =
-        typeof options === 'function'
-          ? options.call(this, origin, request)
-          : options
-      if (policy === true) {
-        // A callback returning true has vetted this origin; cors: true has not.
-        params = { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-      } else if (typeof policy === 'object') {
-        // Callback policies must still match the requesting origin.
-        if (policy.origin === true || policy.origin.includes(origin)) {
-          params =
-            policy.origin === true
-              ? { ...DEFAULT_CORS_PARAMS }
-              : { ...EXPLICIT_ORIGIN_CORS_PARAMS }
-          for (const key in params) {
-            const value = policy[key]
-            if (value !== undefined) {
-              params[key] = value
-            }
-          }
-          // This explicit opt-in restores credentialed origin reflection without
-          // weakening the safe `cors: true` default.
-          if (policy.allowCredentials !== undefined) {
-            params.allowCredentials = policy.allowCredentials
-          }
-        }
-      }
-    }
-
-    if (params === null) return
-
-    headers.set(CORS_HEADERS_MAP.origin, origin)
-
-    for (const key in params) {
-      const header = CORS_HEADERS_MAP[key]
-      if (header) {
-        let value = params[key]
-        if (Array.isArray(value)) value = value.filter(Boolean).join(', ')
-        if (value) headers.set(header, value)
-      }
+    headers.set('Access-Control-Allow-Origin', origin)
+    for (const field of CORS_FIELDS) {
+      const value = params[field]
+      const header = Array.isArray(value)
+        ? value.filter(Boolean).join(', ')
+        : value
+      if (header) headers.set(CORS_HEADERS[field], header)
     }
   }
+
+  /** The policy for this origin, or null when CORS must stay off for it. */
+  private resolveCors(
+    origin: string,
+    request: NeemataHttpRequest,
+  ): CorsParams | null {
+    const options = this.#corsOptions
+    if (!options) return null
+    if (options === true) return DEFAULT_CORS_PARAMS
+    if (Array.isArray(options)) {
+      return options.includes(origin) ? EXPLICIT_ORIGIN_CORS_PARAMS : null
+    }
+
+    const policy =
+      typeof options === 'function'
+        ? options.call(this, origin, request)
+        : options
+    // A callback returning true has vetted this origin; cors: true has not.
+    if (policy === true) return EXPLICIT_ORIGIN_CORS_PARAMS
+    if (typeof policy !== 'object') return null
+
+    // Callback policies must still match the requesting origin.
+    const allowed = policy.origin
+    if (allowed !== true && !allowed.includes(origin)) return null
+
+    // An explicit allowCredentials restores credentialed origin reflection
+    // without weakening the safe `cors: true` default.
+    const params: CorsParams = {
+      ...(allowed === true ? DEFAULT_CORS_PARAMS : EXPLICIT_ORIGIN_CORS_PARAMS),
+    }
+    for (const field of CORS_FIELDS) {
+      const value = policy[field]
+      if (value !== undefined) Object.assign(params, { [field]: value })
+    }
+    return params
+  }
+}
+
+/** Status-only response whose body is its own reason phrase. */
+function statusResponse(status: HttpStatus, headers: Headers): Response {
+  const text = HttpStatusText[status]
+  return new Response(text, { status, statusText: text, headers })
+}
+
+/**
+ * Codec output as a response body. Holds the single cast: codecs return a
+ * plain `ArrayBufferView`, which the DOM `BodyInit` union does not accept.
+ */
+function encodedResponse(
+  body: ArrayBufferView | undefined,
+  status: HttpStatus,
+  headers: Headers,
+): Response {
+  return new Response(body as BodyInit | undefined, {
+    status,
+    statusText: HttpStatusText[status],
+    headers,
+  })
 }
 
 export interface NeemataHttpResolvedProcedure extends GatewayResolvedProcedure {
