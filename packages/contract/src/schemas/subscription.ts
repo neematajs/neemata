@@ -146,7 +146,9 @@ export function SubscriptionContract(options: {
 
   // events are filled after freezing the subscription so each one can hold a
   // back-reference to it
-  for (const [eventName, event] of Object.entries(options.events)) {
+  // (for…in keeps events inherited through a prototype)
+  for (const eventName in options.events) {
+    const event = options.events[eventName]
     events[eventName] = freeze<TAnySubscriptionEventContract>({
       ...event,
       event: eventName,

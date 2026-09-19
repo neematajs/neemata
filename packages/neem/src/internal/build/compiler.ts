@@ -151,6 +151,10 @@ export async function watchTargets(
           const compiled = resolveTargets(targets, entryFileNames)
           if (initial) initialTargets = compiled
           else await options.onRebuild?.({ targets: compiled })
+        } catch (error) {
+          // a throw here would otherwise leave the first build pending forever
+          if (!initial) throw error
+          ready.reject(error)
         } finally {
           if ('result' in event) await event.result?.close?.()
           // Rolldown rebuilds retain sizeable allocations between watch builds;
@@ -376,12 +380,15 @@ function createEntryMetadataPlugin(
 ): rolldown.RolldownPlugin {
   const collect = (bundle: rolldown.OutputBundle) => {
     for (const input of inputs) {
+      // an extensionless entry resolves to a facade that differs from the
+      // configured path, so the input name is the fallback identity
       const chunk = Object.values(bundle).find(
         (candidate) =>
           candidate.type === 'chunk' &&
           candidate.isEntry &&
           candidate.fileName &&
-          candidate.facadeModuleId === input.file,
+          (candidate.facadeModuleId === input.file ||
+            candidate.name === input.name),
       )
       if (chunk) entryFileNames.set(input.key, chunk.fileName)
     }

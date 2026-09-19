@@ -36,6 +36,21 @@ describe('createMetricsServer', () => {
     }
   })
 
+  it('stops cleanly when push is configured without a job name', async () => {
+    const metrics = createMetricsServer({
+      logger: createTestLogger(),
+      config: {
+        host: '127.0.0.1',
+        port: 0,
+        push: { name: '', interval: 60_000 },
+      },
+      registry: { contentType: 'text/plain', metrics: () => '' },
+    })
+
+    await metrics.start()
+    await expect(metrics.stop()).resolves.toBeUndefined()
+  })
+
   it('returns 500 and logs when metrics collection fails', async () => {
     const logger = createTestLogger()
     const metrics = createMetricsServer({

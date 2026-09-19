@@ -89,6 +89,7 @@ async function collectReport(name) {
     resolve(root, 'scripts/benchmarks/run.js'),
     resolve(root, 'scripts/benchmarks/utils.js'),
     resolve(root, SUITES[name].config),
+    resolve(root, 'vitest.bench.base.ts'),
   )
   return { cases: normalizeVitestReport(rawReport, name), suiteFiles }
 }

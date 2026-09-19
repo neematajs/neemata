@@ -134,10 +134,37 @@ function dropShadowed(program: Program, tracked: Tracked): void {
     tracked.locals.delete(name)
     tracked.namespaces.delete(name)
   }
+  // only names a pattern binds: default expressions and property keys merely
+  // mention an identifier
   const dropBound = (pattern: Node) => {
-    walk(pattern, (part) => {
-      if (part.type === 'Identifier') drop(part.name)
-    })
+    switch (pattern.type) {
+      case 'Identifier':
+        drop(pattern.name)
+        break
+      case 'AssignmentPattern':
+        dropBound(pattern.left)
+        break
+      case 'RestElement':
+        dropBound(pattern.argument)
+        break
+      case 'ArrayPattern':
+        for (const element of pattern.elements) {
+          if (element) dropBound(element)
+        }
+        break
+      case 'ObjectPattern':
+        for (const property of pattern.properties) {
+          dropBound(
+            property.type === 'RestElement'
+              ? property.argument
+              : property.value,
+          )
+        }
+        break
+      case 'TSParameterProperty':
+        dropBound(pattern.parameter)
+        break
+    }
   }
 
   walk(program, (node) => {

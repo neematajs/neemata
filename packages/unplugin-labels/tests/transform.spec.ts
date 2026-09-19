@@ -123,6 +123,29 @@ describe('transformLabels', () => {
     expect(transform(shadowedByCatchParam)).toBeUndefined()
   })
 
+  it('does not treat mentions inside a parameter as shadowing', () => {
+    const defaultValue = `
+      import { lazy } from 'nmtjs'
+      function run(value = lazy()) {}
+      const db = lazy()
+    `
+    expect(transform(defaultValue)).toContain('lazy(undefined, "db")')
+
+    const propertyKey = `
+      import { lazy } from 'nmtjs'
+      function run({ lazy: value }) {}
+      const db = lazy()
+    `
+    expect(transform(propertyKey)).toContain('lazy(undefined, "db")')
+
+    const destructured = `
+      import { lazy } from 'nmtjs'
+      function run({ lazy }) {}
+      const db = lazy()
+    `
+    expect(transform(destructured)).toBeUndefined()
+  })
+
   it('ignores unnamed usages', () => {
     const code = `
       import { lazy } from 'nmtjs'

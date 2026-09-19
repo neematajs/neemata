@@ -99,7 +99,10 @@ function processNestedRoutes(
 ): Record<string, TRouteContract> {
   const processed: Record<string, any> = {}
 
-  for (const [routeName, route] of Object.entries(routes)) {
+  // for…in on purpose: route maps composed through prototypes keep their
+  // inherited routes
+  for (const routeName in routes) {
+    const route = routes[routeName]
     const name = concatFullName(parentName, routeName)
 
     if (IsRouterContract(route)) {

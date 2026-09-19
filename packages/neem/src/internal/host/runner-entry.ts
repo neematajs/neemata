@@ -29,8 +29,10 @@ if (!parentPort) {
 const port = parentPort
 const data = rawWorkerData as HostRunnerData
 let host: NeemRuntimeHost | undefined
-// The crash handlers below are installed before the logger can be resolved.
-let crashLogger: Logger | undefined
+// Requests and crashes can arrive while the logger is still resolving: stop and
+// shutdown must still be served then, or a failed startup elsewhere waits for
+// this runner's RPC timeouts.
+let logger: Logger | undefined
 let plannerOptions: unknown
 let currentThreads: readonly NeemRuntimeThreadHandle[] = []
 
@@ -44,14 +46,13 @@ function post(message: HostRunnerResponse): void {
 }
 
 async function initialize(): Promise<void> {
-  const logger = childLogger(
+  logger = childLogger(
     await resolveManifestLogger(data.logger, {
       mode: data.mode,
       outDir: data.outDir,
     }),
     runtimeLabel(data.runtimeName, 'host'),
   )
-  crashLogger = logger
   logger.trace(
     {
       hostArtifactId: data.hostArtifact.id,
@@ -61,11 +62,6 @@ async function initialize(): Promise<void> {
     },
     'Neem host runner initialized',
   )
-  // Requests are only served once the logger exists; the port buffers anything
-  // the parent sends before this listener is attached.
-  port.on('message', (message: HostRunnerRequest) => {
-    void handle(message, logger)
-  })
   post({ type: 'ready' })
 }
 
@@ -117,30 +113,32 @@ async function initializeHost(
   await host.start?.()
 }
 
-async function handle(
-  request: HostRunnerRequest,
-  logger: Logger,
-): Promise<void> {
+function requireLogger(): Logger {
+  if (!logger) throw new Error('Neem host runner logger is not initialized')
+  return logger
+}
+
+async function handle(request: HostRunnerRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'plan':
-        logger.trace('Calling Neem runtime planner')
+        logger?.trace('Calling Neem runtime planner')
         post({
           id: request.id,
           type: 'result',
-          data: { plan: await callPlanner(logger) },
+          data: { plan: await callPlanner(requireLogger()) },
         })
         return
       case 'start':
-        logger.trace(
+        logger?.trace(
           { threads: request.threads.length },
           'Calling Neem runtime host start',
         )
-        await initializeHost(request.threads, logger)
+        await initializeHost(request.threads, requireLogger())
         post({ id: request.id, type: 'result' })
         return
       case 'stop':
-        logger.trace(
+        logger?.trace(
           { threads: currentThreads.length },
           'Calling Neem runtime host stop',
         )
@@ -150,7 +148,7 @@ async function handle(
         post({ id: request.id, type: 'result' })
         return
       case 'shutdown':
-        logger.trace('Neem host runner shutting down')
+        logger?.trace('Neem host runner shutting down')
         closeCurrentThreads()
         post({ id: request.id, type: 'result' })
         return closeAndExit(port)
@@ -160,17 +158,19 @@ async function handle(
   }
 }
 
+port.on('message', (message: HostRunnerRequest) => {
+  void handle(message)
+})
+
 process.on('uncaughtException', (error) => {
-  crashLogger?.error(
-    new Error('Neem host uncaught exception', { cause: error }),
-  )
+  logger?.error(new Error('Neem host uncaught exception', { cause: error }))
   post({ type: 'failure', error: serializeError(error) })
   process.exit(1)
 })
 
 process.on('unhandledRejection', (error) => {
   const normalized = normalizeError(error)
-  crashLogger?.error(
+  logger?.error(
     new Error('Neem host unhandled rejection', { cause: normalized }),
   )
   post({ type: 'failure', error: serializeError(normalized) })

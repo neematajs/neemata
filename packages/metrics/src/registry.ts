@@ -9,8 +9,9 @@ import {
 export const metricsRegistry = register
 export const metricsWorkerRegistry = createMetricsWorkerRegistry()
 
-// collectDefaultMetrics throws on a registry that already holds them
-const withDefaultMetrics = new WeakSet<Registry>()
+// only the shared registry is guarded: it is registered from several entry
+// points, while a custom registry may be cleared and registered again
+let defaultRegistered = false
 
 export function createMetricsRegistry(): Registry {
   return new Registry()
@@ -32,7 +33,9 @@ export function createMetricsWorkerRegistry(
 export function registerDefaultMetrics(
   registry: Registry = metricsRegistry,
 ): void {
-  if (withDefaultMetrics.has(registry)) return
-  withDefaultMetrics.add(registry)
+  if (registry === metricsRegistry) {
+    if (defaultRegistered) return
+    defaultRegistered = true
+  }
   collectDefaultMetrics({ register: registry })
 }

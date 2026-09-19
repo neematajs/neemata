@@ -120,10 +120,13 @@ function createPush(
   )
   let timer: NodeJS.Timeout | undefined
 
-  const flush = () =>
-    gateway.pushAdd({ jobName }).catch((cause) => {
+  const flush = async () => {
+    // pushAdd throws synchronously on an empty job name
+    if (!jobName) return
+    await gateway.pushAdd({ jobName }).catch((cause) => {
       logger.error(new Error('Metrics push error', { cause }))
     })
+  }
 
   return {
     start() {
