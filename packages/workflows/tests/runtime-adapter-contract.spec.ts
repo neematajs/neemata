@@ -824,6 +824,48 @@ function workflowRuntimeAdapterContract(
       expect(requeued?.command).toStrictEqual(command)
     })
 
+    it('lists a single dead attempt command by id', async () => {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'dead-attempt-by-id-workflow',
+        input: {},
+      })
+      const attemptIds = [
+        '00000000-0000-4000-8000-000000000221',
+        '00000000-0000-4000-8000-000000000222',
+      ]
+      for (const attemptId of attemptIds) {
+        await runtime.attemptExecutor.dispatchActivity({
+          kind: 'activityAttempt',
+          workflowName: 'dead-attempt-by-id-workflow',
+          activityName: 'content',
+          runId: run.id,
+          nodeName: 'content',
+          childKey: attemptId,
+          attemptId,
+          leaseToken: 'attempt-lease',
+          input: {},
+        })
+        const claimed = await runtime.attemptExecutor.claim({
+          taskNames: [],
+          workerId: 'activity-worker',
+          workflowNames: ['dead-attempt-by-id-workflow'],
+          activityNames: ['content'],
+          leaseMs: 30_000,
+        })
+        await runtime.attemptExecutor.release(claimed!, {
+          error: new Error('poison activity command'),
+        })
+      }
+
+      const dead = await runtime.store.listUnreapedDeadCommands()
+      expect(dead).toHaveLength(2)
+      const scoped = await runtime.store.listUnreapedDeadCommands({
+        commandId: dead[0]!.id,
+      })
+      expect(scoped.map((command) => command.id)).toStrictEqual([dead[0]!.id])
+    })
+
     it('counts lease-expired continue redeliveries toward dead-lettering', async () => {
       const runtime = await createRuntime({ maxDeliveries: 2 })
       const run = await runtime.store.createRun({

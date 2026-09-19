@@ -734,7 +734,13 @@ export function createInMemoryWorkflowRuntime(
       }
       collect(continueRunCommands, 'continue')
       for (const item of attemptCommands) {
-        if (item.deadAt === undefined || item.reapedAt !== undefined) continue
+        if (
+          item.deadAt === undefined ||
+          item.reapedAt !== undefined ||
+          (params?.commandId !== undefined && item.id !== params.commandId)
+        ) {
+          continue
+        }
         const command = mapDeadCommand(
           item,
           item.payload.kind === 'activityAttempt' ? 'activity' : 'task',
