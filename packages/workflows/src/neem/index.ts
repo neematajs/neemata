@@ -13,4 +13,3 @@ export type {
   WorkflowTaskImplementationsFactory,
 } from './runtime.ts'
 export { defineWorkflowsWorker } from './worker-entry.ts'
-export type { WorkflowsWorkerConfig } from './worker-entry.ts'

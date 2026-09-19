@@ -1,6 +1,7 @@
+import type { MaybePromise } from '@nmtjs/common'
 import type { BaseTypeAny, t } from '@nmtjs/type'
 
-export type MaybePromise<T> = T | Promise<T>
+export type { MaybePromise }
 
 export type DurationString = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
 
@@ -88,6 +89,12 @@ export type BoundaryOutput<T> = T extends { readonly out: infer Output }
   ? Output
   : T
 
+/** Phantom carrier: definitions keep their input/output types in `_types`. */
+export type PhantomIO<Input = unknown, Output = unknown> = {
+  readonly input: Input
+  readonly output: Output
+}
+
 export type TaskDefinition<
   Name extends string = string,
   Input = unknown,
@@ -106,7 +113,7 @@ export type TaskDefinition<
   readonly idempotency?: RunIdempotencyBuilder<Input>
   /** Enforced for root starts through the runtime client; child dispatch is unaffected. */
   readonly unique?: RunUniqueBuilder<Input>
-  readonly _types?: { readonly input: Input; readonly output: Output }
+  readonly _types?: PhantomIO<Input, Output>
 }
 
 export type AnyTaskDefinition = TaskDefinition<string, any, any>
@@ -124,11 +131,6 @@ export type TaskDecodedInput<T> = BoundaryOutput<TaskInputBoundary<T>>
 export type TaskOutputInput<T> = BoundaryInput<TaskOutputBoundary<T>>
 
 export type TaskOutput<T> = BoundaryOutput<TaskOutputBoundary<T>>
-
-export type ActivityBinding<Input = unknown, Output = unknown> = {
-  readonly input: Input
-  readonly output: Output
-}
 
 export type WorkflowNodeKind =
   | 'activity'
@@ -154,14 +156,12 @@ export type WorkflowActivityNode<
   Input = unknown,
   Output = unknown,
 > = WorkflowNodeBase<'activity', Name> & {
-  readonly kind: 'activity'
-  readonly name: Name
   readonly input: Schema
   readonly output: Schema
   readonly retry?: RetryPolicy
   /** Timeout for this activity attempt. */
   readonly timeout?: DurationString
-  readonly _types?: ActivityBinding<Input, Output>
+  readonly _types?: PhantomIO<Input, Output>
 }
 
 export type WorkflowTaskNode<
@@ -172,7 +172,7 @@ export type WorkflowTaskNode<
   readonly retry?: RetryPolicy
   /** Overrides the target task's default timeout for this workflow task node. */
   readonly timeout?: DurationString
-  readonly _types?: ActivityBinding<TaskInput<Task>, TaskOutput<Task>>
+  readonly _types?: PhantomIO<TaskInput<Task>, TaskOutput<Task>>
 }
 
 export type WorkflowChildWorkflowNode<
@@ -181,39 +181,26 @@ export type WorkflowChildWorkflowNode<
 > = WorkflowNodeBase<'workflow', Name> & {
   readonly workflow: Workflow
   readonly cancellation?: CancellationPolicy
-  readonly _types?: ActivityBinding<
-    WorkflowInput<Workflow>,
-    WorkflowOutput<Workflow>
-  >
+  readonly _types?: PhantomIO<WorkflowInput<Workflow>, WorkflowOutput<Workflow>>
 }
 
 export type WorkflowBranchNode<
   Name extends string = string,
-  Cases extends Record<string, BranchCaseDefinition> = Record<
-    string,
-    BranchCaseDefinition
-  >,
+  Cases extends BranchCases = BranchCases,
   Output = unknown,
 > = WorkflowNodeBase<'branch', Name> & {
-  readonly kind: 'branch'
-  readonly name: Name
   readonly output?: Schema
   readonly cases: Cases
-  readonly _types?: ActivityBinding<unknown, Output>
+  readonly _types?: PhantomIO<unknown, Output>
 }
 
 export type WorkflowParallelNode<
   Name extends string = string,
-  Cases extends Record<string, BranchCaseDefinition> = Record<
-    string,
-    BranchCaseDefinition
-  >,
+  Cases extends BranchCases = BranchCases,
   Output = unknown,
 > = WorkflowNodeBase<'parallel', Name> & {
-  readonly kind: 'parallel'
-  readonly name: Name
   readonly cases: Cases
-  readonly _types?: ActivityBinding<unknown, Output>
+  readonly _types?: PhantomIO<unknown, Output>
 }
 
 export type MapNodeOutput<Item, Output> = {
@@ -236,7 +223,7 @@ export type WorkflowMapTaskNode<
   readonly retry?: RetryPolicy
   /** Overrides the target task's default timeout for every map task item. */
   readonly timeout?: DurationString
-  readonly _types?: ActivityBinding<
+  readonly _types?: PhantomIO<
     SchemaBoundary<
       readonly BoundaryInput<Item>[],
       readonly BoundaryOutput<Item>[]
@@ -254,7 +241,7 @@ export type WorkflowMapWorkflowNode<
   readonly item: Schema
   readonly concurrency?: number
   readonly cancellation?: CancellationPolicy
-  readonly _types?: ActivityBinding<
+  readonly _types?: PhantomIO<
     SchemaBoundary<
       readonly BoundaryInput<Item>[],
       readonly BoundaryOutput<Item>[]
@@ -265,41 +252,68 @@ export type WorkflowMapWorkflowNode<
 
 export type BranchCaseKind = 'activity' | 'task' | 'workflow'
 
+type BranchCaseBase<Kind extends BranchCaseKind, Input, Output> = {
+  readonly kind: Kind
+  readonly title?: string
+  readonly description?: string
+  readonly _types?: PhantomIO<Input, Output>
+}
+
+export type ActivityCaseDefinition<
+  Input = unknown,
+  Output = unknown,
+> = BranchCaseBase<'activity', Input, Output> & {
+  readonly input: Schema
+  readonly output: Schema
+  readonly retry?: RetryPolicy
+  /** Timeout for this branch or parallel activity member. */
+  readonly timeout?: DurationString
+}
+
+export type TaskCaseDefinition<
+  Input = unknown,
+  Output = unknown,
+  Task extends AnyTaskDefinition = AnyTaskDefinition,
+> = BranchCaseBase<'task', Input, Output> & {
+  readonly target: Task
+  readonly retry?: RetryPolicy
+  /** Overrides the target task's default timeout for this branch or parallel task member. */
+  readonly timeout?: DurationString
+}
+
+export type WorkflowCaseDefinition<
+  Input = unknown,
+  Output = unknown,
+  Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
+> = BranchCaseBase<'workflow', Input, Output> & {
+  readonly target: Workflow
+  readonly cancellation?: CancellationPolicy
+}
+
+/**
+ * Distributes over `Kind` so the default parameter yields a discriminated
+ * union that narrows on `kind`.
+ */
 export type BranchCaseDefinition<
   Kind extends BranchCaseKind = BranchCaseKind,
   Input = unknown,
   Output = unknown,
   Target = unknown,
-> = {
-  readonly kind: Kind
-  readonly title?: string
-  readonly description?: string
-  readonly _types?: { readonly input: Input; readonly output: Output }
-} & (Kind extends 'activity'
-  ? {
-      readonly input: Schema
-      readonly output: Schema
-      readonly retry?: RetryPolicy
-      /** Timeout for this branch or parallel activity member. */
-      readonly timeout?: DurationString
-    }
+> = Kind extends 'activity'
+  ? ActivityCaseDefinition<Input, Output>
   : Kind extends 'task'
-    ? {
-        readonly target: Target extends AnyTaskDefinition
-          ? Target
-          : AnyTaskDefinition
-        readonly retry?: RetryPolicy
-        /** Overrides the target task's default timeout for this branch or parallel task member. */
-        readonly timeout?: DurationString
-      }
-    : Kind extends 'workflow'
-      ? {
-          readonly target: Target extends AnyWorkflowDefinition
-            ? Target
-            : AnyWorkflowDefinition
-          readonly cancellation?: CancellationPolicy
-        }
-      : never)
+    ? TaskCaseDefinition<
+        Input,
+        Output,
+        Target extends AnyTaskDefinition ? Target : AnyTaskDefinition
+      >
+    : WorkflowCaseDefinition<
+        Input,
+        Output,
+        Target extends AnyWorkflowDefinition ? Target : AnyWorkflowDefinition
+      >
+
+export type BranchCases = Record<string, BranchCaseDefinition>
 
 export type WorkflowNode =
   | WorkflowActivityNode
@@ -310,20 +324,19 @@ export type WorkflowNode =
   | WorkflowMapTaskNode
   | WorkflowMapWorkflowNode
 
-export type BranchCaseOutput<T> =
-  T extends BranchCaseDefinition<any, any, infer Output>
-    ? BoundaryOutput<Output>
-    : never
+export type BranchCaseOutput<T> = T extends {
+  readonly _types?: PhantomIO<any, infer Output>
+}
+  ? BoundaryOutput<Output>
+  : never
 
-export type BranchCaseOutputs<
-  Cases extends Record<string, BranchCaseDefinition>,
-> = {
+export type BranchCaseOutputs<Cases extends BranchCases> = {
   readonly [CaseName in keyof Cases]: BranchCaseOutput<Cases[CaseName]>
 }
 
-export type BranchCaseOutputUnion<
-  Cases extends Record<string, BranchCaseDefinition>,
-> = BranchCaseOutput<Cases[keyof Cases]>
+export type BranchCaseOutputUnion<Cases extends BranchCases> = BranchCaseOutput<
+  Cases[keyof Cases]
+>
 
 export type WorkflowDefinition<
   Name extends string = string,
@@ -348,10 +361,7 @@ export type WorkflowDefinition<
   readonly idempotency?: RunIdempotencyBuilder<Input>
   /** Enforced for root starts through the runtime client; child dispatch is unaffected. */
   readonly unique?: RunUniqueBuilder<Input>
-  readonly _types?: {
-    readonly input: Input
-    readonly output: Output
-  }
+  readonly _types?: PhantomIO<Input, Output>
 }
 
 export type AnyWorkflowDefinition = WorkflowDefinition<
@@ -378,45 +388,37 @@ export type WorkflowOutput<T> = BoundaryOutput<WorkflowOutputBoundary<T>>
 export type WorkflowNodes<T> =
   T extends WorkflowDefinition<string, any, any, infer Nodes> ? Nodes : never
 
-export type WorkflowRun<
-  Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-> = {
+type RunBase = {
   readonly id: string
-  readonly kind: 'workflow'
-  readonly name: Workflow['name']
   readonly status: WorkflowStatus
-  readonly input: WorkflowDecodedInput<Workflow>
-  readonly output?: WorkflowOutput<Workflow>
   readonly error?: unknown
   readonly parentRunId?: string
   readonly parentNodeName?: string
   readonly rootRunId: string
-  readonly tags: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
+  readonly tags: RunTags
+  readonly idempotencyKey?: IdempotencyKey
   readonly unique?: ResolvedRunUnique
   readonly version: number
   readonly createdAt: Date
   readonly updatedAt: Date
 }
 
-export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
-  readonly id: string
-  readonly kind: 'task'
-  readonly name: Task['name']
-  readonly status: TaskStatus
-  readonly input: TaskDecodedInput<Task>
-  readonly output?: TaskOutput<Task>
-  readonly error?: unknown
-  readonly parentRunId?: string
-  readonly parentNodeName?: string
-  readonly rootRunId: string
-  readonly tags: Readonly<Record<string, string>>
-  readonly idempotencyKey?: readonly unknown[]
-  readonly unique?: ResolvedRunUnique
-  readonly version: number
-  readonly createdAt: Date
-  readonly updatedAt: Date
+export type WorkflowRun<
+  Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
+> = RunBase & {
+  readonly kind: 'workflow'
+  readonly name: Workflow['name']
+  readonly input: WorkflowDecodedInput<Workflow>
+  readonly output?: WorkflowOutput<Workflow>
 }
+
+export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> =
+  RunBase & {
+    readonly kind: 'task'
+    readonly name: Task['name']
+    readonly input: TaskDecodedInput<Task>
+    readonly output?: TaskOutput<Task>
+  }
 
 export type RunnableRun<
   Runnable extends AnyWorkflowDefinition | AnyTaskDefinition =
@@ -447,7 +449,7 @@ export type ScheduleDefinition<
   readonly input: RunnableInput<Runnable>
   readonly cron?: string
   readonly every?: DurationString
-  readonly tags?: Readonly<Record<string, string>>
+  readonly tags?: RunTags
   readonly enabled: boolean
   readonly immediately?: boolean
 }

@@ -17,7 +17,6 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
-  BranchCaseDefinition,
   BranchCaseKind,
   WorkflowNodeKind,
 } from '../types/index.ts'
@@ -44,7 +43,6 @@ export type WorkflowGraphNode = {
   readonly target?: WorkflowGraphTarget
   /** Branch and parallel members, in definition order. */
   readonly cases?: readonly WorkflowGraphCase[]
-  /** Fan-out completion mode for mapTask and mapWorkflow nodes. */
 }
 
 export type WorkflowGraphTarget = {
@@ -89,7 +87,6 @@ function serializeTarget(
 export function serializeWorkflowGraph(
   definition: AnyWorkflowDefinition,
 ): WorkflowGraph {
-  const base = { name: definition.name, ...metadata(definition) }
   const nodes = definition.nodes.map((node): WorkflowGraphNode => {
     const base = { name: node.name, kind: node.kind, ...metadata(node) }
 
@@ -97,21 +94,16 @@ export function serializeWorkflowGraph(
       case 'activity':
         return base
       case 'task':
-      case 'mapTask': {
-        const target = serializeTarget('task', node.task)
-        return { ...base, target }
-      }
+      case 'mapTask':
+        return { ...base, target: serializeTarget('task', node.task) }
       case 'workflow':
-      case 'mapWorkflow': {
-        const target = serializeTarget('workflow', node.workflow)
-        return { ...base, target }
-      }
+      case 'mapWorkflow':
+        return { ...base, target: serializeTarget('workflow', node.workflow) }
       case 'branch':
       case 'parallel': {
         const cases: WorkflowGraphCase[] = []
 
-        for (const key in node.cases) {
-          const branchCase = node.cases[key]
+        for (const [key, branchCase] of Object.entries(node.cases)) {
           const graphCase = {
             key,
             kind: branchCase.kind,
@@ -122,12 +114,7 @@ export function serializeWorkflowGraph(
             continue
           }
 
-          // BranchCaseDefinition's conditional payload doesn't narrow on
-          // `kind` at the union default, so the cast lives here once.
-          const reference = branchCase as BranchCaseDefinition<
-            'task' | 'workflow'
-          >
-          const target = serializeTarget(reference.kind, reference.target)
+          const target = serializeTarget(branchCase.kind, branchCase.target)
           cases.push({ ...graphCase, target })
         }
 
@@ -136,7 +123,7 @@ export function serializeWorkflowGraph(
     }
   })
 
-  return { ...base, nodes }
+  return { name: definition.name, ...metadata(definition), nodes }
 }
 
 export type WorkflowCatalog = {
@@ -255,28 +242,32 @@ export type NodeUnitDto = {
   readonly childRun?: RunSummaryDto
 }
 
+const runDates = {
+  activeSince: true,
+  createdAt: true,
+  updatedAt: true,
+} as const
+const recordDates = { createdAt: true, updatedAt: true } as const
+const attemptDates = {
+  dispatchedAt: true,
+  heartbeatAt: true,
+  completedAt: true,
+} as const
+
 export function toRunDto(run: StoredRun): RunDto {
-  return convertDates(run, {
-    activeSince: true,
-    createdAt: true,
-    updatedAt: true,
-  })
+  return convertDates(run, runDates)
 }
 
 export function toNodeDto(node: StoredNode): NodeDto {
-  return convertDates(node, { createdAt: true, updatedAt: true })
+  return convertDates(node, recordDates)
 }
 
 export function toNodeChildDto(child: StoredNodeChild): NodeChildDto {
-  return convertDates(child, { createdAt: true, updatedAt: true })
+  return convertDates(child, recordDates)
 }
 
 export function toAttemptDto(attempt: StoredAttempt): AttemptDto {
-  return convertDates(attempt, {
-    dispatchedAt: true,
-    heartbeatAt: true,
-    completedAt: true,
-  })
+  return convertDates(attempt, attemptDates)
 }
 
 export function toRunSnapshotDto(snapshot: RunSnapshot): RunSnapshotDto {
@@ -331,27 +322,19 @@ export function nodeUnits(
 }
 
 export function toRunSummaryDto(summary: RunSummary): RunSummaryDto {
-  return convertDates(summary, {
-    activeSince: true,
-    createdAt: true,
-    updatedAt: true,
-  })
+  return convertDates(summary, runDates)
 }
 
 function toNodeSummaryDto(summary: NodeSummary): NodeSummaryDto {
-  return convertDates(summary, { createdAt: true, updatedAt: true })
+  return convertDates(summary, recordDates)
 }
 
 function toNodeChildSummaryDto(summary: NodeChildSummary): NodeChildSummaryDto {
-  return convertDates(summary, { createdAt: true, updatedAt: true })
+  return convertDates(summary, recordDates)
 }
 
 function toAttemptSummaryDto(summary: AttemptSummary): AttemptSummaryDto {
-  return convertDates(summary, {
-    dispatchedAt: true,
-    heartbeatAt: true,
-    completedAt: true,
-  })
+  return convertDates(summary, attemptDates)
 }
 
 export function toRunDetailDto(detail: RunDetail): RunDetailDto {

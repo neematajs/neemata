@@ -18,16 +18,11 @@ export function defineWorkflowsPlanner<
     const config = await resolveWorkflowsConfig(await factory())
     const coordinator = createWorkerData(
       'coordinator',
-      config.workers.coordinator,
+      config.workers.coordinator.threads,
     )
-    const execution: WorkflowsWorkerData[] = []
-
-    for (const pool of config.workers.execution) {
-      const threads = normalizeThreadCount('execution', pool.threads)
-      for (let index = 0; index < threads; index++) {
-        execution.push({ role: 'execution', pool: pool.name })
-      }
-    }
+    const execution = config.workers.execution.flatMap((pool) =>
+      createWorkerData('execution', pool.threads, pool.name),
+    )
 
     return {
       workers: { coordinator, execution },
@@ -38,17 +33,9 @@ export function defineWorkflowsPlanner<
 
 function createWorkerData(
   role: WorkflowWorkerRole,
-  config: { readonly threads: number },
+  threads: number,
+  pool?: string,
 ): readonly WorkflowsWorkerData[] {
-  const threads = normalizeThreadCount(role, config.threads)
-  return Array.from({ length: threads }, () => ({ role }))
-}
-
-function normalizeThreadCount(role: WorkflowWorkerRole, value: number): number {
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(
-      `Invalid workflows worker thread count for ${role}: expected positive integer, received ${value}`,
-    )
-  }
-  return value
+  const data = pool === undefined ? { role } : { role, pool }
+  return Array.from({ length: threads }, () => ({ ...data }))
 }

@@ -6,6 +6,7 @@ import type {
   BranchCaseDefinition,
   BranchCaseOutputUnion,
   BranchCaseOutputs,
+  BranchCases,
   CancellationPolicy,
   DurationString,
   RunIdempotencyBuilder,
@@ -39,32 +40,42 @@ import { parseDurationMs } from '../runtime/duration.ts'
 declare const noDeclaredOutput: unique symbol
 type NoDeclaredOutput = { readonly [noDeclaredOutput]: true }
 
-type AvailableNodeName<Name extends string> = Name extends 'input'
-  ? never
-  : Name
+const RESERVED_NODE_NAME = 'input'
 
-type BranchCaseMap = Record<string, BranchCaseDefinition>
+type AvailableNodeName<Name extends string> =
+  Name extends typeof RESERVED_NODE_NAME ? never : Name
 
-type LeafCaseMap = Record<string, BranchCaseDefinition>
+type Metadata = {
+  title?: string
+  description?: string
+}
+
+/** Options of anything executed as a leased attempt: activities and tasks. */
+type AttemptOptions = Metadata & {
+  retry?: RetryPolicy
+  timeout?: DurationString
+}
+
+/** Options of anything executed as a child run: workflows. */
+type ChildOptions = Metadata & {
+  cancellation?: CancellationPolicy
+}
 
 type BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema> = {
   input: InputSchema
   output: OutputSchema
-  title?: string
-  description?: string
-  retry?: RetryPolicy
-  timeout?: DurationString
-} & (OutputSchema extends Schema
-  ? OutputMatches<
-      SchemaOutput<OutputSchema>,
-      BranchOutput,
-      'activity case output does not satisfy branch output'
-    >
-  : OutputMismatch<
-      'activity case output does not satisfy branch output',
-      BranchOutput,
-      unknown
-    >)
+} & AttemptOptions &
+  (OutputSchema extends Schema
+    ? OutputMatches<
+        SchemaOutput<OutputSchema>,
+        BranchOutput,
+        'activity case output does not satisfy branch output'
+      >
+    : OutputMismatch<
+        'activity case output does not satisfy branch output',
+        BranchOutput,
+        unknown
+      >)
 
 declare const outputMismatch: unique symbol
 type OutputMismatch<Message extends string, Expected, Received> = {
@@ -86,45 +97,11 @@ type SchemaSides<T extends Schema> = SchemaBoundary<
   SchemaOutput<T>
 >
 
-export type BranchCaseHelpers = {
-  activity<
-    InputSchema extends Schema,
-    OutputSchema extends Schema = Schema,
-  >(options: {
-    input: InputSchema
-    output: OutputSchema
-    title?: string
-    description?: string
-    retry?: RetryPolicy
-    timeout?: DurationString
-  }): BranchCaseDefinition<
-    'activity',
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
-  >
-  task<Task extends AnyTaskDefinition>(
-    task: Task,
-    options?: {
-      title?: string
-      description?: string
-      retry?: RetryPolicy
-      timeout?: DurationString
-    },
-  ): BranchCaseDefinition<'task', TaskInput<Task>, TaskOutput<Task>, Task>
-  workflow<Workflow extends AnyWorkflowDefinition>(
-    workflow: Workflow,
-    options?: {
-      title?: string
-      description?: string
-      cancellation?: CancellationPolicy
-    },
-  ): BranchCaseDefinition<
-    'workflow',
-    WorkflowInput<Workflow>,
-    WorkflowOutput<Workflow>,
-    Workflow
-  >
-}
+/**
+ * `OutputMatches<X, unknown, …>` is always `unknown`, so the unconstrained
+ * helpers are the converged ones with the constraint erased.
+ */
+export type BranchCaseHelpers = ConvergedBranchCaseHelpers<unknown>
 
 export type ConvergedBranchCaseHelpers<BranchOutput> = {
   activity<InputSchema extends Schema, OutputSchema extends Schema = Schema>(
@@ -141,12 +118,7 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
         BranchOutput,
         'task case output does not satisfy branch output'
       >,
-    options?: {
-      title?: string
-      description?: string
-      retry?: RetryPolicy
-      timeout?: DurationString
-    },
+    options?: AttemptOptions,
   ): BranchCaseDefinition<'task', TaskInput<Task>, TaskOutput<Task>, Task>
   workflow<Workflow extends AnyWorkflowDefinition>(
     workflow: Workflow &
@@ -155,11 +127,7 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
         BranchOutput,
         'workflow case output does not satisfy branch output'
       >,
-    options?: {
-      title?: string
-      description?: string
-      cancellation?: CancellationPolicy
-    },
+    options?: ChildOptions,
   ): BranchCaseDefinition<
     'workflow',
     WorkflowInput<Workflow>,
@@ -185,14 +153,7 @@ export type WorkflowBuilder<
     OutputSchema extends Schema,
   >(
     name: AvailableNodeName<NodeName>,
-    options: {
-      input: InputSchema
-      output: OutputSchema
-      title?: string
-      description?: string
-      retry?: RetryPolicy
-      timeout?: DurationString
-    },
+    options: { input: InputSchema; output: OutputSchema } & AttemptOptions,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -210,12 +171,7 @@ export type WorkflowBuilder<
   task<NodeName extends string, Task extends AnyTaskDefinition>(
     name: AvailableNodeName<NodeName>,
     task: Task,
-    options?: {
-      title?: string
-      description?: string
-      retry?: RetryPolicy
-      timeout?: DurationString
-    },
+    options?: AttemptOptions,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -226,11 +182,7 @@ export type WorkflowBuilder<
   workflow<NodeName extends string, Workflow extends AnyWorkflowDefinition>(
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
-    options?: {
-      title?: string
-      description?: string
-      cancellation?: CancellationPolicy
-    },
+    options?: ChildOptions,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -241,13 +193,11 @@ export type WorkflowBuilder<
   branch<
     NodeName extends string,
     OutputSchema extends Schema,
-    Cases extends BranchCaseMap,
+    Cases extends BranchCases,
   >(
     name: AvailableNodeName<NodeName>,
-    options: {
+    options: Metadata & {
       output: OutputSchema
-      title?: string
-      description?: string
       cases: (
         helpers: ConvergedBranchCaseHelpers<SchemaOutput<OutputSchema>>,
       ) => Cases
@@ -259,11 +209,9 @@ export type WorkflowBuilder<
     DeclaredOutput
   >
 
-  branch<NodeName extends string, Cases extends LeafCaseMap>(
+  branch<NodeName extends string, Cases extends BranchCases>(
     name: AvailableNodeName<NodeName>,
-    options: {
-      title?: string
-      description?: string
+    options: Metadata & {
       cases: (helpers: BranchCaseHelpers) => Cases
     },
   ): WorkflowBuilder<
@@ -276,13 +224,10 @@ export type WorkflowBuilder<
     DeclaredOutput
   >
 
-  parallel<NodeName extends string, Cases extends LeafCaseMap>(
+  parallel<NodeName extends string, Cases extends BranchCases>(
     name: AvailableNodeName<NodeName>,
     cases: (helpers: BranchCaseHelpers) => Cases,
-    options?: {
-      title?: string
-      description?: string
-    },
+    options?: Metadata,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -297,14 +242,7 @@ export type WorkflowBuilder<
   >(
     name: AvailableNodeName<NodeName>,
     task: Task,
-    options: {
-      item: ItemSchema
-      title?: string
-      description?: string
-      concurrency?: number
-      retry?: RetryPolicy
-      timeout?: DurationString
-    },
+    options: { item: ItemSchema; concurrency?: number } & AttemptOptions,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -319,13 +257,7 @@ export type WorkflowBuilder<
   >(
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
-    options: {
-      item: ItemSchema
-      title?: string
-      description?: string
-      concurrency?: number
-      cancellation?: CancellationPolicy
-    },
+    options: { item: ItemSchema; concurrency?: number } & ChildOptions,
   ): WorkflowBuilder<
     Name,
     Input,
@@ -407,14 +339,34 @@ export type ScheduleOptions<
   immediately?: boolean
 }
 
+type ActivityNodeOptions = { input: Schema; output: Schema } & AttemptOptions
+
+type MapNodeOptions = { item: Schema; concurrency?: number } & AttemptOptions &
+  ChildOptions
+
+type BranchNodeOptions = Metadata & {
+  output?: Schema
+  cases: (helpers: BranchCaseHelpers) => BranchCases
+}
+
 const nodeNamePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
+
+/** Node metadata is omitted rather than stored as `undefined`. */
+function metadata(options: Metadata) {
+  return {
+    ...(options.title === undefined ? {} : { title: options.title }),
+    ...(options.description === undefined
+      ? {}
+      : { description: options.description }),
+  }
+}
 
 function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   if (!nodeNamePattern.test(name)) {
     throw new Error(`Invalid workflow node name: ${name}`)
   }
-  if (name === 'input') {
-    throw new Error('Workflow node name cannot be "input"')
+  if (name === RESERVED_NODE_NAME) {
+    throw new Error(`Workflow node name cannot be "${RESERVED_NODE_NAME}"`)
   }
   if (nodes.some((node) => node.name === name)) {
     throw new Error(`Duplicate workflow node name: ${name}`)
@@ -443,6 +395,10 @@ function createBranchCaseHelpers(): BranchCaseHelpers {
   }) as BranchCaseHelpers
 }
 
+/**
+ * Runtime half of `WorkflowBuilder`: the node list it accumulates is a plain
+ * array, while the builder type tracks it as a tuple to type the chain.
+ */
 class WorkflowDraftBuilder<Name extends string> {
   constructor(
     readonly options: WorkflowOptions<Name, any, any>,
@@ -461,57 +417,59 @@ class WorkflowDraftBuilder<Name extends string> {
     return this.options.output
   }
 
-  activity(name: string, options: any) {
+  activity(name: string, options: ActivityNodeOptions) {
     assertNodeName(name, this.nodes)
     return this.withNode(Object.freeze({ kind: 'activity', name, ...options }))
   }
 
-  task(name: string, task: AnyTaskDefinition, options?: any) {
+  task(name: string, task: AnyTaskDefinition, options?: AttemptOptions) {
     assertNodeName(name, this.nodes)
     return this.withNode(
       Object.freeze({ kind: 'task', name, task, ...options }),
     )
   }
 
-  workflow(name: string, workflow: AnyWorkflowDefinition, options?: any) {
+  workflow(
+    name: string,
+    workflow: AnyWorkflowDefinition,
+    options?: ChildOptions,
+  ) {
     assertNodeName(name, this.nodes)
     return this.withNode(
       Object.freeze({ kind: 'workflow', name, workflow, ...options }),
     )
   }
 
-  branch(name: string, options: any) {
+  branch(name: string, options: BranchNodeOptions) {
     assertNodeName(name, this.nodes)
     return this.withNode(
       Object.freeze({
         kind: 'branch',
         name,
-        ...(options.title === undefined ? {} : { title: options.title }),
-        ...(options.description === undefined
-          ? {}
-          : { description: options.description }),
+        ...metadata(options),
         output: options.output,
         cases: Object.freeze(options.cases(createBranchCaseHelpers())),
       }),
     )
   }
 
-  parallel(name: string, casesFactory: any, options?: any) {
+  parallel(
+    name: string,
+    casesFactory: BranchNodeOptions['cases'],
+    options?: Metadata,
+  ) {
     assertNodeName(name, this.nodes)
     return this.withNode(
       Object.freeze({
         kind: 'parallel',
         name,
-        ...(options?.title === undefined ? {} : { title: options.title }),
-        ...(options?.description === undefined
-          ? {}
-          : { description: options.description }),
+        ...metadata(options ?? {}),
         cases: Object.freeze(casesFactory(createBranchCaseHelpers())),
       }),
     )
   }
 
-  mapTask(name: string, task: AnyTaskDefinition, options: any) {
+  mapTask(name: string, task: AnyTaskDefinition, options: MapNodeOptions) {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
     return this.withNode(
@@ -519,7 +477,11 @@ class WorkflowDraftBuilder<Name extends string> {
     )
   }
 
-  mapWorkflow(name: string, workflow: AnyWorkflowDefinition, options: any) {
+  mapWorkflow(
+    name: string,
+    workflow: AnyWorkflowDefinition,
+    options: MapNodeOptions,
+  ) {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
     return this.withNode(
@@ -531,12 +493,7 @@ class WorkflowDraftBuilder<Name extends string> {
     return Object.freeze({
       kind: 'workflow',
       name: this.options.name,
-      ...(this.options.title === undefined
-        ? {}
-        : { title: this.options.title }),
-      ...(this.options.description === undefined
-        ? {}
-        : { description: this.options.description }),
+      ...metadata(this.options),
       input: this.options.input,
       output: this.options.output,
       nodes: Object.freeze([...this.nodes]),
@@ -565,6 +522,8 @@ export function defineWorkflow<
   [],
   OutputSchema extends Schema ? SchemaSides<OutputSchema> : NoDeclaredOutput
 > {
+  // The draft accumulates a plain node array; only the builder type tracks the
+  // node tuple that types the chain, so the two cannot be related structurally.
   return new WorkflowDraftBuilder(options) as any
 }
 
@@ -587,28 +546,29 @@ function assertScheduleCadence(input: {
   readonly cron?: string
   readonly every?: string
 }) {
-  const cadenceCount =
-    (input.cron === undefined ? 0 : 1) + (input.every === undefined ? 0 : 1)
-  if (cadenceCount !== 1) {
-    throw new Error(
-      `Schedule [${input.name}] must define exactly one of cron/every`,
-    )
+  const { name, cron, every } = input
+  const cadenceMessage = `Schedule [${name}] must define exactly one of cron/every`
+
+  if (cron !== undefined && every !== undefined) {
+    throw new Error(cadenceMessage)
   }
 
-  if (input.every !== undefined) {
-    const everyMs = parseDurationMs(input.every)
+  if (every !== undefined) {
+    const everyMs = parseDurationMs(every)
     if (everyMs === undefined || everyMs <= 0) {
-      throw new Error(
-        `Invalid schedule [${input.name}] every duration [${input.every}]`,
-      )
+      throw new Error(`Invalid schedule [${name}] every duration [${every}]`)
     }
     return
   }
 
+  if (cron === undefined) {
+    throw new Error(cadenceMessage)
+  }
+
   try {
-    CronExpressionParser.parse(input.cron!, { currentDate: new Date(0) })
+    CronExpressionParser.parse(cron, { currentDate: new Date(0) })
   } catch (error) {
-    throw new Error(`Invalid schedule [${input.name}] cron [${input.cron!}]`, {
+    throw new Error(`Invalid schedule [${name}] cron [${cron}]`, {
       cause: error,
     })
   }

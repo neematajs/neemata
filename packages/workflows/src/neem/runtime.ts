@@ -1,8 +1,8 @@
 import type { ExecutionEnvironmentPlugin } from '@nmtjs/core'
 
 import type {
-  TaskImplementation,
-  WorkflowImplementation,
+  AnyTaskImplementation,
+  AnyWorkflowImplementation,
 } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
@@ -11,16 +11,6 @@ import {
   collectWorkflowActivityNames,
   collectWorkflowTaskNames,
 } from '../runtime/worker.ts'
-
-export type AnyWorkflowImplementation = Omit<
-  WorkflowImplementation,
-  'finish'
-> & {
-  readonly finish: (...args: any[]) => unknown
-}
-export type AnyTaskImplementation = Omit<TaskImplementation, 'handler'> & {
-  readonly handler: (...args: any[]) => unknown
-}
 
 export type WorkflowsRuntimeFactory = () => MaybePromise<WorkflowRuntimeAdapter>
 
@@ -111,7 +101,7 @@ export type WorkflowsWorkerData = {
   readonly pool?: string
 }
 
-export const DEFAULT_EXECUTION_POOL_NAME = 'execution'
+const DEFAULT_EXECUTION_POOL_NAME = 'execution'
 
 const defaultWorkerConfig = {
   threads: 1,
@@ -162,14 +152,10 @@ export async function resolveWorkflowsConfig<
   const workflows = await config.workflows()
   const tasks = (await config.tasks?.()) ?? []
   const { workers } = config
-  if (workers && ('activity' in workers || 'task' in workers)) {
-    throw new Error(
-      'Workflows workers.activity and workers.task were replaced by workers.execution',
-    )
-  }
+  assertImplemented(workflows, tasks)
   const schedules = (await config.schedules?.()) ?? []
   const plugins = config.plugins ?? []
-  const coordinator = normalizePool(workers?.coordinator)
+  const coordinator = normalizePool(workers?.coordinator, 'coordinator')
   const execution = normalizeExecutionPools(
     workers?.execution,
     workflows,
@@ -188,40 +174,96 @@ export async function resolveWorkflowsConfig<
 
 function normalizePool<T extends WorkflowsWorkerPoolConfig>(
   config: T | undefined,
+  role: WorkflowWorkerRole,
 ) {
-  return Object.freeze({
+  const pool = Object.freeze({
     ...defaultWorkerConfig,
     ...config,
   })
+  if (!Number.isInteger(pool.threads) || pool.threads < 1) {
+    throw new Error(
+      `Invalid workflows worker thread count for ${role}: expected positive integer, received ${pool.threads}`,
+    )
+  }
+  return pool
 }
 
-function normalizeExecutionPools(
+function assertImplemented(
+  workflows: readonly AnyWorkflowImplementation[],
+  tasks: readonly AnyTaskImplementation[],
+) {
+  const registeredWorkflows = new Set(
+    workflows.map((implementation) => implementation.workflow.name),
+  )
+  const missingWorkflows = collectChildWorkflowNames(workflows).filter(
+    (name) => !registeredWorkflows.has(name),
+  )
+  if (missingWorkflows.length > 0) {
+    throw new Error(
+      `Workflows [${missingWorkflows.join(', ')}] referenced by registered workflows have no registered implementation`,
+    )
+  }
+
+  const registeredTasks = new Set(
+    tasks.map((implementation) => implementation.task.name),
+  )
+  const missingTasks = collectWorkflowTaskNames(workflows).filter(
+    (name) => !registeredTasks.has(name),
+  )
+  if (missingTasks.length > 0) {
+    throw new Error(
+      `Tasks [${missingTasks.join(', ')}] referenced by registered workflows have no registered implementation`,
+    )
+  }
+}
+
+function toNamedPools(
   config:
     | WorkflowsExecutionWorkerPoolConfig
     | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
     | undefined,
-  workflows: readonly AnyWorkflowImplementation[],
-  tasks: readonly AnyTaskImplementation[],
-): readonly ResolvedExecutionWorkerPool[] {
-  let pools: readonly WorkflowsNamedExecutionWorkerPoolConfig[]
-  if (Array.isArray(config)) {
-    pools = config
-  } else {
-    pools = [
-      {
-        name: DEFAULT_EXECUTION_POOL_NAME,
-        ...(config as WorkflowsExecutionWorkerPoolConfig | undefined),
-      },
-    ]
-  }
+): readonly WorkflowsNamedExecutionWorkerPoolConfig[] {
+  // `Array.isArray` does not narrow a readonly array union, so both branches
+  // have to name the shape they handle.
+  const pools = Array.isArray(config)
+    ? (config as readonly WorkflowsNamedExecutionWorkerPoolConfig[])
+    : [
+        {
+          name: DEFAULT_EXECUTION_POOL_NAME,
+          ...(config as WorkflowsExecutionWorkerPoolConfig | undefined),
+        },
+      ]
   if (pools.length === 0) {
     throw new Error('Workflows execution worker pool list must not be empty')
   }
+  return pools
+}
 
+function claimNames(
+  kind: 'Activity' | 'Task',
+  names: readonly string[],
+  poolName: string,
+  claimed: Map<string, string>,
+) {
+  for (const name of names) {
+    const owner = claimed.get(name)
+    if (owner !== undefined) {
+      throw new Error(
+        `${kind} [${name}] is claimed by both workflows execution pools [${owner}] and [${poolName}]`,
+      )
+    }
+    claimed.set(name, poolName)
+  }
+}
+
+function collectPoolClaims(
+  pools: readonly WorkflowsNamedExecutionWorkerPoolConfig[],
+) {
   const names = new Set<string>()
-  const claimedActivities = new Map<string, string>()
-  const claimedTasks = new Map<string, string>()
+  const activities = new Map<string, string>()
+  const tasks = new Map<string, string>()
   let catchAll: string | undefined
+
   for (const pool of pools) {
     if (!pool.name) {
       throw new Error('Workflows execution worker pool requires a name')
@@ -244,50 +286,31 @@ function normalizeExecutionPools(
       continue
     }
 
-    for (const activityName of pool.activityNames ?? []) {
-      const owner = claimedActivities.get(activityName)
-      if (owner !== undefined) {
-        throw new Error(
-          `Activity [${activityName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
-        )
-      }
-      claimedActivities.set(activityName, pool.name)
-    }
-    for (const taskName of pool.taskNames ?? []) {
-      const owner = claimedTasks.get(taskName)
-      if (owner !== undefined) {
-        throw new Error(
-          `Task [${taskName}] is claimed by both workflows execution pools [${owner}] and [${pool.name}]`,
-        )
-      }
-      claimedTasks.set(taskName, pool.name)
-    }
+    claimNames('Activity', pool.activityNames ?? [], pool.name, activities)
+    claimNames('Task', pool.taskNames ?? [], pool.name, tasks)
   }
 
+  return { activities, tasks, catchAll }
+}
+
+function normalizeExecutionPools(
+  config:
+    | WorkflowsExecutionWorkerPoolConfig
+    | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
+    | undefined,
+  workflows: readonly AnyWorkflowImplementation[],
+  tasks: readonly AnyTaskImplementation[],
+): readonly ResolvedExecutionWorkerPool[] {
+  const pools = toNamedPools(config)
+  const claimed = collectPoolClaims(pools)
+  const { catchAll } = claimed
+
   const registeredActivities = new Set(collectWorkflowActivityNames(workflows))
-  const registeredWorkflows = new Set(
-    workflows.map((implementation) => implementation.workflow.name),
-  )
-  const missingWorkflows = collectChildWorkflowNames(workflows).filter(
-    (name) => !registeredWorkflows.has(name),
-  )
-  if (missingWorkflows.length > 0) {
-    throw new Error(
-      `Workflows [${missingWorkflows.join(', ')}] referenced by registered workflows have no registered implementation`,
-    )
-  }
   const registeredTasks = new Set(
     tasks.map((implementation) => implementation.task.name),
   )
-  const missingTasks = collectWorkflowTaskNames(workflows).filter(
-    (name) => !registeredTasks.has(name),
-  )
-  if (missingTasks.length > 0) {
-    throw new Error(
-      `Tasks [${missingTasks.join(', ')}] referenced by registered workflows have no registered implementation`,
-    )
-  }
-  const unknownActivities = Array.from(claimedActivities.keys()).filter(
+
+  const unknownActivities = Array.from(claimed.activities.keys()).filter(
     (name) => !registeredActivities.has(name),
   )
   if (unknownActivities.length > 0) {
@@ -295,7 +318,7 @@ function normalizeExecutionPools(
       `Activities [${unknownActivities.join(', ')}] selected by workflows execution pools do not exist in the registered workflows`,
     )
   }
-  const unknownTasks = Array.from(claimedTasks.keys()).filter(
+  const unknownTasks = Array.from(claimed.tasks.keys()).filter(
     (name) => !registeredTasks.has(name),
   )
   if (unknownTasks.length > 0) {
@@ -305,10 +328,10 @@ function normalizeExecutionPools(
   }
 
   const unclaimedActivities = Array.from(registeredActivities).filter(
-    (name) => !claimedActivities.has(name),
+    (name) => !claimed.activities.has(name),
   )
   const unclaimedTasks = Array.from(registeredTasks).filter(
-    (name) => !claimedTasks.has(name),
+    (name) => !claimed.tasks.has(name),
   )
 
   // Missing coverage would otherwise leave durable commands stalled forever.
@@ -332,7 +355,7 @@ function normalizeExecutionPools(
     const taskNames = pool.taskNames ?? (isCatchAll ? unclaimedTasks : [])
 
     return Object.freeze({
-      ...normalizePool(pool),
+      ...normalizePool(pool, 'execution'),
       name: pool.name,
       activityNames,
       taskNames,

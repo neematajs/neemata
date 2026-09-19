@@ -6,10 +6,12 @@ import {
 } from '@nmtjs/core'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
-import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type {
   AnyTaskImplementation,
   AnyWorkflowImplementation,
+} from '../implement/index.ts'
+import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
+import type {
   ResolvedExecutionWorkerPool,
   ResolvedWorkflowsConfig,
   WorkflowsConfig,
@@ -18,18 +20,19 @@ import type {
 import { serveExecutionWorker, serveWorkflowWorker } from '../runtime/worker.ts'
 import { resolveWorkflowsConfig } from './runtime.ts'
 
-export type WorkflowsWorkerConfig<
-  TWorkflowImplementation extends AnyWorkflowImplementation =
-    AnyWorkflowImplementation,
-  TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
-> = WorkflowsConfig<TWorkflowImplementation, TTaskImplementation>
+/** How often a coordinator sweeps due schedules. */
+const SCHEDULE_TICK_MS = 1_000
+
+type WorkerRole =
+  | { readonly role: 'coordinator' }
+  | { readonly role: 'execution'; readonly pool: ResolvedExecutionWorkerPool }
 
 export function defineWorkflowsWorker<
   const TWorkflowImplementation extends AnyWorkflowImplementation,
   const TTaskImplementation extends AnyTaskImplementation =
     AnyTaskImplementation,
->(config: WorkflowsWorkerConfig<TWorkflowImplementation, TTaskImplementation>) {
-  return defineRuntimeWorker<WorkflowsWorkerData, WorkflowsWorkerConfig>({
+>(config: WorkflowsConfig<TWorkflowImplementation, TTaskImplementation>) {
+  return defineRuntimeWorker<WorkflowsWorkerData, WorkflowsConfig>({
     definition: config,
     createRuntime(ctx) {
       const abort = new AbortController()
@@ -44,10 +47,13 @@ export function defineWorkflowsWorker<
         finished: finished.promise,
         async start() {
           const config = await resolveWorkflowsConfig(ctx.definition)
-          const executionPool =
+          const role: WorkerRole =
             ctx.data.role === 'execution'
-              ? resolveExecutionWorkerPool(config, ctx.data)
-              : undefined
+              ? {
+                  role: 'execution',
+                  pool: resolveExecutionWorkerPool(config, ctx.data),
+                }
+              : { role: 'coordinator' }
           execution = new ExecutionEnvironment({
             logger: ctx.logger,
             label: 'Workflows',
@@ -59,7 +65,7 @@ export function defineWorkflowsWorker<
             execution,
           )
           runtime = await config.runtime()
-          if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
+          if (role.role === 'coordinator' && config.schedules.length > 0) {
             if (!runtime.scheduler) {
               throw new Error(
                 'Workflow runtime adapter does not support schedules',
@@ -72,10 +78,9 @@ export function defineWorkflowsWorker<
             execution,
           )
           workerLoop = runRoleLoop({
-            data: ctx.data,
+            role,
             runtime,
             config,
-            executionPool,
             container: execution.container,
             workerId: ctx.name,
             signal: abort.signal,
@@ -95,40 +100,47 @@ export function defineWorkflowsWorker<
         },
         async stop() {
           abort.abort()
+          const loop = workerLoop
+          const env = execution
+          const adapter = runtime
+          const steps: Array<() => unknown> = [() => loop]
+
+          if (loop && env) {
+            steps.push(() =>
+              env.lifecycleHooks.callHook(
+                ExecutionEnvironmentLifecycleHook.Stop,
+              ),
+            )
+          }
+          if (env) {
+            steps.push(() =>
+              env.lifecycleHooks.callHook(
+                ExecutionEnvironmentLifecycleHook.BeforeDispose,
+                env,
+              ),
+            )
+          }
+          steps.push(() => adapter?.dispose?.())
+          if (env) {
+            steps.push(
+              () =>
+                env.lifecycleHooks.callHook(
+                  ExecutionEnvironmentLifecycleHook.AfterDispose,
+                  env,
+                ),
+              () => env.dispose(),
+            )
+          }
+
+          // Every step runs even when an earlier one fails; the first failure
+          // is what the host is told about.
           let failure: unknown
-          const attempt = async (operation: () => unknown) => {
+          for (const step of steps) {
             try {
-              await operation()
+              await step()
             } catch (error) {
               failure ??= error
             }
-          }
-
-          await attempt(async () => await workerLoop)
-          if (workerLoop) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.Stop,
-              )
-            })
-          }
-          if (execution) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.BeforeDispose,
-                execution,
-              )
-            })
-          }
-          await attempt(async () => await runtime?.dispose?.())
-          if (execution) {
-            await attempt(async () => {
-              await execution?.lifecycleHooks.callHook(
-                ExecutionEnvironmentLifecycleHook.AfterDispose,
-                execution,
-              )
-            })
-            await attempt(async () => await execution?.dispose())
           }
 
           workerLoop = undefined
@@ -142,56 +154,57 @@ export function defineWorkflowsWorker<
 }
 
 async function runRoleLoop(input: {
-  readonly data: WorkflowsWorkerData
+  readonly role: WorkerRole
   readonly runtime: WorkflowRuntimeAdapter
   readonly config: ResolvedWorkflowsConfig
-  readonly executionPool?: ResolvedExecutionWorkerPool
   readonly container: Container
   readonly workerId: string
   readonly signal: AbortSignal
   readonly onError: (error: unknown) => void
 }): Promise<void> {
-  const role = input.data.role
-  switch (role) {
-    case 'coordinator':
-      await serveWorkflowWorker({
-        ...input.runtime,
-        container: input.container,
-        workflows: input.config.workflows,
-        workerId: input.workerId,
-        concurrency: input.config.workers.coordinator.concurrency,
-        leaseMs: input.config.workers.coordinator.leaseMs,
-        idleDelayMs: input.config.workers.coordinator.pollIntervalMs,
-        scheduling:
-          input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
-        signal: input.signal,
-        onError: input.onError,
-      })
-      return
+  const { role, runtime, config, container, workerId, signal, onError } = input
 
-    case 'execution':
-      await serveExecutionWorker({
-        ...input.runtime,
-        container: input.container,
-        workflows: input.config.workflows,
-        tasks: input.config.tasks,
-        activityNames: input.executionPool!.activityNames,
-        taskNames: input.executionPool!.taskNames,
-        workerId: input.workerId,
-        concurrency: input.executionPool!.concurrency,
-        leaseMs: input.executionPool!.leaseMs,
-        idleDelayMs: input.executionPool!.pollIntervalMs,
-        // Coordinators own maintenance so execution capacity is not duplicated
-        // across every named pool and thread.
-        reaping: false,
-        signal: input.signal,
-        onError: input.onError,
-      })
-      return
+  if (role.role === 'coordinator') {
+    const { coordinator } = config.workers
+    await serveWorkflowWorker({
+      ...runtime,
+      container,
+      workflows: config.workflows,
+      workerId,
+      concurrency: coordinator.concurrency,
+      leaseMs: coordinator.leaseMs,
+      idleDelayMs: coordinator.pollIntervalMs,
+      scheduling:
+        config.schedules.length === 0
+          ? undefined
+          : { everyMs: SCHEDULE_TICK_MS },
+      signal,
+      onError,
+    })
+    return
   }
+
+  const { pool } = role
+  await serveExecutionWorker({
+    ...runtime,
+    container,
+    workflows: config.workflows,
+    tasks: config.tasks,
+    activityNames: pool.activityNames,
+    taskNames: pool.taskNames,
+    workerId,
+    concurrency: pool.concurrency,
+    leaseMs: pool.leaseMs,
+    idleDelayMs: pool.pollIntervalMs,
+    // Coordinators own maintenance so execution capacity is not duplicated
+    // across every named pool and thread.
+    reaping: false,
+    signal,
+    onError,
+  })
 }
 
-export function resolveExecutionWorkerPool(
+function resolveExecutionWorkerPool(
   config: ResolvedWorkflowsConfig,
   data: WorkflowsWorkerData,
 ): ResolvedExecutionWorkerPool {
