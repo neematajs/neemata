@@ -34,9 +34,9 @@ export class TeardownStack {
     const teardowns = this.#teardowns
     this.#teardowns = []
     const errors: unknown[] = []
-    for (let i = teardowns.length - 1; i >= 0; i--) {
+    for (const teardown of teardowns.toReversed()) {
       try {
-        await teardowns[i]()
+        await teardown()
       } catch (error) {
         errors.push(error)
       }

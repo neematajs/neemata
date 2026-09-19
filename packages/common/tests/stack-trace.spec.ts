@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
-import { tryCaptureStackTrace } from '../src/utils.ts'
+import { tryCaptureStackTrace } from '../src/stack-trace.ts'
 
 describe('tryCaptureStackTrace', () => {
   it('should capture the direct caller location', () => {
     const trace = tryCaptureStackTrace()
-    expect(trace).toContain('utils.spec.ts')
+    expect(trace).toContain('stack-trace.spec.ts')
     expect(trace).toMatch(/:\d+:\d+$/)
   })
 
@@ -21,8 +21,8 @@ describe('tryCaptureStackTrace', () => {
     const direct = (() => tryCaptureStackTrace())()
     const anchored = nested()
     // both captured in this file, but the anchored one skips the wrapper
-    expect(anchored).toContain('utils.spec.ts')
-    expect(direct).toContain('utils.spec.ts')
+    expect(anchored).toContain('stack-trace.spec.ts')
+    expect(direct).toContain('stack-trace.spec.ts')
     expect(anchored).not.toBe(direct)
   })
 

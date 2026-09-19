@@ -5,130 +5,117 @@ export type OperationQueueStrategy = 'serial' | 'latest'
 
 export type OperationQueueOptions = { strategy?: OperationQueueStrategy }
 
+// Erases the caller's result type: the queue only needs to start it and to
+// settle it when it is dropped.
 type QueuedOperation = {
-  task: () => MaybePromise<unknown>
-  resolve: (value: unknown) => void
-  reject: (error: unknown) => void
+  run: () => Promise<void>
+  supersede: () => void
 }
 
 export class OperationSupersededError extends Error {
+  override name = 'OperationSupersededError'
+
   constructor(message = 'Operation superseded') {
     super(message)
-    this.name = 'OperationSupersededError'
   }
 }
 
 export class OperationQueue {
-  private readonly strategy: OperationQueueStrategy
-  private tail: Promise<unknown> = Promise.resolve()
-  private count = 0
-  private runningLatest = false
-  private latestOperation: QueuedOperation | undefined
-  private readonly idleWaiters = new Set<() => void>()
+  readonly #strategy: OperationQueueStrategy
+  readonly #idleWaiters = new Set<() => void>()
+  #tail: Promise<unknown> = Promise.resolve()
+  #count = 0
+  #running = false
+  #latest: QueuedOperation | undefined
 
   constructor({ strategy = 'serial' }: OperationQueueOptions = {}) {
-    this.strategy = strategy
+    this.#strategy = strategy
   }
 
   get pending(): number {
-    return this.count
+    return this.#count
   }
 
   get busy(): boolean {
-    return this.count > 0
+    return this.#count > 0
   }
 
   run<T>(task: () => MaybePromise<T>): Promise<T> {
-    return this.strategy === 'latest'
-      ? this.runLatest(task)
-      : this.runSerial(task)
+    return this.#strategy === 'latest'
+      ? this.#runLatest(task)
+      : this.#runSerial(task)
   }
 
   async waitIdle(): Promise<void> {
     if (!this.busy) return
 
     await new Promise<void>((resolve) => {
-      this.idleWaiters.add(resolve)
+      this.#idleWaiters.add(resolve)
     })
   }
 
-  private runSerial<T>(task: () => MaybePromise<T>): Promise<T> {
-    this.count++
+  #runSerial<T>(task: () => MaybePromise<T>): Promise<T> {
+    this.#count++
 
-    const result = this.tail.then(task, task)
-    this.tail = result
+    const result = this.#tail.then(task, task)
+    this.#tail = result
       .catch(() => undefined)
       .finally(() => {
-        this.finishOperation()
+        this.#finish()
       })
 
     return result
   }
 
-  private runLatest<T>(task: () => MaybePromise<T>): Promise<T> {
-    this.count++
+  #runLatest<T>(task: () => MaybePromise<T>): Promise<T> {
+    this.#count++
 
-    const { operation, promise } = createQueuedOperation(task)
+    const { promise, resolve, reject } = createFuture<T>()
+    const operation: QueuedOperation = {
+      run: async () => {
+        try {
+          resolve(await task())
+        } catch (error) {
+          reject(error)
+        } finally {
+          this.#finish()
+        }
+      },
+      supersede: () => {
+        reject(new OperationSupersededError())
+        this.#finish()
+      },
+    }
 
-    if (this.runningLatest) {
-      const previous = this.latestOperation
-      if (previous) {
-        previous.reject(new OperationSupersededError())
-        this.finishOperation()
-      }
-      this.latestOperation = operation
+    if (this.#running) {
+      this.#latest?.supersede()
+      this.#latest = operation
       return promise
     }
 
-    this.runningLatest = true
-    void this.runLatestOperations(operation)
+    this.#running = true
+    void this.#drainLatest(operation)
 
     return promise
   }
 
-  private async runLatestOperations(operation: QueuedOperation): Promise<void> {
+  async #drainLatest(operation: QueuedOperation): Promise<void> {
     let current: QueuedOperation | undefined = operation
 
     while (current) {
-      await this.runLatestOperation(current)
-      current = this.latestOperation
-      this.latestOperation = undefined
+      await current.run()
+      current = this.#latest
+      this.#latest = undefined
     }
 
-    this.runningLatest = false
+    this.#running = false
   }
 
-  private async runLatestOperation(operation: QueuedOperation): Promise<void> {
-    try {
-      operation.resolve(await operation.task())
-    } catch (error) {
-      operation.reject(error)
-    } finally {
-      this.finishOperation()
-    }
-  }
+  #finish(): void {
+    this.#count--
+    if (this.#count > 0) return
 
-  private finishOperation(): void {
-    this.count--
-    if (this.count > 0) return
-
-    for (const resolve of this.idleWaiters) resolve()
-    this.idleWaiters.clear()
-  }
-}
-
-function createQueuedOperation<T>(task: () => MaybePromise<T>): {
-  operation: QueuedOperation
-  promise: Promise<T>
-} {
-  const future = createFuture<T>()
-
-  return {
-    operation: {
-      task: task as () => MaybePromise<unknown>,
-      resolve: future.resolve as (value: unknown) => void,
-      reject: future.reject,
-    },
-    promise: future.promise,
+    for (const resolve of this.#idleWaiters) resolve()
+    this.#idleWaiters.clear()
   }
 }

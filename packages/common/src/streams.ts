@@ -15,7 +15,7 @@ export interface DuplexStreamOptions<O = unknown, I = O> {
 
 export class DuplexStream<O = unknown, I = O> {
   readonly readable: globalThis.ReadableStream<O>
-  readonly writable!: globalThis.WritableStream<I>
+  readonly writable: globalThis.WritableStream<I>
 
   // writes parked on readable backpressure, released in FIFO order by pull()
   #parkedWrites: (() => void)[] = []
@@ -26,6 +26,10 @@ export class DuplexStream<O = unknown, I = O> {
   #draining = false
 
   constructor(options: DuplexStreamOptions<O, I> = {}) {
+    // the readable controller is the writable's sink; ReadableStream runs
+    // start() synchronously, so it is assigned before the writable is built
+    let controller!: globalThis.ReadableStreamDefaultController<O>
+
     this.readable = new globalThis.ReadableStream<O>(
       {
         cancel: (reason) => {
@@ -35,53 +39,54 @@ export class DuplexStream<O = unknown, I = O> {
           // returned so cancel() awaits async cleanup and surfaces rejections
           return options.cancel?.(reason)
         },
-        start: (controller) => {
-          // @ts-expect-error
-          this.writable = new globalThis.WritableStream<I>(
-            {
-              write: (_chunk) => {
-                let chunk: O
-                if (options.transform) {
-                  try {
-                    chunk = options.transform(_chunk)
-                  } catch (error) {
-                    // reject the write AND error the readable — otherwise a
-                    // pending reader would hang forever on a bad chunk
-                    controller.error(error)
-                    throw error
-                  }
-                } else {
-                  chunk = _chunk as unknown as O
-                }
-                controller.enqueue(chunk)
-                this.#queuedChunks.push(chunk)
-                if (!this.#draining && (controller.desiredSize ?? 1) <= 0) {
-                  return new Promise<void>((resolve) => {
-                    this.#parkedWrites.push(resolve)
-                  })
-                }
-              },
-              abort: (reason) => controller.error(reason),
-              close: () => {
-                options?.close?.()
-                try {
-                  controller.close()
-                } catch {
-                  // Controller may already be closed (e.g., via cancel)
-                }
-              },
-            },
-            options.writableStrategy,
-          )
+        start: (readableController) => {
+          controller = readableController
           options.start?.(controller)
         },
-        pull: (controller) => {
+        pull: () => {
           const consumed = this.#queuedChunks.shift()
           this.#parkedWrites.shift()?.()
           return options.pull?.(controller, consumed)
         },
       },
       options.readableStrategy,
+    )
+
+    this.writable = new globalThis.WritableStream<I>(
+      {
+        write: (input) => {
+          let chunk: O
+          if (options.transform) {
+            try {
+              chunk = options.transform(input)
+            } catch (error) {
+              // reject the write AND error the readable — otherwise a
+              // pending reader would hang forever on a bad chunk
+              controller.error(error)
+              throw error
+            }
+          } else {
+            chunk = input as unknown as O
+          }
+          controller.enqueue(chunk)
+          this.#queuedChunks.push(chunk)
+          if (!this.#draining && (controller.desiredSize ?? 1) <= 0) {
+            return new Promise<void>((resolve) => {
+              this.#parkedWrites.push(resolve)
+            })
+          }
+        },
+        abort: (reason) => controller.error(reason),
+        close: () => {
+          options.close?.()
+          try {
+            controller.close()
+          } catch {
+            // Controller may already be closed (e.g., via cancel)
+          }
+        },
+      },
+      options.writableStrategy,
     )
   }
 
