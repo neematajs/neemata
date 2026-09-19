@@ -41,7 +41,7 @@ afterEach(async () => {
 
 describe('Nuxt development runtime', () => {
   it('serves SSR and API requests while bridging Nuxt logs', async () => {
-    const running = startWorker({ root: fixtureRoot })
+    const running = startWorker({ mode: 'dev', root: fixtureRoot })
     const ready = await waitForReady(running)
 
     expect(ready.upstreams).toHaveLength(2)
@@ -72,7 +72,7 @@ describe('Nuxt development runtime', () => {
   }, 60_000)
 
   it('pushes an HMR update after the client module enters Vite graph', async () => {
-    const running = startWorker({ root: fixtureRoot })
+    const running = startWorker({ mode: 'dev', root: fixtureRoot })
     const ready = await waitForReady(running)
     const url = ready.upstreams[0]?.url
     if (!url) throw new Error('Dev runtime returned no HTTP upstream')
@@ -110,6 +110,7 @@ describe('Nuxt development runtime', () => {
 
   it('serves stripped and direct requests under path routing', async () => {
     const running = startWorker({
+      mode: 'dev',
       root: fixtureRoot,
       base: '/admin/',
       routing: 'path',
@@ -132,7 +133,7 @@ describe('Nuxt development runtime', () => {
   }, 60_000)
 
   it('refuses connections after stop completes', async () => {
-    const running = startWorker({ root: fixtureRoot })
+    const running = startWorker({ mode: 'dev', root: fixtureRoot })
     const ready = await waitForReady(running)
     const url = ready.upstreams[0]?.url
     if (!url) throw new Error('Dev runtime returned no HTTP upstream')
@@ -144,6 +145,7 @@ describe('Nuxt development runtime', () => {
 })
 
 function startWorker(options: {
+  mode: 'dev'
   root: string
   base?: string
   routing?: string

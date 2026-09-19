@@ -1,10 +1,11 @@
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { IncomingMessage } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import type { NeemNuxtRoutingKind } from './types.ts'
+import type { NodeHandler } from './types.ts'
 
 /**
  * Minimal structural view of the Nuxt surface the preset touches. Kit is
@@ -37,10 +38,10 @@ export type NuxtInstance = {
  * feature-detects like nuxt/cli does — `handler` first, then `app`.
  */
 export type NuxtDevServerLike = {
-  handler?: (req: IncomingMessage, res: ServerResponse) => void
+  handler?: NodeHandler
   fetch?: (request: Request) => Promise<Response>
   app?: unknown
-  upgrade?: (req: IncomingMessage, socket: unknown, head: Buffer) => void
+  upgrade?: (req: IncomingMessage, socket: Duplex, head: Buffer) => void
 }
 
 export type NuxtKitModule = {
@@ -70,9 +71,7 @@ export async function importKitFrom(root: string): Promise<NuxtKitModule> {
 }
 
 type H3Module = {
-  toNodeListener: (
-    app: unknown,
-  ) => (req: IncomingMessage, res: ServerResponse) => void
+  toNodeListener: (app: unknown) => NodeHandler
 }
 
 /**
@@ -151,12 +150,20 @@ export async function importConsolaFrom(
   }
 }
 
+function* walkUp(from: string): Generator<string> {
+  let dir = from
+  while (true) {
+    yield dir
+    const parent = dirname(dir)
+    if (parent === dir) return
+    dir = parent
+  }
+}
+
 function findPackageJson(from: string): string | undefined {
-  let dir = dirname(from)
-  while (dir !== dirname(dir)) {
+  for (const dir of walkUp(dirname(from))) {
     const candidate = join(dir, 'package.json')
     if (existsSync(candidate)) return candidate
-    dir = dirname(dir)
   }
   return undefined
 }
@@ -175,22 +182,19 @@ function pickImportCondition(entry: unknown): string | undefined {
 }
 
 function resolveNuxtPackage(root: string): string {
-  let dir = resolve(root)
   let resolutionError: unknown
-  while (true) {
-    const candidate = join(dir, 'node_modules/nuxt/package.json')
-    if (existsSync(candidate)) {
-      try {
-        return realpathSync(candidate)
-      } catch (error) {
-        resolutionError = error
-        break
-      }
-    }
 
-    const parent = dirname(dir)
-    if (parent === dir) break
-    dir = parent
+  for (const dir of walkUp(resolve(root))) {
+    const candidate = join(dir, 'node_modules/nuxt/package.json')
+    if (!existsSync(candidate)) continue
+    try {
+      return realpathSync(candidate)
+    } catch (error) {
+      // A broken physical install is the answer, not a reason to keep
+      // walking into an outer app's node_modules.
+      resolutionError = error
+      break
+    }
   }
 
   // Bun resolves missing packages from its global cache, which would escape
@@ -225,44 +229,4 @@ function resolveNuxtPackage(root: string): string {
 export function shimWorkerUmask(): void {
   const readUmask = process.umask.bind(process)
   process.umask = ((_mask?: unknown) => readUmask()) as typeof process.umask
-}
-
-export function assertRoutingBase(
-  routing: NeemNuxtRoutingKind | undefined,
-  base: string,
-): void {
-  if (routing === 'path' && base === '/') {
-    throw new Error(
-      'Path-routed Neem proxy strips the "/<route>/" prefix upstream, so the Nuxt app must be ' +
-        'configured with a matching app.baseURL: set [base] to the proxy route (e.g. "/admin/") ' +
-        'or use default/subdomain routing',
-    )
-  }
-}
-
-// Nuxt also accepts relative and full-URL baseURLs, but neither can describe
-// an app hosted behind the Neem proxy — reject instead of silently mangling
-// them into broken absolute paths.
-export function normalizeBase(base: string): string {
-  if (base === '/') return '/'
-  if (base === '' || base === './' || !base.startsWith('/')) {
-    throw new Error(
-      `neem-nuxt supports absolute path bases only (e.g. "/admin/"); received [${base}]`,
-    )
-  }
-  return base.endsWith('/') ? base : `${base}/`
-}
-
-/**
- * A path-routed Neem proxy strips the `/<route>/` prefix before forwarding,
- * while Nuxt (with that prefix as app.baseURL) expects it present — nitro's
- * router and Vite's dev middleware both mount under the base. Restore it for
- * proxied requests; direct requests that already carry the base pass through.
- */
-export function restoreBase(req: { url?: string }, base: string): void {
-  const prefix = base.slice(0, -1)
-  const url = req.url ?? '/'
-  if (url !== prefix && !url.startsWith(base)) {
-    req.url = prefix + url
-  }
 }

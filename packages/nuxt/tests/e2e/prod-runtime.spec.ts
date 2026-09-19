@@ -12,7 +12,12 @@ type Runtime = {
   stop: () => Promise<void>
 }
 
-type ProdOptions = { base?: string; routing?: string; assetsDir?: string }
+type ProdOptions = {
+  mode: 'prod'
+  base: string
+  routing?: string
+  assetsDir: string
+}
 type ProdFactory = (
   context: { logger: { info: (message: string) => void } },
   options: ProdOptions,
@@ -27,6 +32,7 @@ afterEach(async () => {
 describe('Nuxt production runtime', () => {
   it('serves static files and falls through non-static requests', async () => {
     const { runtime, url } = await startRuntime({
+      mode: 'prod',
       base: '/',
       assetsDir: '/_nuxt/',
     })
@@ -72,6 +78,7 @@ describe('Nuxt production runtime', () => {
 
   it('strips a default-routing base only for static lookup', async () => {
     const { runtime, url } = await startRuntime({
+      mode: 'prod',
       base: '/admin/',
       assetsDir: '/_nuxt/',
     })
@@ -91,6 +98,7 @@ describe('Nuxt production runtime', () => {
 
   it('restores a path-routing base before the Nitro listener', async () => {
     const { runtime, url } = await startRuntime({
+      mode: 'prod',
       base: '/admin/',
       routing: 'path',
       assetsDir: '/_nuxt/',
@@ -106,7 +114,14 @@ describe('Nuxt production runtime', () => {
 
   it('explains when the Nitro server artifact is missing', async () => {
     const { factory } = await createArtifact(false)
-    const runtime = factory({ logger: { info: () => {} } }, {})
+    const runtime = factory(
+      { logger: { info: () => {} } },
+      {
+        mode: 'prod',
+        base: '/',
+        assetsDir: '/_nuxt/',
+      },
+    )
     cleanups.push(() => runtime.stop())
 
     await expect(runtime.start()).rejects.toThrow(

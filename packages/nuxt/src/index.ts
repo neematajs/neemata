@@ -2,7 +2,7 @@ import type { NeemMarkedRuntimeDeclaration } from '@nmtjs/neem'
 import { defineRuntime } from '@nmtjs/neem'
 
 import type { NeemNuxtRuntimeOptions } from './types.ts'
-import { normalizeBase } from './nuxt-loader.ts'
+import { normalizeBase } from './base.ts'
 import { neemNuxtArtifactPlugin } from './plugin.ts'
 
 export type {
@@ -44,8 +44,8 @@ export function createNuxtRuntime(
   }
 
   return defineRuntime({
-    ...(options.name ? { name: options.name } : {}),
-    ...(options.proxy ? { proxy: options.proxy } : {}),
+    name: options.name,
+    proxy: options.proxy,
     planner: '@nmtjs/nuxt/neem/planner',
     worker: {
       entry: '@nmtjs/nuxt/neem/worker',

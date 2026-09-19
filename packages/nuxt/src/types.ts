@@ -1,10 +1,15 @@
+import type { IncomingMessage, ServerResponse } from 'node:http'
+
 import type {
+  NeemProxyRoutingOptions,
   NeemRuntime,
   NeemRuntimeProxyConfig,
   NeemRuntimeWorkerContext,
 } from '@nmtjs/neem'
 
-export type NeemNuxtRoutingKind = 'path' | 'subdomain' | 'default'
+export type NeemNuxtRoutingKind = NeemProxyRoutingOptions['type']
+
+export type NodeHandler = (req: IncomingMessage, res: ServerResponse) => void
 
 export type NeemNuxtRuntimeOptions = {
   /** Absolute path to the Nuxt app root (the directory with nuxt.config). */
@@ -21,20 +26,35 @@ export type NeemNuxtRuntimeOptions = {
 }
 
 /**
- * Options baked into the worker artifact via the `neem-nuxt:options` virtual
- * module. The plugin emits mode-specific values: the dev artifact gets the
- * app root (it loads the app itself), the prod artifact only gets the
- * resolved base and assets dir — baking the build machine's absolute root
- * into production would cost artifact-hash stability and leak local paths
- * for no use.
+ * Dev-artifact options: the dev implementation loads the app itself, so it
+ * needs the app root and reads the effective base off the loaded instance.
  */
-export type NeemNuxtBakedOptions = {
-  root?: string
+export type NeemNuxtDevOptions = {
+  mode: 'dev'
+  root: string
   base?: string
   routing?: NeemNuxtRoutingKind
-  /** Resolved `app.buildAssetsDir` — the immutable-cache asset prefix. */
-  assetsDir?: string
 }
+
+/**
+ * Prod-artifact options: base and assets dir are resolved at build time —
+ * baking the build machine's absolute root into production would cost
+ * artifact-hash stability and leak local paths for no use.
+ */
+export type NeemNuxtProdOptions = {
+  mode: 'prod'
+  base: string
+  routing?: NeemNuxtRoutingKind
+  /** Resolved `app.buildAssetsDir` — the immutable-cache asset prefix. */
+  assetsDir: string
+}
+
+/**
+ * Options baked into the worker artifact via the `neem-nuxt:options` virtual
+ * module. The plugin emits the variant that matches the implementation it
+ * resolved behind `neem-nuxt:impl`.
+ */
+export type NeemNuxtBakedOptions = NeemNuxtDevOptions | NeemNuxtProdOptions
 
 export type NeemNuxtWorkerContext = NeemRuntimeWorkerContext<
   unknown,
@@ -45,7 +65,6 @@ export type NeemNuxtWorkerContext = NeemRuntimeWorkerContext<
  * Shape shared by the dev and prod implementations behind the
  * `neem-nuxt:impl` virtual module, so the worker entry stays mode-agnostic.
  */
-export type NeemNuxtRuntimeFactory = (
-  ctx: NeemNuxtWorkerContext,
-  options: NeemNuxtBakedOptions,
-) => NeemRuntime
+export type NeemNuxtRuntimeFactory<
+  T extends NeemNuxtBakedOptions = NeemNuxtBakedOptions,
+> = (ctx: NeemNuxtWorkerContext, options: T) => NeemRuntime

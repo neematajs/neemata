@@ -1,5 +1,4 @@
-import type { IncomingMessage, Server, ServerResponse } from 'node:http'
-import type { Duplex } from 'node:stream'
+import type { Server } from 'node:http'
 import { createServer } from 'node:http'
 
 import type {
@@ -7,18 +6,19 @@ import type {
   ConsolaLogObject,
   NuxtInstance,
 } from '../nuxt-loader.ts'
-import type { NeemNuxtRuntimeFactory, NeemNuxtWorkerContext } from '../types.ts'
+import type {
+  NeemNuxtRuntimeFactory,
+  NeemNuxtWorkerContext,
+  NodeHandler,
+} from '../types.ts'
+import { assertRoutingBase, normalizeBase, restoreBase } from '../base.ts'
 import {
-  assertRoutingBase,
   importConsolaFrom,
   importH3From,
   importKitFrom,
-  normalizeBase,
-  restoreBase,
   shimWorkerUmask,
 } from '../nuxt-loader.ts'
-
-type NodeHandler = (req: IncomingMessage, res: ServerResponse) => void
+import { closeServer, listenLoopback } from '../server.ts'
 
 /**
  * Development implementation behind `neem-nuxt:impl`: runs Nuxt's dev
@@ -34,21 +34,18 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
   let nuxt: NuxtInstance | undefined
   let server: Server | undefined
   let stopping = false
-  let failListener: (error: Error) => void = () => {}
-  const finished = new Promise<void>((_resolve, reject) => {
-    failListener = reject
-  })
+  const { promise: finished, reject: fail } = Promise.withResolvers<void>()
   void finished.catch(() => {})
 
   return {
     finished,
     async start() {
-      const root = options.root
-      if (!root) {
+      if (options.mode !== 'dev') {
         throw new Error(
           'Nuxt dev runtime options are missing the app root; the artifact was not produced by "neem dev"',
         )
       }
+      const { root } = options
 
       shimWorkerUmask()
 
@@ -77,31 +74,15 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       }
       const httpServer = createServer((req, res) => handler(req, res))
       server = httpServer
-      await new Promise<void>((resolve, reject) => {
-        // Only listener on the server at this point; dropped once bound.
-        httpServer.once('error', reject)
-        httpServer.listen(0, '127.0.0.1', () => {
-          httpServer.removeAllListeners('error')
-          resolve()
-        })
-      })
+
+      const port = await listenLoopback(httpServer)
       // The startup rejection above is settled; a late socket error must fail
       // the runtime instead of crashing the worker as an uncaught exception.
       httpServer.on('error', (error) => {
-        if (!stopping) failListener(error)
+        if (!stopping) fail(error)
       })
-      const address = httpServer.address()
-      if (!address || typeof address === 'string') {
-        throw new Error('Nuxt dev server listener did not report a tcp address')
-      }
-      const url = `http://127.0.0.1:${address.port}`
-
-      // Handing Nuxt the worker-owned address before ready() prevents nitro
-      // from creating its own listener.
-      instance.options.devServer.host = '127.0.0.1'
-      instance.options.devServer.port = address.port
-      instance.options.devServer.url = url
-      instance.options.devServer.https = false
+      const url = `http://127.0.0.1:${port}`
+      pinDevServerAddress(instance, port, url)
 
       await instance.ready()
 
@@ -113,9 +94,7 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       // — surface them as a runtime failure so the host restart policy
       // recycles the worker with a fresh artifact.
       instance.hook('restart', () => {
-        if (!stopping) {
-          failListener(new Error('Nuxt requested a dev server restart'))
-        }
+        if (!stopping) fail(new Error('Nuxt requested a dev server restart'))
       })
 
       // Sets nuxt._devServerListener in core, which Vite's HMR attaches to —
@@ -124,31 +103,21 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
 
       await kit.buildNuxt(instance)
 
-      let ready = await resolveDevHandler(instance, root)
+      const built = await resolveDevHandler(instance, root)
       if (options.routing === 'path') {
-        const inner = ready
-        ready = (req, res) => {
+        handler = (req, res) => {
           restoreBase(req, base)
-          inner(req, res)
+          built(req, res)
         }
         // Vite's HMR upgrade handler checks the request path against the base
         // too, and it reads req.url before our 'upgrade' listener below —
         // prependListener keeps the restore ahead of it.
         httpServer.prependListener('upgrade', (req) => restoreBase(req, base))
+      } else {
+        handler = built
       }
-      handler = ready
 
-      // HMR upgrades ride Vite's own listener (attached via the listen hook);
-      // everything else (e.g. app-level WebSocket routes) goes to nitro.
-      const hmrPrefix = joinBasePath(base, instance.options.app.buildAssetsDir)
-      httpServer.on('upgrade', (req, socket, head) => {
-        if ((req.url ?? '/').startsWith(hmrPrefix)) return
-        if (instance.server?.upgrade) {
-          instance.server.upgrade(req, socket as Duplex, head)
-        } else {
-          socket.destroy()
-        }
-      })
+      attachUpgradeRouting(httpServer, instance, base)
 
       ctx.logger.info(`Nuxt dev server listening at ${url}`)
       // Same port twice on purpose: HTTP and the HMR WebSocket share the
@@ -168,13 +137,23 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       // Nuxt first: closing watchers/vite before the listener avoids the
       // fsevents teardown assert observed on abrupt exits.
       await instance?.close().catch(() => {})
-      await new Promise<void>((resolve) => {
-        if (!httpServer) return resolve()
-        httpServer.close(() => resolve())
-        httpServer.closeAllConnections()
-      })
+      await closeServer(httpServer)
     },
   }
+}
+
+// Handing Nuxt the worker-owned address before ready() prevents nitro from
+// creating its own listener.
+function pinDevServerAddress(
+  nuxt: NuxtInstance,
+  port: number,
+  url: string,
+): void {
+  const { devServer } = nuxt.options
+  devServer.host = '127.0.0.1'
+  devServer.port = port
+  devServer.url = url
+  devServer.https = false
 }
 
 async function resolveDevHandler(
@@ -191,10 +170,30 @@ async function resolveDevHandler(
   }
   if (server && typeof server.fetch === 'function') {
     throw new Error(
-      'Nuxt dev server exposes a fetch-only shape (nitro v3); the neem-nuxt prototype supports nitropack v2 (handler/app) only',
+      'Nuxt dev server exposes a fetch-only shape (nitro v3); neem-nuxt currently supports nitropack v2 (handler/app) only',
     )
   }
   throw new Error('Nuxt dev server exposes none of handler/app/fetch')
+}
+
+/**
+ * HMR upgrades ride Vite's own listener (attached via the listen hook);
+ * everything else (e.g. app-level WebSocket routes) goes to nitro.
+ */
+function attachUpgradeRouting(
+  server: Server,
+  nuxt: NuxtInstance,
+  base: string,
+): void {
+  const hmrPrefix = joinBasePath(base, nuxt.options.app.buildAssetsDir)
+  server.on('upgrade', (req, socket, head) => {
+    if ((req.url ?? '/').startsWith(hmrPrefix)) return
+    if (nuxt.server?.upgrade) {
+      nuxt.server.upgrade(req, socket, head)
+    } else {
+      socket.destroy()
+    }
+  })
 }
 
 /**
@@ -236,6 +235,11 @@ function sanitizeDevViteOptions(
   }
 }
 
+// consola's numeric level scale
+const ERROR_LEVEL = 0
+const WARN_LEVEL = 1
+const DEBUG_LEVEL = 4
+
 /**
  * Routes consola output (nuxt + nitro + the vite-builder's vite-log bridge)
  * through the Neem logger so dev logs are uniformly formatted and
@@ -254,9 +258,9 @@ function bridgeConsola(
     {
       log(logObj: ConsolaLogObject) {
         const message = formatConsolaArgs(logObj)
-        if (logObj.level <= 0) logger.error(message)
-        else if (logObj.level === 1) logger.warn(message)
-        else if (logObj.level >= 4) logger.trace(message)
+        if (logObj.level <= ERROR_LEVEL) logger.error(message)
+        else if (logObj.level === WARN_LEVEL) logger.warn(message)
+        else if (logObj.level >= DEBUG_LEVEL) logger.trace(message)
         else logger.debug(message)
       },
     },

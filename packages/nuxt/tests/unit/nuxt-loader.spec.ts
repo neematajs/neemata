@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   assertRoutingBase,
+  normalizeBase,
+  restoreBase,
+} from '../../src/base.ts'
+import {
   importConsolaFrom,
   importH3From,
   importKitFrom,
-  normalizeBase,
-  restoreBase,
 } from '../../src/nuxt-loader.ts'
 
 const tempDirs: string[] = []
@@ -104,7 +106,7 @@ try {
       const source = pathToFileURL(
         resolve(import.meta.dirname, '../../src/nuxt-loader.ts'),
       ).href
-      const env = {
+      const env: NodeJS.ProcessEnv = {
         ...process.env,
         NODE_PATH: resolve(import.meta.dirname, '../../node_modules'),
       }

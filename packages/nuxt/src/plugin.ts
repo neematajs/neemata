@@ -2,15 +2,12 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { RolldownPlugin, RolldownPluginOption } from '@nmtjs/neem'
+import type { RolldownPlugin } from '@nmtjs/neem'
 
-import type { NeemNuxtRoutingKind } from './types.ts'
+import type { NeemNuxtBakedOptions, NeemNuxtRoutingKind } from './types.ts'
+import { assertRoutingBase, normalizeBase } from './base.ts'
 import { APP_DIR } from './constants.ts'
-import {
-  assertRoutingBase,
-  importKitFrom,
-  normalizeBase,
-} from './nuxt-loader.ts'
+import { importKitFrom } from './nuxt-loader.ts'
 
 const VIRTUAL_OPTIONS = 'neem-nuxt:options'
 const RESOLVED_OPTIONS = '\0neem-nuxt:options'
@@ -20,11 +17,6 @@ export type NeemNuxtArtifactPluginOptions = {
   root: string
   base?: string
   routing?: NeemNuxtRoutingKind
-}
-
-type ResolvedAppInfo = {
-  base: string
-  assetsDir: string
 }
 
 /**
@@ -40,26 +32,13 @@ type ResolvedAppInfo = {
  */
 export function neemNuxtArtifactPlugin(
   options: NeemNuxtArtifactPluginOptions,
-): RolldownPluginOption {
+): RolldownPlugin {
   // createNuxtRuntime already normalizes, but the plugin is exported on its
   // own — normalize here too so restoreBase's trailing-slash invariant holds
   // for direct consumers.
   const explicitBase = options.base ? normalizeBase(options.base) : undefined
-  // Needed twice in a build (baked options + nitro build); resolve once.
-  let appInfo: Promise<ResolvedAppInfo> | undefined
-  const resolveAppInfo = () => {
-    appInfo ??= (async () => {
-      const kit = await importKitFrom(options.root)
-      const config = await kit.loadNuxtConfig({ cwd: options.root })
-      return {
-        base: explicitBase ?? normalizeBase(config.app?.baseURL ?? '/'),
-        assetsDir: config.app?.buildAssetsDir ?? '/_nuxt/',
-      }
-    })()
-    return appInfo
-  }
 
-  const plugin: RolldownPlugin = {
+  return {
     name: 'neem-nuxt:artifact',
     resolveId(id) {
       if (id === VIRTUAL_OPTIONS) return RESOLVED_OPTIONS
@@ -72,14 +51,22 @@ export function neemNuxtArtifactPlugin(
       if (id !== RESOLVED_OPTIONS) return null
       if (this.meta.watchMode) {
         return bakedOptionsModule({
+          mode: 'dev',
           root: options.root,
           base: explicitBase,
           routing: options.routing,
         })
       }
-      const { base, assetsDir } = await resolveAppInfo()
+      const kit = await importKitFrom(options.root)
+      const config = await kit.loadNuxtConfig({ cwd: options.root })
+      const base = explicitBase ?? normalizeBase(config.app?.baseURL ?? '/')
       assertRoutingBase(options.routing, base)
-      return bakedOptionsModule({ base, routing: options.routing, assetsDir })
+      return bakedOptionsModule({
+        mode: 'prod',
+        base,
+        routing: options.routing,
+        assetsDir: config.app?.buildAssetsDir ?? '/_nuxt/',
+      })
     },
     async writeBundle(output) {
       if (this.meta.watchMode) return
@@ -88,7 +75,6 @@ export function neemNuxtArtifactPlugin(
       }
 
       const kit = await importKitFrom(options.root)
-      const { base } = await resolveAppInfo()
       const appOutDir = resolve(output.dir, APP_DIR)
 
       // `node` (node-listener) is the embeddable nitro preset: its entry
@@ -100,7 +86,7 @@ export function neemNuxtArtifactPlugin(
         overrides: {
           telemetry: false,
           nitro: { preset: 'node', output: { dir: appOutDir } },
-          ...(explicitBase ? { app: { baseURL: base } } : {}),
+          ...(explicitBase ? { app: { baseURL: explicitBase } } : {}),
         },
       })
       try {
@@ -119,15 +105,9 @@ export function neemNuxtArtifactPlugin(
       }
     },
   }
-  return plugin
 }
 
-function bakedOptionsModule(options: {
-  root?: string
-  base?: string
-  routing?: NeemNuxtRoutingKind
-  assetsDir?: string
-}): string {
+function bakedOptionsModule(options: NeemNuxtBakedOptions): string {
   return `export default ${JSON.stringify(options)}`
 }
 
