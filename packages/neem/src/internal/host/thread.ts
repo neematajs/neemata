@@ -1,7 +1,7 @@
 import type { MessagePort as NodeMessagePort } from 'node:worker_threads'
 import { MessageChannel, Worker } from 'node:worker_threads'
 
-import type { MaybePromise } from '@nmtjs/common'
+import type { Future, MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 import { createFuture } from '@nmtjs/common'
 
@@ -19,6 +19,7 @@ import type { RuntimeWorkerData, WorkerMessage } from '../worker/protocol.ts'
 import { NeemWorkerError } from '../../shared/errors.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
+import { STOP_TIMEOUT_MS } from '../threads.ts'
 import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 
@@ -38,16 +39,16 @@ export type ThreadControllerOptions = {
 }
 
 const STARTUP_TIMEOUT_MS = 30_000
-const STOP_TIMEOUT_MS = 5_000
 
 export class ThreadController {
   readonly id: string
   readonly runtimeName: string
   readonly name: string
-  readonly artifactId: string
   readonly artifact: NeemResolvedArtifact
   readonly port: NodeMessagePort
 
+  private readonly workerData: RuntimeWorkerData
+  private readonly logger: Logger
   private worker: Worker | undefined
   private state: NeemWorkerState = 'idle'
   private failureCount = 0
@@ -56,12 +57,10 @@ export class ThreadController {
   private stoppedAt: number | undefined
   private lastError: Error | undefined
   private upstreams: readonly NeemRuntimeUpstream[] = []
-  private ready: ReturnType<typeof createFuture<void>> | undefined
-  // ready stays assigned through hook cleanup; fail() must know if startup can still reject.
-  private readySettled = false
-  private exited: ReturnType<typeof createFuture<void>> | undefined
-  private stopping = false
-  private readonly logger: Logger
+  // Held only while startup can still be settled; fail() uses its presence to
+  // decide between rejecting start() and reporting a post-ready failure.
+  private startup: Future<void> | undefined
+  private exited: Future<void> | undefined
 
   constructor(private readonly options: ThreadControllerOptions) {
     const channel = new MessageChannel()
@@ -69,7 +68,6 @@ export class ThreadController {
     this.runtimeName = options.runtimeName
     this.name = options.plan.name
     this.artifact = options.plan.artifact
-    this.artifactId = options.plan.artifact.id
     this.id = `${options.runtimeName}:${options.plan.name}:${options.index}`
     this.logger = childLogger(
       options.snapshot.logger,
@@ -85,11 +83,7 @@ export class ThreadController {
       logger: options.snapshot.manifest.config.logger,
       port: channel.port2,
     }
-    this.transferPort = channel.port2
   }
-
-  private readonly workerData: RuntimeWorkerData
-  private readonly transferPort: NodeMessagePort
 
   getHandle(): NeemRuntimeThreadHandle {
     return { name: this.name, port: this.port }
@@ -112,24 +106,22 @@ export class ThreadController {
     return this.upstreams
   }
 
+  // Single use: stop() closes port1 and port2 is transferred on the first
+  // spawn, so a stopped controller can never be started again.
   async start(): Promise<void> {
-    if (this.state === 'ready') return
-    if (this.worker) throw new Error(`Worker [${this.name}] already started`)
+    if (this.state !== 'idle') {
+      throw new Error(`Worker [${this.name}] already started`)
+    }
 
-    this.stopping = false
     await this.callWorkerHook('worker:start')
     // stop() may run while a startup hook is still pending.
-    if (this.stopping) return
+    if (this.state !== 'idle') return
     this.state = 'starting'
     this.startedAt = Date.now()
-    this.readyAt = undefined
-    this.stoppedAt = undefined
-    this.lastError = undefined
-    this.logger.trace({ artifactId: this.artifactId }, 'Neem worker starting')
+    this.logger.trace({ artifactId: this.artifact.id }, 'Neem worker starting')
 
-    const ready = createFuture<void>()
-    this.ready = ready
-    this.readySettled = false
+    const startup = createFuture<void>()
+    this.startup = startup
     this.exited = createFuture<void>()
     const timer = setTimeout(() => {
       this.fail(
@@ -141,7 +133,7 @@ export class ThreadController {
 
     this.worker = new Worker(this.options.snapshot.workerEntry, {
       workerData: this.workerData,
-      transferList: [this.transferPort],
+      transferList: [this.workerData.port],
       env: createRuntimeEnv({
         manifest: this.options.snapshot.manifest,
         runtimeName: this.runtimeName,
@@ -153,41 +145,47 @@ export class ThreadController {
     this.worker.on('exit', (code) => this.handleExit(code))
 
     try {
-      await ready.promise
+      await startup.promise
       await this.callWorkerHook('worker:ready')
-      if (this.hasFailed() && this.lastError) throw this.lastError
+      // Read through getState(): the worker event handlers move the state
+      // while start() awaits, which narrowing here cannot see.
+      if (this.getState() === 'failed' && this.lastError) throw this.lastError
       this.logger.trace(
         { upstreams: this.upstreams.length },
         'Neem worker ready',
       )
     } catch (error) {
       const normalized = normalizeError(error)
-      const handledFailure = this.hasFailed() && this.readySettled
-      if (!this.hasFailed()) this.markFailed(normalized)
-      if (!handledFailure) await this.callWorkerFailHook(normalized)
+      const failed = this.getState() === 'failed'
+      // fail() already reported a failure that arrived after worker:ready.
+      const reported = failed && this.readyAt !== undefined
+      if (!failed) this.markFailed(normalized)
+      if (!reported) await this.callWorkerFailHook(normalized)
       await this.terminateWorker()
       throw normalized
     } finally {
       clearTimeout(timer)
-      this.ready = undefined
-      this.readySettled = false
     }
   }
 
   async stop(): Promise<void> {
-    this.stopping = true
     const worker = this.worker
-    if (!worker || this.state === 'stopped') {
+    const done = !worker || this.state === 'stopped'
+    this.state = 'stopping'
+    if (done) {
       this.markStopped()
       return
     }
 
-    this.state = 'stopping'
-    this.ready?.reject(new Error(`Worker [${this.name}] stopped before ready`))
+    const startup = this.startup
+    this.startup = undefined
+    startup?.reject(new Error(`Worker [${this.name}] stopped before ready`))
     this.logger.trace('Neem worker stopping')
     try {
       worker.postMessage({ type: 'stop' })
-    } catch {}
+    } catch {
+      // The worker may already be gone; the exit race below settles either way.
+    }
 
     let exited = false
     try {
@@ -215,7 +213,7 @@ export class ThreadController {
 
   private handleMessage(message: WorkerMessage): void {
     if (message.type === 'ready') {
-      this.upstreams = message.data.upstreams ?? []
+      this.upstreams = message.data.upstreams
       this.markReady()
       return
     }
@@ -236,7 +234,7 @@ export class ThreadController {
 
   private handleExit(code: number): void {
     this.exited?.resolve()
-    if (this.stopping || this.state === 'stopped') {
+    if (this.state === 'stopping' || this.state === 'stopped') {
       this.markStopped()
       return
     }
@@ -249,8 +247,9 @@ export class ThreadController {
     if (this.state !== 'starting') return
     this.state = 'ready'
     this.readyAt = Date.now()
-    this.readySettled = true
-    this.ready?.resolve()
+    const startup = this.startup
+    this.startup = undefined
+    startup?.resolve()
   }
 
   private markStopped(): void {
@@ -263,8 +262,10 @@ export class ThreadController {
 
     this.markFailed(error)
 
-    if (this.ready && !this.readySettled) {
-      this.ready.reject(error)
+    const startup = this.startup
+    if (startup) {
+      this.startup = undefined
+      startup.reject(error)
       return
     }
 
@@ -279,15 +280,11 @@ export class ThreadController {
     this.logger.error({ err: error }, 'Neem worker failed')
   }
 
-  private hasFailed(): boolean {
-    return this.state === 'failed'
-  }
-
   private getWorkerHealth(): NeemManagedWorkerHealth {
     return {
       id: this.id,
       name: this.name,
-      artifactId: this.artifactId,
+      artifactId: this.artifact.id,
       state: this.state,
       failureCount: this.failureCount,
       startedAt: this.startedAt,
@@ -309,7 +306,7 @@ export class ThreadController {
         mode: this.options.snapshot.mode,
         id: this.id,
         name: this.name,
-        artifactId: this.artifactId,
+        artifactId: this.artifact.id,
         owner: this.artifact.owner,
         error,
       },

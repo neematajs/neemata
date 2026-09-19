@@ -22,18 +22,10 @@ export type RuntimeWorkerData = {
 
 export type ParentMessage = { type: 'stop' }
 
-export type WorkerErrorOrigin = NeemWorkerErrorOrigin
-
-export type ReadyMessage = {
-  type: 'ready'
-  data: { upstreams?: readonly NeemRuntimeUpstream[] }
-}
-
-export type ErrorMessage = {
-  type: 'error'
-  data: SerializedError & { origin: WorkerErrorOrigin }
-}
-
-export type StoppedMessage = { type: 'stopped' }
-
-export type WorkerMessage = ReadyMessage | ErrorMessage | StoppedMessage
+export type WorkerMessage =
+  | { type: 'ready'; data: { upstreams: readonly NeemRuntimeUpstream[] } }
+  | {
+      type: 'error'
+      data: SerializedError & { origin: NeemWorkerErrorOrigin }
+    }
+  | { type: 'stopped' }

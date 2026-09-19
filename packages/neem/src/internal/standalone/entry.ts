@@ -43,7 +43,6 @@ export async function startStandalone(
       manifestFile,
       logger,
     }),
-    failOnWorkerError: true,
     onFailure(error) {
       closed.reject(error)
     },

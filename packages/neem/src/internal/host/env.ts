@@ -1,6 +1,6 @@
 import type { Manifest } from '../manifest/manifest.ts'
 
-export type CreateRuntimeEnvOptions = {
+type CreateRuntimeEnvOptions = {
   manifest: Manifest
   runtimeName: string
   executionEnv?: NodeJS.ProcessEnv

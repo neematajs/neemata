@@ -1,6 +1,7 @@
 import { parentPort } from 'node:worker_threads'
 
 import type { RuntimeRequest, RuntimeResponse } from './protocol.ts'
+import { closeAndExit } from '../threads.ts'
 import { serializeError } from '../utils.ts'
 import { RuntimeService } from './runtime.ts'
 
@@ -9,7 +10,7 @@ if (!parentPort) {
 }
 
 const port = parentPort
-const service = new RuntimeService()
+let service: RuntimeService | undefined
 
 function post(message: RuntimeResponse): void {
   port.postMessage(message)
@@ -19,24 +20,19 @@ async function handle(request: RuntimeRequest): Promise<void> {
   try {
     switch (request.type) {
       case 'start': {
-        const health = await service.start({
+        service = new RuntimeService({
           mode: request.mode,
           outDir: request.outDir,
           env: request.env,
-          manifestFile: request.manifestFile,
           runtimes: request.runtimes,
           emit: (event) => post({ type: 'event', event }),
         })
-        post({ id: request.id, type: 'result', data: { health } })
-        return
-      }
-      case 'reload': {
-        const health = await service.reload(request.manifestFile)
+        const health = await service.start(request.manifestFile)
         post({ id: request.id, type: 'result', data: { health } })
         return
       }
       case 'reload-runtime': {
-        const health = await service.reloadRuntime(
+        const health = await requireService().reloadRuntime(
           request.runtimeName,
           request.manifestFile,
         )
@@ -44,17 +40,20 @@ async function handle(request: RuntimeRequest): Promise<void> {
         return
       }
       case 'stop':
-        await service.stop()
+        await service?.stop()
+        service = undefined
         post({ id: request.id, type: 'result' })
         post({ type: 'event', event: { type: 'stopped' } })
-        port.close()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        process.exit(0)
-        return
+        return closeAndExit(port)
     }
   } catch (error) {
     post({ id: request.id, type: 'error', error: serializeError(error) })
   }
+}
+
+function requireService(): RuntimeService {
+  if (!service) throw new Error('Neem runtime service is not started')
+  return service
 }
 
 port.on('message', (message: RuntimeRequest) => {

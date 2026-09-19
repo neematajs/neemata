@@ -7,6 +7,7 @@ import type {
   NeemRuntimeThreadHandle,
 } from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
+import type { RpcResponse } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type HostRunnerData = {
@@ -28,12 +29,11 @@ export type HostRunnerCommand =
 export type HostRunnerRequest = HostRunnerCommand & { id: number }
 
 export type HostRunnerResponse =
-  | { id: number; type: 'result'; data?: HostRunnerResult }
-  | { id: number; type: 'error'; error: SerializedError }
+  | RpcResponse<HostRunnerResult>
   | { type: 'ready' }
   | { type: 'failure'; error: SerializedError }
 
-export type HostRunnerResult = { plan?: NeemRuntimePlan }
+export type HostRunnerResult = { plan: NeemRuntimePlan }
 
 export function getTransferList(
   request: HostRunnerCommand,

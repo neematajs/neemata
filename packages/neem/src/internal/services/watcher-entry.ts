@@ -1,6 +1,7 @@
 import { parentPort } from 'node:worker_threads'
 
 import type { WatcherRequest, WatcherResponse } from './protocol.ts'
+import { closeAndExit } from '../threads.ts'
 import { serializeError } from '../utils.ts'
 import { WatcherService } from './watcher.ts'
 
@@ -33,10 +34,7 @@ async function handle(request: WatcherRequest): Promise<void> {
         await service?.stop()
         service = undefined
         post({ id: request.id, type: 'result' })
-        port.close()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        process.exit(0)
-        return
+        return closeAndExit(port)
     }
   } catch (error) {
     post({ id: request.id, type: 'error', error: serializeError(error) })

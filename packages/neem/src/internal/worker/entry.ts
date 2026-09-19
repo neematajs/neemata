@@ -2,16 +2,17 @@ import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
 import type { Logger } from '@nmtjs/core'
 
+import type { NeemWorkerErrorOrigin } from '../../shared/errors.ts'
 import type { NeemRuntime, NeemRuntimeWorker } from '../../shared/types.ts'
 import type {
   ParentMessage,
   RuntimeWorkerData,
-  WorkerErrorOrigin,
   WorkerMessage,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
+import { closeAndExit } from '../threads.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
 
 if (!parentPort) {
@@ -22,15 +23,16 @@ const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
 
 let runtime: NeemRuntime | undefined
+// The crash handlers below are installed before the logger can be resolved.
 let logger: Logger | undefined
 let started = false
 let stopRequested = false
 
-function postMessage(message: WorkerMessage): void {
+function post(message: WorkerMessage): void {
   port.postMessage(message)
 }
 
-function reportError(value: unknown, origin: WorkerErrorOrigin): void {
+function reportError(value: unknown, origin: NeemWorkerErrorOrigin): void {
   // This thread is the only place the real value still exists, so it is
   // logged here in full; the parent only receives a rendered summary.
   if (value instanceof Error) {
@@ -38,14 +40,13 @@ function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   } else {
     logger?.error({ err: value }, `Neem runtime ${origin} error`)
   }
-  postMessage({ type: 'error', data: { ...serializeError(value), origin } })
+  post({ type: 'error', data: { ...serializeError(value), origin } })
 }
 
-async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
-  logger = await resolveWorkerLogger(
-    data,
-    runtimeLabel(data.runtimeName, data.name),
-  )
+async function createRuntime(
+  data: RuntimeWorkerData,
+  logger: Logger,
+): Promise<NeemRuntime> {
   logger.trace(
     { artifactId: data.artifact.id, file: data.artifact.file },
     'Neem runtime worker initializing',
@@ -71,22 +72,9 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   return created
 }
 
-async function resolveWorkerLogger(
-  data: RuntimeWorkerData,
-  label: string,
-): Promise<Logger> {
-  return childLogger(
-    await resolveManifestLogger(data.logger, {
-      mode: data.mode,
-      outDir: data.outDir,
-    }),
-    label,
-  )
-}
-
-async function stopRuntime(options: { force?: boolean } = {}): Promise<void> {
-  if (runtime && (started || options.force)) {
-    logger?.trace({ force: options.force }, 'Stopping Neem runtime worker')
+async function stopRuntime(): Promise<void> {
+  if (runtime && started) {
+    logger?.trace('Stopping Neem runtime worker')
     await runtime.stop()
     logger?.trace('Neem runtime worker stopped')
   }
@@ -97,11 +85,8 @@ async function stopAndExit(): Promise<void> {
   stopRequested = true
   try {
     await stopRuntime()
-    postMessage({ type: 'stopped' })
-    workerData.port.close()
-    port.close()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    process.exit(0)
+    post({ type: 'stopped' })
+    await closeAndExit(workerData.port, port)
   } catch (error) {
     reportError(error, 'runtime')
     process.exit(1)
@@ -126,7 +111,7 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
 }
 
 port.on('message', (message: ParentMessage) => {
-  if (message?.type === 'stop') void stopAndExit()
+  if (message.type === 'stop') void stopAndExit()
 })
 
 process.on('uncaughtException', (error) => {
@@ -141,28 +126,37 @@ process.on('unhandledRejection', (error) => {
 
 async function main(): Promise<void> {
   try {
-    runtime = await createRuntime(workerData)
+    logger = childLogger(
+      await resolveManifestLogger(workerData.logger, {
+        mode: workerData.mode,
+        outDir: workerData.outDir,
+      }),
+      runtimeLabel(workerData.runtimeName, workerData.name),
+    )
+    runtime = await createRuntime(workerData, logger)
   } catch (error) {
     reportError(error, 'bootstrap')
     process.exit(1)
   }
 
   try {
-    logger?.trace('Starting Neem runtime worker')
+    logger.trace('Starting Neem runtime worker')
     const result = await runtime.start()
     const upstreams = parseRuntimeStartResult(result)
     started = true
-    logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
-    postMessage({ type: 'ready', data: { upstreams } })
+    logger.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
+    post({ type: 'ready', data: { upstreams } })
     void watchRuntimeFinished(runtime)
   } catch (error) {
-    await stopRuntime({ force: true }).catch((cleanupError) => {
-      logger?.warn(
+    try {
+      await runtime.stop()
+    } catch (cleanupError) {
+      logger.warn(
         new Error('Neem runtime cleanup after start error failed', {
           cause: normalizeError(cleanupError),
         }),
       )
-    })
+    }
     reportError(error, 'start')
     process.exit(1)
   }

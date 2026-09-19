@@ -13,6 +13,14 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import { childLogger } from '../logger.ts'
 import { normalizeError } from '../utils.ts'
 
+export type RuntimeUpstreams = {
+  runtimeName: string
+  upstreams: readonly NeemRuntimeUpstream[]
+}
+
+// Hand-rolled instead of `import type { Proxy } from '@nmtjs/proxy'`: the peer
+// is optional, and the emitted .d.ts files must not force consumers that never
+// enable the proxy to install it.
 export type NativeProxy = {
   start: () => Promise<void>
   stop: () => Promise<void>
@@ -81,7 +89,7 @@ export class ProxyController {
 
     try {
       for (const upstream of this.desired.values()) {
-        await this.addUpstream(upstream)
+        await this.apply('add', upstream)
       }
       await this.proxy.start()
       this.running = true
@@ -192,8 +200,8 @@ export class ProxyController {
 
     await this.mutations
       .run(async () => {
-        for (const upstream of removals) await this.removeUpstream(upstream)
-        for (const upstream of additions) await this.addUpstream(upstream)
+        for (const upstream of removals) await this.apply('remove', upstream)
+        for (const upstream of additions) await this.apply('add', upstream)
       })
       .catch((error) => {
         const normalized = normalizeError(error)
@@ -206,65 +214,34 @@ export class ProxyController {
       })
   }
 
-  private async addUpstream(
+  private async apply(
+    operation: 'add' | 'remove',
     upstream: NeemProxyUpstreamSnapshot,
   ): Promise<void> {
-    if (!this.proxy) return
+    const proxy = this.proxy
+    if (!proxy) return
+    const { runtimeName, proxyUpstream, count } = upstream
     const key = upstreamKey(upstream)
     try {
-      await this.proxy.addUpstream(upstream.runtimeName, upstream.proxyUpstream)
-      this.applied.set(key, upstream)
+      if (operation === 'add') {
+        await proxy.addUpstream(runtimeName, proxyUpstream)
+        this.applied.set(key, upstream)
+      } else {
+        await proxy.removeUpstream(runtimeName, proxyUpstream)
+        this.applied.delete(key)
+      }
       this.failures.delete(key)
+      const outcome = operation === 'add' ? 'added' : 'removed'
       this.logger.trace(
-        {
-          runtimeName: upstream.runtimeName,
-          upstream: upstream.upstream,
-          count: upstream.count,
-        },
-        'Neem proxy upstream added',
+        { runtimeName, upstream: upstream.upstream, count },
+        `Neem proxy upstream ${outcome}`,
       )
     } catch (error) {
       const normalized = normalizeError(error)
-      this.failures.set(key, { operation: 'add', upstream, error: normalized })
+      this.failures.set(key, { operation, upstream, error: normalized })
       throw normalized
     }
   }
-
-  private async removeUpstream(
-    upstream: NeemProxyUpstreamSnapshot,
-  ): Promise<void> {
-    if (!this.proxy) return
-    const key = upstreamKey(upstream)
-    try {
-      await this.proxy.removeUpstream(
-        upstream.runtimeName,
-        upstream.proxyUpstream,
-      )
-      this.applied.delete(key)
-      this.failures.delete(key)
-      this.logger.trace(
-        {
-          runtimeName: upstream.runtimeName,
-          upstream: upstream.upstream,
-          count: upstream.count,
-        },
-        'Neem proxy upstream removed',
-      )
-    } catch (error) {
-      const normalized = normalizeError(error)
-      this.failures.set(key, {
-        operation: 'remove',
-        upstream,
-        error: normalized,
-      })
-      throw normalized
-    }
-  }
-}
-
-export type RuntimeUpstreams = {
-  runtimeName: string
-  upstreams: readonly NeemRuntimeUpstream[]
 }
 
 export function createDesiredUpstreams(
@@ -331,9 +308,8 @@ export function createNativeProxyOptions(
   runtimes: RuntimeProxyConfigs,
 ): NativeProxyOptions {
   const applications: NativeProxyOptions['applications'] = []
-  for (const name in runtimes) {
-    if (!Object.hasOwn(runtimes, name)) continue
-    const proxy = runtimes[name]?.proxy
+  for (const [name, runtime] of Object.entries(runtimes)) {
+    const proxy = runtime?.proxy
     if (!proxy) continue
 
     const routing = normalizeProxyRouting(name, proxy.routing)
@@ -357,9 +333,7 @@ function normalizeProxyRouting(
   if (!routing) return { type: 'path', name: runtimeName }
   if (routing.type === 'default') return { type: 'default' }
 
-  return routing.name === undefined
-    ? { type: routing.type, name: runtimeName }
-    : { type: routing.type, name: routing.name }
+  return { type: routing.type, name: routing.name ?? runtimeName }
 }
 
 function assertSingleDefaultRoute(
@@ -380,10 +354,8 @@ function filterRuntimeUpstreams(
   runtimes: RuntimeProxyConfigs,
 ): readonly RuntimeUpstreams[] {
   const proxied = new Set<string>()
-  for (const name in runtimes) {
-    if (Object.hasOwn(runtimes, name) && runtimes[name]?.proxy) {
-      proxied.add(name)
-    }
+  for (const [name, runtime] of Object.entries(runtimes)) {
+    if (runtime?.proxy) proxied.add(name)
   }
   return upstreams.filter((runtime) => proxied.has(runtime.runtimeName))
 }

@@ -3,14 +3,10 @@ import { Worker } from 'node:worker_threads'
 import { createFuture } from '@nmtjs/common'
 
 import type { RpcCommand } from '../rpc.ts'
-import type { SerializedError } from '../utils.ts'
+import type { ServiceResponse } from './protocol.ts'
 import { RpcChannel } from '../rpc.ts'
+import { getRequestTimeoutMs, STOP_TIMEOUT_MS } from '../threads.ts'
 import { raceWithTimeout } from '../utils.ts'
-
-export type WorkerServiceResponse<TEvent, TResult> =
-  | { id: number; type: 'result'; data?: TResult }
-  | { id: number; type: 'error'; error: SerializedError }
-  | { type: 'event'; event: TEvent }
 
 export type WorkerServiceClientOptions<TEvent> = {
   entry: URL
@@ -20,33 +16,23 @@ export type WorkerServiceClientOptions<TEvent> = {
   onStopProgress?: (event: WorkerServiceStopProgressEvent) => void
 }
 
-export type WorkerServiceStopProgressEvent =
-  | {
-      phase: 'slow'
-      serviceName: string
-      entry: string
-      elapsedMs: number
-      timeoutMs: number
-    }
-  | {
-      phase: 'timeout'
-      serviceName: string
-      entry: string
-      timeoutMs: number
-    }
-  | {
-      phase: 'complete'
-      serviceName: string
-      entry: string
-      elapsedMs: number
-      exited: boolean
-    }
+type StopPhase =
+  | { phase: 'slow'; elapsedMs: number; timeoutMs: number }
+  | { phase: 'timeout'; timeoutMs: number }
+  | { phase: 'complete'; elapsedMs: number; exited: boolean }
 
-const STOP_TIMEOUT_MS = 5_000
+export type WorkerServiceStopProgressEvent = StopPhase & {
+  serviceName: string
+  entry: string
+}
+
 const STOP_SLOW_MS = 1_000
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 
-export class WorkerServiceClient<TEvent, TResult = unknown> {
+export class WorkerServiceClient<
+  TCommand extends RpcCommand,
+  TEvent,
+  TResult = unknown,
+> {
   private readonly worker: Worker
   private stopping = false
   private hasExited = false
@@ -57,7 +43,8 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     this.worker = new Worker(options.entry)
     this.rpc = new RpcChannel({
       post: (message) => this.worker.postMessage(message),
-      timeoutMs: getRequestTimeoutMs,
+      timeoutMs: () =>
+        getRequestTimeoutMs(process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS),
       timeoutMessage: (type, timeoutMs) =>
         `Neem worker service request [${options.serviceName}:${type}] timed out after ${timeoutMs}ms`,
     })
@@ -66,21 +53,14 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     this.worker.on('exit', (code) => this.handleExit(code))
   }
 
-  request<T extends TResult = TResult>(
-    command: RpcCommand,
+  request(
+    command: TCommand,
     options: { timeoutMs?: number } = {},
-  ): Promise<T | undefined> {
-    if (this.hasExited) {
-      return Promise.reject(
-        new Error(
-          `Neem worker service [${this.options.serviceName}] is not running`,
-        ),
-      )
-    }
-    return this.rpc.request(command, options) as Promise<T | undefined>
+  ): Promise<TResult | undefined> {
+    return this.send(command, options)
   }
 
-  async stop(command: { type: 'stop' } = { type: 'stop' }): Promise<void> {
+  async stop(): Promise<void> {
     this.stopping = true
     const startedAt = Date.now()
     let slow = false
@@ -95,9 +75,9 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     slowTimer.unref()
     let exited = false
     try {
-      await this.request(command, { timeoutMs: STOP_TIMEOUT_MS }).catch(
+      await this.send({ type: 'stop' }, { timeoutMs: STOP_TIMEOUT_MS }).catch(
         (error) => {
-          if (this.worker.threadId !== -1) throw error
+          if (!this.hasExited) throw error
         },
       )
       const result = await raceWithTimeout(this.exited.promise, STOP_TIMEOUT_MS)
@@ -122,7 +102,21 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     }
   }
 
-  private handleMessage(message: WorkerServiceResponse<TEvent, TResult>): void {
+  private send(
+    command: RpcCommand,
+    options: { timeoutMs?: number },
+  ): Promise<TResult | undefined> {
+    if (this.hasExited) {
+      return Promise.reject(
+        new Error(
+          `Neem worker service [${this.options.serviceName}] is not running`,
+        ),
+      )
+    }
+    return this.rpc.request(command, options)
+  }
+
+  private handleMessage(message: ServiceResponse<TEvent, TResult>): void {
     if (message.type === 'event') {
       this.options.onEvent?.(message.event)
       return
@@ -146,12 +140,7 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
     )
   }
 
-  private reportStopProgress(
-    event:
-      | { phase: 'slow'; elapsedMs: number; timeoutMs: number }
-      | { phase: 'timeout'; timeoutMs: number }
-      | { phase: 'complete'; elapsedMs: number; exited: boolean },
-  ): void {
+  private reportStopProgress(event: StopPhase): void {
     this.options.onStopProgress?.({
       ...event,
       serviceName: this.options.serviceName,
@@ -167,14 +156,4 @@ export class WorkerServiceClient<TEvent, TResult = unknown> {
 
 export function resolveServiceEntry(name: string): URL {
   return new URL(`./${name}.js`, import.meta.url)
-}
-
-function getRequestTimeoutMs(): number {
-  const value = Number.parseInt(
-    process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS ?? '',
-    10,
-  )
-  return Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_REQUEST_TIMEOUT_MS
 }

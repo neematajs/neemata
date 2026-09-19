@@ -12,7 +12,7 @@ import type {
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
-import type { RecoveryOptions } from './recovery.ts'
+import type { RecoveryOptions, RecoveryPolicy } from './recovery.ts'
 import type { HostRunnerData } from './runner-protocol.ts'
 import type { ThreadPlan } from './thread.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
@@ -34,14 +34,22 @@ export type RuntimeControllerOptions = {
 
 export class RuntimeController {
   private host: HostRunner | undefined
-  private logger: Logger | undefined
+  private logger: Logger
   private threads: readonly ThreadController[] = []
   private stopped = true
+  private started = false
   private cleanupPromise: Promise<void> | undefined
   private recoveryPromise: Promise<void> | undefined
+  // Only a successful recovery resets this counter; cleanup between attempts
+  // must leave the remaining attempts eligible.
   private restartAttempts = 0
 
-  constructor(private options: RuntimeControllerOptions) {}
+  constructor(private options: RuntimeControllerOptions) {
+    this.logger = childLogger(
+      options.snapshot.logger,
+      runtimeLabel(options.runtimeName),
+    )
+  }
 
   get name(): string {
     return this.options.runtimeName
@@ -67,16 +75,24 @@ export class RuntimeController {
 
   async start(): Promise<void> {
     this.stopped = false
-    const logger = this.createLogger()
-    this.logger = logger
+    this.started = true
+    const { logger } = this
     logger.debug('Neem runtime starting')
 
     try {
       await this.callRuntimeHook('runtime:start')
       if (this.stopped) return
-      const host = this.createHostRunner()
+      const host = new HostRunner({
+        data: this.createRunnerData(),
+        env: createRuntimeEnv({
+          manifest: this.options.snapshot.manifest,
+          runtimeName: this.name,
+          overrideEnv: this.options.snapshot.env,
+        }),
+        onFailure: (error) => this.handleFailure(error, 'host'),
+      })
       this.host = host
-      await host.start()
+      await host.spawn()
       if (this.stopped) return
       const plan = await host.plan()
       if (this.stopped) return
@@ -110,9 +126,11 @@ export class RuntimeController {
 
       await Promise.all(this.threads.map((thread) => thread.start()))
       if (this.stopped) return
-      await host.callStart(this.getThreadHandles())
+      await host.start(this.threads.map((thread) => thread.getHandle()))
       if (this.stopped) return
-      await this.callRuntimeHook('runtime:ready', this.getUpstreams())
+      await this.callRuntimeHook('runtime:ready', {
+        upstreams: this.getUpstreams(),
+      })
       if (this.stopped) return
       logger.debug('Neem runtime ready')
       logger.trace(
@@ -138,7 +156,6 @@ export class RuntimeController {
     await this.cleanup()
   }
 
-  // Failed startup cleanup must leave the remaining recovery attempts eligible.
   private cleanup(): Promise<void> {
     // Startup failure and recovery can reach cleanup together. Replacements
     // must wait for the original workers to release their resources.
@@ -149,18 +166,19 @@ export class RuntimeController {
   }
 
   private async stopResources(): Promise<void> {
+    if (!this.started) return
+    this.started = false
     const host = this.host
     const threads = this.threads
-    const logger = this.logger
+    const { logger } = this
     this.host = undefined
     this.threads = []
-    this.logger = undefined
-    logger?.debug('Neem runtime stopping')
-    logger?.trace({ threads: threads.length }, 'Neem runtime stop options')
+    logger.debug('Neem runtime stopping')
+    logger.trace({ threads: threads.length }, 'Neem runtime stop options')
 
     let hostError: Error | undefined
     try {
-      await host?.callStop()
+      await host?.stop()
     } catch (error) {
       hostError = normalizeError(error)
     }
@@ -168,33 +186,35 @@ export class RuntimeController {
     const threadResults = await Promise.allSettled(
       threads.map((thread) => thread.stop()),
     )
-    await host?.shutdown().catch((error) => {
+    await host?.terminate().catch((error) => {
       hostError ??= normalizeError(error)
     })
 
     let hookError: Error | undefined
-    if (logger) {
-      await this.callRuntimeHook('runtime:stop').catch((error) => {
-        hookError = normalizeError(error)
-      })
-    }
-    logger?.debug('Neem runtime stopped')
+    await this.callRuntimeHook('runtime:stop').catch((error) => {
+      hookError = normalizeError(error)
+    })
+    logger.debug('Neem runtime stopped')
 
-    const threadError = threadResults.find(
+    const rejected = threadResults.find(
       (result): result is PromiseRejectedResult => result.status === 'rejected',
     )
-    if (hostError) throw hostError
-    if (threadError) throw normalizeError(threadError.reason)
-    if (hookError) throw hookError
+    const errors = [
+      hostError,
+      rejected && normalizeError(rejected.reason),
+      hookError,
+    ].filter((error) => error !== undefined)
+    if (errors[0]) throw errors[0]
   }
 
   replaceSnapshot(snapshot: RuntimeSnapshot): void {
     this.options = { ...this.options, snapshot }
+    this.logger = childLogger(snapshot.logger, runtimeLabel(this.name))
   }
 
   private async handleFailure(error: Error, source: string): Promise<void> {
     if (this.stopped) return
-    this.logger?.warn({ err: error }, `Neem runtime ${source} failed`)
+    this.logger.warn({ err: error }, `Neem runtime ${source} failed`)
     await this.callRuntimeFailHook(error)
 
     if (this.stopped || this.recoveryPromise) return
@@ -208,19 +228,16 @@ export class RuntimeController {
       return
     }
 
-    this.recoveryPromise = this.recover(error).finally(() => {
+    this.recoveryPromise = this.recover(error, policy).finally(() => {
       this.recoveryPromise = undefined
     })
     await this.recoveryPromise
   }
 
-  private async recover(initialError: Error): Promise<void> {
-    // Cleanup clears the active logger between attempts.
-    const logger = this.logger
-    const policy = createRecoveryPolicy(
-      this.options.snapshot.mode,
-      this.options.recovery,
-    )
+  private async recover(
+    initialError: Error,
+    policy: RecoveryPolicy,
+  ): Promise<void> {
     let lastError = initialError
 
     while (this.restartAttempts < policy.attempts) {
@@ -228,7 +245,7 @@ export class RuntimeController {
       const attempt = this.restartAttempts + 1
       this.restartAttempts = attempt
       const delayMs = getRecoveryDelay(policy, attempt)
-      logger?.warn(
+      this.logger.warn(
         { err: lastError },
         `Restarting Neem runtime after failure (${attempt}/${policy.attempts})`,
       )
@@ -249,27 +266,11 @@ export class RuntimeController {
     }
 
     if (this.stopped) return
-    logger?.error({ err: lastError }, 'Neem runtime recovery exhausted')
+    this.logger.error({ err: lastError }, 'Neem runtime recovery exhausted')
     await this.options.onFailure?.(lastError, this)
   }
 
-  private createHostRunner(): HostRunner {
-    return new HostRunner({
-      data: this.createHostRunnerData(),
-      env: this.createRuntimeEnv(),
-      onFailure: (error) => this.handleFailure(error, 'host'),
-    })
-  }
-
-  private createRuntimeEnv(): NodeJS.ProcessEnv {
-    return createRuntimeEnv({
-      manifest: this.options.snapshot.manifest,
-      runtimeName: this.name,
-      overrideEnv: this.options.snapshot.env,
-    })
-  }
-
-  private createHostRunnerData(): HostRunnerData {
+  private createRunnerData(): HostRunnerData {
     return {
       mode: this.options.snapshot.mode,
       runtimeName: this.name,
@@ -288,36 +289,32 @@ export class RuntimeController {
     }
   }
 
-  private createLogger(): Logger {
-    return childLogger(this.options.snapshot.logger, runtimeLabel(this.name))
-  }
-
   private async callRuntimeFailHook(error: Error): Promise<void> {
-    await this.callRuntimeHook('runtime:fail', undefined, error).catch(
-      (hookError) => {
-        this.logger?.warn(
-          new Error(`Runtime [${this.name}] fail hook failed`, {
-            cause: normalizeError(hookError),
-          }),
-        )
-      },
-    )
+    await this.callRuntimeHook('runtime:fail', { error }).catch((hookError) => {
+      this.logger.warn(
+        new Error(`Runtime [${this.name}] fail hook failed`, {
+          cause: normalizeError(hookError),
+        }),
+      )
+    })
   }
 
   private callRuntimeHook(
     name: 'runtime:start' | 'runtime:ready' | 'runtime:stop' | 'runtime:fail',
-    upstreams?: readonly NeemRuntimeUpstream[],
-    error?: Error,
+    event: {
+      upstreams?: readonly NeemRuntimeUpstream[]
+      error?: Error
+    } = {},
   ): Promise<void> {
-    this.logger?.trace(
-      { hook: name, upstreams: upstreams?.length, err: error },
+    this.logger.trace(
+      { hook: name, upstreams: event.upstreams?.length, err: event.error },
       'Neem runtime hook',
     )
     return callHostHook(
       this.options.hooks,
       this.options.snapshot.logger,
       name,
-      { mode: this.options.snapshot.mode, name: this.name, upstreams, error },
+      { mode: this.options.snapshot.mode, name: this.name, ...event },
     )
   }
 
@@ -344,13 +341,9 @@ export class RuntimeController {
       starting: counts.starting,
     }
   }
-
-  private getThreadHandles() {
-    return this.threads.map((thread) => thread.getHandle())
-  }
 }
 
-export function resolveRuntimeArtifact(
+function resolveRuntimeArtifact(
   snapshot: RuntimeSnapshot,
   runtimeName: string,
   artifactId: string,
@@ -361,7 +354,7 @@ export function resolveRuntimeArtifact(
   )
 }
 
-export function resolveRequiredRuntimeArtifact(
+function resolveRequiredRuntimeArtifact(
   snapshot: RuntimeSnapshot,
   runtimeName: string,
   artifactId: string,

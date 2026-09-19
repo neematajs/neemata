@@ -7,9 +7,14 @@ import type { Logger } from '@nmtjs/core'
 import { OperationQueue } from '@nmtjs/common'
 
 import type { NeemConfig } from '../../shared/types.ts'
-import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
+import type {
+  CompiledGraph,
+  GraphWatcher,
+  TargetChange,
+} from '../build/compiler.ts'
 import type { BuildGraph, BuildTarget } from '../build/graph.ts'
 import type {
+  WatcherChange,
   WatcherEvent,
   WatcherManifestIdentity,
   WatcherResult,
@@ -28,12 +33,6 @@ export type WatcherServiceOptions = {
   runtimes?: readonly string[]
   emit: (event: WatcherEvent) => MaybePromise<void>
 }
-
-type WatcherManifestChangeInput =
-  | { type: 'runtime-changed'; runtimeName: string }
-  | { type: 'runtime-host-changed'; runtimeName: string }
-  | { type: 'plugin-changed' }
-  | { type: 'logger-changed' }
 
 export class WatcherService {
   private readonly changes = new OperationQueue()
@@ -79,9 +78,10 @@ export class WatcherService {
     const config = await importDefault<NeemConfig>(this.options.configFile, {
       cacheBust: true,
     })
-    this.logger = createLoggerFromConfigInput('development', config.logger)
-    this.logger.info('Neem watcher starting')
-    this.logger.trace(
+    const logger = createLoggerFromConfigInput('development', config.logger)
+    this.logger = logger
+    logger.info('Neem watcher starting')
+    logger.trace(
       {
         configFile: this.options.configFile,
         outDir: this.options.outDir,
@@ -89,7 +89,7 @@ export class WatcherService {
       },
       'Neem watcher options',
     )
-    this.logger.trace({ config }, 'Neem source config')
+    logger.trace({ config }, 'Neem source config')
 
     const resolvedConfig = await resolveNeemRuntimeDeclarations(
       this.options.configFile,
@@ -101,8 +101,8 @@ export class WatcherService {
       config: resolvedConfig,
       runtimes: this.options.runtimes,
     })
-    this.logger?.debug('Neem build graph ready')
-    this.logger?.trace(
+    logger.debug('Neem build graph ready')
+    logger.trace(
       {
         runtimes: graph.runtimes.map((runtime) => runtime.name),
         plugins: graph.plugins.map((plugin) => plugin.name),
@@ -170,7 +170,7 @@ export class WatcherService {
   }
 
   private async writeManifestSnapshot(
-    compiled: ReturnType<GraphWatcher['snapshot']>,
+    compiled: CompiledGraph,
   ): Promise<WatcherManifestIdentity> {
     const manifestFile = await writeManifest(
       this.options.outDir,
@@ -182,7 +182,7 @@ export class WatcherService {
   }
 }
 
-function classifyChange(change: TargetChange): WatcherManifestChangeInput {
+function classifyChange(change: TargetChange): WatcherChange {
   switch (change.target.kind) {
     case 'runtime-worker':
     case 'runtime-planner':

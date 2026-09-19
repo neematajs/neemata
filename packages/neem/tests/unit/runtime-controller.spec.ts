@@ -19,11 +19,11 @@ import { wait } from '../../src/internal/utils.ts'
 // Keep real worker threads and their startup deadline; control only host planning.
 const host = vi.hoisted(() => ({
   options: [] as HostRunnerOptions[],
-  start: vi.fn<HostRunner['start']>(),
+  spawn: vi.fn<HostRunner['spawn']>(),
   plan: vi.fn<HostRunner['plan']>(),
-  callStart: vi.fn<HostRunner['callStart']>(),
-  callStop: vi.fn<HostRunner['callStop']>(),
-  shutdown: vi.fn<HostRunner['shutdown']>(),
+  start: vi.fn<HostRunner['start']>(),
+  stop: vi.fn<HostRunner['stop']>(),
+  terminate: vi.fn<HostRunner['terminate']>(),
 }))
 
 vi.mock('../../src/internal/host/runner.ts', () => ({
@@ -31,11 +31,11 @@ vi.mock('../../src/internal/host/runner.ts', () => ({
     constructor(options: HostRunnerOptions) {
       host.options.push(options)
     }
-    start = host.start
+    spawn = host.spawn
     plan = host.plan
-    callStart = host.callStart
-    callStop = host.callStop
-    shutdown = host.shutdown
+    start = host.start
+    stop = host.stop
+    terminate = host.terminate
   },
 }))
 
@@ -115,7 +115,7 @@ describe('RuntimeController recovery', () => {
     await runtime.start()
     const entered = createFuture<void>()
     const release = createFuture<void>()
-    host.callStop.mockImplementationOnce(async () => {
+    host.stop.mockImplementationOnce(async () => {
       entered.resolve()
       await release.promise
     })
@@ -126,7 +126,7 @@ describe('RuntimeController recovery', () => {
     release.resolve()
     await Promise.all([stop, recovery])
 
-    expect(host.start).toHaveBeenCalledTimes(1)
+    expect(host.spawn).toHaveBeenCalledTimes(1)
     expect(runtime.listThreads()).toHaveLength(0)
     expect(onRecovered).not.toHaveBeenCalled()
     expect(onFailure).not.toHaveBeenCalled()
@@ -138,11 +138,11 @@ describe('RuntimeController recovery', () => {
     const release = createFuture<void>()
     const failure = new Error('host crashed during initial startup')
     let recovery: Promise<void> | undefined
-    host.callStart.mockImplementationOnce(async () => {
+    host.start.mockImplementationOnce(async () => {
       recovery = Promise.resolve(host.options[0]!.onFailure?.(failure))
       throw failure
     })
-    host.callStop.mockImplementationOnce(async () => {
+    host.stop.mockImplementationOnce(async () => {
       entered.resolve()
       await release.promise
     })
@@ -153,7 +153,7 @@ describe('RuntimeController recovery', () => {
       // The recovery delay is zero; the original workers must retain ownership
       // of their resources until their blocked cleanup can finish.
       await wait(25)
-      expect(host.start).toHaveBeenCalledTimes(1)
+      expect(host.spawn).toHaveBeenCalledTimes(1)
       expect(onRecovered).not.toHaveBeenCalled()
     } finally {
       release.resolve()
@@ -161,8 +161,8 @@ describe('RuntimeController recovery', () => {
       await recovery
     }
 
-    expect(host.start).toHaveBeenCalledTimes(2)
-    expect(host.callStop).toHaveBeenCalledTimes(1)
+    expect(host.spawn).toHaveBeenCalledTimes(2)
+    expect(host.stop).toHaveBeenCalledTimes(1)
     expect(onRecovered).toHaveBeenCalledOnce()
     expect(onFailure).not.toHaveBeenCalled()
     expect(runtime.getHealth().pool).toMatchObject({ state: 'ready', ready: 2 })
@@ -170,11 +170,11 @@ describe('RuntimeController recovery', () => {
 
   it.each([
     'runtime:start',
-    'host:start',
+    'host:spawn',
     'planning',
     'worker:start',
     'worker:ready',
-    'host:callStart',
+    'host:start',
     'runtime:ready',
   ] as const)('honors an explicit stop during recovery %s', async (stage) => {
     const { runtime, hooks, onRecovered, onFailure } = await createFixture()
@@ -191,8 +191,8 @@ describe('RuntimeController recovery', () => {
     hooks.hook('runtime:ready', ready)
 
     switch (stage) {
-      case 'host:start':
-        host.start.mockImplementationOnce(pause)
+      case 'host:spawn':
+        host.spawn.mockImplementationOnce(pause)
         break
       case 'planning':
         host.plan.mockImplementationOnce(async () => {
@@ -200,8 +200,8 @@ describe('RuntimeController recovery', () => {
           return { workers: [{}, {}] }
         })
         break
-      case 'host:callStart':
-        host.callStart.mockImplementationOnce(pause)
+      case 'host:start':
+        host.start.mockImplementationOnce(pause)
         break
       default:
         hooks.hook(stage, pause)
@@ -228,9 +228,9 @@ describe('RuntimeController recovery', () => {
     expect(onRecovered).not.toHaveBeenCalled()
     expect(onFailure).not.toHaveBeenCalled()
     if (stage !== 'runtime:ready') expect(ready).not.toHaveBeenCalled()
-    if (stage === 'runtime:start') expect(host.start).toHaveBeenCalledTimes(1)
-    if (stage === 'host:start') expect(host.plan).toHaveBeenCalledTimes(1)
-    if (['runtime:start', 'host:start', 'planning'].includes(stage)) {
+    if (stage === 'runtime:start') expect(host.spawn).toHaveBeenCalledTimes(1)
+    if (stage === 'host:spawn') expect(host.plan).toHaveBeenCalledTimes(1)
+    if (['runtime:start', 'host:spawn', 'planning'].includes(stage)) {
       expect(workerStart).not.toHaveBeenCalled()
     }
   })
@@ -357,11 +357,11 @@ async function createFixture() {
   const hooks = createHostHooks()
   const onRecovered = vi.fn()
   const onFailure = vi.fn<(error: Error, runtime: RuntimeController) => void>()
-  host.start.mockResolvedValue()
+  host.spawn.mockResolvedValue()
   host.plan.mockResolvedValue({ workers: [{}, {}] })
-  host.callStart.mockResolvedValue()
-  host.callStop.mockResolvedValue()
-  host.shutdown.mockResolvedValue()
+  host.start.mockResolvedValue()
+  host.stop.mockResolvedValue()
+  host.terminate.mockResolvedValue()
   const runtime = new RuntimeController({
     snapshot,
     runtimeName: 'api',

@@ -8,8 +8,10 @@ import { defineCommand } from 'citty'
 import type { WorkerServiceStopProgressEvent } from './internal/services/client.ts'
 import type { ConfigSignalWatcher } from './internal/services/config-signal.ts'
 import type {
+  RuntimeCommand,
   RuntimeEvent,
   RuntimeResult,
+  WatcherCommand,
   WatcherEvent,
   WatcherManifestIdentity,
   WatcherResult,
@@ -29,8 +31,16 @@ import {
   serializeError,
 } from './internal/utils.ts'
 
-type RuntimeClient = WorkerServiceClient<RuntimeEvent, RuntimeResult>
-type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
+type RuntimeClient = WorkerServiceClient<
+  RuntimeCommand,
+  RuntimeEvent,
+  RuntimeResult
+>
+type WatcherClient = WorkerServiceClient<
+  WatcherCommand,
+  WatcherEvent,
+  WatcherResult
+>
 
 export const buildCommand = defineCommand({
   meta: {
@@ -445,7 +455,7 @@ function createWatcherClient(options: {
   onEvent: (event: WatcherEvent) => void
   onFailure: (error: Error) => void
 }): WatcherClient {
-  return new WorkerServiceClient<WatcherEvent, WatcherResult>({
+  return new WorkerServiceClient<WatcherCommand, WatcherEvent, WatcherResult>({
     entry: resolveServiceEntry('watcher-entry'),
     serviceName: 'watcher',
     onStopProgress: (event) => reportServiceStopProgress(options.probe, event),
@@ -458,7 +468,7 @@ function createRuntimeClient(options: {
   onEvent: (event: RuntimeEvent) => void
   onFailure: (error: Error) => void
 }): RuntimeClient {
-  return new WorkerServiceClient<RuntimeEvent, RuntimeResult>({
+  return new WorkerServiceClient<RuntimeCommand, RuntimeEvent, RuntimeResult>({
     entry: resolveServiceEntry('runtime-entry'),
     serviceName: 'runtime',
     onStopProgress: (event) => reportServiceStopProgress(options.probe, event),

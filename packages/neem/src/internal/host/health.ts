@@ -1,4 +1,5 @@
-import type { Server, ServerResponse } from 'node:http'
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+import { once } from 'node:events'
 import { createServer } from 'node:http'
 
 import type { Logger } from '@nmtjs/core'
@@ -15,88 +16,77 @@ export type HealthProbeOptions = {
   getHealth: () => NeemRuntimeServerHealth
 }
 
+type ResolvedHealthConfig = {
+  hostname: string
+  port: number
+  healthPath: string
+  readyPath: string
+}
+
 export class HealthProbe {
   private readonly logger: Logger
-  private readonly hostname: string
-  private readonly port: number
-  private readonly healthPath: string
-  private readonly readyPath: string
+  private readonly config: ResolvedHealthConfig
   private server: Server | undefined
 
   constructor(private readonly options: HealthProbeOptions) {
     this.logger = childLogger(options.logger, 'neem:health')
-    this.hostname = options.config.hostname ?? '127.0.0.1'
-    this.port = options.config.port
-    this.healthPath = normalizePath(options.config.paths?.health, '/health')
-    this.readyPath = normalizePath(options.config.paths?.ready, '/ready')
+    this.config = resolveConfig(options.config)
   }
 
   async start(): Promise<void> {
     if (this.server) return
 
-    const server = createServer((request, response) => {
-      const path = new URL(
-        request.url ?? '/',
-        `http://${request.headers.host ?? '127.0.0.1'}`,
-      ).pathname
-      const headOnly = request.method === 'HEAD'
-
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
-        writeJson(response, headOnly, 405, {
-          ok: false,
-          error: 'Method not allowed',
-        })
-        return
-      }
-
-      if (path === this.healthPath) {
-        const health = this.options.getHealth()
-        const status =
-          health.state === 'failed' || health.state === 'stopped' ? 503 : 200
-        writeJson(response, headOnly, status, {
-          ok: status < 400,
-          health: serializeHealth(health),
-        })
-        return
-      }
-
-      if (path === this.readyPath) {
-        const health = this.options.getHealth()
-        writeJson(response, headOnly, health.ready ? 200 : 503, {
-          ok: health.ready,
-          health: serializeHealth(health),
-        })
-        return
-      }
-
-      writeJson(response, headOnly, 404, { ok: false, error: 'Not found' })
-    })
-
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error) => {
-        server.off('listening', onListening)
-        reject(error)
-      }
-      const onListening = () => {
-        server.off('error', onError)
-        resolve()
-      }
-      server.once('error', onError)
-      server.once('listening', onListening)
-      server.listen(this.port, this.hostname)
-    })
+    const { hostname, port, healthPath, readyPath } = this.config
+    const server = createServer((request, response) =>
+      this.handle(request, response),
+    )
+    server.listen(port, hostname)
+    await once(server, 'listening')
 
     this.server = server
     this.logger.debug('Neem health probe started')
     this.logger.trace(
-      {
-        hostname: this.hostname,
-        port: this.port,
-        health: this.healthPath,
-        ready: this.readyPath,
-      },
+      { hostname, port, health: healthPath, ready: readyPath },
       'Neem health probe options',
     )
+  }
+
+  private handle(request: IncomingMessage, response: ServerResponse): void {
+    const path = new URL(
+      request.url ?? '/',
+      `http://${request.headers.host ?? '127.0.0.1'}`,
+    ).pathname
+    const headOnly = request.method === 'HEAD'
+
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      writeJson(response, headOnly, 405, {
+        ok: false,
+        error: 'Method not allowed',
+      })
+      return
+    }
+
+    if (path === this.config.healthPath) {
+      const health = this.options.getHealth()
+      const status =
+        health.state === 'failed' || health.state === 'stopped' ? 503 : 200
+      writeJson(response, headOnly, status, {
+        ok: status < 400,
+        health: serializeHealth(health),
+      })
+      return
+    }
+
+    if (path === this.config.readyPath) {
+      const health = this.options.getHealth()
+      writeJson(response, headOnly, health.ready ? 200 : 503, {
+        ok: health.ready,
+        health: serializeHealth(health),
+      })
+      return
+    }
+
+    writeJson(response, headOnly, 404, { ok: false, error: 'Not found' })
   }
 
   async stop(): Promise<void> {
@@ -115,12 +105,22 @@ export class HealthProbe {
 
   matches(config: NeemHealthConfig | undefined): boolean {
     if (!config) return false
+    const other = resolveConfig(config)
     return (
-      this.hostname === (config.hostname ?? '127.0.0.1') &&
-      this.port === config.port &&
-      this.healthPath === normalizePath(config.paths?.health, '/health') &&
-      this.readyPath === normalizePath(config.paths?.ready, '/ready')
+      this.config.hostname === other.hostname &&
+      this.config.port === other.port &&
+      this.config.healthPath === other.healthPath &&
+      this.config.readyPath === other.readyPath
     )
+  }
+}
+
+function resolveConfig(config: NeemHealthConfig): ResolvedHealthConfig {
+  return {
+    hostname: config.hostname ?? '127.0.0.1',
+    port: config.port,
+    healthPath: normalizePath(config.paths?.health, '/health'),
+    readyPath: normalizePath(config.paths?.ready, '/ready'),
   }
 }
 

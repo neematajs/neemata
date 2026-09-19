@@ -7,7 +7,6 @@ import type {
   NeemRuntimeServerHealth,
   NeemRuntimeServerSnapshot,
   NeemRuntimeServerState,
-  NeemRuntimeUpstream,
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
@@ -24,10 +23,11 @@ import { RuntimeController } from './runtime.ts'
 export type HostControllerOptions = {
   snapshot: RuntimeSnapshot
   hooks?: HostHooks
-  failOnWorkerError?: boolean
   recovery?: RecoveryOptions
   onFailure?: (error: Error) => void
 }
+
+const LABEL = 'neem:server'
 
 export class HostController {
   private state: NeemRuntimeServerState = 'idle'
@@ -42,9 +42,9 @@ export class HostController {
   private healthProbe: HealthProbe | undefined
   private plugins: PluginEnvironment | undefined
 
-  constructor(readonly options: HostControllerOptions) {
+  constructor(private readonly options: HostControllerOptions) {
     this.snapshot = options.snapshot
-    this.logger = childLogger(options.snapshot.logger, 'neem:server')
+    this.logger = childLogger(options.snapshot.logger, LABEL)
     this.hooks = options.hooks ?? createHostHooks()
   }
 
@@ -64,7 +64,7 @@ export class HostController {
     const runtimes = [...this.runtimes.values()].map((runtime) =>
       runtime.getHealth(),
     )
-    const proxy = this.proxy?.getHealth() ?? this.getDisabledProxyHealth()
+    const proxy = this.proxy?.getHealth() ?? this.getInactiveProxyHealth()
 
     return {
       ...this.getSnapshot(),
@@ -75,12 +75,6 @@ export class HostController {
       runtimes,
       proxy,
     }
-  }
-
-  getUpstreams(): readonly NeemRuntimeUpstream[] {
-    return [...this.runtimes.values()].flatMap((runtime) =>
-      runtime.getUpstreams(),
-    )
   }
 
   start(): Promise<void> {
@@ -98,81 +92,47 @@ export class HostController {
         'Neem server options',
       )
 
-      await this.bringUp({
-        readyHook: 'server:ready',
-        onReady: () => this.logger.info('Neem server ready'),
-        failMessage: 'Failed to start Neem server',
-      })
+      try {
+        await this.startPlugins()
+        await this.syncHealthProbe()
+        await this.callServerHook('server:start')
+        await this.startRuntimes()
+        await this.startProxy()
+        this.markState('running')
+        await this.callServerHook('server:ready')
+        this.logger.info('Neem server ready')
+        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+      } catch (error) {
+        const normalized = normalizeError(error)
+        this.markState('failed', normalized)
+        this.logger.error({ err: normalized }, 'Failed to start Neem server')
+        await this.callServerFailHook(normalized)
+        await this.stopSubsystems().catch(() => undefined)
+        throw normalized
+      }
     })
-  }
-
-  reload(snapshot: RuntimeSnapshot): Promise<void> {
-    return this.operations.run(async () => {
-      this.markState('reloading')
-      this.logger.debug('Neem server reloading')
-      this.logger.trace(
-        {
-          mode: snapshot.mode,
-          runtimes: Object.keys(snapshot.manifest.runtimes),
-          outDir: snapshot.outDir,
-          config: snapshot.manifest.config,
-        },
-        'Neem server options',
-      )
-
-      await this.bringUp({
-        prepare: async () => {
-          await this.stopSubsystems()
-          this.replaceSnapshot(snapshot)
-        },
-        readyHook: 'server:reload',
-        onReady: () => this.logger.debug('Neem server reloaded'),
-        failMessage: 'Failed to reload Neem server',
-      })
-    })
-  }
-
-  // Shared start/reload bring-up: identical subsystem ordering and error
-  // handling, differing only in the reload prelude and success hook/log.
-  private async bringUp(options: {
-    prepare?: () => Promise<void>
-    readyHook: 'server:ready' | 'server:reload'
-    onReady: () => void
-    failMessage: string
-  }): Promise<void> {
-    try {
-      await options.prepare?.()
-      await this.startPlugins()
-      await this.syncHealthProbe()
-      await this.callServerHook('server:start')
-      await this.startRuntimes()
-      await this.startProxy()
-      this.markState('running')
-      await this.callServerHook(options.readyHook)
-      options.onReady()
-      this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
-    } catch (error) {
-      const normalized = normalizeError(error)
-      this.markState('failed', normalized)
-      this.logger.error({ err: normalized }, options.failMessage)
-      await this.callServerFailHook(normalized)
-      await this.stopSubsystems().catch(() => undefined)
-      throw normalized
-    }
   }
 
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
-      const reloadStartedAt = performance.now()
-      const current = this.runtimes.get(runtimeName)
-      let currentDetached = false
-      let currentStopped = false
+      const startedAt = performance.now()
+      const timings = {
+        detachProxyMs: 0,
+        stopMs: 0,
+        startMs: 0,
+        attachProxyMs: 0,
+        hooksMs: 0,
+      }
+      const measure = async (
+        step: keyof typeof timings,
+        run: () => Promise<void>,
+      ) => {
+        const from = performance.now()
+        await run()
+        timings[step] = roundMs(performance.now() - from)
+      }
+      let current = this.runtimes.get(runtimeName)
       let next: RuntimeController | undefined
-      let detachProxyMs = 0
-      let stopMs = 0
-      let startMs = 0
-      let attachProxyMs = 0
-      let hooksMs = 0
 
       this.markState('reloading')
       this.logger.debug(`Neem runtime ${runtimeName} reloading`)
@@ -180,49 +140,37 @@ export class HostController {
 
       try {
         if (current) {
+          const running = current
           this.runtimes.delete(runtimeName)
-          currentDetached = true
-          const detachProxyStartedAt = performance.now()
-          await this.syncProxyUpstreams()
-          detachProxyMs = performance.now() - detachProxyStartedAt
-          const stopStartedAt = performance.now()
-          await current.stop()
-          stopMs = performance.now() - stopStartedAt
-          currentStopped = true
+          await measure('detachProxyMs', () => this.syncProxyUpstreams())
+          await measure('stopMs', () => running.stop())
+          current = undefined
         }
 
         this.replaceSnapshot(snapshot)
 
-        const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
-        if (exists) {
-          const startStartedAt = performance.now()
-          next = this.createRuntime(runtimeName)
-          this.runtimes.set(runtimeName, next)
-          await next.start()
-          startMs = performance.now() - startStartedAt
+        if (snapshot.manifest.runtimes[runtimeName]) {
+          const replacement = this.createRuntime(runtimeName)
+          next = replacement
+          this.runtimes.set(runtimeName, replacement)
+          await measure('startMs', () => replacement.start())
         }
 
-        const attachProxyStartedAt = performance.now()
-        await this.syncProxyUpstreams()
-        attachProxyMs = performance.now() - attachProxyStartedAt
+        await measure('attachProxyMs', () => this.syncProxyUpstreams())
         this.markState('running')
-        const hooksStartedAt = performance.now()
-        await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
-          mode: this.snapshot.mode,
-          name: runtimeName,
-          upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
-        })
-        hooksMs = performance.now() - hooksStartedAt
+        await measure('hooksMs', () =>
+          callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
+            mode: this.snapshot.mode,
+            name: runtimeName,
+            upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
+          }),
+        )
         this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
         this.logger.debug(
           {
             runtimeName,
-            totalMs: roundMs(performance.now() - reloadStartedAt),
-            detachProxyMs: roundMs(detachProxyMs),
-            stopMs: roundMs(stopMs),
-            startMs: roundMs(startMs),
-            attachProxyMs: roundMs(attachProxyMs),
-            hooksMs: roundMs(hooksMs),
+            totalMs: roundMs(performance.now() - startedAt),
+            ...timings,
           },
           'Neem runtime reload timing',
         )
@@ -230,9 +178,7 @@ export class HostController {
       } catch (error) {
         const normalized = normalizeError(error)
         this.runtimes.delete(runtimeName)
-        if (currentDetached && !currentStopped) {
-          await current?.stop().catch(() => undefined)
-        }
+        await current?.stop().catch(() => undefined)
         await next?.stop().catch(() => undefined)
         await this.syncProxyUpstreams().catch(() => undefined)
         this.markState('failed', normalized)
@@ -252,17 +198,14 @@ export class HostController {
       this.logger.info('Neem server stopping')
 
       let stopError: Error | undefined
-      try {
-        await this.callServerHook('server:stop').catch((error) => {
-          stopError = normalizeError(error)
-        })
-        await this.stopSubsystems().catch((error) => {
-          stopError ??= normalizeError(error)
-        })
-      } finally {
-        this.markState('stopped')
-        this.logger.debug('Neem server stopped')
-      }
+      await this.callServerHook('server:stop').catch((error) => {
+        stopError = normalizeError(error)
+      })
+      await this.stopSubsystems().catch((error) => {
+        stopError ??= normalizeError(error)
+      })
+      this.markState('stopped')
+      this.logger.debug('Neem server stopped')
 
       if (stopError) throw stopError
     })
@@ -359,9 +302,6 @@ export class HostController {
         await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
       },
       onFailure: (error) => {
-        const failOnWorkerError =
-          this.options.failOnWorkerError ?? this.snapshot.mode === 'production'
-        if (!failOnWorkerError) return
         this.markState('failed', error)
         this.options.onFailure?.(error)
       },
@@ -370,7 +310,7 @@ export class HostController {
 
   private replaceSnapshot(snapshot: RuntimeSnapshot): void {
     this.snapshot = snapshot
-    this.logger = childLogger(snapshot.logger, 'neem:server')
+    this.logger = childLogger(snapshot.logger, LABEL)
     for (const runtime of this.runtimes.values())
       runtime.replaceSnapshot(snapshot)
   }
@@ -395,12 +335,7 @@ export class HostController {
   }
 
   private callServerHook(
-    name:
-      | 'server:start'
-      | 'server:ready'
-      | 'server:reload'
-      | 'server:stop'
-      | 'server:fail',
+    name: 'server:start' | 'server:ready' | 'server:stop' | 'server:fail',
     error?: Error,
   ): Promise<void> {
     this.logger.trace({ hook: name, err: error }, 'Neem server hook')
@@ -420,7 +355,7 @@ export class HostController {
     })
   }
 
-  private getDisabledProxyHealth(): NeemProxyHealth {
+  private getInactiveProxyHealth(): NeemProxyHealth {
     return {
       enabled: Boolean(this.snapshot.config.proxy),
       running: false,

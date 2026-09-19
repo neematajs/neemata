@@ -38,7 +38,7 @@ describe('WorkerServiceClient', () => {
         }
       })
     `)
-    const client = new WorkerServiceClient<never>({
+    const client = new WorkerServiceClient<{ type: 'hang' }, never>({
       entry,
       serviceName: 'test-service',
     })
@@ -57,7 +57,7 @@ describe('WorkerServiceClient', () => {
 
       parentPort.on('message', () => {})
     `)
-    const client = new WorkerServiceClient<never>({
+    const client = new WorkerServiceClient<{ type: 'hang' }, never>({
       entry,
       serviceName: 'test-service',
       onFailure: () => {},

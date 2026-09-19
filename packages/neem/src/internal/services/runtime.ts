@@ -1,5 +1,3 @@
-import { resolve } from 'node:path'
-
 import type { Logger } from '@nmtjs/core'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
@@ -12,54 +10,43 @@ import {
   selectManifestRuntimes,
 } from '../manifest/manifest.ts'
 import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
-import { createHostHooks } from '../plugins/hooks.ts'
 import { serializeError } from '../utils.ts'
 
 export type RuntimeServiceOptions = {
   mode: NeemMode
   outDir: string
   env?: NodeJS.ProcessEnv
-  manifestFile: string
   runtimes?: readonly string[]
   emit: (event: RuntimeEvent) => void
 }
 
 export class RuntimeService {
   private controller: HostController | undefined
-  private readonly hooks = createHostHooks()
-  private env: NodeJS.ProcessEnv | undefined
   private logger: Logger | undefined
-  private mode: NeemMode | undefined
-  private outDir: string | undefined
-  private runtimes: readonly string[] | undefined
 
-  async start(
-    options: RuntimeServiceOptions,
-  ): Promise<NeemRuntimeServerHealth> {
-    this.mode = options.mode
-    this.outDir = options.outDir
-    this.env = options.env
-    this.runtimes = options.runtimes
-    const snapshot = await this.loadSnapshot(options.manifestFile)
+  constructor(private readonly options: RuntimeServiceOptions) {}
+
+  async start(manifestFile: string): Promise<NeemRuntimeServerHealth> {
+    const { mode, outDir, emit } = this.options
+    const snapshot = await this.loadSnapshot(manifestFile)
     this.logger = snapshot.logger
     snapshot.logger.info('Neem runtime service starting')
     snapshot.logger.trace(
       {
-        mode: options.mode,
-        outDir: options.outDir,
-        manifestFile: options.manifestFile,
+        mode,
+        outDir,
+        manifestFile,
         runtimes: Object.keys(snapshot.manifest.runtimes),
       },
       'Neem runtime service options',
     )
     const controller = new HostController({
       snapshot,
-      hooks: this.hooks,
-      failOnWorkerError: true,
-      recovery: { attempts: options.mode === 'production' ? 3 : 1 },
-      onFailure: (error) => {
-        options.emit({ type: 'error', error: serializeError(error) })
-      },
+      // Production keeps the built-in recovery policy; a dev session retries
+      // once so a broken edit surfaces immediately.
+      recovery: mode === 'production' ? undefined : { attempts: 1 },
+      onFailure: (error) =>
+        emit({ type: 'error', error: serializeError(error) }),
     })
     this.controller = controller
     await controller.start()
@@ -69,17 +56,8 @@ export class RuntimeService {
       { ready: health.ready, revision: health.revision },
       'Neem runtime service health',
     )
-    options.emit({ type: 'ready', health })
+    emit({ type: 'ready', health })
     return health
-  }
-
-  async reload(manifestFile: string): Promise<NeemRuntimeServerHealth> {
-    const controller = this.requireController()
-    const snapshot = await this.loadSnapshot(manifestFile)
-    snapshot.logger.debug('Neem runtime service reloading')
-    snapshot.logger.trace({ manifestFile }, 'Neem runtime service manifest')
-    await controller.reload(snapshot)
-    return controller.getHealth()
   }
 
   async reloadRuntime(
@@ -107,16 +85,11 @@ export class RuntimeService {
     this.logger?.debug('Neem runtime service stopped')
   }
 
-  getHealth(): NeemRuntimeServerHealth {
-    return this.requireController().getHealth()
-  }
-
   private async loadSnapshot(manifestFile: string) {
-    const outDir = this.outDir ?? resolve(manifestFile, '..')
-    const mode = this.mode ?? 'production'
+    const { mode, outDir, env, runtimes } = this.options
     const manifest = selectManifestRuntimes(
       await readManifest(manifestFile),
-      this.runtimes,
+      runtimes,
     )
     await assertManifestFilesExist(outDir, manifest)
     const logger = await resolveManifestLogger(manifest.config.logger, {
@@ -127,7 +100,7 @@ export class RuntimeService {
     return createRuntimeSnapshot({
       mode,
       outDir,
-      env: this.env,
+      env,
       manifest,
       manifestFile,
       logger,
