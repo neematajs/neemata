@@ -16,7 +16,7 @@ import { ProtocolError } from '@nmtjs/protocol/server'
 import { createServerTransport } from '@nmtjs/transports/http-server'
 import { mcp } from '@nmtjs/transports/mcp'
 import { t } from '@nmtjs/type'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { McpAuthOptions } from '../../src/mcp/types.ts'
 
@@ -185,6 +185,40 @@ describe('official MCP SDK v2 client interop (2026-07-28)', () => {
       arguments: {},
     })
     expect(result.structuredContent).toEqual({ healthy: true })
+  })
+
+  it('aborts the procedure when the client cancels a tool call', async () => {
+    const running = Promise.withResolvers<void>()
+    let aborted = false
+    const { url } = await createHarness({
+      'users/create': ({ signal }) =>
+        new Promise((resolve) => {
+          const settle = () => {
+            aborted = signal.aborted
+            resolve({ aborted })
+          }
+          // never leave the call in flight: a cancellation that never
+          // arrives must fail the assertion, not hang teardown
+          setTimeout(settle, 2000)
+          signal.addEventListener('abort', settle, { once: true })
+          running.resolve()
+        }),
+    })
+    const client = await connectClient(url)
+    const controller = new AbortController()
+
+    const call = client
+      .callTool(
+        { name: 'users_create', arguments: { email: 'a@b.c', name: 'den' } },
+        { signal: controller.signal },
+      )
+      .catch(() => undefined)
+
+    await running.promise
+    controller.abort()
+    await call
+
+    await vi.waitFor(() => expect(aborted).toBe(true))
   })
 
   it('rejects 2025-era session traffic (legacy: reject)', async () => {

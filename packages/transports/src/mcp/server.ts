@@ -4,6 +4,7 @@ import type {
   JsonSchemaType,
   McpHttpHandler,
   McpRequestContext,
+  ServerContext,
 } from '@modelcontextprotocol/server'
 import type {
   GatewayConnection,
@@ -189,48 +190,53 @@ export class McpHandler {
             ? {}
             : { annotations: config.annotations }),
         },
-        async (args: unknown, extra: any): Promise<CallToolResult> => {
-          try {
-            const payload = input.kind === 'none' ? undefined : args
-            const signal = extra?.signal ?? new AbortController().signal
-            const result = await this.params.onRpc(
-              state.connection,
-              { payload, procedure: config.procedure },
-              signal,
-            )
-
-            const text = JSON.stringify(result ?? null)
-            const structured =
-              result !== null &&
-              typeof result === 'object' &&
-              !Array.isArray(result)
-                ? (result as Record<string, unknown>)
-                : undefined
-            return {
-              content: [{ type: 'text', text }],
-              ...(structured === undefined
-                ? {}
-                : { structuredContent: structured }),
-              isError: false,
-            }
-          } catch (error) {
-            // Execution failures are tool results, not protocol errors —
-            // agents are expected to read and react to them
-            const message =
-              error instanceof ProtocolError
-                ? error.message || error.code
-                : 'Tool execution failed'
-            if (!(error instanceof ProtocolError)) console.error(error)
-            return {
-              content: [{ type: 'text', text: message }],
-              isError: true,
-            }
-          }
-        },
+        (args: unknown, ctx: ServerContext) =>
+          this.callTool(
+            state.connection,
+            config.procedure,
+            input.kind === 'none' ? undefined : args,
+            ctx.mcpReq.signal,
+          ),
       )
     }
 
     return server
+  }
+
+  private async callTool(
+    connection: GatewayConnection,
+    procedure: string,
+    payload: unknown,
+    signal: AbortSignal,
+  ): Promise<CallToolResult> {
+    let result: unknown
+    try {
+      result = await this.params.onRpc(
+        connection,
+        { payload, procedure },
+        signal,
+      )
+    } catch (error) {
+      // Execution failures are tool results, not protocol errors — agents
+      // are expected to read and react to them
+      const message =
+        error instanceof ProtocolError
+          ? error.message || error.code
+          : 'Tool execution failed'
+      if (!(error instanceof ProtocolError)) console.error(error)
+      return { content: [{ type: 'text', text: message }], isError: true }
+    }
+
+    const text = JSON.stringify(result ?? null)
+    const structured =
+      result !== null && typeof result === 'object' && !Array.isArray(result)
+        ? (result as Record<string, unknown>)
+        : undefined
+    return {
+      content: [{ type: 'text', text }],
+      ...(structured === undefined ? {} : { structuredContent: structured }),
+      isError: false,
+    }
   }
 
   /** Resolve the procedure behind a tool and derive its schema/description. */
