@@ -15,7 +15,7 @@ import type {
 import { isAbortError, isAsyncIterable } from '@nmtjs/common'
 import { provision } from '@nmtjs/core'
 import { GatewayInjectables, ProxyableTransportType } from '@nmtjs/gateway'
-import { ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
+import { BLOB_HEADER, ErrorCode, ProtocolBlob } from '@nmtjs/protocol'
 import {
   negotiateCodecs,
   ProtocolClientStream,
@@ -45,7 +45,6 @@ import {
 } from './constants.ts'
 import * as injections from './injectables.ts'
 
-const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
 const DEFAULT_ALLOWED_METHODS: readonly string[] = Object.freeze(['post'])
 
 type CorsParams = Omit<HttpHandlerCorsCustomOptions, 'origin'>
@@ -160,7 +159,7 @@ export class NeemataHttpHandler {
     // undecodable content-type is not an error: the body is passed through
     // as a raw blob stream payload, so only Accept can fail negotiation.
     const rawBody =
-      request.headers.get(NEEMATA_BLOB_HEADER) === 'true' ||
+      request.headers.get(BLOB_HEADER) === 'true' ||
       !contentType ||
       !this.#codecs.supportsDecoder(contentType)
 
@@ -301,7 +300,7 @@ export class NeemataHttpHandler {
     if (result instanceof ProtocolBlob) {
       const { source, metadata } = result
 
-      headers.set(NEEMATA_BLOB_HEADER, 'true')
+      headers.set(BLOB_HEADER, 'true')
       headers.set('Content-Type', metadata.type)
       // nullish check — zero is a valid size for empty blobs
       if (metadata.size !== undefined) {

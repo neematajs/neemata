@@ -28,13 +28,5 @@
     "typescript/prefer-literal-enum-member": "error",
     "unicorn/prefer-node-protocol": "error",
     "unicorn/prefer-number-properties": "error"
-  },
-  "overrides": [
-    {
-      "files": ["packages/protocol/src/server/protocol.ts"],
-      "rules": {
-        "typescript/no-redundant-type-constituents": "off"
-      }
-    }
-  ]
+  }
 }

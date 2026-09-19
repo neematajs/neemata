@@ -1,5 +1,5 @@
 import type { BaseClientCodec } from '@nmtjs/protocol/client'
-import { ConnectionType, ErrorCode } from '@nmtjs/protocol'
+import { BLOB_HEADER, ConnectionType, ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/client'
 
 import type {
@@ -32,7 +32,6 @@ const resolveDecodeBase64 = (custom?: DecodeBase64): DecodeBase64 => {
   }
 }
 
-const NEEMATA_BLOB_HEADER = 'X-Neemata-Blob'
 const MAX_KEEPALIVE_BODY_BYTES = 64 * 1024
 
 export type HttpClientTransportOptions = {
@@ -89,7 +88,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
 
     if (rpc.blob) {
       headers.set('Content-Type', rpc.blob.metadata.type)
-      headers.set(NEEMATA_BLOB_HEADER, 'true')
+      headers.set(BLOB_HEADER, 'true')
       body = rpc.blob.source
     } else {
       headers.set('Content-Type', context.contentType)
@@ -135,7 +134,7 @@ export class HttpTransportClient implements UnidirectionalTransport {
       return { type: 'rpc_stream' as const, stream: this.toStream(response) }
     }
 
-    if (!response.headers.get(NEEMATA_BLOB_HEADER)) {
+    if (!response.headers.get(BLOB_HEADER)) {
       const result = await response.bytes()
       return { type: 'rpc' as const, result }
     }
