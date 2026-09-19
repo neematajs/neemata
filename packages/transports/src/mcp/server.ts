@@ -209,13 +209,24 @@ export class McpHandler {
     payload: unknown,
     signal: AbortSignal,
   ): Promise<CallToolResult> {
-    let result: unknown
     try {
-      result = await this.params.onRpc(
+      const result = await this.params.onRpc(
         connection,
         { payload, procedure },
         signal,
       )
+      // serializing inside the try keeps a throwing toJSON() behind the same
+      // sanitized failure as the call itself
+      const text = JSON.stringify(result ?? null)
+      const structured =
+        result !== null && typeof result === 'object' && !Array.isArray(result)
+          ? (result as Record<string, unknown>)
+          : undefined
+      return {
+        content: [{ type: 'text', text }],
+        ...(structured === undefined ? {} : { structuredContent: structured }),
+        isError: false,
+      }
     } catch (error) {
       // Execution failures are tool results, not protocol errors — agents
       // are expected to read and react to them
@@ -225,17 +236,6 @@ export class McpHandler {
           : 'Tool execution failed'
       if (!(error instanceof ProtocolError)) console.error(error)
       return { content: [{ type: 'text', text: message }], isError: true }
-    }
-
-    const text = JSON.stringify(result ?? null)
-    const structured =
-      result !== null && typeof result === 'object' && !Array.isArray(result)
-        ? (result as Record<string, unknown>)
-        : undefined
-    return {
-      content: [{ type: 'text', text }],
-      ...(structured === undefined ? {} : { structuredContent: structured }),
-      isError: false,
     }
   }
 

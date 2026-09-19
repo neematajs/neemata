@@ -375,8 +375,10 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
     if (chunkType instanceof type.NeverType)
       throw new Error('Stream procedure must have a defined output type')
 
+    // only an explicit `false` opts out; an unset value keeps encoding on
     const encode =
-      runtimeConfig.serializeOutput && !(chunkType instanceof type.AnyType)
+      runtimeConfig.serializeOutput !== false &&
+      !(chunkType instanceof type.AnyType)
 
     return async function* (onDone?: () => void) {
       try {
@@ -400,7 +402,7 @@ export class ApplicationApi implements GatewayApi<ApplicationResolvedProcedure> 
   ) {
     const { output } = procedure.contract
     if (output instanceof type.NeverType) return undefined
-    if (!runtimeConfig.serializeOutput) return response
+    if (runtimeConfig.serializeOutput === false) return response
     return output.encode(response)
   }
 }

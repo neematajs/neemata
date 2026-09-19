@@ -3,12 +3,14 @@ import { Container, createLogger, Scope } from '@nmtjs/core'
 import { GatewayInjectables } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
 import { ProtocolError } from '@nmtjs/protocol/server'
+import { t } from '@nmtjs/type'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AnyFilter, AnyProcedure } from '../src/index.ts'
 import {
   ApiError,
   ApplicationApi,
+  config,
   createFilter,
   createProcedure,
 } from '../src/index.ts'
@@ -169,5 +171,18 @@ describe('ApplicationApi timeout', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('ApplicationApi output serialization', () => {
+  it('keeps encoding output when serializeOutput is left unset', async () => {
+    const procedure = createProcedure({
+      output: t.object({ public: t.string() }),
+      meta: [config.static({ serializeOutput: undefined })],
+      handler: () => ({ public: 'a', secret: 'b' }),
+    })
+    const { call } = createTestApi({ procedure })
+
+    await expect(call()).resolves.toEqual({ public: 'a' })
   })
 })

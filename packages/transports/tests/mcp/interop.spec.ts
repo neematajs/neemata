@@ -190,11 +190,15 @@ describe('official MCP SDK v2 client interop (2026-07-28)', () => {
   it('aborts the procedure when the client cancels a tool call', async () => {
     const running = Promise.withResolvers<void>()
     let aborted = false
+    let disposing = true
     const { url } = await createHarness({
-      'users/create': ({ signal }) =>
+      'users/create': ({ signal, connection }) =>
         new Promise((resolve) => {
           const settle = () => {
             aborted = signal.aborted
+            // teardown aborts the connection first, so a live connection here
+            // proves the request's own signal carried the cancellation
+            disposing = connection.abortController.signal.aborted
             resolve({ aborted })
           }
           // never leave the call in flight: a cancellation that never
@@ -219,6 +223,7 @@ describe('official MCP SDK v2 client interop (2026-07-28)', () => {
     await call
 
     await vi.waitFor(() => expect(aborted).toBe(true))
+    expect(disposing).toBe(false)
   })
 
   it('rejects 2025-era session traffic (legacy: reject)', async () => {
