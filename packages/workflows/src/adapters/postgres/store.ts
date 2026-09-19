@@ -2,7 +2,7 @@ import type { RunSnapshot } from '../../runtime/state.ts'
 import type { WorkflowStore } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
-import { validateFailedRunRetry } from '../../runtime/store.ts'
+import { validateFailedRunRetry } from '../../runtime/retry-validation.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import {
