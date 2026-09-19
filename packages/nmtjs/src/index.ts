@@ -8,6 +8,9 @@ import {
 } from '@nmtjs/metrics'
 import { PubSubInjectables } from '@nmtjs/pubsub'
 
+// Declaration emit cannot name the inferred shapes of the frozen objects
+// below without reaching into transitive installs (prom-client, pino), so
+// they stay annotated (TS2883).
 type Injectables = Readonly<
   typeof CoreInjectables & typeof GatewayInjectables & typeof PubSubInjectables
 >
