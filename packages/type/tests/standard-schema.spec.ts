@@ -76,6 +76,21 @@ describe('Standard schema', () => {
     expect(outputSchema).toHaveProperty('type')
   })
 
+  it('carries registered metadata into every JSON schema', () => {
+    const titled = t.string().title('Name').description('A name')
+
+    for (const mode of ['decode', 'encode'] as const) {
+      for (const io of ['input', 'output'] as const) {
+        const jsonSchema = titled.standard[mode]['~standard'].jsonSchema[io]({
+          target: 'draft-07',
+        })
+
+        expect(jsonSchema).toHaveProperty('title', 'Name')
+        expect(jsonSchema).toHaveProperty('description', 'A name')
+      }
+    }
+  })
+
   it('infers JSON schema for custom types', () => {
     const bigIntStandard = t.bigInt().standard.decode['~standard']
     const bigIntSchema = bigIntStandard.jsonSchema.input({ target: 'draft-07' })

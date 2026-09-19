@@ -137,6 +137,7 @@ export namespace standard {
               cycles,
               reused,
               unrepresentable: 'any',
+              metadata: registry,
             })
           },
         },
