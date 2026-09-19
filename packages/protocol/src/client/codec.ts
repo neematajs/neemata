@@ -6,8 +6,6 @@ export interface EncodeRPCContext<T = any> {
   addStream: (blob: ProtocolBlob) => T
 }
 
-export type ProtocolRPCEncode = ArrayBufferView
-
 export interface BaseClientDecoder {
   decode(buffer: ArrayBufferView): unknown
   decodeRPC(
@@ -21,7 +19,7 @@ export interface BaseClientEncoder {
   encodeRPC(
     data: unknown,
     context: EncodeRPCContext<ProtocolClientBlobStream>,
-  ): ProtocolRPCEncode
+  ): ArrayBufferView
 }
 
 export abstract class BaseClientCodec
@@ -30,10 +28,7 @@ export abstract class BaseClientCodec
   abstract contentType: string
 
   abstract encode(data: unknown): ArrayBufferView
-  abstract encodeRPC(
-    data: unknown,
-    context: EncodeRPCContext,
-  ): ProtocolRPCEncode
+  abstract encodeRPC(data: unknown, context: EncodeRPCContext): ArrayBufferView
   abstract decode(buffer: ArrayBufferView): unknown
   abstract decodeRPC(
     buffer: ArrayBufferView,

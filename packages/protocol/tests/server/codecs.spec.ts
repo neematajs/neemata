@@ -38,13 +38,9 @@ describe.sequential('Codec', () => {
     )
   })
 
-  it('should throw when encoder/decoder unsupported and flag is set', () => {
-    expect(() => codecs.supportsDecoder('application/unknown', true)).toThrow(
-      /No supported codec/,
-    )
-    expect(() => codecs.supportsEncoder('application/unknown', true)).toThrow(
-      /No supported codec/,
-    )
+  it('should not match an unsupported type', () => {
+    expect(codecs.supportsDecoder('application/unknown')).toBeNull()
+    expect(codecs.supportsEncoder('application/unknown')).toBeNull()
   })
 })
 

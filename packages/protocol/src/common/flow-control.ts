@@ -77,13 +77,15 @@ export class ReceiveCreditWindow {
 
   /** Returns false when incoming data exceeds the outstanding grant. */
   accept(amount: number): boolean {
-    if (!isCreditAmount(amount) || amount > this.#outstanding) return false
-    this.#outstanding -= amount
-    return true
+    return this.#release(amount)
   }
 
   /** Rolls back a grant that did not reach the sender. */
   revoke(amount: number): boolean {
+    return this.#release(amount)
+  }
+
+  #release(amount: number) {
     if (!isCreditAmount(amount) || amount > this.#outstanding) return false
     this.#outstanding -= amount
     return true

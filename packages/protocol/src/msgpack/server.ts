@@ -10,9 +10,10 @@ import type {
 } from '../common/index.ts'
 import { ProtocolBlob } from '../common/blob.ts'
 import { BaseServerCodec } from '../server/codec.ts'
-import { decodeStreamExt, encodeStreamExt, extensionCodec } from './common.ts'
+import { decodeRPCFrame, encodeStreamExt, extensionCodec } from './common.ts'
 
-// Marker class for stream IDs (used internally for msgpack extension encoding)
+// stands in for a blob until the payload is encoded, so the api layer can
+// hand back a value the codec recognises as a stream reference
 class StreamIdMarker {
   constructor(
     public readonly streamId: number,
@@ -27,7 +28,7 @@ export class MsgpackCodec extends BaseServerCodec {
   encode(data: any) {
     // Encoding undefined would produce a zero-byte frame that gets silently
     // dropped over SSE and breaks decoding over WS — reject it early instead
-    if (typeof data === 'undefined') {
+    if (data === undefined) {
       throw new TypeError('Cannot encode undefined')
     }
     return Buffer.from(
@@ -40,7 +41,7 @@ export class MsgpackCodec extends BaseServerCodec {
   }
 
   encodeRPC(data: unknown, _streams: EncodeRPCStreams) {
-    if (typeof data === 'undefined') {
+    if (data === undefined) {
       return Buffer.alloc(0)
     }
 
@@ -75,18 +76,6 @@ export class MsgpackCodec extends BaseServerCodec {
   }
 
   decodeRPC(buffer: Buffer, context: DecodeRPCContext<ProtocolBlobInterface>) {
-    if (buffer.byteLength === 0) {
-      return undefined
-    }
-
-    return decode(buffer, {
-      extensionCodec,
-      context: {
-        decodeStream: (data: Uint8Array) => {
-          const { id, metadata } = decodeStreamExt(data)
-          return context.addStream(id, metadata)
-        },
-      },
-    })
+    return decodeRPCFrame(buffer, context)
   }
 }

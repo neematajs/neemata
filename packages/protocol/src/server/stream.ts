@@ -6,6 +6,11 @@ import type { ProtocolBlob, ProtocolBlobMetadata } from '../common/blob.ts'
 import type { SendResult } from './types.ts'
 import { DEFAULT_BLOB_CHUNK_SIZE, SendCredits } from '../common/flow-control.ts'
 
+/**
+ * A PassThrough whose own `_read` stays in charge of the flow: a custom
+ * `read` option is forwarded as a notification (the owner uses it to grant
+ * credit) rather than replacing the PassThrough behaviour.
+ */
 export class ProtocolClientStream extends PassThrough {
   readonly #read?: ReadableOptions['read']
 
@@ -87,7 +92,7 @@ export class ProtocolServerStream {
     this.#source.on('error', (error) => {
       if (!this.#granted && !this.#finished) {
         this.#pendingError = error
-        this.#source.destroy?.()
+        this.#source.destroy()
         return
       }
       this.#fail(error)
@@ -122,7 +127,7 @@ export class ProtocolServerStream {
     } else {
       this.#finished = true
       this.#buffered = null
-      this.#source.destroy?.()
+      this.#source.destroy()
     }
   }
 
@@ -131,7 +136,7 @@ export class ProtocolServerStream {
     this.#finished = true
     this.#pendingError = null
     this.#buffered = null
-    this.#source.destroy?.(error)
+    this.#source.destroy(error)
     this.#sink.error(error)
   }
 

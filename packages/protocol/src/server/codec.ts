@@ -68,10 +68,7 @@ export class ProtocolCodecRegistry {
   decoders = new Map<Pattern, BaseServerDecoder>()
   encoders = new Map<Pattern, BaseServerEncoder>()
 
-  default: BaseServerCodec
-
   constructor(codecs: [BaseServerCodec, ...BaseServerCodec[]]) {
-    this.default = codecs[0]
     for (const codec of codecs) {
       this.encoders.set(codec.contentType, codec)
       for (const acceptType of codec.accept) {
@@ -80,29 +77,23 @@ export class ProtocolCodecRegistry {
     }
   }
 
-  supportsDecoder(contentType: string, throwIfUnsupported = false) {
-    return this.supports(this.decoders, contentType, throwIfUnsupported)
+  supportsDecoder(contentType: string) {
+    return this.supports(this.decoders, contentType)
   }
 
-  supportsEncoder(contentType: string, throwIfUnsupported = false) {
-    return this.supports(this.encoders, contentType, throwIfUnsupported)
+  supportsEncoder(contentType: string) {
+    return this.supports(this.encoders, contentType)
   }
 
   private supports<T extends BaseServerEncoder | BaseServerDecoder>(
     codecs: Map<Pattern, T>,
     contentType: string,
-    throwIfUnsupported = false,
   ): T | null {
-    const types = parseContentTypes(contentType)
-
-    for (const type of types) {
+    for (const type of parseContentTypes(contentType)) {
       for (const [pattern, codec] of codecs) {
         if (type === '*/*' || match(type, pattern)) return codec
       }
     }
-
-    if (throwIfUnsupported)
-      throw new Error(`No supported codec found: ${contentType}`)
 
     return null
   }

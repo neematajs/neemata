@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest'
 import { ProtocolError as ClientProtocolError } from '../src/client/protocol.ts'
 import { ProtocolError as ServerProtocolError } from '../src/server/protocol.ts'
 
+it('is one class on both halves, so instanceof works across them', () => {
+  expect(ClientProtocolError).toBe(ServerProtocolError)
+  expect(new ServerProtocolError('BadRequest')).toBeInstanceOf(
+    ClientProtocolError,
+  )
+})
+
 describe.each([
   ['server', ServerProtocolError],
   ['client', ClientProtocolError],

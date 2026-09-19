@@ -2,7 +2,13 @@
 
 import type { ServerMessageTypePayload } from '../protocol.ts'
 import type { MessageContext } from '../types.ts'
-import { decodeText, encodeNumber, encodeText } from '../../common/binary.ts'
+import {
+  concat,
+  decodeOptionalText,
+  encodeFrame,
+  encodeNumber,
+  encodeText,
+} from '../../common/binary.ts'
 import {
   ClientMessageType,
   MessageByteLength,
@@ -14,11 +20,11 @@ import { ProtocolVersionInterface } from '../protocol.ts'
 export class ProtocolVersion1 extends ProtocolVersionInterface {
   version = ProtocolVersion.v1
   decodeMessage(context: MessageContext, buffer: Buffer) {
-    const messageType = buffer.readUint8(0)
+    const messageType = buffer.readUInt8(0)
     const messagePayload = buffer.subarray(MessageByteLength.MessageType)
     switch (messageType) {
       case ClientMessageType.Rpc: {
-        const callId = messagePayload.readUint32LE(0)
+        const callId = messagePayload.readUInt32LE(0)
         const procedureLength = messagePayload.readUInt16LE(
           MessageByteLength.CallId,
         )
@@ -49,9 +55,10 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
       }
       case ClientMessageType.RpcAbort: {
         const callId = messagePayload.readUInt32LE(0)
-        const reasonPayload = messagePayload.subarray(MessageByteLength.CallId)
-        const reason =
-          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
+        const reason = decodeOptionalText(
+          messagePayload,
+          MessageByteLength.CallId,
+        )
         return { type: messageType, callId, reason }
       }
       case ClientMessageType.RpcStreamPull: {
@@ -71,36 +78,24 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         const size = messagePayload.readUInt32LE(MessageByteLength.CallId)
         return { type: messageType, callId, size }
       }
-      case ClientMessageType.Ping: {
-        const nonce = messagePayload.readUInt32LE(0)
-        return { type: messageType, nonce }
-      }
+      case ClientMessageType.Ping:
       case ClientMessageType.Pong: {
         const nonce = messagePayload.readUInt32LE(0)
         return { type: messageType, nonce }
       }
-      case ClientMessageType.ServerBlobAbort: {
+      case ClientMessageType.ServerBlobAbort:
+      case ClientMessageType.ClientBlobAbort: {
         const streamId = messagePayload.readUInt32LE(0)
-        const reasonPayload = messagePayload.subarray(
+        const reason = decodeOptionalText(
+          messagePayload,
           MessageByteLength.StreamId,
         )
-        const reason =
-          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
         return { type: messageType, streamId, reason }
       }
       case ClientMessageType.ServerBlobPull: {
         const streamId = messagePayload.readUInt32LE(0)
         const size = messagePayload.readUInt32LE(MessageByteLength.StreamId)
         return { type: messageType, streamId, size }
-      }
-      case ClientMessageType.ClientBlobAbort: {
-        const streamId = messagePayload.readUInt32LE(0)
-        const reasonPayload = messagePayload.subarray(
-          MessageByteLength.StreamId,
-        )
-        const reason =
-          reasonPayload.byteLength > 0 ? decodeText(reasonPayload) : undefined
-        return { type: messageType, streamId, reason }
       }
       case ClientMessageType.ClientBlobEnd: {
         return { type: messageType, streamId: messagePayload.readUInt32LE(0) }
@@ -122,18 +117,10 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
     payload: ServerMessageTypePayload[T],
   ) {
     switch (messageType) {
-      // case ServerMessageType.Event: {
-      //   const { event, data } =
-      //     payload as ServerMessageTypePayload[ServerMessageType.Event]
-      //   return this.encode(
-      //     encodeNumber(messageType, 'Uint8'),
-      //     context.encoder.encode({ event, data }),
-      //   )
-      // }
       case ServerMessageType.RpcResponse: {
         const { callId, result, streams, error } =
           payload as ServerMessageTypePayload[ServerMessageType.RpcResponse]
-        return this.encode(
+        return concat(
           encodeNumber(messageType, 'Uint8'),
           encodeNumber(callId, 'Uint32'),
           encodeNumber(error ? 1 : 0, 'Uint8'),
@@ -147,27 +134,20 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         const { callId } = payload as ServerMessageTypePayload[
           | ServerMessageType.RpcStreamEnd
           | ServerMessageType.RpcStreamResponse]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(callId, 'Uint32'),
-        )
+        return encodeFrame(messageType, callId)
       }
       case ServerMessageType.RpcStreamChunk: {
         const { callId, chunk } =
           payload as ServerMessageTypePayload[ServerMessageType.RpcStreamChunk]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(callId, 'Uint32'),
-          chunk,
-        )
+        return encodeFrame(messageType, callId, chunk)
       }
       case ServerMessageType.RpcStreamAbort: {
         const { callId, reason } =
           payload as ServerMessageTypePayload[ServerMessageType.RpcStreamAbort]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(callId, 'Uint32'),
-          reason ? encodeText(reason) : Buffer.alloc(0),
+        return encodeFrame(
+          messageType,
+          callId,
+          reason ? encodeText(reason) : undefined,
         )
       }
       case ServerMessageType.Pong:
@@ -175,47 +155,33 @@ export class ProtocolVersion1 extends ProtocolVersionInterface {
         const { nonce } = payload as ServerMessageTypePayload[
           | ServerMessageType.Pong
           | ServerMessageType.Ping]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(nonce, 'Uint32'),
-        )
+        return encodeFrame(messageType, nonce)
       }
       case ServerMessageType.ClientBlobPull: {
         const { size, streamId } =
           payload as ServerMessageTypePayload[ServerMessageType.ClientBlobPull]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(streamId, 'Uint32'),
-          encodeNumber(size, 'Uint32'),
-        )
+        return encodeFrame(messageType, streamId, encodeNumber(size, 'Uint32'))
       }
       case ServerMessageType.ServerBlobAbort:
       case ServerMessageType.ClientBlobAbort: {
         const { streamId, reason } = payload as ServerMessageTypePayload[
           | ServerMessageType.ServerBlobAbort
           | ServerMessageType.ClientBlobAbort]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(streamId, 'Uint32'),
-          reason ? encodeText(reason) : Buffer.alloc(0),
+        return encodeFrame(
+          messageType,
+          streamId,
+          reason ? encodeText(reason) : undefined,
         )
       }
       case ServerMessageType.ServerBlobPush: {
         const { streamId, chunk } =
           payload as ServerMessageTypePayload[ServerMessageType.ServerBlobPush]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(streamId, 'Uint32'),
-          chunk,
-        )
+        return encodeFrame(messageType, streamId, chunk)
       }
       case ServerMessageType.ServerBlobEnd: {
         const { streamId } =
           payload as ServerMessageTypePayload[ServerMessageType.ServerBlobEnd]
-        return this.encode(
-          encodeNumber(messageType, 'Uint8'),
-          encodeNumber(streamId, 'Uint32'),
-        )
+        return encodeFrame(messageType, streamId)
       }
 
       default:

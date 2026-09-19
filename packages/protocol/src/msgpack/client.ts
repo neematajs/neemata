@@ -10,7 +10,7 @@ import type {
 } from '../common/index.ts'
 import { BaseClientCodec } from '../client/codec.ts'
 import { ProtocolBlob } from '../common/blob.ts'
-import { decodeStreamExt, encodeStreamExt, extensionCodec } from './common.ts'
+import { decodeRPCFrame, encodeStreamExt, extensionCodec } from './common.ts'
 
 /**
  * MessagePack codec with support for Neemata streams.
@@ -21,7 +21,7 @@ export class MsgpackCodec extends BaseClientCodec {
   contentType = 'application/msgpack'
 
   encode(data: any): Uint8Array {
-    if (typeof data === 'undefined') {
+    if (data === undefined) {
       return new Uint8Array(0)
     }
 
@@ -32,7 +32,7 @@ export class MsgpackCodec extends BaseClientCodec {
     data: unknown,
     context: EncodeRPCContext<ProtocolClientBlobStream>,
   ) {
-    if (typeof data === 'undefined') {
+    if (data === undefined) {
       return new Uint8Array(0)
     }
 
@@ -63,18 +63,6 @@ export class MsgpackCodec extends BaseClientCodec {
     buffer: ArrayBufferView,
     context: DecodeRPCContext<ProtocolBlobInterface>,
   ) {
-    if (buffer.byteLength === 0) {
-      return undefined
-    }
-
-    return decode(buffer, {
-      extensionCodec,
-      context: {
-        decodeStream: (data: Uint8Array) => {
-          const { id, metadata } = decodeStreamExt(data)
-          return context.addStream(id, metadata)
-        },
-      },
-    })
+    return decodeRPCFrame(buffer, context)
   }
 }

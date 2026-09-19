@@ -49,6 +49,12 @@ export const encodeText = (text: string) => utf8encoder.encode(text)
 export const decodeText = (buffer: Parameters<typeof utf8decoder.decode>[0]) =>
   utf8decoder.decode(buffer)
 
+/** Text that occupies the rest of the frame, absent when nothing follows. */
+export const decodeOptionalText = (buffer: Uint8Array, offset: number) => {
+  const text = buffer.subarray(offset)
+  return text.byteLength > 0 ? decodeText(text) : undefined
+}
+
 export const concat = (...buffers: (ArrayBuffer | ArrayBufferView)[]) => {
   let totalLength = 0
   for (const buffer of buffers) totalLength += buffer.byteLength
@@ -65,9 +71,19 @@ export const concat = (...buffers: (ArrayBuffer | ArrayBufferView)[]) => {
   return view
 }
 
-export const UTF8Transform = () =>
-  new TransformStream<string, Uint8Array>({
-    transform(chunk, controller) {
-      controller.enqueue(encodeText(chunk))
-    },
-  })
+/**
+ * The frame layout shared by every message that is a type, an id and an
+ * optional tail — a size, a chunk or a reason, chosen by the caller.
+ */
+export const encodeFrame = (
+  messageType: number,
+  id: number,
+  tail?: ArrayBuffer | ArrayBufferView,
+) => {
+  const chunks: (ArrayBuffer | ArrayBufferView)[] = [
+    encodeNumber(messageType, 'Uint8'),
+    encodeNumber(id, 'Uint32'),
+  ]
+  if (tail) chunks.push(tail)
+  return concat(...chunks)
+}

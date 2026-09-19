@@ -1,4 +1,4 @@
-import type { Callback, DuplexStreamOptions } from '@nmtjs/common'
+import type { DuplexStreamOptions } from '@nmtjs/common'
 import { DuplexStream } from '@nmtjs/common'
 
 import type {
@@ -14,7 +14,7 @@ export class ProtocolClientBlobStream
 {
   readonly [kBlobKey] = true
 
-  #queue: Uint8Array
+  #queue: Uint8Array = new Uint8Array(0)
   #reader: ReadableStreamDefaultReader
   #sourceReader: ReadableStreamDefaultReader | null = null
 
@@ -50,16 +50,13 @@ export class ProtocolClientBlobStream
         }
       },
       cancel: (reason) => {
-        // Use reader.cancel() if reader exists (stream is locked), otherwise source.cancel()
-        if (sourceReader) {
-          return sourceReader.cancel(reason)
-        } else {
-          return source.cancel(reason)
-        }
+        // the source is locked once a reader was taken, so cancelling has to
+        // go through that reader
+        if (sourceReader) return sourceReader.cancel(reason)
+        return source.cancel(reason)
       },
     })
 
-    this.#queue = new Uint8Array(0)
     this.#reader = this.readable.getReader()
     this.#sourceReader = sourceReader
   }
@@ -75,7 +72,6 @@ export class ProtocolClientBlobStream
   }
 
   async end() {
-    // Release the reader lock when the stream is finished
     this.#reader.releaseLock()
     this.#sourceReader?.releaseLock()
   }
@@ -84,7 +80,9 @@ export class ProtocolClientBlobStream
     if (this.#queue.byteLength === 0) {
       const { done, value } = await this.#reader.read()
       if (done) return null
-      this.#queue = concat(this.#queue, value)
+      // the source may hand out any view or an ArrayBuffer; copying is only
+      // needed to normalize those
+      this.#queue = value instanceof Uint8Array ? value : concat(value)
     }
 
     const chunkSize = Math.min(size, this.#queue.byteLength)
@@ -102,8 +100,8 @@ export abstract class ProtocolServerStreamInterface<
     try {
       while (true) {
         const { done, value } = await reader.read()
-        if (!done) yield value
-        else break
+        if (done) return
+        yield value
       }
     } finally {
       reader.releaseLock()
@@ -111,36 +109,13 @@ export abstract class ProtocolServerStreamInterface<
   }
 }
 
-export class ProtocolServerStream<T = unknown>
-  extends ProtocolServerStreamInterface<T>
-  implements ProtocolServerStreamInterface<T> {}
+export class ProtocolServerStream<
+  T = unknown,
+> extends ProtocolServerStreamInterface<T> {}
 
 export class ProtocolServerRPCStream<
   T = unknown,
-> extends ProtocolServerStream<T> {
-  createAsyncIterable(onDone: Callback) {
-    return {
-      [Symbol.asyncIterator]: () => {
-        const iterator = this[Symbol.asyncIterator]()
-        return {
-          async next() {
-            const result = await iterator.next()
-            if (result.done) onDone()
-            return result
-          },
-          async return(value) {
-            onDone()
-            return iterator.return?.(value) ?? { done: true, value }
-          },
-          async throw(error) {
-            onDone()
-            return iterator.throw?.(error) ?? Promise.reject(error)
-          },
-        }
-      },
-    }
-  }
-}
+> extends ProtocolServerStream<T> {}
 
 export class ProtocolServerBlobStream
   extends ProtocolServerStreamInterface<ArrayBufferView>
@@ -165,9 +140,7 @@ export class ProtocolServerBlobStream
   }
 
   async text() {
-    const chunks: ArrayBufferView[] = []
-    for await (const chunk of this) chunks.push(chunk)
-    return decodeText(concat(...chunks))
+    return decodeText(await this.bytes())
   }
 
   async bytes() {
@@ -200,16 +173,12 @@ export class ProtocolServerBlobStream
     return transform.readable as ReadableStream<Uint8Array<ArrayBuffer>>
   }
 
-  /**
-   * Throws an error
-   */
+  // the stream is single-pass: neither form can be served without buffering
+  // the whole blob, which is what streaming it is meant to avoid
   async formData(): Promise<FormData> {
     throw new Error('Method not implemented.')
   }
 
-  /**
-   * Throws an error
-   */
   slice(): Blob {
     throw new Error('Unable to slice')
   }

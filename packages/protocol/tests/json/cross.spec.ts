@@ -231,5 +231,25 @@ describe('JsonCodec', () => {
       )
       expect(clientDecoded).toEqual(['a', null, null, 'b'])
     })
+
+    it('should frame RPC payloads byte for byte the same on both halves', () => {
+      expect(
+        Buffer.from(clientCodec.encodeRPC(data, { addStream: vi.fn() })),
+      ).toEqual(Buffer.from(serverCodec.encodeRPC(data, {})))
+
+      const metadata = { type: 'text/plain', size: 3 }
+      const streamId = 7
+      const blob = ProtocolBlob.from(new Uint8Array([1, 2, 3]), metadata)
+      const clientFramed = clientCodec.encodeRPC(
+        { file: blob, ...data },
+        { addStream: vi.fn(() => ({ id: streamId, metadata })) },
+      )
+      const serverFramed = serverCodec.encodeRPC(
+        { file: serverCodec.encodeBlob(streamId), ...data },
+        { [streamId]: metadata },
+      )
+
+      expect(Buffer.from(clientFramed)).toEqual(Buffer.from(serverFramed))
+    })
   })
 })
