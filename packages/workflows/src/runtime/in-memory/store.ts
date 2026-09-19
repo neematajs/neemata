@@ -19,7 +19,12 @@ import { toStoredError } from '../errors.ts'
 import { jsonContains, sameValue } from '../json.ts'
 import { normalizeBatchSize, normalizePruneStatuses } from '../limits.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../status.ts'
-import { ATTEMPT_TRANSITIONS, canTransition } from '../transitions.ts'
+import {
+  ATTEMPT_TRANSITIONS,
+  canTransition,
+  NODE_TRANSITIONS,
+  RUN_TRANSITIONS,
+} from '../transitions.ts'
 import {
   commandQueues,
   findDeadIndex,
@@ -547,6 +552,10 @@ export function createStore(state: State): WorkflowStore {
       })
     },
     async failNode({ runId, nodeName, error }) {
+      const node = nodes.get(nodeKey(runId, nodeName))
+      if (!node || !canTransition(NODE_TRANSITIONS, node.status, 'failed')) {
+        return node
+      }
       return transitionNode(state, runId, nodeName, {
         status: 'failed',
         error: toStoredError(error),
@@ -573,7 +582,13 @@ export function createStore(state: State): WorkflowStore {
     async completeRun({ runId, output }) {
       return transitionRun(state, runId, { status: 'completed', output })
     },
+    // The fail* writes check the transition before serializing: a late failure
+    // must leave a settled record untouched even if its error cannot be stored.
     async failRun({ runId, error }) {
+      const run = runs.get(runId)
+      if (!run || !canTransition(RUN_TRANSITIONS, run.status, 'failed')) {
+        return run
+      }
       return transitionRun(state, runId, {
         status: 'failed',
         error: toStoredError(error),
@@ -768,6 +783,12 @@ export function createStore(state: State): WorkflowStore {
       )
     },
     async failNodeChild({ runId, nodeName, childKey, error }) {
+      const child = state.children.get(
+        childMapKey({ runId, nodeName, childKey }),
+      )
+      if (!child || !canTransition(NODE_TRANSITIONS, child.status, 'failed')) {
+        return child
+      }
       return transitionChild(
         state,
         { runId, nodeName, childKey },
@@ -792,15 +813,16 @@ function matchesFilter(run: StoredRun, filter: ListRunsFilter) {
     const statuses = [filter.status].flat()
     if (!statuses.includes(run.status)) return false
   }
+  // positive `<` on purpose: an Invalid Date cutoff must match nothing
   if (
     filter.activeBefore !== undefined &&
-    run.activeSince >= filter.activeBefore
+    !(run.activeSince < filter.activeBefore)
   ) {
     return false
   }
   if (
     filter.createdBefore !== undefined &&
-    run.createdAt >= filter.createdBefore
+    !(run.createdAt < filter.createdBefore)
   ) {
     return false
   }

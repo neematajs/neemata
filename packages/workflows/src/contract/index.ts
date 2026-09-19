@@ -88,9 +88,13 @@ type OutputMatches<
   Received,
   Expected,
   Message extends string,
-> = Received extends Expected
-  ? unknown
-  : OutputMismatch<Message, Expected, Received>
+> = unknown extends Expected
+  ? // nothing to converge on; also keeps a `never` output from distributing
+    // the check away into `never`
+    unknown
+  : Received extends Expected
+    ? unknown
+    : OutputMismatch<Message, Expected, Received>
 
 type SchemaSides<T extends Schema> = SchemaBoundary<
   SchemaInput<T>,
@@ -98,8 +102,8 @@ type SchemaSides<T extends Schema> = SchemaBoundary<
 >
 
 /**
- * `OutputMatches<X, unknown, …>` is always `unknown`, so the unconstrained
- * helpers are the converged ones with the constraint erased.
+ * `OutputMatches<X, unknown, …>` short-circuits to `unknown`, so the
+ * unconstrained helpers are the converged ones with the constraint erased.
  */
 export type BranchCaseHelpers = ConvergedBranchCaseHelpers<unknown>
 

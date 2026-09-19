@@ -745,7 +745,8 @@ function normalizeCases(
   const implementations: Record<string, WorkflowCaseImplementation> = {}
 
   for (const [caseName, branchCase] of Object.entries(node.cases)) {
-    if (!Object.hasOwn(cases, caseName)) {
+    // `in`, not hasOwn: case maps may expose cases through getters on a prototype
+    if (!(caseName in cases)) {
       throw new Error(
         `Missing workflow ${node.kind} case implementation [${node.name}.${caseName}]`,
       )
