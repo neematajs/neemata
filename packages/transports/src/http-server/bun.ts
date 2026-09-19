@@ -55,7 +55,7 @@ class BunServerHost extends BaseServerHost<'bun'> {
       // Bun's own default (128MiB) applies when neither option is set
       maxRequestBodySize:
         runtime?.maxRequestBodySize ?? this.options.maxRequestBodySize,
-      unix: listen.unix as string,
+      unix: listen.unix,
       port: listen.port ?? 0,
       hostname: listen.hostname,
       reusePort: listen.reusePort,
