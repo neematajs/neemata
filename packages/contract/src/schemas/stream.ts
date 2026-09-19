@@ -63,5 +63,5 @@ export const StreamContract = <
 export function IsStreamContract(
   contract: any,
 ): contract is TAnyStreamContract {
-  return Kind in contract && contract[Kind] === StreamKind
+  return contract?.[Kind] === StreamKind
 }

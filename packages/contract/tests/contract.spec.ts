@@ -8,7 +8,12 @@ import type {
 } from '../src/schemas/procedure.ts'
 import type { TStreamContract } from '../src/schemas/stream.ts'
 import type { SubscriptionEventMessage } from '../src/schemas/subscription.ts'
-import { c, IsRouterContract, RouterContract } from '../src/index.ts'
+import {
+  c,
+  IsCallableContract,
+  IsRouterContract,
+  RouterContract,
+} from '../src/index.ts'
 import { EventContract, IsEventContract } from '../src/schemas/event.ts'
 import {
   IsProcedureContract,
@@ -51,6 +56,26 @@ describe('Contract — Event', { sequential: true }, () => {
       expect(event).toBeDefined()
       expect(event).toHaveProperty('type', 'neemata:event')
       expect(event).toHaveProperty('payload', eventType)
+    })
+  })
+
+  describe('Guards', () => {
+    const guards = {
+      IsEventContract,
+      IsProcedureContract,
+      IsStreamContract,
+      IsSubscriptionContract,
+      IsRouterContract,
+      IsCallableContract,
+    }
+
+    it('should reject non-contract values without throwing', () => {
+      for (const [name, guard] of Object.entries(guards)) {
+        for (const value of [null, undefined, 0, '', 'procedure', false]) {
+          expect(() => guard(value), name).not.toThrow()
+          expect(guard(value), name).toBe(false)
+        }
+      }
     })
   })
 

@@ -63,5 +63,5 @@ export const ProcedureContract = <
 export function IsProcedureContract(
   contract: any,
 ): contract is TAnyProcedureContract {
-  return Kind in contract && contract[Kind] === ProcedureKind
+  return contract?.[Kind] === ProcedureKind
 }

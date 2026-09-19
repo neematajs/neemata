@@ -159,5 +159,5 @@ export function SubscriptionContract(options: {
 export function IsSubscriptionContract(
   contract: any,
 ): contract is TAnySubscriptionContract {
-  return Kind in contract && contract[Kind] === SubscriptionKind
+  return contract?.[Kind] === SubscriptionKind
 }

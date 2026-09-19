@@ -32,5 +32,5 @@ export const EventContract = <
 }
 
 export function IsEventContract(value: any): value is TAnyEventContract {
-  return Kind in value && value[Kind] === EventKind
+  return value?.[Kind] === EventKind
 }

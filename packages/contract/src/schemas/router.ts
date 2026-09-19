@@ -123,5 +123,5 @@ function processNestedRoutes(
 }
 
 export function IsRouterContract(value: any): value is TAnyRouterContract {
-  return Kind in value && value[Kind] === RouterKind
+  return value?.[Kind] === RouterKind
 }
