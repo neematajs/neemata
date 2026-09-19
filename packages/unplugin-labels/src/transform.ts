@@ -1,5 +1,12 @@
 import { isAbsolute, relative } from 'node:path'
 
+import type { SourceMap } from 'magic-string'
+import type {
+  CallExpression,
+  Node,
+  Program,
+  PropertyKey as PropertyKeyNode,
+} from 'oxc-parser'
 import MagicString from 'magic-string'
 import { parseSync } from 'oxc-parser'
 
@@ -31,24 +38,31 @@ export const DEFAULT_FUNCTIONS = [
   'value',
 ]
 
-type Node = Record<string, any>
+/** Creator names reachable in this module, by how they were imported. */
+type Tracked = { locals: Set<string>; namespaces: Set<string> }
+
+const isNode = (value: unknown): value is Node =>
+  typeof value === 'object' &&
+  value !== null &&
+  'type' in value &&
+  typeof value.type === 'string'
 
 const walk = (node: Node, visit: (node: Node) => void) => {
   visit(node)
-  for (const key of Object.keys(node)) {
-    const value = node[key]
+  const values: unknown[] = Object.values(node)
+  for (const value of values) {
     if (Array.isArray(value)) {
       for (const item of value) {
-        if (item && typeof item.type === 'string') walk(item, visit)
+        if (isNode(item)) walk(item, visit)
       }
-    } else if (value && typeof value.type === 'string') {
+    } else if (isNode(value)) {
       walk(value, visit)
     }
   }
 }
 
 // look through wrappers that do not change which call produced the injectable
-const unwrap = (node: Node | null): Node | null => {
+const unwrap = (node: Node | null): CallExpression | null => {
   let current = node
   while (current) {
     switch (current.type) {
@@ -63,9 +77,9 @@ const unwrap = (node: Node | null): Node | null => {
         // const db = lazy().$withType<Db>() — label the inner creator call
         const { callee } = current
         if (
-          callee?.type === 'MemberExpression' &&
+          callee.type === 'MemberExpression' &&
           !callee.computed &&
-          callee.property?.name === '$withType'
+          callee.property.name === '$withType'
         ) {
           current = callee.object
           continue
@@ -79,18 +93,110 @@ const unwrap = (node: Node | null): Node | null => {
   return null
 }
 
-const propertyName = (key: Node | null, computed: boolean) => {
-  if (!key || computed) return undefined
-  if (key.type === 'Identifier') return key.name as string
+const propertyName = (key: PropertyKeyNode, computed: boolean) => {
+  if (computed) return undefined
+  if (key.type === 'Identifier') return key.name
   if (key.type === 'Literal' && typeof key.value === 'string') return key.value
   return undefined
+}
+
+function collectTracked(
+  program: Program,
+  modules: string[],
+  functions: string[],
+): Tracked {
+  const locals = new Set<string>()
+  const namespaces = new Set<string>()
+
+  for (const statement of program.body) {
+    if (statement.type !== 'ImportDeclaration') continue
+    if (!modules.includes(statement.source.value)) continue
+    for (const specifier of statement.specifiers) {
+      if (specifier.type === 'ImportSpecifier') {
+        const { imported } = specifier
+        const name =
+          imported.type === 'Identifier' ? imported.name : imported.value
+        if (functions.includes(name)) locals.add(specifier.local.name)
+      } else if (specifier.type === 'ImportNamespaceSpecifier') {
+        namespaces.add(specifier.local.name)
+      }
+    }
+  }
+
+  return { locals, namespaces }
+}
+
+// labels are diagnostics: a wrongly rewritten call to a same-named local
+// function would change behavior, so any shadowing disables that name
+function dropShadowed(program: Program, tracked: Tracked): void {
+  const drop = (name: string | undefined) => {
+    if (!name) return
+    tracked.locals.delete(name)
+    tracked.namespaces.delete(name)
+  }
+  const dropBound = (pattern: Node) => {
+    walk(pattern, (part) => {
+      if (part.type === 'Identifier') drop(part.name)
+    })
+  }
+
+  walk(program, (node) => {
+    switch (node.type) {
+      case 'FunctionDeclaration':
+      case 'ClassDeclaration':
+        drop(node.id?.name)
+        break
+      case 'VariableDeclarator':
+        dropBound(node.id)
+        break
+      case 'FunctionExpression':
+      case 'ArrowFunctionExpression':
+        for (const param of node.params) dropBound(param)
+        break
+    }
+  })
+}
+
+function isTracked(
+  call: CallExpression,
+  tracked: Tracked,
+  functions: string[],
+): boolean {
+  const { callee } = call
+  if (callee.type === 'Identifier') return tracked.locals.has(callee.name)
+  if (
+    callee.type === 'MemberExpression' &&
+    !callee.computed &&
+    callee.object.type === 'Identifier' &&
+    tracked.namespaces.has(callee.object.name)
+  ) {
+    return functions.includes(callee.property.name)
+  }
+  return false
+}
+
+// the table is built on first use: only labeled calls need a position, a
+// handful per module
+function createOrigin(code: string, path: string) {
+  let lineStarts: number[] | undefined
+  return (offset: number) => {
+    if (!lineStarts) {
+      lineStarts = [0]
+      for (let i = 0; i < code.length; i++) {
+        if (code.charCodeAt(i) === 10) lineStarts.push(i + 1)
+      }
+    }
+    let line = lineStarts.length
+    while (line > 1 && lineStarts[line - 1] > offset) line--
+    return `${path}:${line}:${offset - lineStarts[line - 1] + 1}`
+  }
 }
 
 export function transformLabels(
   code: string,
   id: string,
   options: LabelsOptions = {},
-): { code: string; map: any } | undefined {
+): { code: string; map: SourceMap } | undefined {
   const functions = options.functions ?? DEFAULT_FUNCTIONS
   const modules = options.modules ?? DEFAULT_MODULES
   const format = options.format ?? ((name) => name)
@@ -101,101 +207,28 @@ export function transformLabels(
   if (!functions.some((name) => code.includes(name))) return undefined
 
   const filename = id.split('?')[0]
-  const result = parseSync(filename, code)
-  const program: Node =
-    typeof result.program === 'string'
-      ? JSON.parse(result.program)
-      : result.program
+  const { program } = parseSync(filename, code)
 
-  const locals = new Set<string>()
-  const namespaces = new Set<string>()
+  const tracked = collectTracked(program, modules, functions)
+  if (!tracked.locals.size && !tracked.namespaces.size) return undefined
 
-  for (const statement of program.body ?? []) {
-    if (statement.type !== 'ImportDeclaration') continue
-    if (!modules.includes(statement.source?.value)) continue
-    for (const specifier of statement.specifiers ?? []) {
-      if (specifier.type === 'ImportSpecifier') {
-        const imported = specifier.imported?.name ?? specifier.imported?.value
-        if (functions.includes(imported)) locals.add(specifier.local.name)
-      } else if (specifier.type === 'ImportNamespaceSpecifier') {
-        namespaces.add(specifier.local.name)
-      }
-    }
-  }
-
-  if (!locals.size && !namespaces.size) return undefined
-
-  // labels are diagnostics: a wrongly rewritten call to a same-named local
-  // function would change behavior, so any shadowing disables that name
-  walk(program, (node) => {
-    const drop = (name?: string) => {
-      if (name) {
-        locals.delete(name)
-        namespaces.delete(name)
-      }
-    }
-    switch (node.type) {
-      case 'FunctionDeclaration':
-      case 'ClassDeclaration':
-        drop(node.id?.name)
-        break
-      case 'VariableDeclarator':
-        walk(node.id, (part) => {
-          if (part.type === 'Identifier') drop(part.name)
-        })
-        break
-      case 'FunctionExpression':
-      case 'ArrowFunctionExpression':
-        for (const param of node.params ?? []) {
-          walk(param, (part) => {
-            if (part.type === 'Identifier') drop(part.name)
-          })
-        }
-        break
-    }
-  })
-
-  if (!locals.size && !namespaces.size) return undefined
-
-  const isTrackedCall = (node: Node) => {
-    const { callee } = node
-    if (callee?.type === 'Identifier') return locals.has(callee.name)
-    if (
-      callee?.type === 'MemberExpression' &&
-      !callee.computed &&
-      callee.object?.type === 'Identifier' &&
-      namespaces.has(callee.object.name)
-    ) {
-      return functions.includes(callee.property?.name)
-    }
-    return false
-  }
+  dropShadowed(program, tracked)
+  if (!tracked.locals.size && !tracked.namespaces.size) return undefined
 
   const originPath = isAbsolute(filename)
     ? relative(root, filename).replaceAll('\\', '/')
     : filename
-
-  let lineStarts: number[] | undefined
-  const originOf = (offset: number) => {
-    if (!lineStarts) {
-      lineStarts = [0]
-      for (let i = 0; i < code.length; i++) {
-        if (code.charCodeAt(i) === 10) lineStarts.push(i + 1)
-      }
-    }
-    let line = lineStarts.length
-    while (line > 1 && lineStarts[line - 1] > offset) line--
-    return `${originPath}:${line}:${offset - lineStarts[line - 1] + 1}`
-  }
+  const originOf = createOrigin(code, originPath)
 
   const source = new MagicString(code)
-  const labeled = new Set<Node>()
+  const labeled = new Set<CallExpression>()
 
   const tryLabel = (name: string | undefined, expression: Node | null) => {
     if (!name) return
     const call = unwrap(expression)
-    if (!call || labeled.has(call) || !isTrackedCall(call)) return
-    const args: Node[] = call.arguments ?? []
+    if (!call || labeled.has(call)) return
+    if (!isTracked(call, tracked, functions)) return
+    const args = call.arguments
     // explicit arguments always win; spreads make positions unknowable
     if (args.length >= (withOrigin ? 3 : 2)) return
     if (args.some((arg) => arg.type === 'SpreadElement')) return
@@ -215,7 +248,7 @@ export function transformLabels(
   walk(program, (node) => {
     switch (node.type) {
       case 'VariableDeclarator':
-        if (node.id?.type === 'Identifier') tryLabel(node.id.name, node.init)
+        if (node.id.type === 'Identifier') tryLabel(node.id.name, node.init)
         break
       case 'PropertyDefinition':
         tryLabel(propertyName(node.key, node.computed), node.value)
@@ -227,13 +260,13 @@ export function transformLabels(
         break
       case 'AssignmentExpression':
         if (node.operator !== '=') break
-        if (node.left?.type === 'Identifier') {
+        if (node.left.type === 'Identifier') {
           tryLabel(node.left.name, node.right)
         } else if (
-          node.left?.type === 'MemberExpression' &&
+          node.left.type === 'MemberExpression' &&
           !node.left.computed
         ) {
-          tryLabel(node.left.property?.name, node.right)
+          tryLabel(node.left.property.name, node.right)
         }
         break
     }
