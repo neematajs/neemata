@@ -6,7 +6,6 @@ import { validateFailedRunRetry } from '../../runtime/retry-validation.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import {
-  DEFAULT_MAX_DELIVERIES,
   many,
   one,
   mapRun,
@@ -36,12 +35,13 @@ export {
 type PostgresWorkflowStoreContext = {
   readonly db: WorkflowPostgresConnection
   readonly ready: Promise<void>
+  readonly maxDeliveries: number
 }
 
 export const createPostgresWorkflowStore = (
   ctx: PostgresWorkflowStoreContext,
 ): WorkflowStore => {
-  const { db, ready } = ctx
+  const { db, ready, maxDeliveries } = ctx
 
   return {
     async reopenFailedRun(params) {
@@ -176,12 +176,12 @@ export const createPostgresWorkflowStore = (
             [runIds],
           )
           const root = mapRun(reopened.find((run) => run.id === params.runId)!)
-          const scoped = createPostgresWorkflowStore({ db: tx, ready })
-          const commands = {
+          const scoped = createPostgresWorkflowStore({
             db: tx,
             ready,
-            maxDeliveries: DEFAULT_MAX_DELIVERIES,
-          }
+            maxDeliveries,
+          })
+          const commands = { db: tx, ready, maxDeliveries }
           if (root.kind === 'task') {
             const snapshot = snapshots.find(({ run }) => run.id === root.id)!
             const child = snapshot.children.find(
