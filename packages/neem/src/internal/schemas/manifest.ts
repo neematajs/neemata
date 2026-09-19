@@ -2,13 +2,12 @@ import { isAbsolute, normalize } from 'node:path'
 
 import * as z from 'zod/mini'
 
-import type { Manifest } from '../manifest/manifest.ts'
+import type { NeemLoggerOptions } from '../../shared/types.ts'
 
 export const NEEM_MANIFEST_SCHEMA_VERSION = 1
 
 // Strict objects throughout: the manifest is written and read by the same
 // schema version, so unknown keys mean corruption, not forward compatibility.
-const stringSchema = z.string()
 const manifestPathSchema = z
   .string()
   .check(
@@ -22,33 +21,20 @@ const manifestPathSchema = z
 const manifestPluginNameSchema = z
   .string()
   .check(z.refine((name) => name.trim().length > 0))
-const manifestEnvSchema = z.record(stringSchema, stringSchema)
+const manifestEnvSchema = z.record(z.string(), z.string())
 
 const manifestArtifactOwnerSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('config') }),
-  z.strictObject({ type: z.literal('runtime'), name: stringSchema }),
+  z.strictObject({ type: z.literal('runtime'), name: z.string() }),
 ])
 
-const createManifestArtifactSchema = (id: z.ZodMiniType = stringSchema) =>
-  z.strictObject({
-    id,
-    kind: z.enum(['worker', 'module']),
-    owner: manifestArtifactOwnerSchema,
-    file: manifestPathSchema,
-    outDir: manifestPathSchema,
-  })
-
-const manifestArtifactSchema = createManifestArtifactSchema()
-
-const manifestWorkerArtifactSchema = createManifestArtifactSchema(
-  z.literal('worker'),
-)
-const manifestHostArtifactSchema = createManifestArtifactSchema(
-  z.literal('host'),
-)
-const manifestPlannerArtifactSchema = createManifestArtifactSchema(
-  z.literal('planner'),
-)
+const manifestArtifactSchema = z.strictObject({
+  id: z.string(),
+  kind: z.enum(['worker', 'module']),
+  owner: manifestArtifactOwnerSchema,
+  file: manifestPathSchema,
+  outDir: manifestPathSchema,
+})
 
 const manifestLoggerSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('module'), file: manifestPathSchema }),
@@ -56,26 +42,26 @@ const manifestLoggerSchema = z.discriminatedUnion('type', [
     type: z.literal('options'),
     // Logger options are @nmtjs/core LoggingOptions; their shape is owned by
     // core and validated there when the logger is created.
-    options: z.optional(z.unknown()),
+    options: z.optional(z.custom<NeemLoggerOptions>()),
   }),
 ])
 
 const manifestProxyRoutingSchema = z.discriminatedUnion('type', [
-  z.strictObject({ type: z.literal('path'), name: z.optional(stringSchema) }),
+  z.strictObject({ type: z.literal('path'), name: z.optional(z.string()) }),
   z.strictObject({
     type: z.literal('subdomain'),
-    name: z.optional(stringSchema),
+    name: z.optional(z.string()),
   }),
   z.strictObject({ type: z.literal('default') }),
 ])
 
 const manifestRuntimeProxySchema = z.strictObject({
   routing: z.optional(manifestProxyRoutingSchema),
-  sni: z.optional(stringSchema),
+  sni: z.optional(z.string()),
 })
 
 const manifestProxyConfigSchema = z.strictObject({
-  hostname: stringSchema,
+  hostname: z.string(),
   port: z.number(),
   healthChecks: z.optional(
     z.strictObject({ interval: z.optional(z.number()) }),
@@ -83,24 +69,24 @@ const manifestProxyConfigSchema = z.strictObject({
   stickySessions: z.optional(
     z.strictObject({
       enabled: z.optional(z.boolean()),
-      cookieName: z.optional(stringSchema),
-      headerName: z.optional(stringSchema),
+      cookieName: z.optional(z.string()),
+      headerName: z.optional(z.string()),
       ttlMs: z.optional(z.number()),
       maxEntries: z.optional(z.number()),
     }),
   ),
   tls: z.optional(
-    z.strictObject({ keyPath: stringSchema, certPath: stringSchema }),
+    z.strictObject({ keyPath: z.string(), certPath: z.string() }),
   ),
 })
 
 const manifestHealthConfigSchema = z.strictObject({
-  hostname: z.optional(stringSchema),
+  hostname: z.optional(z.string()),
   port: z.number(),
   paths: z.optional(
     z.strictObject({
-      health: z.optional(stringSchema),
-      ready: z.optional(stringSchema),
+      health: z.optional(z.string()),
+      ready: z.optional(z.string()),
     }),
   ),
 })
@@ -114,7 +100,7 @@ const manifestConfigSchema = z.strictObject({
   env: z.optional(manifestEnvSchema),
   proxy: z.optional(manifestProxyConfigSchema),
   health: z.optional(manifestHealthConfigSchema),
-  runtimes: z.record(stringSchema, manifestRuntimeConfigSchema),
+  runtimes: z.record(z.string(), manifestRuntimeConfigSchema),
 })
 
 const manifestPluginSchema = z.strictObject({
@@ -125,11 +111,11 @@ const manifestPluginSchema = z.strictObject({
 })
 
 const manifestRuntimeSchema = z.strictObject({
-  name: stringSchema,
+  name: z.string(),
   env: z.optional(manifestEnvSchema),
-  worker: z.optional(manifestWorkerArtifactSchema),
-  host: manifestHostArtifactSchema,
-  planner: manifestPlannerArtifactSchema,
+  worker: z.optional(manifestArtifactSchema),
+  host: manifestArtifactSchema,
+  planner: manifestArtifactSchema,
 })
 
 const manifestRuntimeEntrySchema = z.strictObject({
@@ -138,13 +124,15 @@ const manifestRuntimeEntrySchema = z.strictObject({
   worker: manifestArtifactSchema,
 })
 
+const RUNTIME_ARTIFACTS = ['worker', 'host', 'planner'] as const
+
 export const manifestSchema = z
   .strictObject({
     schemaVersion: z.literal(NEEM_MANIFEST_SCHEMA_VERSION),
     runtime: manifestRuntimeEntrySchema,
     plugins: z.optional(z.array(manifestPluginSchema)),
     config: manifestConfigSchema,
-    runtimes: z.record(stringSchema, manifestRuntimeSchema),
+    runtimes: z.record(z.string(), manifestRuntimeSchema),
   })
   .check((payload) => {
     for (const [runtimeName, runtime] of Object.entries(
@@ -158,9 +146,16 @@ export const manifestSchema = z
         })
       }
 
-      for (const artifactName of ['worker', 'host', 'planner'] as const) {
+      for (const artifactName of RUNTIME_ARTIFACTS) {
         const artifact = runtime[artifactName]
         if (!artifact) continue
+        if (artifact.id !== artifactName) {
+          payload.issues.push({
+            code: 'custom',
+            input: artifact.id,
+            path: ['runtimes', runtimeName, artifactName, 'id'],
+          })
+        }
         if (
           artifact.owner.type !== 'runtime' ||
           artifact.owner.name !== runtimeName
@@ -175,6 +170,10 @@ export const manifestSchema = z
     }
   })
 
+// The schema is the single source of truth for the manifest shape; every
+// Manifest* type is derived from it so a schema change is a compile error.
+export type Manifest = z.infer<typeof manifestSchema>
+
 export function parseManifest(manifest: unknown): Manifest {
-  return manifestSchema.parse(manifest) as Manifest
+  return manifestSchema.parse(manifest)
 }

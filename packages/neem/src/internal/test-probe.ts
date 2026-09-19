@@ -1,5 +1,14 @@
+import type { WorkerServiceStopProgressEvent } from './services/client.ts'
+import type { RuntimeEvent, WatcherEvent } from './services/protocol.ts'
+
+export type NeemTestProbeEvent =
+  | `cli:${'build' | 'dev' | 'start'}:${'start' | 'closed'}`
+  | `runtime:${RuntimeEvent['type']}`
+  | `watcher:${WatcherEvent['type']}`
+  | `service:stop-${WorkerServiceStopProgressEvent['phase']}`
+
 export type NeemTestProbe = {
-  emit: (event: string, data?: Record<string, unknown>) => void
+  emit: (event: NeemTestProbeEvent, data?: Record<string, unknown>) => void
 }
 
 export function createNeemTestProbe(): NeemTestProbe | undefined {
@@ -9,6 +18,9 @@ export function createNeemTestProbe(): NeemTestProbe | undefined {
   return { emit }
 }
 
-function emit(event: string, data: Record<string, unknown> = {}): void {
+function emit(
+  event: NeemTestProbeEvent,
+  data: Record<string, unknown> = {},
+): void {
   process.send?.({ source: 'neem:test-probe', event, ...data })
 }

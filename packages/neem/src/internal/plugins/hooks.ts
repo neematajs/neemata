@@ -1,36 +1,26 @@
 import type { Logger } from '@nmtjs/core'
-import type { Hookable } from 'hookable'
 import { createHooks } from 'hookable'
 
 import type {
-  NeemHostHookEvent,
   NeemHostHookMap,
-  NeemHostRuntimeHookEvent,
-  NeemHostWorkerHookEvent,
+  NeemHostHooks,
+  NeemPluginHooks,
 } from '../../shared/types.ts'
 import { childLogger } from '../logger.ts'
 
-export type HostHookMap = NeemHostHookMap
+export type HostHooks = NeemHostHooks
 
-export type HostHooks = Hookable<HostHookMap>
-
-export type PluginHooks = Partial<HostHookMap>
-
-export type {
-  NeemHostHookEvent as HostHookEvent,
-  NeemHostRuntimeHookEvent as HostRuntimeHookEvent,
-  NeemHostWorkerHookEvent as HostWorkerHookEvent,
-}
+export type PluginHooks = NeemPluginHooks
 
 export function createHostHooks(): HostHooks {
-  return createHooks<HostHookMap>()
+  return createHooks<NeemHostHookMap>()
 }
 
-export async function callHostHook<Name extends keyof HostHookMap>(
+export async function callHostHook<Name extends keyof NeemHostHookMap>(
   hooks: HostHooks,
   logger: Logger,
   name: Name,
-  ...args: Parameters<HostHookMap[Name]>
+  ...args: Parameters<NeemHostHookMap[Name]>
 ): Promise<void> {
   const hookLogger = childLogger(logger, 'neem:hooks')
   await hooks.callHookWith(

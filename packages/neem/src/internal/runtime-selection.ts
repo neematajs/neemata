@@ -1,9 +1,22 @@
+export function parseRuntimeNames(
+  csv: string | undefined,
+): readonly string[] | undefined {
+  if (!csv) return undefined
+  return normalizeRuntimeNames(csv.split(','))
+}
+
 export function normalizeRuntimeNames(
   runtimes: readonly string[] | undefined,
 ): readonly string[] | undefined {
   if (!runtimes) return undefined
-  const names = runtimes.map((name) => name.trim()).filter(Boolean)
-  return names.length > 0 ? names : undefined
+
+  const names = new Set<string>()
+  for (const runtime of runtimes) {
+    const name = runtime.trim()
+    if (name) names.add(name)
+  }
+
+  return names.size > 0 ? Array.from(names) : undefined
 }
 
 export function assertRuntimeNamesExist(

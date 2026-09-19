@@ -15,15 +15,18 @@ export function childLogger(logger: Logger, label: string): Logger {
   return forkLogger(logger, label)
 }
 
+export function isLoggerModuleInput(
+  input: NeemLoggerInput | undefined,
+): input is string | URL {
+  return typeof input === 'string' || input instanceof URL
+}
+
 export function createLoggerFromConfigInput(
   mode: NeemMode,
   input: NeemLoggerInput | undefined,
 ): Logger {
-  if (!input || typeof input === 'string' || input instanceof URL) {
-    return createDefaultLogger(mode)
-  }
-
-  return createDefaultLogger(mode, input)
+  const options = !input || isLoggerModuleInput(input) ? undefined : input
+  return createDefaultLogger(mode, options)
 }
 
 export async function resolveManifestLogger(
@@ -49,7 +52,7 @@ export function runtimeLabel(runtimeName: string, threadName?: string): string {
 
 export function createDefaultLogger(
   mode: NeemMode = 'production',
-  input: NeemLoggerOptions = {},
+  input: NeemLoggerOptions | undefined = {},
 ): Logger {
   if (process.env.NODE_ENV === 'test') {
     return createLogger({ pinoOptions: { enabled: false } }, 'neem')

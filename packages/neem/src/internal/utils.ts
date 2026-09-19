@@ -4,23 +4,21 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inspect } from 'node:util'
 
+import type { SerializedError } from '@nmtjs/common'
 import {
   MAX_SERIALIZED_ERROR_DEPTH,
   serializeError as serializeErrorCore,
 } from '@nmtjs/common'
 
-export type EntryModule<T> = { default: T }
+export type { SerializedError }
+
+type EntryModule<T> = { default: T }
 
 export async function importDefault<T>(
   file: string | URL,
   options: { cacheBust?: boolean } = {},
 ): Promise<T> {
-  const href =
-    file instanceof URL
-      ? file.href
-      : file.startsWith('file:')
-        ? file
-        : pathToFileURL(file).href
+  const href = toFileHref(file)
   const module = (await import(
     options.cacheBust ? `${href}?t=${Date.now()}` : href
   )) as EntryModule<T>
@@ -31,19 +29,9 @@ export function normalizeError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
-export type SerializedError = {
-  message: string
-  name?: string
-  stack?: string
-  cause?: SerializedError
-}
-
-export function serializeError(
-  value: unknown,
-  depth = MAX_SERIALIZED_ERROR_DEPTH,
-): SerializedError {
+export function serializeError(value: unknown): SerializedError {
   return serializeErrorCore(value, {
-    depth,
+    depth: MAX_SERIALIZED_ERROR_DEPTH,
     // Anything can be thrown or rejected; `String(value)` would flatten an
     // object to `[object Object]`, so render it the way a REPL would.
     fallback: (candidate) => ({ name: 'Error', message: inspect(candidate) }),
@@ -81,10 +69,16 @@ export async function raceWithTimeout<T>(
   }
 }
 
-export function toFilePath(entry: string | URL, cwd = process.cwd()): string {
+export function toFilePath(entry: string | URL): string {
   if (entry instanceof URL) return fileURLToPath(entry)
   if (entry.startsWith('file:')) return fileURLToPath(entry)
-  return resolve(cwd, entry)
+  return resolve(entry)
+}
+
+export function toFileHref(entry: string | URL): string {
+  if (entry instanceof URL) return entry.href
+  if (entry.startsWith('file:')) return entry
+  return pathToFileURL(entry).href
 }
 
 export function sanitizePathPart(value: string): string {

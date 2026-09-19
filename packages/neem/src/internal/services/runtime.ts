@@ -102,7 +102,6 @@ export class RuntimeService {
       outDir,
       env,
       manifest,
-      manifestFile,
       logger,
     })
   }

@@ -1,5 +1,6 @@
 import type { TransferListItem } from 'node:worker_threads'
 
+import type { Future } from '@nmtjs/common'
 import { createFuture } from '@nmtjs/common'
 
 import type { SerializedError } from './utils.ts'
@@ -28,7 +29,7 @@ export class RpcChannel<TResult> {
   private readonly pending = new Map<
     number,
     {
-      future: ReturnType<typeof createFuture<TResult | undefined>>
+      future: Future<TResult | undefined>
       timeout: NodeJS.Timeout
     }
   >()

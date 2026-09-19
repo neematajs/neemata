@@ -5,6 +5,12 @@ import type { Logger, LoggingOptions } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
 import type { OutputOptions, RolldownOptions } from 'rolldown'
 
+import type {
+  ROLLDOWN_KEYS,
+  ROLLDOWN_RESOLVE_KEYS,
+  ROLLDOWN_TRANSFORM_KEYS,
+} from './rolldown.ts'
+
 export type {
   Plugin as RolldownPlugin,
   RolldownOptions,
@@ -17,25 +23,17 @@ export type NeemArtifactEntry = string | URL
 
 export type NeemRolldownResolveOptions = Pick<
   NonNullable<RolldownOptions['resolve']>,
-  | 'alias'
-  | 'conditionNames'
-  | 'extensionAlias'
-  | 'exportsFields'
-  | 'extensions'
-  | 'mainFields'
-  | 'mainFiles'
-  | 'modules'
-  | 'symlinks'
+  (typeof ROLLDOWN_RESOLVE_KEYS)[number]
 >
 
 export type NeemRolldownTransformOptions = Pick<
   NonNullable<RolldownOptions['transform']>,
-  'define' | 'inject' | 'dropLabels' | 'jsx'
+  (typeof ROLLDOWN_TRANSFORM_KEYS)[number]
 >
 
 export type NeemRolldownOptions = Pick<
   RolldownOptions,
-  'plugins' | 'external' | 'moduleTypes' | 'checks' | 'tsconfig'
+  (typeof ROLLDOWN_KEYS)[number]
 > & {
   resolve?: NeemRolldownResolveOptions
   transform?: NeemRolldownTransformOptions
@@ -62,11 +60,6 @@ export type NeemResolvedArtifact = {
   owner: NeemArtifactOwner
   file: string
   outDir: string
-}
-
-export type NeemArtifactRegistry = {
-  resolve: (id: string) => NeemResolvedArtifact | undefined
-  list: () => readonly NeemResolvedArtifact[]
 }
 
 export type NeemEntryInput = NeemArtifactEntry
@@ -173,7 +166,7 @@ export type NeemStartedRuntimeThreadHealth = NeemManagedWorkerHealth & {
 
 export type NeemProxyUpstream = {
   type: 'port'
-  transport: 'http' | 'http2' | 'ws'
+  transport: NeemRuntimeUpstreamType
   secure: boolean
   hostname: string
   port: number
@@ -335,7 +328,6 @@ export type NeemConfig = {
   runtimes: NeemRuntimeProjectEntries
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
-  // commands?: Record<string, NeemCommandInput>
   plugins?: readonly NeemPluginInput[]
   outDir?: string
 }
@@ -343,18 +335,12 @@ export type NeemConfig = {
 export type NeemResolvedRuntimeDeclaration = {
   name: string
   file: string
-  directory: string
   declaration: NeemMarkedRuntimeDeclaration
-  planner: NeemEntryInput
+  planner: NeemArtifactEntry
 }
 
-export type NeemResolvedRuntimeDeclarations = Record<
-  string,
-  NeemResolvedRuntimeDeclaration
->
-
 export type NeemResolvedConfig = Omit<NeemConfig, 'runtimes'> & {
-  runtimes: NeemResolvedRuntimeDeclarations
+  runtimes: Record<string, NeemResolvedRuntimeDeclaration>
 }
 
 export type NeemRuntimeThreadHandle = { name: string; port: MessagePort }

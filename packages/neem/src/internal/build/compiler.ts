@@ -4,7 +4,7 @@ import { isBuiltin } from 'node:module'
 import { basename, dirname, resolve } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { OutputOptions, PreRenderedAsset, RolldownOutput } from 'rolldown'
+import type { OutputOptions, PreRenderedAsset } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import injectableLabelsPlugin from '@nmtjs/unplugin-labels/rolldown'
 import * as rolldown from 'rolldown'
@@ -25,22 +25,26 @@ import type {
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { toFilePath } from '../utils.ts'
 
-type ArtifactInput = { entry: string; input: string; targetKey?: string }
+const DEFAULT_DEBOUNCE_MS = 50
 
-type ArtifactBuildMetadata = {
-  entryFileName?: string
-  entryFileNames?: Map<string, string | undefined>
-  watch: boolean
-}
+const DEFAULT_DEPS_CHUNK_TEST = /node_modules/
+
+const DEFAULT_DEPS_CHUNK_GROUP = {
+  name: 'deps',
+  test: DEFAULT_DEPS_CHUNK_TEST,
+} satisfies NeemChunkGroup
+
+type EntryInput = { key: string; name: string; file: string }
+
+/** Entry chunk file name per build target key, filled in by the build. */
+type EntryFileNames = Map<string, string>
 
 export type CompiledTarget = {
   target: BuildTarget
   artifact: NeemResolvedArtifact
-  bundle?: RolldownOutput
 }
 
 export type CompiledRuntime = {
-  name: string
   node: RuntimeBuildNode
   worker?: CompiledTarget
   host: CompiledTarget
@@ -56,16 +60,10 @@ export type CompiledGraph = {
   targets: readonly CompiledTarget[]
 }
 
-export type TargetChange = {
-  target: BuildTarget
-  compiled: CompiledTarget
-  compiledTargets?: readonly CompiledTarget[]
-  initial: boolean
-}
+export type TargetChange = { targets: readonly CompiledTarget[] }
 
-export type TargetWatcher = {
-  target: BuildTarget
-  ready: Promise<CompiledTarget>
+export type GroupWatcher = {
+  ready: Promise<readonly CompiledTarget[]>
   close: () => Promise<void>
 }
 
@@ -76,41 +74,17 @@ export type GraphWatcher = {
 }
 
 export async function compileGraph(graph: BuildGraph): Promise<CompiledGraph> {
-  const groups = await Promise.all(
-    graph.buildGroups.map((group) => compileBuildGroup(group)),
-  )
+  const groups = await Promise.all(graph.buildGroups.map(compileTargets))
   return createCompiledGraph(graph, groups.flat())
 }
 
-async function compileBuildGroup(
+export async function compileTargets(
   group: BuildGroup,
 ): Promise<readonly CompiledTarget[]> {
-  if (group.kind === 'target') return [await compileTarget(group.target)]
-  return compileTargetGroup(group.targets)
-}
-
-export async function compileTarget(
-  target: BuildTarget,
-): Promise<CompiledTarget> {
-  const metadata: ArtifactBuildMetadata = { watch: false }
-  await mkdir(target.outDir, { recursive: true })
-  const bundle = await rolldown.build(createRolldownOptions(target, metadata))
-  const artifact = createResolvedArtifact(target, bundle, metadata)
-  return { target, artifact }
-}
-
-async function compileTargetGroup(
-  targets: readonly BuildTarget[],
-): Promise<readonly CompiledTarget[]> {
-  const metadata: ArtifactBuildMetadata = {
-    entryFileNames: new Map(),
-    watch: false,
-  }
-  await mkdirTargetDirs(targets)
-  const bundle = await rolldown.build(
-    createGroupedRolldownOptions(targets, metadata),
-  )
-  return createResolvedTargets(targets, bundle, metadata)
+  const entryFileNames: EntryFileNames = new Map()
+  await mkdirTargetDirs(group.targets)
+  await rolldown.build(createRolldownOptions(group, false, entryFileNames))
+  return resolveTargets(group.targets, entryFileNames)
 }
 
 export async function watchGraph(
@@ -121,18 +95,15 @@ export async function watchGraph(
   const watchConfig = graph.config.build?.watch
   const watchers = await Promise.all(
     graph.buildGroups.map((group) =>
-      watchBuildGroup(
-        group,
-        {
-          onRebuild: async (change) => {
-            for (const target of change.compiledTargets ?? [change.compiled]) {
-              compiled.set(target.target.key, target)
-            }
-            await handlers.onChange?.(change)
-          },
-        },
+      watchTargets(group, {
         watchConfig,
-      ),
+        onRebuild: async (change) => {
+          for (const target of change.targets) {
+            compiled.set(target.target.key, target)
+          }
+          await handlers.onChange?.(change)
+        },
+      }),
     ),
   )
   const ready = Promise.all(watchers.map((watcher) => watcher.ready)).then(
@@ -146,7 +117,7 @@ export async function watchGraph(
   return {
     ready,
     snapshot() {
-      return createCompiledGraph(graph, [...compiled.values()])
+      return createCompiledGraph(graph, Array.from(compiled.values()))
     },
     async close() {
       await Promise.all(watchers.map((watcher) => watcher.close()))
@@ -154,158 +125,48 @@ export async function watchGraph(
   }
 }
 
-type BuildGroupWatcher = {
-  ready: Promise<readonly CompiledTarget[]>
-  close: () => Promise<void>
-}
-
-async function watchBuildGroup(
+export async function watchTargets(
   group: BuildGroup,
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
-  watchConfig?: NeemBuildWatchConfig,
-): Promise<BuildGroupWatcher> {
-  if (group.kind === 'target') {
-    const watcher = await watchTarget(group.target, handlers, watchConfig)
-    return {
-      ready: watcher.ready.then((target) => [target]),
-      close: watcher.close,
-    }
-  }
-
-  return watchTargetGroup(group.targets, handlers, watchConfig)
-}
-
-export async function watchTarget(
-  target: BuildTarget,
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
-  watchConfig?: NeemBuildWatchConfig,
-): Promise<TargetWatcher> {
-  const metadata: ArtifactBuildMetadata = { watch: true }
-  await mkdir(target.outDir, { recursive: true })
-  const watcher = rolldown.watch({
-    ...createRolldownOptions(target, metadata),
-    watch: createWatchOptions(watchConfig),
-  })
-
-  let initialWatchBuild = true
-  let initialCompiled: CompiledTarget | undefined
-  const ready = createFuture<CompiledTarget>()
-
-  watcher.on('event', async (event) => {
-    const code = event?.code
-    if (code === 'START' || code === 'BUNDLE_START') return
-
-    if (code === 'BUNDLE_END') {
-      try {
-        const compiled = {
-          target,
-          artifact: createResolvedArtifact(target, undefined, metadata),
-        }
-        if (initialWatchBuild) {
-          initialCompiled = compiled
-          return
-        }
-
-        await handlers.onRebuild?.({ target, compiled, initial: false })
-      } finally {
-        if ('result' in event) await event.result?.close?.()
-      }
-      return
-    }
-
-    if (code === 'END') {
-      if (initialWatchBuild) {
-        initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ?? {
-            target,
-            artifact: createResolvedArtifact(target, undefined, metadata),
-          },
-        )
-      }
-      return
-    }
-
-    if (code === 'ERROR') {
-      ready.reject(event.error)
-      if ('result' in event) await event.result?.close?.()
-    }
-  })
-
-  return {
-    target,
-    ready: ready.promise,
-    async close() {
-      await watcher.close()
-    },
-  }
-}
-
-async function watchTargetGroup(
-  targets: readonly BuildTarget[],
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
-  watchConfig?: NeemBuildWatchConfig,
-): Promise<BuildGroupWatcher> {
-  const metadata: ArtifactBuildMetadata = {
-    entryFileNames: new Map(),
-    watch: true,
-  }
+  options: {
+    onRebuild?: (change: TargetChange) => MaybePromise<void>
+    watchConfig?: NeemBuildWatchConfig
+  } = {},
+): Promise<GroupWatcher> {
+  const { targets } = group
+  const entryFileNames: EntryFileNames = new Map()
   await mkdirTargetDirs(targets)
   const watcher = rolldown.watch({
-    ...createGroupedRolldownOptions(targets, metadata),
-    watch: createWatchOptions(watchConfig),
+    ...createRolldownOptions(group, true, entryFileNames),
+    watch: createWatchOptions(options.watchConfig),
   })
 
-  let initialWatchBuild = true
-  let initialCompiled: readonly CompiledTarget[] | undefined
+  let initial = true
+  let initialTargets: readonly CompiledTarget[] | undefined
   const ready = createFuture<readonly CompiledTarget[]>()
 
   watcher.on('event', async (event) => {
-    const code = event?.code
-    if (code === 'START' || code === 'BUNDLE_START') return
-
-    if (code === 'BUNDLE_END') {
-      try {
-        const compiledTargets = createResolvedTargets(
-          targets,
-          undefined,
-          metadata,
-        )
-        if (initialWatchBuild) {
-          initialCompiled = compiledTargets
-          return
+    switch (event.code) {
+      case 'BUNDLE_END':
+        try {
+          const compiled = resolveTargets(targets, entryFileNames)
+          if (initial) initialTargets = compiled
+          else await options.onRebuild?.({ targets: compiled })
+        } finally {
+          if ('result' in event) await event.result?.close?.()
+          // Rolldown rebuilds retain sizeable allocations between watch builds;
+          // nudge V8 to release them during long dev sessions (no-op unless the
+          // process runs with --expose-gc, which bin/neem.js enables).
+          globalThis.gc?.()
         }
-
-        await handlers.onRebuild?.({
-          target: targets[0]!,
-          compiled: compiledTargets[0]!,
-          compiledTargets,
-          initial: false,
-        })
-      } finally {
+        return
+      case 'END':
+        if (!initial) return
+        initial = false
+        ready.resolve(initialTargets ?? resolveTargets(targets, entryFileNames))
+        return
+      case 'ERROR':
+        ready.reject(event.error)
         if ('result' in event) await event.result?.close?.()
-        // Rolldown rebuilds retain sizeable allocations between watch builds;
-        // nudge V8 to release them during long dev sessions (no-op unless the
-        // process runs with --expose-gc, which bin/neem.js enables).
-        globalThis.gc?.()
-      }
-      return
-    }
-
-    if (code === 'END') {
-      if (initialWatchBuild) {
-        initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ??
-            createResolvedTargets(targets, undefined, metadata),
-        )
-      }
-      return
-    }
-
-    if (code === 'ERROR') {
-      ready.reject(event.error)
-      if ('result' in event) await event.result?.close?.()
     }
   })
 
@@ -317,19 +178,7 @@ async function watchTargetGroup(
   }
 }
 
-function createWatchOptions(
-  config: NeemBuildWatchConfig | undefined,
-): NonNullable<rolldown.BuildOptions['watch']> {
-  return {
-    ...(config?.buildDelay !== undefined
-      ? { buildDelay: config.buildDelay }
-      : {}),
-    clearScreen: false,
-    watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
-  }
-}
-
-export function createCompiledGraph(
+function createCompiledGraph(
   graph: BuildGraph,
   targets: readonly CompiledTarget[],
 ): CompiledGraph {
@@ -348,7 +197,7 @@ export function createCompiledGraph(
       throw new Error(`Compiled runtime [${runtime.name}] planner is missing`)
     }
 
-    return { name: runtime.name, node: runtime, worker, host, planner }
+    return { node: runtime, worker, host, planner }
   })
   const plugins = graph.plugins.map((plugin) => ({
     node: plugin,
@@ -358,41 +207,71 @@ export function createCompiledGraph(
   return { graph, runtimes, plugins, targets }
 }
 
+function createWatchOptions(
+  config: NeemBuildWatchConfig | undefined,
+): NonNullable<rolldown.BuildOptions['watch']> {
+  return {
+    // Rolldown distinguishes an absent buildDelay from `undefined`.
+    ...(config?.buildDelay === undefined
+      ? {}
+      : { buildDelay: config.buildDelay }),
+    clearScreen: false,
+    watcher: {
+      debounceDelay: config?.debounceDelay ?? DEFAULT_DEBOUNCE_MS,
+      useDebounce: true,
+    },
+  }
+}
+
 function createRolldownOptions(
-  target: BuildTarget,
-  metadata: ArtifactBuildMetadata,
+  group: BuildGroup,
+  watch: boolean,
+  entryFileNames: EntryFileNames,
 ): rolldown.BuildOptions {
-  const userOptions = mergeRolldownOptions(target.artifact.rolldown) ?? {}
+  const [first] = group.targets
+  if (!first) throw new Error('Cannot compile an empty build group')
+  // Infra entry names are part of the output layout contract, and their
+  // modules resolve under node_modules when Neem itself is installed as a
+  // dependency — where the default deps group would swallow them.
+  const infra = group.kind === 'infra'
+  const userOptions = mergeRolldownOptions(first.artifact.rolldown)
+  // Neem owns the output topology, so a user-supplied output array (rolldown's
+  // multi-output form) has nothing to contribute here.
   const userOutput =
-    typeof userOptions.output === 'object' && userOptions.output
+    userOptions.output && !Array.isArray(userOptions.output)
       ? userOptions.output
       : {}
-  const input = createArtifactInput(target)
-  const output: OutputOptions = Object.assign(
-    {
-      sourcemap: true,
-      minify: false,
-      dir: target.outDir,
-      format: 'esm' as const,
-      entryFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      assetFileNames: metadata.watch
-        ? createStableWatchAssetFileName
-        : '[name]-[hash][extname]',
-    },
-    userOutput,
-    { codeSplitting: resolveCodeSplitting(target.artifact.chunks) },
-  )
+  const inputs: EntryInput[] = group.targets.map((target) => ({
+    key: target.key,
+    name: target.entryName,
+    file: toFilePath(target.artifact.entry),
+  }))
+  const output: OutputOptions = {
+    sourcemap: true,
+    minify: false,
+    dir: first.outDir,
+    format: 'esm',
+    ...userOutput,
+    entryFileNames: watch || infra ? '[name].js' : '[name]-[hash].js',
+    chunkFileNames: watch ? '[name].js' : '[name]-[hash].js',
+    assetFileNames: watch
+      ? createStableWatchAssetFileName
+      : '[name]-[hash][extname]',
+    codeSplitting: resolveCodeSplitting(
+      first.artifact.chunks,
+      infra ? inputs.map((input) => input.file) : [],
+    ),
+  }
 
   return {
-    input: input.input,
+    input: Object.fromEntries(inputs.map((input) => [input.name, input.file])),
     platform: 'node',
     ...userOptions,
     experimental: {
       // Chunk optimization may regroup chunks between rebuilds; artifact file
       // names must stay stable for running dev workers.
       chunkOptimization: false,
-      incrementalBuild: metadata.watch,
+      incrementalBuild: watch,
       ...userOptions.experimental,
     },
     external: createExternalMatcher(userOptions.external),
@@ -402,75 +281,15 @@ function createRolldownOptions(
       // names and declaration sites, so diagnostics stay readable in bundles
       injectableLabelsPlugin(),
       ...normalizePlugins(userOptions.plugins),
-      createArtifactMetadataPlugin(input, metadata),
+      createEntryMetadataPlugin(inputs, entryFileNames),
     ],
     output,
   }
 }
-
-function createGroupedRolldownOptions(
-  targets: readonly BuildTarget[],
-  metadata: ArtifactBuildMetadata,
-): rolldown.BuildOptions {
-  const firstTarget = targets[0]
-  if (!firstTarget) throw new Error('Cannot compile an empty build group')
-  const userOptions = mergeRolldownOptions(firstTarget.artifact.rolldown) ?? {}
-  const userOutput =
-    typeof userOptions.output === 'object' && userOptions.output
-      ? userOptions.output
-      : {}
-  const inputs = createArtifactInputs(targets)
-  const output: OutputOptions = Object.assign(
-    {
-      sourcemap: true,
-      minify: false,
-      dir: firstTarget.outDir,
-      format: 'esm' as const,
-    },
-    userOutput,
-    {
-      entryFileNames: '[name].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      assetFileNames: metadata.watch
-        ? createStableWatchAssetFileName
-        : '[name]-[hash][extname]',
-      codeSplitting: resolveCodeSplitting(
-        firstTarget.artifact.chunks,
-        inputs.map((input) => input.entry),
-      ),
-    },
-  )
-
-  return {
-    input: Object.fromEntries(
-      inputs.map((input) => [input.input, input.entry]),
-    ),
-    platform: 'node',
-    ...userOptions,
-    experimental: { chunkOptimization: false, ...userOptions.experimental },
-    external: createExternalMatcher(userOptions.external),
-    plugins: [
-      createNativeAddonPlugin(),
-      // before user plugins: injectables get labeled with their variable
-      // names and declaration sites, so diagnostics stay readable in bundles
-      injectableLabelsPlugin(),
-      ...normalizePlugins(userOptions.plugins),
-      createArtifactMetadataPlugin(inputs, metadata),
-    ],
-    output,
-  }
-}
-
-const DEFAULT_DEPS_CHUNK_TEST = /node_modules/
-
-const DEFAULT_DEPS_CHUNK_GROUP = {
-  name: 'deps',
-  test: DEFAULT_DEPS_CHUNK_TEST,
-} satisfies NeemChunkGroup
 
 function resolveCodeSplitting(
   chunks: NeemChunkingOptions | undefined,
-  excludeFromDefaultDeps: readonly string[] = [],
+  excludeFromDefaultDeps: readonly string[],
 ): OutputOptions['codeSplitting'] {
   if (chunks === false) return undefined
 
@@ -517,102 +336,54 @@ function createExternalMatcher(
   }
 }
 
-function createArtifactInput(target: BuildTarget): ArtifactInput {
-  const entry = toFilePath(target.artifact.entry)
-  return { entry, input: entry }
-}
-
-function createArtifactInputs(
+function resolveTargets(
   targets: readonly BuildTarget[],
-): ArtifactInput[] {
-  return targets.map((target) => {
-    const entry = toFilePath(target.artifact.entry)
-    const input = getArtifactInputName(target)
-    return { entry, input, targetKey: target.key }
-  })
+  entryFileNames: EntryFileNames,
+): readonly CompiledTarget[] {
+  return targets.map((target) => ({
+    target,
+    artifact: resolveArtifact(target, entryFileNames),
+  }))
 }
 
-function getArtifactInputName(target: BuildTarget): string {
-  switch (target.kind) {
-    case 'start-entry':
-      return 'start'
-    case 'worker-entry':
-      return 'worker-entry'
-    case 'host-runner-entry':
-      return 'runner-entry'
-    default:
-      return target.artifact.id
-  }
-}
-
-function createResolvedArtifact(
+function resolveArtifact(
   target: BuildTarget,
-  bundle: RolldownOutput | undefined,
-  metadata: ArtifactBuildMetadata,
+  entryFileNames: EntryFileNames,
 ): NeemResolvedArtifact {
-  const entryChunk = bundle?.output.find(
-    (chunk) =>
-      chunk.type === 'chunk' &&
-      chunk.isEntry &&
-      chunk.fileName &&
-      chunk.facadeModuleId === toFilePath(target.artifact.entry),
-  )
-  const entryFileName = metadata.entryFileName ?? entryChunk?.fileName
-  const groupedEntryFileName = metadata.entryFileNames?.get(target.key)
-  const file = resolve(
-    target.outDir,
-    groupedEntryFileName ?? entryFileName ?? 'index.js',
-  )
+  const fileName = entryFileNames.get(target.key)
+  if (!fileName) {
+    throw new Error(`Neem build emitted no entry chunk for [${target.key}]`)
+  }
 
+  const { id, kind } = target.artifact
   return {
-    id: target.artifact.id,
-    kind: target.artifact.kind,
+    id,
+    kind,
     owner: target.owner,
-    file,
+    file: resolve(target.outDir, fileName),
     outDir: target.outDir,
   }
 }
 
-function createResolvedTargets(
-  targets: readonly BuildTarget[],
-  bundle: RolldownOutput | undefined,
-  metadata: ArtifactBuildMetadata,
-): readonly CompiledTarget[] {
-  return targets.map((target) => {
-    const artifact = createResolvedArtifact(target, bundle, metadata)
-    return { target, artifact }
-  })
-}
-
 async function mkdirTargetDirs(targets: readonly BuildTarget[]): Promise<void> {
-  const dirs = new Set<string>()
-  for (const { outDir } of targets) dirs.add(outDir)
-
+  const dirs = new Set(targets.map((target) => target.outDir))
   await Promise.all(Array.from(dirs, (dir) => mkdir(dir, { recursive: true })))
 }
 
-function createArtifactMetadataPlugin(
-  input: ArtifactInput | readonly ArtifactInput[],
-  metadata: ArtifactBuildMetadata,
+function createEntryMetadataPlugin(
+  inputs: readonly EntryInput[],
+  entryFileNames: EntryFileNames,
 ): rolldown.RolldownPlugin {
-  const inputs = Array.isArray(input) ? input : [input]
   const collect = (bundle: rolldown.OutputBundle) => {
     for (const input of inputs) {
-      const entryChunk = Object.values(bundle).find(
-        (chunk) =>
-          chunk.type === 'chunk' &&
-          chunk.isEntry &&
-          chunk.fileName &&
-          chunk.facadeModuleId === input.entry,
+      const chunk = Object.values(bundle).find(
+        (candidate) =>
+          candidate.type === 'chunk' &&
+          candidate.isEntry &&
+          candidate.fileName &&
+          candidate.facadeModuleId === input.file,
       )
-      if (metadata.entryFileNames) {
-        metadata.entryFileNames.set(
-          input.targetKey ?? input.input,
-          entryChunk?.fileName,
-        )
-      } else {
-        metadata.entryFileName = entryChunk?.fileName
-      }
+      if (chunk) entryFileNames.set(input.key, chunk.fileName)
     }
   }
 
@@ -624,7 +395,7 @@ function createArtifactMetadataPlugin(
     writeBundle(_options, bundle) {
       collect(bundle)
     },
-  } satisfies rolldown.RolldownPlugin
+  }
 }
 
 function createNativeAddonPlugin(): rolldown.RolldownPlugin {

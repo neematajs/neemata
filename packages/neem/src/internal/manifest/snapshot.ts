@@ -16,7 +16,6 @@ export type RuntimeSnapshot = {
   mode: NeemMode
   outDir: string
   env?: NodeJS.ProcessEnv
-  manifestFile?: string
   manifest: Manifest
   config: ManifestConfig
   logger: Logger
@@ -29,7 +28,6 @@ export function createRuntimeSnapshot(options: {
   outDir: string
   env?: NodeJS.ProcessEnv
   manifest: Manifest
-  manifestFile?: string
   logger?: Logger
 }): RuntimeSnapshot {
   const logger = options.logger ?? createDefaultLogger(options.mode)
@@ -48,7 +46,6 @@ export function createRuntimeSnapshot(options: {
     mode: options.mode,
     outDir: options.outDir,
     env: options.env,
-    manifestFile: options.manifestFile,
     manifest: options.manifest,
     config,
     logger,

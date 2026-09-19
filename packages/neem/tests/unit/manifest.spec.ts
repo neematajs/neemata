@@ -14,12 +14,14 @@ import type {
 } from '../../src/internal/manifest/manifest.ts'
 import {
   createManifest as createCompiledManifest,
-  MANIFEST_SCHEMA_VERSION,
   selectManifestRuntimes,
   toManifestPath,
-  validateManifest,
   writeStartEntries,
 } from '../../src/internal/manifest/manifest.ts'
+import {
+  NEEM_MANIFEST_SCHEMA_VERSION,
+  parseManifest,
+} from '../../src/internal/schemas/manifest.ts'
 
 const tempDirs: string[] = []
 
@@ -44,7 +46,7 @@ describe('Neem manifest', () => {
       },
     })
 
-    expect(() => validateManifest(manifest)).toThrow(
+    expect(() => parseManifest(manifest)).toThrow(
       /runtime[\s\S]*entry[\s\S]*Invalid input/,
     )
   })
@@ -150,7 +152,7 @@ describe('Neem manifest', () => {
         },
       },
     })
-    expect(() => validateManifest(wrongOwner)).toThrow(
+    expect(() => parseManifest(wrongOwner)).toThrow(
       /runtimes[\s\S]*api[\s\S]*worker[\s\S]*owner/,
     )
 
@@ -169,7 +171,7 @@ describe('Neem manifest', () => {
         },
       },
     })
-    expect(() => validateManifest(wrongId)).toThrow(
+    expect(() => parseManifest(wrongId)).toThrow(
       /runtimes[\s\S]*api[\s\S]*worker[\s\S]*id/,
     )
   })
@@ -194,7 +196,7 @@ describe('Neem manifest', () => {
       },
     })
 
-    expect(() => validateManifest(manifest)).toThrow(
+    expect(() => parseManifest(manifest)).toThrow(
       /runtimes[\s\S]*api[\s\S]*worker[\s\S]*kind/,
     )
   })
@@ -224,7 +226,7 @@ function runtimeStartEntry(name: string): string {
 
 function createManifest(overrides: Partial<Manifest> = {}): Manifest {
   const manifest: Manifest = {
-    schemaVersion: MANIFEST_SCHEMA_VERSION,
+    schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
     runtime: {
       entry: 'runtime/start.js',
       start: artifact('start', 'start', 'runtime/start.js', 'module'),
@@ -312,8 +314,8 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
     ],
     runtimes: [
       {
-        name: 'scheduler',
         node: {
+          name: 'scheduler',
           declaration: {
             declaration: {
               env: { RUNTIME_ENV: 'scheduler' },
@@ -340,7 +342,13 @@ function compiledTarget(
     target: {
       key: `${artifact.owner.type}:${artifact.id}`,
       kind,
-      artifact: { id: artifact.id, kind: artifact.kind, entry: artifact.file },
+      entryName: artifact.id,
+      artifact: {
+        id: artifact.id,
+        kind: artifact.kind,
+        entry: artifact.file,
+        rolldown: {},
+      },
       owner: artifact.owner,
       outDir: artifact.outDir,
     },

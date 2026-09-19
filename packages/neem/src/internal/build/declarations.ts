@@ -1,150 +1,131 @@
 import { existsSync, globSync, readFileSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, resolve } from 'node:path'
-import { pathToFileURL } from 'node:url'
 
 import type {
+  NeemArtifactEntry,
   NeemConfig,
   NeemMarkedRuntimeDeclaration,
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
 import { isNeemRuntimeDeclaration } from '../../public/config.ts'
+import { importDefault } from '../utils.ts'
 import { resolveBuildEntry } from './resolver.ts'
 
-const runtimeDeclarationFiles = [
-  'neem.runtime.ts',
-  'neem.runtime.mts',
-  'neem.runtime.js',
-  'neem.runtime.mjs',
-  'neem.runtime.cts',
-  'neem.runtime.cjs',
-] as const
+const SOURCE_EXTENSIONS = ['ts', 'mts', 'js', 'mjs', 'cts', 'cjs'] as const
 
-const plannerFiles = [
-  'neem.planner.ts',
-  'neem.planner.mts',
-  'neem.planner.js',
-  'neem.planner.mjs',
-  'neem.planner.cts',
-  'neem.planner.cjs',
-] as const
-
-type RuntimeProjectMatch = { entry: string; file: string; directory: string }
-
-type EntryModule = { default?: unknown }
+const RUNTIME_DECLARATION_FILES = conventionalFiles('neem.runtime')
+const PLANNER_FILES = conventionalFiles('neem.planner')
 
 export async function resolveNeemRuntimeDeclarations(
   configFile: string,
   config: NeemConfig,
 ): Promise<NeemResolvedConfig> {
-  const matches = resolveRuntimeProjectFiles(configFile, config.runtimes)
+  const files = resolveRuntimeProjectFiles(configFile, config.runtimes)
   const runtimes = new Map<string, NeemResolvedRuntimeDeclaration>()
 
-  for (const match of matches) {
-    const declaration = await loadRuntimeDeclaration(match.file)
-    const planner = resolveRuntimePlanner(match.file, declaration)
-    const name = resolveRuntimeName(match.file, declaration)
+  for (const file of files) {
+    const declaration = await loadRuntimeDeclaration(file)
+    validateRuntimeDeclaration(file, declaration)
+    const planner = resolveRuntimePlanner(file, declaration)
+    const name = resolveRuntimeName(file, declaration)
     if (runtimes.has(name)) {
       throw new Error(
-        `Duplicate runtime name [${name}] in runtime declaration [${match.file}]`,
+        `Duplicate runtime name [${name}] in runtime declaration [${file}]`,
       )
     }
-    validateRuntimeDeclaration(match.file, declaration)
-    runtimes.set(name, {
-      name,
-      file: match.file,
-      directory: match.directory,
-      declaration,
-      planner,
-    })
+    runtimes.set(name, { name, file, declaration, planner })
   }
 
   return Object.freeze({ ...config, runtimes: Object.fromEntries(runtimes) })
 }
 
-export function resolveRuntimeProjectFiles(
+function conventionalFiles(stem: string): readonly string[] {
+  return SOURCE_EXTENSIONS.map((extension) => `${stem}.${extension}`)
+}
+
+function resolveRuntimeProjectFiles(
   configFile: string,
   entries: readonly string[],
-): readonly RuntimeProjectMatch[] {
+): readonly string[] {
   const configDir = dirname(configFile)
-  const positives: RuntimeProjectMatch[] = []
+  const positives: string[] = []
   const negatives = new Set<string>()
 
   for (const entry of entries) {
     const negated = entry.startsWith('!')
     const raw = negated ? entry.slice(1) : entry
-    const matches = expandRuntimeProjectEntry(configDir, raw)
+    const files = expandRuntimeProjectEntry(configDir, raw)
 
-    if (!negated && matches.length === 0) {
+    if (!negated && files.length === 0) {
       throw new Error(
         `Runtime project entry [${entry}] matched no files or folders`,
       )
     }
-    for (const match of matches) {
-      if (negated) negatives.add(match.file)
-      else positives.push({ ...match, entry })
+    for (const file of files) {
+      if (negated) negatives.add(file)
+      else positives.push(file)
     }
   }
 
-  const selected = new Map<string, RuntimeProjectMatch>()
-  for (const match of positives) {
-    if (!negatives.has(match.file)) selected.set(match.file, match)
+  const selected = new Set<string>()
+  for (const file of positives) {
+    if (!negatives.has(file)) selected.add(file)
   }
 
-  return [...selected.values()]
+  return Array.from(selected)
 }
 
 async function loadRuntimeDeclaration(
   file: string,
 ): Promise<NeemMarkedRuntimeDeclaration> {
-  const module = (await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
-  )) as EntryModule
-  if (!('default' in module)) {
+  const declaration = await importDefault<unknown>(file, { cacheBust: true })
+  if (declaration === undefined) {
     throw new Error(
       `Runtime declaration file [${file}] must have a default export`,
     )
   }
-  if (!isNeemRuntimeDeclaration(module.default)) {
+  if (!isNeemRuntimeDeclaration(declaration)) {
     throw new Error(
       `Runtime declaration file [${file}] default export must be a marked runtime declaration produced by defineRuntime or a package create*Runtime helper`,
     )
   }
-  return module.default
+  return declaration
 }
 
 function expandRuntimeProjectEntry(
   configDir: string,
   entry: string,
-): readonly RuntimeProjectMatch[] {
+): readonly string[] {
   const pattern = isAbsolute(entry) ? entry : resolve(configDir, entry)
-  const matches = globSync(pattern).sort()
-
-  return matches.map((match) => resolveRuntimeProjectMatch(String(match)))
+  return globSync(pattern).sort().map(resolveRuntimeProjectFile)
 }
 
-function resolveRuntimeProjectMatch(path: string): RuntimeProjectMatch {
+function resolveRuntimeProjectFile(path: string): string {
   const stats = statSync(path)
   if (stats.isDirectory()) {
-    const file = resolveRuntimeDeclarationFile(path)
+    const file = findConventionalFile(path, RUNTIME_DECLARATION_FILES)
     if (!file) {
       throw new Error(
         `Runtime folder [${path}] has no conventional runtime declaration file`,
       )
     }
-    return { entry: path, file, directory: path }
+    return file
   }
 
   if (!stats.isFile()) {
     throw new Error(`Runtime project entry [${path}] is not a file or folder`)
   }
 
-  return { entry: path, file: path, directory: dirname(path) }
+  return path
 }
 
-function resolveRuntimeDeclarationFile(directory: string): string | undefined {
-  for (const file of runtimeDeclarationFiles) {
-    const candidate = resolve(directory, file)
+function findConventionalFile(
+  directory: string,
+  names: readonly string[],
+): string | undefined {
+  for (const name of names) {
+    const candidate = resolve(directory, name)
     if (existsSync(candidate)) return candidate
   }
   return undefined
@@ -153,14 +134,16 @@ function resolveRuntimeDeclarationFile(directory: string): string | undefined {
 function resolveRuntimePlanner(
   declarationFile: string,
   declaration: NeemMarkedRuntimeDeclaration,
-): string {
-  const explicit = resolveBuildEntry(declarationFile, declaration.planner)
-  if (explicit) return String(explicit)
-
-  for (const file of plannerFiles) {
-    const candidate = resolve(dirname(declarationFile), file)
-    if (existsSync(candidate)) return candidate
+): NeemArtifactEntry {
+  if (declaration.planner) {
+    return resolveBuildEntry(declarationFile, declaration.planner)
   }
+
+  const conventional = findConventionalFile(
+    dirname(declarationFile),
+    PLANNER_FILES,
+  )
+  if (conventional) return conventional
 
   throw new Error(
     `Runtime declaration file [${declarationFile}] has no resolved planner entry`,

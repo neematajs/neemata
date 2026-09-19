@@ -12,10 +12,12 @@ export function defineRuntimeWorker<Data = unknown, Definition = unknown>(
   })
 }
 
-export function isNeemRuntimeWorker(value: any): value is NeemRuntimeWorker {
+export function isNeemRuntimeWorker(
+  value: unknown,
+): value is NeemRuntimeWorker {
   return (
     typeof value === 'object' &&
     value !== null &&
-    value[NeemRuntimeWorkerBrand] === true
+    (value as Record<symbol, unknown>)[NeemRuntimeWorkerBrand] === true
   )
 }

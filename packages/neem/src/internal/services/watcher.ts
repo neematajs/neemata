@@ -145,7 +145,7 @@ export class WatcherService {
       this.logger?.trace(
         {
           event,
-          target: toLogTarget(change.target),
+          target: toLogTarget(changedTarget(change)),
           manifestFile: manifest.manifestFile,
           manifestRevision: manifest.manifestRevision,
           manifestHash: manifest.manifestHash,
@@ -182,15 +182,22 @@ export class WatcherService {
   }
 }
 
+function changedTarget(change: TargetChange): BuildTarget {
+  const [first] = change.targets
+  if (!first) throw new Error('Neem watcher reported a rebuild without targets')
+  return first.target
+}
+
 function classifyChange(change: TargetChange): WatcherChange {
-  switch (change.target.kind) {
+  const target = changedTarget(change)
+  switch (target.kind) {
     case 'runtime-worker':
     case 'runtime-planner':
-      return { type: 'runtime-changed', runtimeName: getRuntimeName(change) }
+      return { type: 'runtime-changed', runtimeName: getRuntimeName(target) }
     case 'runtime-host':
       return {
         type: 'runtime-host-changed',
-        runtimeName: getRuntimeName(change),
+        runtimeName: getRuntimeName(target),
       }
     case 'plugin-entry':
       return { type: 'plugin-changed' }
@@ -211,8 +218,8 @@ async function hashFile(file: string): Promise<string> {
   return createHash('sha256').update(contents).digest('hex')
 }
 
-function getRuntimeName(change: TargetChange): string {
-  const owner = change.target.owner
+function getRuntimeName(target: BuildTarget): string {
+  const { owner } = target
   return owner.type === 'runtime' ? owner.name : 'unknown'
 }
 

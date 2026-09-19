@@ -1,26 +1,18 @@
 import { resolve } from 'node:path'
 
-import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from '@nmtjs/core'
 
-import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { Manifest } from '../manifest/manifest.ts'
-import type { HostHooks, PluginHooks } from './hooks.ts'
+import type {
+  NeemMode,
+  NeemPluginHooks,
+  NeemPluginHooksFactory,
+  NeemRuntimeServerHealth,
+} from '../../shared/types.ts'
+import type { Manifest, ManifestPlugin } from '../manifest/manifest.ts'
+import type { HostHooks } from './hooks.ts'
 import { childLogger } from '../logger.ts'
 import { importDefault, normalizeError } from '../utils.ts'
 import { callHostHook } from './hooks.ts'
-
-export type PluginContext<Options = unknown> = {
-  name: string
-  mode: NeemMode
-  options: Options
-  logger: Logger
-  getHealth: () => NeemRuntimeServerHealth
-}
-
-export type PluginFactory<Options = unknown> = (
-  ctx: PluginContext<Options>,
-) => MaybePromise<PluginHooks>
 
 export type PluginEnvironmentOptions = {
   manifest: Manifest
@@ -33,50 +25,56 @@ export type PluginEnvironmentOptions = {
 }
 
 export class PluginEnvironment {
-  private removers: Array<() => void> = []
-  private initialized = false
+  private readonly removers: Array<() => void> = []
   private readonly logger: Logger
+  private readonly hostLogger: Logger
+  private readonly hooks: HostHooks
+  private readonly mode: NeemMode
+  private readonly outDir: string
+  private readonly plugins: readonly ManifestPlugin[]
+  private readonly getHealth: () => NeemRuntimeServerHealth
+  private readonly cacheBust: boolean | undefined
+  private initialized = false
 
-  constructor(private readonly options: PluginEnvironmentOptions) {
+  constructor(options: PluginEnvironmentOptions) {
+    const { hooks, mode, outDir, getHealth, cacheBust } = options
     this.logger = childLogger(options.logger, 'neem:plugins')
+    this.hostLogger = options.logger
+    this.hooks = hooks
+    this.mode = mode
+    this.outDir = outDir
+    this.plugins = options.manifest.plugins ?? []
+    this.getHealth = getHealth
+    this.cacheBust = cacheBust
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return
 
-    const pluginNames =
-      this.options.manifest.plugins?.map((plugin) => plugin.name) ?? []
-    this.logger.trace({ plugins: pluginNames }, 'Initializing Neem plugins')
+    const names = this.plugins.map((plugin) => plugin.name)
+    this.logger.trace({ plugins: names }, 'Initializing Neem plugins')
 
     const hooks = await this.loadHooks()
-    const removers: Array<() => void> = []
 
     try {
-      for (const pluginHooks of hooks)
-        removers.push(this.options.hooks.addHooks(pluginHooks))
+      for (const pluginHooks of hooks) {
+        this.removers.push(this.hooks.addHooks(pluginHooks))
+      }
 
-      this.removers = removers
-      await callHostHook(
-        this.options.hooks,
-        this.options.logger,
-        'initialize',
-        { mode: this.options.mode },
-      )
+      await this.callHook('initialize')
       this.initialized = true
-      if (pluginNames.length > 0) this.logger.debug('Neem plugins initialized')
-      this.logger.trace({ plugins: pluginNames }, 'Neem plugins initialized')
+      if (names.length > 0) {
+        this.logger.debug({ plugins: names }, 'Neem plugins initialized')
+      }
     } catch (error) {
-      await callHostHook(this.options.hooks, this.options.logger, 'dispose', {
-        mode: this.options.mode,
-      }).catch((disposeError) => {
+      await this.callHook('dispose').catch((disposeError) => {
         this.logger.warn(
           new Error('Neem plugin initialization cleanup failed', {
             cause: normalizeError(disposeError),
           }),
         )
       })
-      for (const remove of removers.reverse()) remove()
-      this.removers = []
+      this.removeHooks()
       throw error
     }
   }
@@ -86,26 +84,32 @@ export class PluginEnvironment {
 
     this.logger.debug('Disposing Neem plugins')
     try {
-      await callHostHook(this.options.hooks, this.options.logger, 'dispose', {
-        mode: this.options.mode,
-      })
+      await this.callHook('dispose')
     } finally {
-      for (const remove of this.removers.splice(0).reverse()) remove()
+      this.removeHooks()
       this.initialized = false
       this.logger.debug('Neem plugins disposed')
     }
   }
 
-  private async loadHooks(): Promise<PluginHooks[]> {
-    const hooks: PluginHooks[] = []
+  private callHook(name: 'initialize' | 'dispose'): Promise<void> {
+    return callHostHook(this.hooks, this.hostLogger, name, { mode: this.mode })
+  }
 
-    for (const plugin of this.options.manifest.plugins ?? []) {
+  private removeHooks(): void {
+    for (const remove of this.removers.splice(0).reverse()) remove()
+  }
+
+  private async loadHooks(): Promise<NeemPluginHooks[]> {
+    const hooks: NeemPluginHooks[] = []
+
+    for (const plugin of this.plugins) {
       if (!plugin.entry) continue
 
       this.logger.trace({ plugin: plugin.name }, 'Loading Neem plugin')
-      const factory = await importDefault<PluginFactory>(
-        resolve(this.options.outDir, plugin.entry.file),
-        { cacheBust: this.options.cacheBust },
+      const factory = await importDefault<NeemPluginHooksFactory>(
+        resolve(this.outDir, plugin.entry.file),
+        { cacheBust: this.cacheBust },
       )
       if (typeof factory !== 'function') {
         throw new Error(
@@ -115,10 +119,10 @@ export class PluginEnvironment {
 
       const result = await factory({
         name: plugin.name,
-        mode: this.options.mode,
+        mode: this.mode,
         options: plugin.options,
-        logger: this.options.logger,
-        getHealth: this.options.getHealth,
+        logger: this.hostLogger,
+        getHealth: this.getHealth,
       })
       this.logger.trace({ plugin: plugin.name }, 'Neem plugin loaded')
       hooks.push(result)

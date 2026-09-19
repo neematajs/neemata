@@ -1,6 +1,7 @@
 import type {
   NeemConfig,
   NeemEntryInput,
+  NeemEnv,
   NeemMarkedRuntimeDeclaration,
   NeemPluginInput,
   NeemRuntimeBuildConfig,
@@ -11,10 +12,16 @@ import type {
 import { mergeUserRolldownOptions } from '../shared/rolldown.ts'
 import { NeemRuntimeDeclarationBrand } from './runtime.ts'
 
+// Worker and host declarations share the same {entry, build} merge shape.
+type EntryDeclaration = {
+  entry?: NeemEntryInput
+  build?: NeemRuntimeBuildConfig
+}
+
 export function defineConfig(config: NeemConfig): NeemConfig {
   return Object.freeze({
     ...config,
-    ...(config.env ? { env: freezeRuntimeEnv(config.env) } : {}),
+    ...(config.env ? { env: Object.freeze({ ...config.env }) } : {}),
   })
 }
 
@@ -22,69 +29,58 @@ export function definePlugin<const T extends NeemPluginInput>(plugin: T): T {
   return Object.freeze({ ...plugin })
 }
 
-export function defineRuntime<
-  const TDeclaration extends NeemRuntimeDeclaration,
->(declaration: TDeclaration): NeemMarkedRuntimeDeclaration<TDeclaration> {
+export function defineRuntime<const T extends NeemRuntimeDeclaration>(
+  declaration: T,
+): NeemMarkedRuntimeDeclaration<T> {
   return Object.freeze({
     ...declaration,
-    ...(declaration.env ? { env: freezeRuntimeEnv(declaration.env) } : {}),
+    ...(declaration.env ? { env: Object.freeze({ ...declaration.env }) } : {}),
     [NeemRuntimeDeclarationBrand]: true,
-  }) as NeemMarkedRuntimeDeclaration<TDeclaration>
+  }) as NeemMarkedRuntimeDeclaration<T>
 }
 
-export function createRuntime<
-  const TCommon extends NeemRuntimeDeclarationLayer,
->(commonOptions: TCommon) {
-  return function defineRuntimeProject<
-    const TUser extends NeemRuntimeDeclarationLayer,
-  >(userOptions: TUser): NeemMarkedRuntimeDeclaration {
-    return defineRuntime(
-      mergeRuntimeDeclarationLayers(commonOptions, userOptions),
-    )
-  }
+export function createRuntime(common: NeemRuntimeDeclarationLayer) {
+  return (user: NeemRuntimeDeclarationLayer): NeemMarkedRuntimeDeclaration =>
+    defineRuntime(mergeRuntimeDeclarationLayers(common, user))
 }
 
 export function isNeemRuntimeDeclaration(
-  value: any,
+  value: unknown,
 ): value is NeemMarkedRuntimeDeclaration {
   return (
     typeof value === 'object' &&
     value !== null &&
-    value[NeemRuntimeDeclarationBrand] === true
+    (value as Record<symbol, unknown>)[NeemRuntimeDeclarationBrand] === true
   )
 }
 
 function mergeRuntimeDeclarationLayers(
-  commonOptions: NeemRuntimeDeclarationLayer,
-  userOptions: NeemRuntimeDeclarationLayer,
+  common: NeemRuntimeDeclarationLayer,
+  user: NeemRuntimeDeclarationLayer,
 ): NeemRuntimeDeclaration {
+  // Merged layers can still leave a worker without an entry; the build rejects
+  // that in validateRuntimeDeclaration, where the offending file is known.
   return {
-    ...commonOptions,
-    ...userOptions,
-    env: mergeRuntimeEnv(commonOptions.env, userOptions.env),
-    proxy: mergeRuntimeProxyConfig(commonOptions.proxy, userOptions.proxy),
-    worker: mergeEntryDeclaration(commonOptions.worker, userOptions.worker),
-    host: mergeEntryDeclaration(commonOptions.host, userOptions.host),
+    ...common,
+    ...user,
+    env: mergeRuntimeEnv(common.env, user.env),
+    proxy: mergeRuntimeProxyConfig(common.proxy, user.proxy),
+    worker: mergeEntryDeclaration(common.worker, user.worker),
+    host: mergeEntryDeclaration(common.host, user.host),
   } as NeemRuntimeDeclaration
 }
 
 function mergeRuntimeEnv(
-  commonEnv: NeemRuntimeDeclarationLayer['env'],
-  userEnv: NeemRuntimeDeclarationLayer['env'],
-): NeemRuntimeDeclaration['env'] | undefined {
+  commonEnv: NeemEnv | undefined,
+  userEnv: NeemEnv | undefined,
+): NeemEnv | undefined {
   if (!commonEnv && !userEnv) return undefined
-  return freezeRuntimeEnv({ ...commonEnv, ...userEnv })
-}
-
-function freezeRuntimeEnv<const T extends NeemRuntimeDeclaration['env']>(
-  env: T,
-): T {
-  return Object.freeze({ ...env }) as T
+  return Object.freeze({ ...commonEnv, ...userEnv })
 }
 
 function mergeRuntimeProxyConfig(
-  commonProxy: NeemRuntimeDeclarationLayer['proxy'],
-  userProxy: NeemRuntimeDeclarationLayer['proxy'],
+  commonProxy: NeemRuntimeProxyConfig | undefined,
+  userProxy: NeemRuntimeProxyConfig | undefined,
 ): NeemRuntimeProxyConfig | undefined {
   if (!commonProxy && !userProxy) return undefined
   // Routing is a mode selection, not a bag of options: the user layer replaces
@@ -96,16 +92,16 @@ function mergeRuntimeProxyConfig(
   }
 }
 
-// Worker and host declarations share the same {entry, build} merge shape.
-function mergeEntryDeclaration<
-  T extends { entry?: NeemEntryInput; build?: NeemRuntimeBuildConfig },
->(common: Partial<T> | undefined, user: Partial<T> | undefined): T | undefined {
+function mergeEntryDeclaration(
+  common: EntryDeclaration | undefined,
+  user: EntryDeclaration | undefined,
+): EntryDeclaration | undefined {
   if (!common && !user) return undefined
   return {
     ...common,
     ...user,
     build: mergeRuntimeBuildConfig(common?.build, user?.build),
-  } as T
+  }
 }
 
 function mergeRuntimeBuildConfig(

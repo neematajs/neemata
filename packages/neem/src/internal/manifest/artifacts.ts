@@ -1,21 +1,20 @@
 import type {
   NeemArtifactOwner,
-  NeemArtifactRegistry,
   NeemResolvedArtifact,
 } from '../../shared/types.ts'
 
-export type ScopedArtifactRegistry = NeemArtifactRegistry & {
+export type ScopedArtifactRegistry = {
   resolveFor: (
     owner: NeemArtifactOwner,
     id: string,
   ) => NeemResolvedArtifact | undefined
+  list: () => readonly NeemResolvedArtifact[]
 }
 
 export function createArtifactRegistry(
   artifacts: readonly NeemResolvedArtifact[],
 ): ScopedArtifactRegistry {
   const byOwner = new Map<string, Map<string, NeemResolvedArtifact>>()
-  const byId = new Map<string, NeemResolvedArtifact>()
 
   for (const artifact of artifacts) {
     const ownerKey = getOwnerKey(artifact.owner)
@@ -26,13 +25,9 @@ export function createArtifactRegistry(
     }
 
     ownerArtifacts.set(artifact.id, artifact)
-    if (!byId.has(artifact.id)) byId.set(artifact.id, artifact)
   }
 
-  const registry: ScopedArtifactRegistry = {
-    resolve(id) {
-      return byId.get(id)
-    },
+  return {
     resolveFor(owner, id) {
       return byOwner.get(getOwnerKey(owner))?.get(id)
     },
@@ -40,8 +35,6 @@ export function createArtifactRegistry(
       return artifacts
     },
   }
-
-  return registry
 }
 
 function getOwnerKey(owner: NeemArtifactOwner): string {

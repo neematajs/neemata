@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import type { BuildTarget } from '../../src/internal/build/graph.ts'
 import type { NeemResolvedConfig } from '../../src/shared/types.ts'
 import { createBuildGraph } from '../../src/internal/build/graph.ts'
 import { definePlugin, defineRuntime } from '../../src/public/config.ts'
@@ -42,10 +43,14 @@ describe('createBuildGraph', () => {
       }),
     })
 
-    expect(graph.startEntry.key).toBe('runtime:start-entry')
-    expect(graph.workerEntry.key).toBe('runtime:worker-entry')
-    expect(graph.hostRunnerEntry.key).toBe('runtime:host-runner-entry')
-    expect(graph.logger?.artifact.entry).toBe('/workspace/app/logger.ts')
+    expect(target(graph, 'start-entry').key).toBe('runtime:start-entry')
+    expect(target(graph, 'worker-entry').key).toBe('runtime:worker-entry')
+    expect(target(graph, 'host-runner-entry').key).toBe(
+      'runtime:host-runner-entry',
+    )
+    expect(target(graph, 'logger').artifact.entry).toBe(
+      '/workspace/app/logger.ts',
+    )
     expect(graph.plugins).toHaveLength(1)
     expect(graph.plugins[0]).toMatchObject({
       key: '000-scope-plugin-one',
@@ -86,8 +91,12 @@ describe('createBuildGraph', () => {
       'runtime:scheduler:planner',
       'plugin:000-scope-plugin-one',
     ])
-    expect(graph.buildGroups.map((group) => group.key)).toEqual([
-      'runtime:infra',
+    expect(
+      graph.buildGroups.map((group) =>
+        group.targets.map((target) => target.key).join(','),
+      ),
+    ).toEqual([
+      'runtime:start-entry,runtime:worker-entry,runtime:host-runner-entry',
       'config:logger',
       'runtime:api:worker',
       'runtime:api:host',
@@ -96,10 +105,7 @@ describe('createBuildGraph', () => {
       'runtime:scheduler:planner',
       'plugin:000-scope-plugin-one',
     ])
-    expect(graph.buildGroups[0]).toMatchObject({
-      key: 'runtime:infra',
-      kind: 'infra',
-    })
+    expect(graph.buildGroups[0]?.kind).toBe('infra')
     expect(graph.buildGroups[0]?.targets.map((target) => target.kind)).toEqual([
       'start-entry',
       'worker-entry',
@@ -221,12 +227,13 @@ describe('createBuildGraph', () => {
     })
 
     const api = graph.runtimes.find((runtime) => runtime.name === 'api')
-    expect(graph.startEntry.artifact.rolldown?.output).toMatchObject({
-      entryFileNames: 'start.js',
-      minify: 'dce-only',
-      sourcemap: 'hidden',
-      sourcemapExcludeSources: true,
-    })
+    expect(target(graph, 'start-entry').artifact.rolldown.output).toMatchObject(
+      {
+        minify: 'dce-only',
+        sourcemap: 'hidden',
+        sourcemapExcludeSources: true,
+      },
+    )
     expect(api?.worker?.artifact.rolldown?.transform?.define).toEqual({
       __NEEM_ROOT__: '"root"',
       __NEEM_SHARED__: '"worker"',
@@ -257,6 +264,15 @@ describe('createBuildGraph', () => {
   })
 })
 
+function target(
+  graph: ReturnType<typeof createBuildGraph>,
+  kind: BuildTarget['kind'],
+): BuildTarget {
+  const found = graph.targets.find((target) => target.kind === kind)
+  if (!found) throw new Error(`Missing ${kind} target`)
+  return found
+}
+
 function resolvedConfig(
   config: Partial<NeemResolvedConfig> & {
     runtimes: NeemResolvedConfig['runtimes']
@@ -277,7 +293,6 @@ function runtimeDeclaration(
   return {
     name,
     file: `/workspace/app/${name}/neem.runtime.ts`,
-    directory: `/workspace/app/${name}`,
     planner: input.planner ?? './neem.planner.ts',
     declaration: defineRuntime({ name, ...input }),
   }

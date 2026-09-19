@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
@@ -113,9 +114,7 @@ describe('shared utilities', () => {
   })
 
   it('resolves paths, URL paths, and file URL strings', () => {
-    expect(toFilePath('./config.ts', '/workspace/app')).toBe(
-      '/workspace/app/config.ts',
-    )
+    expect(toFilePath('./config.ts')).toBe(resolve('config.ts'))
     expect(toFilePath(new URL('file:///workspace/app/config.ts'))).toBe(
       '/workspace/app/config.ts',
     )

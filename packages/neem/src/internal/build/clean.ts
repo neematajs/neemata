@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 
-import { MANIFEST_FILE } from '../manifest/manifest.ts'
+import { MANIFEST_FILE, OUT_LAYOUT } from '../layout.ts'
 
 export function assertSafeNeemOutDir(options: {
   outDir: string
@@ -16,13 +16,7 @@ export function assertSafeNeemOutDir(options: {
     )
   }
 
-  const configRelativePath = relative(outDir, configDir)
-  if (
-    configRelativePath !== '' &&
-    configRelativePath !== '..' &&
-    !configRelativePath.startsWith(`..${sep}`) &&
-    !isAbsolute(configRelativePath)
-  ) {
+  if (isPathInside(configDir, outDir)) {
     throw new Error(
       `Neem output directory must not contain the config directory [${options.outDir}]`,
     )
@@ -30,12 +24,23 @@ export function assertSafeNeemOutDir(options: {
 }
 
 export async function cleanNeemOutDir(outDir: string): Promise<void> {
+  const { startEntry, runtime, runtimeStarts, config } = OUT_LAYOUT
   await Promise.all([
-    rm(resolve(outDir, 'start.js'), { force: true }),
-    rm(resolve(outDir, 'start.js.map'), { force: true }),
-    rm(resolve(outDir, 'runtime'), { recursive: true, force: true }),
-    rm(resolve(outDir, 'runtimes'), { recursive: true, force: true }),
-    rm(resolve(outDir, 'config'), { recursive: true, force: true }),
+    rm(resolve(outDir, startEntry), { force: true }),
+    rm(resolve(outDir, `${startEntry}.map`), { force: true }),
+    rm(resolve(outDir, runtime), { recursive: true, force: true }),
+    rm(resolve(outDir, runtimeStarts), { recursive: true, force: true }),
+    rm(resolve(outDir, config), { recursive: true, force: true }),
     rm(resolve(outDir, MANIFEST_FILE), { force: true }),
   ])
+}
+
+function isPathInside(child: string, parent: string): boolean {
+  const path = relative(parent, child)
+  return (
+    path !== '' &&
+    path !== '..' &&
+    !path.startsWith(`..${sep}`) &&
+    !isAbsolute(path)
+  )
 }

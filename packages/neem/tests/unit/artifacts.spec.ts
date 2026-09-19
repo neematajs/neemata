@@ -4,13 +4,12 @@ import type { NeemResolvedArtifact } from '../../src/shared/types.ts'
 import { createArtifactRegistry } from '../../src/internal/manifest/artifacts.ts'
 
 describe('createArtifactRegistry', () => {
-  it('resolves first global id and scoped runtime artifacts independently', () => {
+  it('resolves scoped runtime artifacts independently', () => {
     const apiEntry = artifact('entry', 'api', '/out/api.js')
     const jobsEntry = artifact('entry', 'jobs', '/out/jobs.js')
     const jobsSchema = artifact('schema', 'jobs', '/out/schema.js')
     const registry = createArtifactRegistry([apiEntry, jobsEntry, jobsSchema])
 
-    expect(registry.resolve('entry')).toBe(apiEntry)
     expect(registry.resolveFor({ type: 'runtime', name: 'api' }, 'entry')).toBe(
       apiEntry,
     )

@@ -4,10 +4,10 @@ import { fileURLToPath } from 'node:url'
 import { createFuture } from '@nmtjs/common'
 
 import { HostController } from '../host/controller.ts'
+import { MANIFEST_FILE } from '../layout.ts'
 import { resolveManifestLogger } from '../logger.ts'
 import {
   assertManifestFilesExist,
-  MANIFEST_FILE,
   readManifest,
   selectManifestRuntimes,
 } from '../manifest/manifest.ts'
@@ -40,7 +40,6 @@ export async function startStandalone(
       outDir,
       env: options.env,
       manifest,
-      manifestFile,
       logger,
     }),
     onFailure(error) {

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { basename, extname, resolve } from 'node:path'
 
 import type { OutputOptions, RolldownOptions } from 'rolldown'
 
@@ -16,12 +16,14 @@ import {
   mergeRolldownOptions,
   mergeUserRolldownOptions,
 } from '../../shared/rolldown.ts'
+import { OUT_LAYOUT } from '../layout.ts'
+import { isLoggerModuleInput } from '../logger.ts'
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
 } from '../runtime-selection.ts'
-import { sanitizePathPart } from '../utils.ts'
-import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolver.ts'
+import { sanitizePathPart, toFilePath } from '../utils.ts'
+import { resolveBuildEntry } from './resolver.ts'
 
 export type BuildTargetKind =
   | 'runtime-worker'
@@ -36,11 +38,13 @@ export type BuildTargetKind =
 export type BuildTarget = {
   key: string
   kind: BuildTargetKind
+  /** Rolldown input name, and therefore the base name of the entry chunk. */
+  entryName: string
   artifact: {
     id: string
     kind: NeemArtifactKind
     entry: NeemArtifactEntry
-    rolldown?: RolldownOptions
+    rolldown: RolldownOptions
     chunks?: NeemChunkingOptions
   }
   owner: NeemArtifactOwner
@@ -59,36 +63,74 @@ export type PluginBuildNode = {
   key: string
   name: string
   entry?: BuildTarget
-  rolldown?: RolldownOptions
+  rolldown: RolldownOptions
   options?: unknown
 }
 
-export type BuildGroup =
-  | {
-      key: 'runtime:infra'
-      kind: 'infra'
-      targets: readonly [BuildTarget, BuildTarget, BuildTarget]
-    }
-  | {
-      key: string
-      kind: 'target'
-      target: BuildTarget
-      targets: readonly [BuildTarget]
-    }
+/**
+ * Targets compiled by a single rolldown build. Infra entries share one output
+ * directory and are referenced by fixed paths (the generated `start.js` shim,
+ * the manifest worker entry), so the compiler keeps their entry names unhashed
+ * and out of the shared deps chunk.
+ */
+export type BuildGroup = {
+  kind: 'infra' | 'artifact'
+  targets: readonly BuildTarget[]
+}
 
 export type BuildGraph = {
-  configFile: string
   outDir: string
   config: NeemResolvedConfig
-  startEntry: BuildTarget
-  workerEntry: BuildTarget
-  hostRunnerEntry: BuildTarget
-  logger?: BuildTarget
   runtimes: readonly RuntimeBuildNode[]
   plugins: readonly PluginBuildNode[]
   targets: readonly BuildTarget[]
   buildGroups: readonly BuildGroup[]
 }
+
+type GraphContext = {
+  configFile: string
+  outDir: string
+  config: NeemResolvedConfig
+  rootRolldown: RolldownOptions
+}
+
+const INFRA_TARGETS = [
+  {
+    key: 'runtime:start-entry',
+    kind: 'start-entry',
+    entryName: 'start',
+    id: 'start',
+    artifactKind: 'module',
+    module: '../standalone/entry',
+    owner: 'start',
+  },
+  {
+    key: 'runtime:worker-entry',
+    kind: 'worker-entry',
+    entryName: 'worker-entry',
+    id: 'worker-entry',
+    artifactKind: 'worker',
+    module: '../worker/entry',
+    owner: 'worker',
+  },
+  {
+    key: 'runtime:host-runner-entry',
+    kind: 'host-runner-entry',
+    entryName: 'runner-entry',
+    id: 'host-runner-entry',
+    artifactKind: 'worker',
+    module: '../host/runner-entry',
+    owner: 'host-runner',
+  },
+] as const satisfies readonly {
+  key: string
+  kind: BuildTargetKind
+  entryName: string
+  id: string
+  artifactKind: NeemArtifactKind
+  module: string
+  owner: string
+}[]
 
 export function createBuildGraph(options: {
   configFile: string
@@ -101,77 +143,54 @@ export function createBuildGraph(options: {
   assertRuntimeNamesExist(names, Object.keys(config.runtimes))
   const selected = names ? new Set(names) : undefined
   const rootRolldown = createRootBuildRolldownOptions(config.build)
-  const plugins = createPluginNodes(configFile, outDir, config, rootRolldown)
+  const ctx: GraphContext = { configFile, outDir, config, rootRolldown }
+
+  const plugins = createPluginNodes(ctx)
   const pluginRolldown = mergePluginRolldownOptions(plugins)
-  const startEntry = createStartEntryTarget(outDir, rootRolldown)
-  const workerEntry = createWorkerEntryTarget(outDir, rootRolldown)
-  const hostRunnerEntry = createHostRunnerEntryTarget(outDir, rootRolldown)
-  const logger = createLoggerTarget(configFile, outDir, config, rootRolldown)
+  const infraTargets = INFRA_TARGETS.map((spec) => createInfraTarget(spec, ctx))
+  const logger = createLoggerTarget(ctx)
   const runtimes: RuntimeBuildNode[] = []
   for (const [name, runtime] of Object.entries(config.runtimes)) {
     if (selected && !selected.has(name)) continue
-    runtimes.push(
-      createRuntimeNode({
-        outDir,
-        name,
-        runtime,
-        pluginRolldown,
-        rootRolldown,
-      }),
-    )
+    runtimes.push(createRuntimeNode(ctx, name, runtime, pluginRolldown))
   }
 
-  const infraTargets = [startEntry, workerEntry, hostRunnerEntry] as const
-  const targets: BuildTarget[] = [...infraTargets]
-  if (logger) targets.push(logger)
+  const artifactTargets: BuildTarget[] = []
+  if (logger) artifactTargets.push(logger)
   for (const { worker, host, planner } of runtimes) {
-    if (worker) targets.push(worker)
-    targets.push(host, planner)
+    if (worker) artifactTargets.push(worker)
+    artifactTargets.push(host, planner)
   }
   for (const { entry } of plugins) {
-    if (entry) targets.push(entry)
-  }
-
-  const buildGroups: BuildGroup[] = [
-    { key: 'runtime:infra', kind: 'infra', targets: infraTargets },
-  ]
-  for (const target of targets.slice(infraTargets.length)) {
-    buildGroups.push({
-      key: target.key,
-      kind: 'target',
-      target,
-      targets: [target],
-    })
+    if (entry) artifactTargets.push(entry)
   }
 
   return {
-    configFile,
     outDir,
     config,
-    startEntry,
-    workerEntry,
-    hostRunnerEntry,
-    logger,
     runtimes,
     plugins,
-    targets,
-    buildGroups,
+    targets: [...infraTargets, ...artifactTargets],
+    buildGroups: [
+      { kind: 'infra', targets: infraTargets },
+      ...artifactTargets.map((target) => ({
+        kind: 'artifact' as const,
+        targets: [target],
+      })),
+    ],
   }
 }
 
-function createPluginNodes(
-  configFile: string,
-  outDir: string,
-  config: NeemResolvedConfig,
-  rootRolldown?: RolldownOptions,
-): readonly PluginBuildNode[] {
-  return (config.plugins ?? []).map((plugin, index) => {
+function createPluginNodes(ctx: GraphContext): readonly PluginBuildNode[] {
+  return (ctx.config.plugins ?? []).map((plugin, index) => {
     const name = plugin.name.trim()
     if (!name)
       throw new Error(`Neem plugin at index [${index}] must have a name`)
 
     const key = `${String(index).padStart(3, '0')}-${sanitizePathPart(name)}`
-    const entry = resolveBuildEntry(configFile, plugin.entry)
+    const entry = plugin.entry
+      ? resolveBuildEntry(ctx.configFile, plugin.entry)
+      : undefined
 
     return {
       key,
@@ -180,112 +199,59 @@ function createPluginNodes(
         ? {
             key: `plugin:${key}`,
             kind: 'plugin-entry',
+            entryName: toEntryName(entry),
             artifact: {
               id: 'plugin',
               kind: 'module',
               entry,
-              rolldown: rootRolldown,
+              rolldown: ctx.rootRolldown,
             },
             owner: { type: 'config' },
-            outDir: resolve(outDir, 'config', 'plugins', key),
+            outDir: resolve(ctx.outDir, OUT_LAYOUT.plugins, key),
           }
         : undefined,
-      rolldown: normalizeUserRolldownOptions(plugin.build?.rolldown),
+      rolldown: mergeUserRolldownOptions(plugin.build?.rolldown),
       options: plugin.options,
     } satisfies PluginBuildNode
   })
 }
 
-function createWorkerEntryTarget(
-  outDir: string,
-  rootRolldown?: RolldownOptions,
+function createInfraTarget(
+  spec: (typeof INFRA_TARGETS)[number],
+  ctx: GraphContext,
 ): BuildTarget {
   return {
-    key: 'runtime:worker-entry',
-    kind: 'worker-entry',
+    key: spec.key,
+    kind: spec.kind,
+    entryName: spec.entryName,
     artifact: {
-      id: 'worker-entry',
-      kind: 'worker',
-      entry: resolveInternalEntry('../worker/entry'),
-      rolldown: mergeOptionalRolldownOptions(
-        { output: { entryFileNames: 'worker-entry.js' } },
-        rootRolldown,
-      ),
+      id: spec.id,
+      kind: spec.artifactKind,
+      entry: resolveInternalEntry(spec.module),
+      rolldown: ctx.rootRolldown,
     },
-    owner: { type: 'runtime', name: 'worker' },
-    outDir: resolve(outDir, 'runtime'),
+    owner: { type: 'runtime', name: spec.owner },
+    outDir: resolve(ctx.outDir, OUT_LAYOUT.runtime),
   }
 }
 
-function createHostRunnerEntryTarget(
-  outDir: string,
-  rootRolldown?: RolldownOptions,
-): BuildTarget {
-  return {
-    key: 'runtime:host-runner-entry',
-    kind: 'host-runner-entry',
-    artifact: {
-      id: 'host-runner-entry',
-      kind: 'worker',
-      entry: resolveInternalEntry('../host/runner-entry'),
-      rolldown: mergeOptionalRolldownOptions(
-        { output: { entryFileNames: 'runner-entry.js' } },
-        rootRolldown,
-      ),
-    },
-    owner: { type: 'runtime', name: 'host-runner' },
-    outDir: resolve(outDir, 'runtime'),
-  }
-}
+function createLoggerTarget(ctx: GraphContext): BuildTarget | undefined {
+  const logger = ctx.config.logger
+  if (!isLoggerModuleInput(logger)) return undefined
 
-function createStartEntryTarget(
-  outDir: string,
-  rootRolldown?: RolldownOptions,
-): BuildTarget {
-  return {
-    key: 'runtime:start-entry',
-    kind: 'start-entry',
-    artifact: {
-      id: 'start',
-      kind: 'module',
-      entry: resolveInternalEntry('../standalone/entry'),
-      rolldown: mergeOptionalRolldownOptions(
-        {
-          output: {
-            entryFileNames: 'start.js',
-            chunkFileNames: '[name]-[hash].js',
-          },
-        },
-        rootRolldown,
-      ),
-    },
-    owner: { type: 'runtime', name: 'start' },
-    outDir: resolve(outDir, 'runtime'),
-  }
-}
-
-function createLoggerTarget(
-  configFile: string,
-  outDir: string,
-  config: NeemResolvedConfig,
-  rootRolldown?: RolldownOptions,
-): BuildTarget | undefined {
-  const logger = config.logger
-  if (!logger || (typeof logger !== 'string' && !(logger instanceof URL))) {
-    return undefined
-  }
-
+  const entry = resolveBuildEntry(ctx.configFile, logger)
   return {
     key: 'config:logger',
     kind: 'logger',
+    entryName: toEntryName(entry),
     artifact: {
       id: 'logger',
       kind: 'module',
-      entry: resolveRequiredBuildEntry(configFile, logger),
-      rolldown: rootRolldown,
+      entry,
+      rolldown: ctx.rootRolldown,
     },
     owner: { type: 'config' },
-    outDir: resolve(outDir, 'config', 'logger'),
+    outDir: resolve(ctx.outDir, OUT_LAYOUT.logger),
   }
 }
 
@@ -296,105 +262,112 @@ function resolveInternalEntry(name: string): URL {
   return new URL(`./${name}.js`, import.meta.url)
 }
 
+// Rolldown derives the `[name]` placeholder from the input key, so entry
+// chunks stay recognisable when they are named after their source file.
+function toEntryName(entry: NeemArtifactEntry): string {
+  const file = toFilePath(entry)
+  return basename(file, extname(file))
+}
+
 function mergePluginRolldownOptions(
   plugins: readonly PluginBuildNode[],
-): RolldownOptions | undefined {
-  return plugins.reduce<RolldownOptions | undefined>(
+): RolldownOptions {
+  return plugins.reduce<RolldownOptions>(
     (merged, plugin) => mergeRolldownOptions(plugin.rolldown, merged),
-    undefined,
+    {},
   )
 }
 
-function createRuntimeNode(options: {
-  outDir: string
-  name: string
-  runtime: NeemResolvedRuntimeDeclaration
-  pluginRolldown?: RolldownOptions
-  rootRolldown?: RolldownOptions
-}): RuntimeBuildNode {
+function createRuntimeNode(
+  ctx: GraphContext,
+  name: string,
+  runtime: NeemResolvedRuntimeDeclaration,
+  pluginRolldown: RolldownOptions,
+): RuntimeBuildNode {
   const runtimeDir = resolve(
-    options.outDir,
-    'runtime',
-    sanitizePathPart(options.name),
+    ctx.outDir,
+    OUT_LAYOUT.runtime,
+    sanitizePathPart(name),
   )
-  const declaration = options.runtime.declaration
-  const workerEntry = declaration.worker
-    ? resolveRequiredBuildEntry(options.runtime.file, declaration.worker.entry)
-    : undefined
-  const hostEntry =
-    resolveBuildEntry(options.runtime.file, declaration.host?.entry) ??
-    resolveInternalEntry('../host/default-host')
-  const plannerEntry = resolveRequiredBuildEntry(
-    options.runtime.file,
-    options.runtime.planner,
+  const { declaration } = runtime
+  const hostRolldown = mergeUserRolldownOptions(
+    declaration.host?.build?.rolldown,
   )
-  if (!workerEntry && !hostEntry) {
-    throw new Error(
-      `Runtime [${options.name}] must configure a worker or host entry`,
-    )
-  }
+  const hostChunks = declaration.host?.build?.chunks
 
   return {
-    name: options.name,
-    declaration: options.runtime,
-    worker: workerEntry
-      ? {
-          key: `runtime:${options.name}:worker`,
+    name,
+    declaration: runtime,
+    worker: declaration.worker
+      ? createRuntimeTarget({
+          key: `runtime:${name}:worker`,
           kind: 'runtime-worker',
-          artifact: {
-            id: 'worker',
-            kind: 'worker',
-            entry: workerEntry,
-            rolldown: mergeOptionalRolldownOptions(
-              normalizeUserRolldownOptions(declaration.worker?.build?.rolldown),
-              options.pluginRolldown,
-              options.rootRolldown,
-            ),
-            chunks: declaration.worker?.build?.chunks,
-          },
-          owner: { type: 'runtime', name: options.name },
+          id: 'worker',
+          artifactKind: 'worker',
+          entry: resolveBuildEntry(runtime.file, declaration.worker.entry),
+          rolldown: mergeRolldownOptions(
+            mergeUserRolldownOptions(declaration.worker.build?.rolldown),
+            pluginRolldown,
+            ctx.rootRolldown,
+          ),
+          chunks: declaration.worker.build?.chunks,
+          owner: name,
           outDir: resolve(runtimeDir, 'worker'),
-        }
+        })
       : undefined,
-    host: {
-      key: `runtime:${options.name}:host`,
+    host: createRuntimeTarget({
+      key: `runtime:${name}:host`,
       kind: 'runtime-host',
-      artifact: {
-        id: 'host',
-        kind: 'module',
-        entry: hostEntry,
-        rolldown: mergeOptionalRolldownOptions(
-          normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
-          options.rootRolldown,
-        ),
-        chunks: declaration.host?.build?.chunks,
-      },
-      owner: { type: 'runtime', name: options.name },
+      id: 'host',
+      artifactKind: 'module',
+      entry: declaration.host?.entry
+        ? resolveBuildEntry(runtime.file, declaration.host.entry)
+        : resolveInternalEntry('../host/default-host'),
+      rolldown: mergeRolldownOptions(hostRolldown, ctx.rootRolldown),
+      chunks: hostChunks,
+      owner: name,
       outDir: resolve(runtimeDir, 'host'),
-    },
-    planner: {
-      key: `runtime:${options.name}:planner`,
+    }),
+    planner: createRuntimeTarget({
+      key: `runtime:${name}:planner`,
       kind: 'runtime-planner',
-      artifact: {
-        id: 'planner',
-        kind: 'module',
-        entry: plannerEntry,
-        rolldown: mergeOptionalRolldownOptions(
-          normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
-          options.rootRolldown,
-        ),
-        chunks: declaration.host?.build?.chunks,
-      },
-      owner: { type: 'runtime', name: options.name },
+      id: 'planner',
+      artifactKind: 'module',
+      entry: resolveBuildEntry(runtime.file, runtime.planner),
+      rolldown: mergeRolldownOptions(hostRolldown, ctx.rootRolldown),
+      chunks: hostChunks,
+      owner: name,
       outDir: resolve(runtimeDir, 'planner'),
-    },
+    }),
+  }
+}
+
+function createRuntimeTarget(options: {
+  key: string
+  kind: BuildTargetKind
+  id: string
+  artifactKind: NeemArtifactKind
+  entry: NeemArtifactEntry
+  rolldown: RolldownOptions
+  chunks?: NeemChunkingOptions
+  owner: string
+  outDir: string
+}): BuildTarget {
+  const { entry, id, artifactKind, rolldown, chunks } = options
+  return {
+    key: options.key,
+    kind: options.kind,
+    entryName: toEntryName(entry),
+    artifact: { id, kind: artifactKind, entry, rolldown, chunks },
+    owner: { type: 'runtime', name: options.owner },
+    outDir: options.outDir,
   }
 }
 
 function createRootBuildRolldownOptions(
   build: NeemBuildConfig | undefined,
-): RolldownOptions | undefined {
-  if (!build) return undefined
+): RolldownOptions {
+  if (!build) return {}
 
   const output: OutputOptions = {}
   if (build.sourcemap !== undefined) output.sourcemap = build.sourcemap
@@ -403,24 +376,8 @@ function createRootBuildRolldownOptions(
     output.sourcemapExcludeSources = build.sourcemapSources === 'exclude'
   }
 
-  const rolldown: RolldownOptions = {
+  return {
     ...(Object.keys(output).length > 0 ? { output } : {}),
     ...(build.define ? { transform: { define: build.define } } : {}),
   }
-
-  return Object.keys(rolldown).length > 0 ? rolldown : undefined
-}
-
-function normalizeUserRolldownOptions(
-  options: RolldownOptions | undefined,
-): RolldownOptions | undefined {
-  const merged = mergeUserRolldownOptions(options)
-  return Object.keys(merged).length > 0 ? merged : undefined
-}
-
-function mergeOptionalRolldownOptions(
-  ...options: [RolldownOptions | undefined, ...(RolldownOptions | undefined)[]]
-): RolldownOptions | undefined {
-  const merged = mergeRolldownOptions(...options)
-  return Object.keys(merged).length > 0 ? merged : undefined
 }

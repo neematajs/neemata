@@ -4,15 +4,15 @@ import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
+import type { BuildOptions, OutputBundle } from 'rolldown'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { BuildTarget } from '../../src/internal/build/graph.ts'
+import type { BuildGroup, BuildTarget } from '../../src/internal/build/graph.ts'
 import {
   compileGraph,
-  compileTarget,
+  compileTargets,
   watchGraph,
-  watchTarget,
+  watchTargets,
 } from '../../src/internal/build/compiler.ts'
 import { createBuildGraph } from '../../src/internal/build/graph.ts'
 import { defineRuntime } from '../../src/public/config.ts'
@@ -39,15 +39,7 @@ describe('Neem compiler', () => {
     const root = await useTempDir()
     const graph = createCompilerGraph(root)
     rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
-      const input = options.input
-      if (isRecord(input)) {
-        return { output: multiOutput(input) } as unknown as RolldownOutput
-      }
-      const target = graph.targets.find(
-        (target) => target.artifact.entry === input,
-      )
-      if (!target) throw new Error(`Unknown test input: ${String(input)}`)
-      return rolldownOutput('index.js', target)
+      collectEntryMetadata(options, entryBundle(options))
     })
 
     const compiled = await compileGraph(graph)
@@ -55,9 +47,9 @@ describe('Neem compiler', () => {
     expect(rolldownMock.build).toHaveBeenCalledTimes(4)
     const infraOptions = findInfraOptions(rolldownMock.build.mock.calls)
     expect(infraOptions.input).toEqual({
-      start: entryPath(graph.startEntry),
-      'worker-entry': entryPath(graph.workerEntry),
-      'runner-entry': entryPath(graph.hostRunnerEntry),
+      start: entryPath(target(graph, 'start-entry')),
+      'worker-entry': entryPath(target(graph, 'worker-entry')),
+      'runner-entry': entryPath(target(graph, 'host-runner-entry')),
     })
     expect(infraOptions.output).toMatchObject({
       dir: resolve(root, 'dist/runtime'),
@@ -75,55 +67,57 @@ describe('Neem compiler', () => {
     expect(depsGroup.name).toBe('deps')
     expect(depsGroup.test).toBeTypeOf('function')
     expect(depsGroup.test('/repo/node_modules/zod/index.js')).toBe(true)
-    expect(depsGroup.test(entryPath(graph.workerEntry))).toBe(false)
-    expect(depsGroup.test(entryPath(graph.hostRunnerEntry))).toBe(false)
-    expect(depsGroup.test(entryPath(graph.startEntry))).toBe(false)
-    expect(compiled.targets).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          target: graph.startEntry,
-          artifact: expect.objectContaining({
-            file: resolve(root, 'dist/runtime/start.js'),
-          }),
-        }),
-        expect.objectContaining({
-          target: graph.workerEntry,
-          artifact: expect.objectContaining({
-            file: resolve(root, 'dist/runtime/worker-entry.js'),
-          }),
-        }),
-        expect.objectContaining({
-          target: graph.hostRunnerEntry,
-          artifact: expect.objectContaining({
-            file: resolve(root, 'dist/runtime/runner-entry.js'),
-          }),
-        }),
-      ]),
+    expect(depsGroup.test(entryPath(target(graph, 'worker-entry')))).toBe(false)
+    expect(depsGroup.test(entryPath(target(graph, 'host-runner-entry')))).toBe(
+      false,
     )
+    expect(depsGroup.test(entryPath(target(graph, 'start-entry')))).toBe(false)
+    expect(compiled.targets.map((compiled) => compiled.artifact.file)).toEqual([
+      resolve(root, 'dist/runtime/start.js'),
+      resolve(root, 'dist/runtime/worker-entry.js'),
+      resolve(root, 'dist/runtime/runner-entry.js'),
+      resolve(root, 'dist/runtime/api/worker/worker.js'),
+      resolve(root, 'dist/runtime/api/host/host.js'),
+      resolve(root, 'dist/runtime/api/planner/planner.js'),
+    ])
   })
 
-  it('does not retain rolldown output objects after compiling a target', async () => {
-    const target = await createTarget()
-    const output = rolldownOutput('compiled-entry.js', target)
-    rolldownMock.build.mockResolvedValue(output)
+  it('resolves the compiled entry file from the emitted bundle', async () => {
+    const group = await createGroup()
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      collectEntryMetadata(options, entryBundle(options, 'compiled-entry.js'))
+    })
 
-    const compiled = await compileTarget(target)
+    const [compiled] = await compileTargets(group)
     const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
 
-    expect(compiled.artifact.file).toBe(
-      resolve(target.outDir, 'compiled-entry.js'),
+    expect(compiled?.artifact.file).toBe(
+      resolve(group.targets[0]!.outDir, 'compiled-entry.js'),
     )
-    expect(compiled.bundle).toBeUndefined()
     expect(options.treeshake).toBeUndefined()
+    expect(options.output).toMatchObject({
+      entryFileNames: '[name]-[hash].js',
+    })
+  })
+
+  it('fails when a build emits no entry chunk for a target', async () => {
+    const group = await createGroup()
+    rolldownMock.build.mockResolvedValue(undefined)
+
+    await expect(compileTargets(group)).rejects.toThrow(
+      'Neem build emitted no entry chunk for [runtime:api:worker]',
+    )
   })
 
   it('appends default deps chunk group after user chunk groups', async () => {
-    const target = await createTarget()
+    const group = await createGroup()
     const localGroup = { name: 'local', test: /perf-large-ts-modules/ }
-    target.artifact.chunks = { groups: [localGroup] }
-    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+    group.targets[0]!.artifact.chunks = { groups: [localGroup] }
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      collectEntryMetadata(options, entryBundle(options))
+    })
 
-    await compileTarget(target)
+    await compileTargets(group)
 
     const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
     expect(options.output).toMatchObject({
@@ -134,12 +128,14 @@ describe('Neem compiler', () => {
   })
 
   it('lets a user deps chunk group replace the default deps group', async () => {
-    const target = await createTarget()
+    const group = await createGroup()
     const depsGroup = { name: 'deps', test: /node_modules\/zod/ }
-    target.artifact.chunks = { groups: [depsGroup] }
-    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+    group.targets[0]!.artifact.chunks = { groups: [depsGroup] }
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      collectEntryMetadata(options, entryBundle(options))
+    })
 
-    await compileTarget(target)
+    await compileTargets(group)
 
     const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
     expect(options.output).toMatchObject({
@@ -148,11 +144,13 @@ describe('Neem compiler', () => {
   })
 
   it('disables code splitting when chunks is false', async () => {
-    const target = await createTarget()
-    target.artifact.chunks = false
-    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+    const group = await createGroup()
+    group.targets[0]!.artifact.chunks = false
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      collectEntryMetadata(options, entryBundle(options))
+    })
 
-    await compileTarget(target)
+    await compileTargets(group)
 
     const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
     expect((options.output as { codeSplitting?: unknown }).codeSplitting).toBe(
@@ -161,36 +159,34 @@ describe('Neem compiler', () => {
   })
 
   it('uses the watcher initial build as ready output', async () => {
-    const target = await createTarget()
-    rolldownMock.build.mockResolvedValue(
-      rolldownOutput('wasted-build.js', target),
-    )
+    const group = await createGroup()
+    rolldownMock.build.mockResolvedValue(undefined)
     const watcher = createWatcher()
     rolldownMock.watch.mockReturnValue(watcher)
 
-    const targetWatcher = await watchTarget(target)
+    const groupWatcher = await watchTargets(group)
     const watchOptions = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
-    collectEntryMetadata(watchOptions, outputBundle('watch-entry.js', target))
+    collectEntryMetadata(watchOptions, entryBundle(watchOptions, 'watch.js'))
 
     const initialResult = { close: vi.fn(async () => {}) }
     watcher.emit('event', { code: 'BUNDLE_END', result: initialResult })
     watcher.emit('event', { code: 'END' })
 
-    const compiled = await targetWatcher.ready
+    const [compiled] = await groupWatcher.ready
 
     expect(rolldownMock.build).not.toHaveBeenCalled()
-    expect(compiled.artifact.file).toBe(
-      resolve(target.outDir, 'watch-entry.js'),
+    expect(compiled?.artifact.file).toBe(
+      resolve(group.targets[0]!.outDir, 'watch.js'),
     )
-    expect(compiled.bundle).toBeUndefined()
+    expect(watchOptions.output).toMatchObject({ entryFileNames: '[name].js' })
     expect(initialResult.close).toHaveBeenCalledTimes(1)
   })
 
   it('does not set a default watcher build delay', async () => {
-    const target = await createTarget()
+    const group = await createGroup()
     rolldownMock.watch.mockReturnValue(createWatcher())
 
-    await watchTarget(target)
+    await watchTargets(group)
 
     const options = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
     expect(options.watch).toMatchObject({
@@ -237,34 +233,14 @@ describe('Neem compiler', () => {
     const infraWatcher = watchers[infraWatcherIndex]
     if (!infraWatcher) throw new Error('Expected infra watcher')
     expect(watchOptions.input).toEqual({
-      start: entryPath(graph.startEntry),
-      'worker-entry': entryPath(graph.workerEntry),
-      'runner-entry': entryPath(graph.hostRunnerEntry),
+      start: entryPath(target(graph, 'start-entry')),
+      'worker-entry': entryPath(target(graph, 'worker-entry')),
+      'runner-entry': entryPath(target(graph, 'host-runner-entry')),
     })
 
-    emitBundle(infraWatcher, watchOptions, {
-      'start.js': outputChunk('start.js', graph.startEntry),
-      'worker-entry.js': outputChunk('worker-entry.js', graph.workerEntry),
-      'runner-entry.js': outputChunk('runner-entry.js', graph.hostRunnerEntry),
-    })
-    for (
-      let index = 0;
-      index < rolldownMock.watch.mock.results.length;
-      index++
-    ) {
-      if (index === infraWatcherIndex) continue
-      const watcher = watchers[index]
-      if (!watcher) throw new Error(`Missing watcher ${index}`)
-      const targetOptions = rolldownMock.watch.mock.calls[
-        index
-      ]?.[0] as BuildOptions
-      const target = graph.targets.find(
-        (target) => target.artifact.entry === targetOptions.input,
-      )
-      if (!target) throw new Error(`Missing target ${index}`)
-      emitBundle(watcher, targetOptions, {
-        'index.js': outputChunk('index.js', target),
-      })
+    for (const [index, watcher] of watchers.entries()) {
+      const options = rolldownMock.watch.mock.calls[index]?.[0] as BuildOptions
+      emitBundle(watcher, options)
     }
 
     const ready = await graphWatcher.ready
@@ -274,25 +250,22 @@ describe('Neem compiler', () => {
       resolve(root, 'dist/runtime/start.js'),
       resolve(root, 'dist/runtime/worker-entry.js'),
       resolve(root, 'dist/runtime/runner-entry.js'),
-      resolve(root, 'dist/runtime/api/worker/index.js'),
-      resolve(root, 'dist/runtime/api/host/index.js'),
-      resolve(root, 'dist/runtime/api/planner/index.js'),
+      resolve(root, 'dist/runtime/api/worker/worker.js'),
+      resolve(root, 'dist/runtime/api/host/host.js'),
+      resolve(root, 'dist/runtime/api/planner/planner.js'),
     ])
 
     const rebuiltResult = { close: vi.fn(async () => {}) }
-    collectEntryMetadata(watchOptions, {
-      'start.js': outputChunk('start.js', graph.startEntry),
-      'worker-entry.js': outputChunk('worker-entry.js', graph.workerEntry),
-      'runner-entry.js': outputChunk('runner-entry.js', graph.hostRunnerEntry),
-    })
+    collectEntryMetadata(watchOptions, entryBundle(watchOptions))
     infraWatcher.emit('event', { code: 'BUNDLE_END', result: rebuiltResult })
     infraWatcher.emit('event', { code: 'END' })
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledTimes(1))
 
     const change = onChange.mock.calls[0]?.[0]
-    expect(change.target).toBe(graph.startEntry)
     expect(
-      change.compiledTargets.map((target) => target.artifact.file),
+      change.targets.map(
+        (target: { artifact: { file: string } }) => target.artifact.file,
+      ),
     ).toEqual([
       resolve(root, 'dist/runtime/start.js'),
       resolve(root, 'dist/runtime/worker-entry.js'),
@@ -312,18 +285,25 @@ describe('Neem compiler', () => {
   })
 })
 
-async function createTarget(): Promise<BuildTarget> {
+async function createGroup(): Promise<BuildGroup> {
   const root = await useTempDir()
   return {
-    key: 'runtime:api:worker',
-    kind: 'runtime-worker',
-    artifact: {
-      id: 'worker',
-      kind: 'worker',
-      entry: resolve(root, 'worker.ts'),
-    },
-    owner: { type: 'runtime', name: 'api' },
-    outDir: resolve(root, 'dist'),
+    kind: 'artifact',
+    targets: [
+      {
+        key: 'runtime:api:worker',
+        kind: 'runtime-worker',
+        entryName: 'worker',
+        artifact: {
+          id: 'worker',
+          kind: 'worker',
+          entry: resolve(root, 'worker.ts'),
+          rolldown: {},
+        },
+        owner: { type: 'runtime', name: 'api' },
+        outDir: resolve(root, 'dist'),
+      },
+    ],
   }
 }
 
@@ -346,8 +326,7 @@ function createCompilerGraph(
         api: {
           name: 'api',
           file: resolve(root, 'api/neem.runtime.ts'),
-          directory: resolve(root, 'api'),
-          planner: './planner.ts',
+          planner: resolve(root, 'api/planner.ts'),
           declaration: defineRuntime({
             name: 'api',
             worker: { entry: './worker.ts' },
@@ -360,37 +339,30 @@ function createCompilerGraph(
   })
 }
 
-function rolldownOutput(fileName: string, target: BuildTarget): RolldownOutput {
-  return {
-    output: [outputChunk(fileName, target)],
-  } as unknown as RolldownOutput
+function target(
+  graph: ReturnType<typeof createBuildGraph>,
+  kind: BuildTarget['kind'],
+): BuildTarget {
+  const found = graph.targets.find((target) => target.kind === kind)
+  if (!found) throw new Error(`Missing ${kind} target`)
+  return found
 }
 
-function outputBundle(fileName: string, target: BuildTarget): OutputBundle {
-  return {
-    [fileName]: outputChunk(fileName, target),
-  } as unknown as OutputBundle
-}
-
-function outputChunk(
-  fileName: string,
-  target: BuildTarget,
-): OutputBundle[string] {
-  return {
-    type: 'chunk',
-    fileName,
-    isEntry: true,
-    facadeModuleId: entryPath(target),
-  } as unknown as OutputBundle[string]
-}
-
-function multiOutput(input: Record<string, unknown>): RolldownOutput['output'] {
-  return Object.entries(input).map(([name, entry]) => ({
-    type: 'chunk',
-    fileName: `${name}.js`,
-    isEntry: true,
-    facadeModuleId: entry,
-  })) as unknown as RolldownOutput['output']
+// Mirrors what rolldown emits for the configured inputs: one entry chunk per
+// input, named after its input key unless the test pins a file name.
+function entryBundle(options: BuildOptions, fileName?: string): OutputBundle {
+  const inputs = options.input as Record<string, string>
+  const bundle: Record<string, unknown> = {}
+  for (const [name, file] of Object.entries(inputs)) {
+    const chunkFileName = fileName ?? `${name}.js`
+    bundle[chunkFileName] = {
+      type: 'chunk',
+      fileName: chunkFileName,
+      isEntry: true,
+      facadeModuleId: file,
+    }
+  }
+  return bundle as unknown as OutputBundle
 }
 
 function createWatcher(): EventEmitter & { close: () => Promise<void> } {
@@ -401,12 +373,8 @@ function createWatcher(): EventEmitter & { close: () => Promise<void> } {
   return watcher
 }
 
-function emitBundle(
-  watcher: EventEmitter,
-  options: BuildOptions,
-  bundle: OutputBundle,
-): void {
-  collectEntryMetadata(options, bundle)
+function emitBundle(watcher: EventEmitter, options: BuildOptions): void {
+  collectEntryMetadata(options, entryBundle(options))
   watcher.emit('event', { code: 'BUNDLE_END', result: { close: vi.fn() } })
   watcher.emit('event', { code: 'END' })
 }
@@ -433,9 +401,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function findInfraOptions(calls: unknown[][]): BuildOptions {
-  const options = calls.find(([options]) =>
-    isRecord((options as BuildOptions | undefined)?.input),
-  )?.[0] as BuildOptions | undefined
+  const options = calls.find(([options]) => {
+    const input = (options as BuildOptions | undefined)?.input
+    return isRecord(input) && Object.keys(input).length > 1
+  })?.[0] as BuildOptions | undefined
   if (!options) throw new Error('Expected infra build options')
   return options
 }

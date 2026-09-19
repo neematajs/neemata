@@ -14,6 +14,14 @@ export type HostConfigEnvOverrides = {
   warnings: string[]
 }
 
+type EnvValue = { source: string; value: string }
+
+type Overridden<T> = {
+  value: T
+  applied: AppliedEnvOverride[]
+  warnings: string[]
+}
+
 // The manifest freezes neem.config.ts values at build time, which makes
 // deploy-time knobs (ports, hostnames, TLS paths) unconfigurable after the
 // image is built. A documented set of env vars is resolved at start so the
@@ -22,18 +30,16 @@ export function applyHostConfigEnvOverrides(
   config: ManifestConfig,
   env: NodeJS.ProcessEnv,
 ): HostConfigEnvOverrides {
-  const applied: AppliedEnvOverride[] = []
-  const warnings: string[] = []
+  const proxy = overrideProxy(config.proxy, env)
+  const health = overrideHealth(config.health, env)
+  const applied = [...proxy.applied, ...health.applied]
+  const warnings = [...proxy.warnings, ...health.warnings]
 
-  const proxy = overrideProxy(config.proxy, env, applied, warnings)
-  const health = overrideHealth(config.health, env, applied, warnings)
-
-  if (proxy === config.proxy && health === config.health)
-    return { config, applied, warnings }
+  if (applied.length === 0) return { config, applied, warnings }
 
   const next = { ...config }
-  if (proxy) next.proxy = proxy
-  if (health) next.health = health
+  if (proxy.value) next.proxy = proxy.value
+  if (health.value) next.health = health.value
   return { config: next, applied, warnings }
 }
 
@@ -45,133 +51,129 @@ export function formatAppliedEnvOverride(override: AppliedEnvOverride): string {
 function overrideProxy(
   proxy: NeemProxyConfig | undefined,
   env: NodeJS.ProcessEnv,
-  applied: AppliedEnvOverride[],
-  warnings: string[],
-): NeemProxyConfig | undefined {
+): Overridden<NeemProxyConfig | undefined> {
   const port = pickEnv(env, 'NEEM_PROXY_PORT', 'PORT')
   const hostname = pickEnv(env, 'NEEM_PROXY_HOSTNAME')
-  const tlsKeyPath = pickEnv(env, 'NEEM_PROXY_TLS_KEY_PATH')
-  const tlsCertPath = pickEnv(env, 'NEEM_PROXY_TLS_CERT_PATH')
+  const keyPath = pickEnv(env, 'NEEM_PROXY_TLS_KEY_PATH')
+  const certPath = pickEnv(env, 'NEEM_PROXY_TLS_CERT_PATH')
 
   if (!proxy) {
     // PORT is a platform-wide convention (PaaS injects it unconditionally),
     // so only neem-specific vars warrant a warning when there is no proxy.
-    warnIgnored(warnings, 'no proxy is configured', [
+    const ignored = [
       port?.source === 'NEEM_PROXY_PORT' ? port : undefined,
       hostname,
-      tlsKeyPath,
-      tlsCertPath,
-    ])
-    return proxy
+      keyPath,
+      certPath,
+    ]
+    return {
+      value: proxy,
+      applied: [],
+      warnings: warnIgnored('no proxy is configured', ignored),
+    }
   }
 
-  let changed = false
   const next = { ...proxy }
+  const applied = overrideEndpoint(next, 'proxy', port, hostname)
+  applied.push(...overrideTls(next, keyPath, certPath))
 
-  if (port) {
-    const value = parsePort(port.value, port.source)
-    if (value !== next.port) {
-      applied.push({
-        source: port.source,
-        path: 'proxy.port',
-        from: next.port,
-        to: value,
-      })
-      next.port = value
-      changed = true
-    }
-  }
-
-  if (hostname && hostname.value !== next.hostname) {
-    applied.push({
-      source: hostname.source,
-      path: 'proxy.hostname',
-      from: next.hostname,
-      to: hostname.value,
-    })
-    next.hostname = hostname.value
-    changed = true
-  }
-
-  if (tlsKeyPath || tlsCertPath) {
-    if (!next.tls && !(tlsKeyPath && tlsCertPath)) {
-      throw new Error(
-        'Both NEEM_PROXY_TLS_KEY_PATH and NEEM_PROXY_TLS_CERT_PATH must be set to enable proxy TLS at start time',
-      )
-    }
-    const tls = { ...next.tls } as { keyPath: string; certPath: string }
-    if (tlsKeyPath && tlsKeyPath.value !== tls.keyPath) {
-      applied.push({
-        source: tlsKeyPath.source,
-        path: 'proxy.tls.keyPath',
-        from: tls.keyPath,
-        to: tlsKeyPath.value,
-      })
-      tls.keyPath = tlsKeyPath.value
-      changed = true
-    }
-    if (tlsCertPath && tlsCertPath.value !== tls.certPath) {
-      applied.push({
-        source: tlsCertPath.source,
-        path: 'proxy.tls.certPath',
-        from: tls.certPath,
-        to: tlsCertPath.value,
-      })
-      tls.certPath = tlsCertPath.value
-      changed = true
-    }
-    next.tls = tls
-  }
-
-  return changed ? next : proxy
+  return { value: applied.length > 0 ? next : proxy, applied, warnings: [] }
 }
 
 function overrideHealth(
   health: NeemHealthConfig | undefined,
   env: NodeJS.ProcessEnv,
-  applied: AppliedEnvOverride[],
-  warnings: string[],
-): NeemHealthConfig | undefined {
+): Overridden<NeemHealthConfig | undefined> {
   const port = pickEnv(env, 'NEEM_HEALTH_PORT')
   const hostname = pickEnv(env, 'NEEM_HEALTH_HOSTNAME')
 
   if (!health) {
-    warnIgnored(warnings, 'no health server is configured', [port, hostname])
-    return health
-  }
-
-  let changed = false
-  const next = { ...health }
-
-  if (port) {
-    const value = parsePort(port.value, port.source)
-    if (value !== next.port) {
-      applied.push({
-        source: port.source,
-        path: 'health.port',
-        from: next.port,
-        to: value,
-      })
-      next.port = value
-      changed = true
+    return {
+      value: health,
+      applied: [],
+      warnings: warnIgnored('no health server is configured', [port, hostname]),
     }
   }
 
-  if (hostname && hostname.value !== next.hostname) {
-    applied.push({
-      source: hostname.source,
-      path: 'health.hostname',
-      from: next.hostname,
-      to: hostname.value,
-    })
-    next.hostname = hostname.value
-    changed = true
-  }
+  const next = { ...health }
+  const applied = overrideEndpoint(next, 'health', port, hostname)
 
-  return changed ? next : health
+  return { value: applied.length > 0 ? next : health, applied, warnings: [] }
 }
 
-type EnvValue = { source: string; value: string }
+// The proxy and the health server expose the same listen knobs; `endpoint` is
+// the caller's own copy, so overwriting it in place is safe.
+function overrideEndpoint(
+  endpoint: { hostname?: string; port: number },
+  path: string,
+  port: EnvValue | undefined,
+  hostname: EnvValue | undefined,
+): AppliedEnvOverride[] {
+  const applied: AppliedEnvOverride[] = []
+
+  if (port) {
+    const value = parsePort(port.value, port.source)
+    if (value !== endpoint.port) {
+      applied.push({
+        source: port.source,
+        path: `${path}.port`,
+        from: endpoint.port,
+        to: value,
+      })
+      endpoint.port = value
+    }
+  }
+
+  if (hostname && hostname.value !== endpoint.hostname) {
+    applied.push({
+      source: hostname.source,
+      path: `${path}.hostname`,
+      from: endpoint.hostname,
+      to: hostname.value,
+    })
+    endpoint.hostname = hostname.value
+  }
+
+  return applied
+}
+
+function overrideTls(
+  proxy: NeemProxyConfig,
+  keyPath: EnvValue | undefined,
+  certPath: EnvValue | undefined,
+): AppliedEnvOverride[] {
+  if (!keyPath && !certPath) return []
+
+  const current = proxy.tls
+  const key = keyPath?.value ?? current?.keyPath
+  const cert = certPath?.value ?? current?.certPath
+  if (key === undefined || cert === undefined) {
+    throw new Error(
+      'Both NEEM_PROXY_TLS_KEY_PATH and NEEM_PROXY_TLS_CERT_PATH must be set to enable proxy TLS at start time',
+    )
+  }
+
+  const applied: AppliedEnvOverride[] = []
+  if (keyPath && key !== current?.keyPath) {
+    applied.push({
+      source: keyPath.source,
+      path: 'proxy.tls.keyPath',
+      from: current?.keyPath,
+      to: key,
+    })
+  }
+  if (certPath && cert !== current?.certPath) {
+    applied.push({
+      source: certPath.source,
+      path: 'proxy.tls.certPath',
+      from: current?.certPath,
+      to: cert,
+    })
+  }
+  proxy.tls = { keyPath: key, certPath: cert }
+
+  return applied
+}
 
 function pickEnv(
   env: NodeJS.ProcessEnv,
@@ -197,13 +199,14 @@ function parsePort(value: string, source: string): number {
 }
 
 function warnIgnored(
-  warnings: string[],
   reason: string,
   values: readonly (EnvValue | undefined)[],
-): void {
-  const sources = values.filter((value) => value !== undefined)
-  if (sources.length === 0) return
-  warnings.push(
-    `${sources.map((value) => value.source).join(', ')} ignored: ${reason}`,
-  )
+): string[] {
+  const sources: string[] = []
+  for (const value of values) {
+    if (value) sources.push(value.source)
+  }
+  if (sources.length === 0) return []
+
+  return [`${sources.join(', ')} ignored: ${reason}`]
 }

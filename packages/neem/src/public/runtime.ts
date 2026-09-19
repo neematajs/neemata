@@ -1,9 +1,5 @@
-import type { MaybePromise } from '@nmtjs/common'
-
 import type {
-  NeemRuntimeHost,
   NeemRuntimeHostFactory,
-  NeemRuntimeHostFactoryParams,
   NeemRuntimePlanner,
 } from '../shared/types.ts'
 
@@ -15,35 +11,38 @@ export const NeemRuntimeHostBrand = Symbol.for('neem:runtime-host')
 
 export function defineRuntimeHost<
   Options = unknown,
-  const TFactory extends (
-    params: NeemRuntimeHostFactoryParams<Options>,
-  ) => MaybePromise<NeemRuntimeHost> = (
-    params: NeemRuntimeHostFactoryParams<Options>,
-  ) => MaybePromise<NeemRuntimeHost>,
->(factory: TFactory): TFactory {
+  const T extends NeemRuntimeHostFactory<Options> =
+    NeemRuntimeHostFactory<Options>,
+>(factory: T): T {
   // Functions cannot be copied like objects, so branding mutates the input;
   // it stays unfrozen to keep the caller free to decorate it.
   return Object.assign(factory, { [NeemRuntimeHostBrand]: true })
 }
 
 export function isNeemRuntimeHostFactory(
-  value: any,
+  value: unknown,
 ): value is NeemRuntimeHostFactory {
-  return typeof value === 'function' && value[NeemRuntimeHostBrand] === true
+  // Read the brand off the raw value: narrowing to `Function` first loses the
+  // symbol index signature needed to look it up.
+  const brands = value as Record<symbol, unknown>
+  return typeof value === 'function' && brands[NeemRuntimeHostBrand] === true
 }
 
 export function defineRuntimePlanner<
   Options = unknown,
   Data = unknown,
-  const TPlanner extends NeemRuntimePlanner<Options, Data> = NeemRuntimePlanner<
+  const T extends NeemRuntimePlanner<Options, Data> = NeemRuntimePlanner<
     Options,
     Data
   >,
->(planner: TPlanner): TPlanner {
+>(planner: T): T {
   // Same trade-off as defineRuntimeHost: brand in place, do not freeze.
   return Object.assign(planner, { [NeemRuntimePlannerBrand]: true })
 }
 
-export function isNeemRuntimePlanner(value: any): value is NeemRuntimePlanner {
-  return typeof value === 'function' && value[NeemRuntimePlannerBrand] === true
+export function isNeemRuntimePlanner(
+  value: unknown,
+): value is NeemRuntimePlanner {
+  const brands = value as Record<symbol, unknown>
+  return typeof value === 'function' && brands[NeemRuntimePlannerBrand] === true
 }

@@ -1,4 +1,4 @@
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, resolve } from 'node:path'
 
 import { ResolverFactory } from 'oxc-resolver'
 
@@ -21,20 +21,12 @@ export function resolveImportFile(importer: string, specifier: string): string {
 
 export function resolveBuildEntry(
   importer: string,
-  entry: NeemArtifactEntry | undefined,
-): NeemArtifactEntry | undefined {
-  if (!entry) return undefined
-  if (entry instanceof URL) return assertFileUrlEntry(entry)
-  if (entry.startsWith('/')) return entry
-  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
-  return resolveImportFile(importer, entry)
-}
-
-export function resolveRequiredBuildEntry(
-  importer: string,
   entry: NeemArtifactEntry,
 ): NeemArtifactEntry {
-  return resolveBuildEntry(importer, entry) ?? entry
+  if (entry instanceof URL) return assertFileUrlEntry(entry)
+  if (isAbsolute(entry)) return entry
+  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
+  return resolveImportFile(importer, entry)
 }
 
 function assertFileUrlEntry(entry: URL): URL {

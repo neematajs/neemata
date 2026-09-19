@@ -2,17 +2,12 @@ import { Buffer } from 'node:buffer'
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 
-import type {
-  NeemArtifactKind,
-  NeemEnv,
-  NeemHealthConfig,
-  NeemLoggerOptions,
-  NeemProxyConfig,
-  NeemResolvedArtifact,
-  NeemRuntimeProxyConfig,
-} from '../../shared/types.ts'
+import type { NeemEnv, NeemResolvedArtifact } from '../../shared/types.ts'
 import type { CompiledGraph } from '../build/compiler.ts'
 import type { BuildTargetKind } from '../build/graph.ts'
+import type { Manifest } from '../schemas/manifest.ts'
+import { MANIFEST_FILE, OUT_LAYOUT } from '../layout.ts'
+import { isLoggerModuleInput } from '../logger.ts'
 import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
@@ -22,56 +17,13 @@ import {
   parseManifest,
 } from '../schemas/manifest.ts'
 
-export const MANIFEST_FILE = 'neem.manifest.json'
-export const MANIFEST_SCHEMA_VERSION = NEEM_MANIFEST_SCHEMA_VERSION
-export { parseManifest } from '../schemas/manifest.ts'
+export type { Manifest }
 
-export type ManifestArtifact = {
-  id: string
-  kind: NeemArtifactKind
-  owner: NeemResolvedArtifact['owner']
-  file: string
-  outDir: string
-}
-
-export type ManifestLogger =
-  | { type: 'options'; options: NeemLoggerOptions }
-  | { type: 'module'; file: string }
-
-export type ManifestRuntimeConfig = {
-  proxy?: NeemRuntimeProxyConfig
-}
-
-export type ManifestConfig = {
-  logger?: ManifestLogger
-  env?: NeemEnv
-  proxy?: NeemProxyConfig
-  health?: NeemHealthConfig
-  runtimes: Record<string, ManifestRuntimeConfig>
-}
-
-export type ManifestPlugin = {
-  name: string
-  entry?: { file: string }
-  options?: unknown
-}
-
-export type Manifest = {
-  schemaVersion: typeof MANIFEST_SCHEMA_VERSION
-  runtime: { entry: string; start: ManifestArtifact; worker: ManifestArtifact }
-  plugins?: readonly ManifestPlugin[]
-  config: ManifestConfig
-  runtimes: Record<
-    string,
-    {
-      name: string
-      env?: NeemEnv
-      worker?: ManifestArtifact
-      host: ManifestArtifact
-      planner: ManifestArtifact
-    }
-  >
-}
+export type ManifestArtifact = Manifest['runtime']['start']
+export type ManifestConfig = Manifest['config']
+export type ManifestLogger = NonNullable<ManifestConfig['logger']>
+export type ManifestPlugin = NonNullable<Manifest['plugins']>[number]
+export type ManifestRuntimeConfig = ManifestConfig['runtimes'][string]
 
 export function createManifest(compiled: CompiledGraph): Manifest {
   const { outDir } = compiled.graph
@@ -79,37 +31,31 @@ export function createManifest(compiled: CompiledGraph): Manifest {
     outDir,
     getRequiredArtifact(compiled, 'start-entry'),
   )
-  const worker = toManifestArtifact(
+  const workerEntry = toManifestArtifact(
     outDir,
     getRequiredArtifact(compiled, 'worker-entry'),
   )
-  const plugins = createPlugins(compiled, outDir)
-  const config = createConfig(compiled)
-  const manifest: Manifest = {
-    schemaVersion: MANIFEST_SCHEMA_VERSION,
-    runtime: {
-      entry: 'start.js',
-      start,
-      worker,
-    },
-    plugins,
-    config,
-    runtimes: {},
-  }
 
-  for (const runtime of compiled.runtimes) {
-    const { name, node } = runtime
-    const env = copyEnv(node.declaration.declaration.env)
-    const worker = runtime.worker
-      ? toManifestArtifact(outDir, runtime.worker.artifact)
-      : undefined
-    const host = toManifestArtifact(outDir, runtime.host.artifact)
-    const planner = toManifestArtifact(outDir, runtime.planner.artifact)
-    manifest.runtimes[name] = { name, env, worker, host, planner }
+  return {
+    schemaVersion: NEEM_MANIFEST_SCHEMA_VERSION,
+    runtime: { entry: OUT_LAYOUT.startEntry, start, worker: workerEntry },
+    plugins: createPlugins(compiled, outDir),
+    config: createConfig(compiled),
+    runtimes: Object.fromEntries(
+      compiled.runtimes.map(({ node, worker, host, planner }) => [
+        node.name,
+        {
+          name: node.name,
+          env: nonEmptyEnv(node.declaration.declaration.env),
+          worker: worker
+            ? toManifestArtifact(outDir, worker.artifact)
+            : undefined,
+          host: toManifestArtifact(outDir, host.artifact),
+          planner: toManifestArtifact(outDir, planner.artifact),
+        },
+      ]),
+    ),
   }
-
-  validateManifest(manifest)
-  return manifest
 }
 
 export async function readManifest(manifestFile: string): Promise<Manifest> {
@@ -170,12 +116,6 @@ export function toManifestArtifact(
   return { id, kind, owner, file, outDir }
 }
 
-export function validateManifest(
-  manifest: unknown,
-): asserts manifest is Manifest {
-  parseManifest(manifest)
-}
-
 export async function assertManifestFilesExist(
   outDir: string,
   manifest: Manifest,
@@ -202,16 +142,16 @@ export async function assertManifestFilesExist(
     }
   }
 
-  for (const [runtimeName, runtime] of Object.entries(manifest.runtimes)) {
+  for (const [name, runtime] of Object.entries(manifest.runtimes)) {
     if (runtime.worker) {
       files.push({
-        label: `${runtimeName}.worker.file`,
+        label: `runtimes.${name}.worker.file`,
         file: runtime.worker.file,
       })
     }
     files.push(
-      { label: `${runtimeName}.host.file`, file: runtime.host.file },
-      { label: `${runtimeName}.planner.file`, file: runtime.planner.file },
+      { label: `runtimes.${name}.host.file`, file: runtime.host.file },
+      { label: `runtimes.${name}.planner.file`, file: runtime.planner.file },
     )
   }
 
@@ -231,30 +171,43 @@ export async function writeStartEntries(
   outDir: string,
   runtimeNames: readonly string[],
 ): Promise<void> {
-  const runtimeStartFile = resolve(outDir, 'runtime/start.js')
+  const runtimeStartFile = resolve(outDir, OUT_LAYOUT.runtimeStartEntry)
   await writeFile(
-    resolve(outDir, 'start.js'),
-    [
-      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(outDir, runtimeStartFile))}`,
-      'await startStandalone()',
-      '',
-    ].join('\n'),
+    resolve(outDir, OUT_LAYOUT.startEntry),
+    renderStartEntry(outDir, runtimeStartFile),
   )
 
   await Promise.all(
     runtimeNames.map(async (name) => {
-      const dir = resolve(outDir, 'runtimes', toRuntimeStartDirName(name))
+      const dir = resolve(
+        outDir,
+        OUT_LAYOUT.runtimeStarts,
+        toRuntimeStartDirName(name),
+      )
       await mkdir(dir, { recursive: true })
       await writeFile(
-        resolve(dir, 'start.js'),
-        [
-          `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
-          `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
-          '',
-        ].join('\n'),
+        resolve(dir, OUT_LAYOUT.startEntry),
+        renderStartEntry(dir, runtimeStartFile, name),
       )
     }),
   )
+}
+
+function renderStartEntry(
+  fromDir: string,
+  runtimeStartFile: string,
+  runtimeName?: string,
+): string {
+  const specifier = toImportSpecifier(fromDir, runtimeStartFile)
+  const options =
+    runtimeName === undefined
+      ? ''
+      : `{ runtimes: [${JSON.stringify(runtimeName)}] }`
+  return [
+    `import { startStandalone } from ${JSON.stringify(specifier)}`,
+    `await startStandalone(${options})`,
+    '',
+  ].join('\n')
 }
 
 const SAFE_RUNTIME_START_DIR_NAME = /^[A-Za-z0-9_-]+$/
@@ -280,46 +233,32 @@ function getRequiredArtifact(
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
   const { proxy, health } = compiled.graph.config
-  const logger = createLogger(compiled)
-  const env = copyEnv(compiled.graph.config.env)
-  const runtimes = new Map<string, ManifestRuntimeConfig>()
-  for (const { name, node } of compiled.runtimes) {
-    runtimes.set(name, createRuntimeConfig(node.declaration.declaration))
-  }
 
   return {
-    logger,
-    env,
+    logger: createLogger(compiled),
+    env: nonEmptyEnv(compiled.graph.config.env),
     proxy,
     health,
-    runtimes: Object.fromEntries(runtimes),
+    runtimes: Object.fromEntries(
+      compiled.runtimes.map(({ node }) => [
+        node.name,
+        { proxy: node.declaration.declaration.proxy },
+      ]),
+    ),
   }
 }
 
-function createRuntimeConfig(declaration: {
-  proxy?: NeemRuntimeProxyConfig
-}): ManifestRuntimeConfig {
-  return declaration.proxy ? { proxy: copyRuntimeProxy(declaration.proxy) } : {}
-}
-
-function copyEnv(env: NeemEnv | undefined): NeemEnv | undefined {
+// An empty env object is indistinguishable from no env for consumers, and
+// omitting it keeps the written manifest free of empty objects.
+function nonEmptyEnv(env: NeemEnv | undefined): NeemEnv | undefined {
   if (!env || Object.keys(env).length === 0) return undefined
   return { ...env }
-}
-
-function copyRuntimeProxy(
-  proxy: NeemRuntimeProxyConfig,
-): NeemRuntimeProxyConfig {
-  return {
-    ...(proxy.routing ? { routing: { ...proxy.routing } } : {}),
-    ...(proxy.sni !== undefined ? { sni: proxy.sni } : {}),
-  }
 }
 
 function createLogger(compiled: CompiledGraph): ManifestLogger | undefined {
   const logger = compiled.graph.config.logger
   if (!logger) return undefined
-  if (typeof logger === 'string' || logger instanceof URL) {
+  if (isLoggerModuleInput(logger)) {
     const artifact = getRequiredArtifact(compiled, 'logger')
     const file = toManifestPath(compiled.graph.outDir, artifact.file)
     return { type: 'module', file }
@@ -330,7 +269,7 @@ function createLogger(compiled: CompiledGraph): ManifestLogger | undefined {
 function createPlugins(
   compiled: CompiledGraph,
   outDir: string,
-): Manifest['plugins'] {
+): ManifestPlugin[] | undefined {
   if (compiled.plugins.length === 0) return undefined
 
   return compiled.plugins.map((plugin) => {

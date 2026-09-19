@@ -1,6 +1,6 @@
 import { dirname, resolve } from 'node:path'
 
-import { consola } from 'consola'
+import { consola, LogLevels } from 'consola'
 import { colorize } from 'consola/utils'
 
 import type { NeemConfig } from '../../shared/types.ts'
@@ -9,6 +9,7 @@ import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { compileGraph } from '../build/compiler.ts'
 import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
+import { DEFAULT_CONFIG_FILE, DEFAULT_OUT_DIR } from '../layout.ts'
 import { createManifest, writeManifest } from '../manifest/manifest.ts'
 import { importDefault } from '../utils.ts'
 
@@ -27,18 +28,21 @@ export type NeemBuildResult = {
 }
 
 const logger = consola.create({
-  level: process.env.NODE_ENV === 'test' ? 0 : 4,
+  level: process.env.NODE_ENV === 'test' ? LogLevels.silent : LogLevels.debug,
 })
 
 export async function buildNeem(
   options: NeemBuildOptions = {},
 ): Promise<NeemBuildResult> {
   const cwd = options.cwd ?? process.cwd()
-  const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
+  const configFile = resolve(cwd, options.config ?? DEFAULT_CONFIG_FILE)
   const config = await importDefault<NeemConfig>(configFile, {
     cacheBust: true,
   })
-  const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
+  const outDir = resolve(
+    cwd,
+    options.outDir ?? config.outDir ?? DEFAULT_OUT_DIR,
+  )
 
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${colorize('green', configFile)}`)
