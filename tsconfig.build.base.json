@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "rootDir": "${configDir}/src",
+    "noEmit": false,
+    "outDir": "${configDir}/dist",
+    "declaration": true,
+    "sourceMap": true,
+    "isolatedDeclarations": false,
+    "tsBuildInfoFile": "${configDir}/node_modules/.tmp/.tsbuildinfo.build"
+  },
+  "include": ["${configDir}/src/**/*"]
+}

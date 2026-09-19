@@ -16,7 +16,6 @@
     "no-sequences": "error",
     "prefer-const": "error",
     "prefer-exponentiation-operator": "error",
-    "react/self-closing-comp": "error",
     "typescript/consistent-type-exports": "off",
     "typescript/consistent-type-imports": [
       "error",
@@ -32,10 +31,7 @@
   },
   "overrides": [
     {
-      "files": [
-        "packages/protocol/src/server/protocol.ts",
-        "packages/transports/src/host/deno.ts"
-      ],
+      "files": ["packages/protocol/src/server/protocol.ts"],
       "rules": {
         "typescript/no-redundant-type-constituents": "off"
       }

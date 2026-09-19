@@ -11,7 +11,7 @@
     "playground:start": "cd playground && neem start",
     "test": "pnpm run test:unit && pnpm run test:e2e",
     "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts",
-    "test:unit": "vitest run --config vitest.unit.config.ts"
+    "test:unit": "vitest run"
   },
   "exports": {
     ".": {

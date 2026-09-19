@@ -1,19 +1,13 @@
 import { defineConfig } from 'vitest/config'
 
+import { benchBase } from './vitest.bench.base.ts'
+
 export default defineConfig({
   test: {
-    environment: 'node',
-    fileParallelism: false,
-    hookTimeout: 30 * 60 * 1_000,
-    isolate: true,
-    maxWorkers: 1,
-    pool: 'forks',
-    testTimeout: 30 * 60 * 1_000,
+    ...benchBase,
     benchmark: {
-      enabled: true,
+      ...benchBase.benchmark,
       include: ['packages/*/bench/**/*.integration.bench.ts'],
-      includeSamples: true,
-      reporters: ['default'],
     },
   },
 })
