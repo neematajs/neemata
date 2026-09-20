@@ -143,11 +143,21 @@ it('requires a standalone worker context to cover its handlers', () => {
     workerId: 'typed',
   }
   const context = Context.make(Service, { value: 1 })
-  expectTypeOf(runExecutionWorker).toBeCallableWith({ ...worker, context })
-  expectTypeOf(runExecutionWorker).toBeCallableWith({
-    ...worker,
-    handlers: createHandlerRuntime(context),
-  })
+  // Thunks: only the call's types matter, the worker must not run.
+  void (() => runExecutionWorker({ ...worker, context }))
+  void (() =>
+    runExecutionWorker({
+      ...worker,
+      handlers: createHandlerRuntime(context),
+    }))
+  // Built separately, so the call cannot influence what the runtime provides.
+  const insufficient = createHandlerRuntime(Context.empty())
+  void (() =>
+    runExecutionWorker({
+      ...worker,
+      // @ts-expect-error A runtime built from the empty context cannot either.
+      handlers: insufficient,
+    }))
   // @ts-expect-error The empty context cannot provide Service.
   void (() => runExecutionWorker({ ...worker, context: Context.empty() }))
   void (() =>

@@ -1,4 +1,5 @@
 import type * as Context from 'effect/Context'
+import type * as Scope from 'effect/Scope'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
@@ -25,10 +26,28 @@ export type HandlerRuntimeOptions = {
   readonly onFatal?: (error: unknown) => void
 }
 
+/**
+ * `run` is a function-typed property so its handler parameter stays
+ * contravariant: a runtime is only assignable where it provides at least the
+ * services required there. Method syntax would compare bivariantly and let a
+ * runtime built from an insufficient context through.
+ *
+ * The default is the erased form every runtime is assignable to. The engine uses
+ * it below the typed entry points, where the durable registry has already erased
+ * the heterogeneous requirements of its handlers.
+ */
+export type HandlerRuntime<R = never> = {
+  readonly run: <A>(
+    handler: () => Effect.Effect<A, unknown, R | Scope.Scope>,
+    signal?: AbortSignal,
+  ) => Promise<A>
+  readonly drain: () => Promise<void>
+}
+
 export function createHandlerRuntime<R>(
   context: Context.Context<R>,
   options: HandlerRuntimeOptions = {},
-) {
+): HandlerRuntime<R> {
   const timeoutMs = options.cleanupTimeoutMs ?? 5_000
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new Error(
@@ -37,10 +56,7 @@ export function createHandlerRuntime<R>(
   }
   const pending = new Set<Promise<unknown>>()
   return {
-    async run<A>(
-      handler: () => Effect.Effect<A, unknown, R>,
-      signal?: AbortSignal,
-    ) {
+    async run(handler, signal) {
       // Do not enter user code for an attempt that has already lost ownership.
       if (signal?.aborted) throw signal.reason
       // These entry-point fibers share services, not the main fiber's lifetime.
@@ -87,9 +103,3 @@ export function createHandlerRuntime<R>(
     },
   }
 }
-
-/**
- * The durable registry erases the heterogeneous requirements of its handlers;
- * the typed entry points prove coverage before constructing this runtime.
- */
-export type HandlerRuntime = ReturnType<typeof createHandlerRuntime<any>>

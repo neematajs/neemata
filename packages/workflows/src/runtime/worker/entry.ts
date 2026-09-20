@@ -76,7 +76,10 @@ export type WorkerHandlers<R> =
       readonly context: Context.Context<Exclude<R, Scope.Scope>>
       readonly handlers?: undefined
     })
-  | { readonly handlers: HandlerRuntime }
+  | { readonly handlers: HandlerRuntime<SharedRequirements<R>> }
+
+// Implementation lists typed as `any` carry no requirement to check.
+type SharedRequirements<R> = 0 extends 1 & R ? never : Exclude<R, Scope.Scope>
 
 function resolveHandlers(input: WorkerHandlers<any>): HandlerRuntime {
   return input.handlers ?? createHandlerRuntime(input.context, input)
