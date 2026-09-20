@@ -1,11 +1,13 @@
-import { createValueInjectable, type DependencyContext } from '@nmtjs/core'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 describe('workflow implementation chain', () => {
-  const prefix = createValueInjectable('case')
+  const prefix = 'case'
 
   const embedding = defineTask({
     name: 'embedding.generate',
@@ -55,50 +57,54 @@ describe('workflow implementation chain', () => {
     .build()
 
   it('requires explicit runnable declarations in implementation order', () => {
-    const implementation = implementWorkflow(workflow, {
-      dependencies: { prefix },
-    })
-      .content(async (_ctx, input) => ({ text: input.scenario }), {
-        input: (ctx, _outputs, input) => {
-          expectTypeOf(ctx.prefix).toEqualTypeOf<string>()
+    const implementation = implementWorkflow(workflow)
+      .content((input) => fromPromise(async () => ({ text: input.scenario })), {
+        input: (_outputs, input) => {
+          expectTypeOf(prefix).toEqualTypeOf<string>()
           expectTypeOf(input).toEqualTypeOf<{
             readonly kind: 'normal' | 'fallback'
             readonly scenario: string
           }>()
-          return { scenario: `${ctx.prefix}:${input.scenario}` }
+          return { scenario: `${prefix}:${input.scenario}` }
         },
       })
       .caseContent({
-        select: (_ctx, _outputs, input): 'normal' | 'fallback' => input.kind,
+        select: (_outputs, input): 'normal' | 'fallback' => input.kind,
         cases: ({ activity, workflow }) => ({
-          normal: activity(async (_ctx, input) => ({ text: input.text }), {
-            input: (_ctx, { content }) => {
-              expectTypeOf(content).toEqualTypeOf<{ readonly text: string }>()
-              return { text: content.text }
+          normal: activity(
+            (input) => fromPromise(async () => ({ text: input.text })),
+            {
+              input: ({ content }) => {
+                expectTypeOf(content).toEqualTypeOf<{ readonly text: string }>()
+                return { text: content.text }
+              },
             },
-          }),
+          ),
           fallback: workflow(fallbackWorkflow, {
-            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+            input: (_outputs, input) => ({ scenario: input.scenario }),
           }),
         }),
       })
       .embedding(embedding, {
-        input: (_ctx, { caseContent }) => ({ text: caseContent.text }),
+        input: ({ caseContent }) => ({ text: caseContent.text }),
       })
       .saveCase(
-        async (_ctx, input) => ({
-          caseId: `${input.scenario}:${input.embeddingId}`,
-        }),
+        (input) =>
+          fromPromise(async () => ({
+            caseId: `${input.scenario}:${input.embeddingId}`,
+          })),
         {
-          input: (_ctx, { embedding }, input) => ({
+          input: ({ embedding }, input) => ({
             scenario: input.scenario,
             embeddingId: embedding.id,
           }),
         },
       )
-      .finish((_ctx, { saveCase }) => ({ caseId: saveCase.caseId }))
+      .finish(({ saveCase }) =>
+        fromPromise(() => ({ caseId: saveCase.caseId })),
+      )
 
-    expect(implementation.dependencies).toStrictEqual({ prefix })
+    expect(implementation).not.toHaveProperty('dependencies')
     expect(implementation.nodes.map((node) => node.name)).toStrictEqual([
       'content',
       'caseContent',
@@ -128,8 +134,10 @@ describe('workflow implementation chain', () => {
   })
 
   it('keeps activity implementation dependencies typed in workflow nodes', () => {
-    const service = createValueInjectable({
-      save: (text: string) => text.length,
+    const service = Context.Reference('test-service', {
+      defaultValue: () => ({
+        save: (text: string) => text.length,
+      }),
     })
     const activityWorkflow = defineWorkflow({
       name: 'activity-dependencies',
@@ -144,43 +152,48 @@ describe('workflow implementation chain', () => {
 
     const inferred = implementWorkflow(activityWorkflow)
       .save({
-        dependencies: { service },
-        handler: (ctx, input) => {
-          expectTypeOf(ctx.service.save).toEqualTypeOf<
-            (text: string) => number
-          >()
-          expectTypeOf(input.text).toEqualTypeOf<string>()
+        handler: (input) =>
+          Effect.gen(function* () {
+            const dependency = yield* service
+            expectTypeOf(dependency.save).toEqualTypeOf<
+              (text: string) => number
+            >()
+            expectTypeOf(input.text).toEqualTypeOf<string>()
 
-          return { size: ctx.service.save(input.text) }
-        },
+            return { size: dependency.save(input.text) }
+          }),
       })
-      .finish((_ctx, { save }) => save)
+      .finish(({ save }) => fromPromise(() => save))
 
     const annotated = implementWorkflow(activityWorkflow)
       .save({
-        dependencies: { service },
-        handler: (
-          ctx: DependencyContext<{ service: typeof service }>,
-          input,
-        ) => ({ size: ctx.service.save(input.text) }),
+        handler: (input: { readonly text: string }) =>
+          service.pipe(
+            Effect.map((dependency) => ({
+              size: dependency.save(input.text),
+            })),
+          ),
       })
-      .finish((_ctx, { save }) => save)
+      .finish(({ save }) => fromPromise(() => save))
 
     expect(inferred.workflow).toBe(activityWorkflow)
     expect(annotated.workflow).toBe(activityWorkflow)
   })
 
   it('keeps activity implementation dependencies typed in branch and parallel cases', () => {
-    const service = createValueInjectable({
-      decorate: (text: string) => `${text}!`,
+    const service = Context.Reference('test-service', {
+      defaultValue: () => ({
+        decorate: (text: string) => `${text}!`,
+      }),
     })
     const io = Schema.Struct({ text: Schema.String })
     const activity = {
-      dependencies: { service },
-      handler: (
-        ctx: DependencyContext<{ service: typeof service }>,
-        input: typeof io.Type,
-      ) => ({ text: ctx.service.decorate(input.text) }),
+      handler: (input: typeof io.Type) =>
+        service.pipe(
+          Effect.map((dependency) => ({
+            text: dependency.decorate(input.text),
+          })),
+        ),
     }
     const branched = defineWorkflow({
       name: 'branch-case-activity-dependencies',
@@ -209,18 +222,18 @@ describe('workflow implementation chain', () => {
         select: () => 'normal',
         cases: ({ activity: defineActivity }) => ({
           normal: defineActivity(activity, {
-            input: (_ctx, _outputs, input) => input,
+            input: (_outputs, input) => input,
           }),
         }),
       })
-      .finish((_ctx, { chosen }) => chosen)
+      .finish(({ chosen }) => fromPromise(() => chosen))
     const parallelImplementation = implementWorkflow(parallel)
       .cases(({ activity: defineActivity }) => ({
         normal: defineActivity(activity, {
-          input: (_ctx, _outputs, input) => input,
+          input: (_outputs, input) => input,
         }),
       }))
-      .finish((_ctx, { cases }) => cases.normal)
+      .finish(({ cases }) => fromPromise(() => cases.normal))
 
     expect(branchImplementation.workflow).toBe(branched)
     expect(parallelImplementation.workflow).toBe(parallel)
@@ -248,17 +261,18 @@ describe('workflow implementation chain', () => {
     implementWorkflow(parallelWorkflow)
       .cases(({ activity }) => ({
         normal: activity(
-          async (_ctx, input: typeof activityInput.Type) => ({
-            ok: input.name === undefined || input.name.length > 0,
-          }),
+          (input: typeof activityInput.Type) =>
+            fromPromise(async () => ({
+              ok: input.name === undefined || input.name.length > 0,
+            })),
           {
-            input: (_ctx, _outputs, input) => ({
+            input: (_outputs, input) => ({
               caseBlueprint: input.caseBlueprint,
             }),
           },
         ),
       }))
-      .finish((_ctx, { cases }) => cases.normal)
+      .finish(({ cases }) => fromPromise(() => cases.normal))
   })
 
   it('infers branch output union when no common output is declared', () => {
@@ -304,25 +318,29 @@ describe('workflow implementation chain', () => {
 
     const implementation = implementWorkflow(branchingWorkflow)
       .content({
-        select: (_ctx, _outputs, input) => input.kind,
+        select: (_outputs, input) => input.kind,
         cases: ({ workflow }) => ({
           outpatient: workflow(outpatientWorkflow, {
-            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+            input: (_outputs, input) => ({ scenario: input.scenario }),
           }),
           obstetrics: workflow(obstetricsWorkflow, {
-            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
+            input: (_outputs, input) => ({ scenario: input.scenario }),
           }),
         }),
       })
-      .finish((_ctx, { content }) => {
-        expectTypeOf(content.kind).toEqualTypeOf<'outpatient' | 'obstetrics'>()
+      .finish(({ content }) =>
+        fromPromise(() => {
+          expectTypeOf(content.kind).toEqualTypeOf<
+            'outpatient' | 'obstetrics'
+          >()
 
-        if (content.kind === 'obstetrics') {
-          expectTypeOf(content.obstetricsData).toEqualTypeOf<string>()
-        }
+          if (content.kind === 'obstetrics') {
+            expectTypeOf(content.obstetricsData).toEqualTypeOf<string>()
+          }
 
-        return content
-      })
+          return content
+        }),
+      )
 
     expect(implementation.workflow).toBe(branchingWorkflow)
   })

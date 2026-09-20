@@ -18,9 +18,10 @@ import {
   runWorkflowWorker,
   type RunSnapshot,
 } from '../../src/runtime/index.ts'
+import { fromPromise } from '../support/effect.ts'
 import {
   createPostgresWorkflowHarness,
-  createTestContainer,
+  createTestContext,
   createTestName,
   postgresTarget,
   requireServiceEnv,
@@ -49,7 +50,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('prunes completed workflow trees and dead commands while preserving live runs', async () => {
       const { runtime, pool } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const childWorkflow = defineWorkflow({
         name: createTestName('postgres-retention-child'),
         input: Schema.Struct({ text: Schema.String }),
@@ -73,14 +74,14 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const childImpl = implementWorkflow(childWorkflow).finish(
-        (_ctx, _outputs, input) => ({ text: input.text }),
+        (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const parentImpl = implementWorkflow(parentWorkflow)
         .child(childWorkflow)
-        .finish((_ctx, { child }) => child)
+        .finish(({ child }) => fromPromise(() => child))
       const liveImpl = implementWorkflow(liveWorkflow)
-        .hold(async (_ctx, input) => input)
-        .finish((_ctx, { hold }) => hold)
+        .hold((input) => fromPromise(async () => input))
+        .finish(({ hold }) => fromPromise(() => hold))
       const client = createWorkflowRuntimeClient(runtime)
       const completedRuns = await Promise.all([
         client.start(parentWorkflow, { text: 'alpha' }),
@@ -88,7 +89,7 @@ describe.skipIf(!postgresTarget.url)(
       ])
       const completedSnapshots = await runWorkersUntilCompleted({
         runtime,
-        container,
+        context,
         workflows: [parentImpl, childImpl],
         runIds: completedRuns.map((run) => run.id),
         workerCount: 2,
@@ -104,7 +105,7 @@ describe.skipIf(!postgresTarget.url)(
       const liveRun = await client.start(liveWorkflow, { text: 'live' })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [liveImpl],
         workerId: 'retention-live-worker',
         idleDelayMs: 10,
@@ -161,7 +162,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('executes multi-worker activity and task effects exactly once', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const effects = new Map<string, number>()
       const task = defineTask({
         name: createTestName('postgres-effect-task'),
@@ -191,36 +192,42 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const taskImpl = implementTask(task, {
-        handler: async (_ctx, input) => {
-          increment(effects, `${input.runKey}:item:${input.item}`)
-          return { id: `${input.runKey}:${input.item}` }
-        },
+        handler: (input) =>
+          fromPromise(async () => {
+            increment(effects, `${input.runKey}:item:${input.item}`)
+            return { id: `${input.runKey}:${input.item}` }
+          }),
       })
       const workflowImpl = implementWorkflow(workflow)
-        .prepare(async (_ctx, input) => {
-          increment(effects, `${input.runKey}:prepare`)
-          return { prefix: input.runKey }
-        })
+        .prepare((input) =>
+          fromPromise(async () => {
+            increment(effects, `${input.runKey}:prepare`)
+            return { prefix: input.runKey }
+          }),
+        )
         .items(task, {
-          items: (_ctx, _outputs, input) => input.items,
-          input: (_ctx, { prepare }, item) => ({
+          items: (_outputs, input) => input.items,
+          input: ({ prepare }, item) => ({
             runKey: prepare.prefix,
             item,
           }),
         })
         .finalize(
-          async (_ctx, input) => {
-            increment(effects, `${input.runKey}:finalize`)
-            return { count: input.count }
-          },
+          (input) =>
+            fromPromise(async () => {
+              increment(effects, `${input.runKey}:finalize`)
+              return { count: input.count }
+            }),
           {
-            input: (_ctx, { prepare, items }) => ({
+            input: ({ prepare, items }) => ({
               runKey: prepare.prefix,
               count: items.items.length,
             }),
           },
         )
-        .finish((_ctx, { finalize }) => ({ count: finalize.count }))
+        .finish(({ finalize }) =>
+          fromPromise(() => ({ count: finalize.count })),
+        )
       const client = createWorkflowRuntimeClient(runtime)
       const inputs = Array.from({ length: 20 }, (_, index) => ({
         runKey: `run-${index}`,
@@ -232,7 +239,7 @@ describe.skipIf(!postgresTarget.url)(
 
       const snapshots = await runWorkersUntilCompleted({
         runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         tasks: [taskImpl],
         runIds: runs.map((run) => run.id),
@@ -254,7 +261,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('redelivers an unacked activity after a crashed worker lease expires', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       let calls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-crash-redelivery-workflow'),
@@ -267,16 +274,18 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
-        .content(async (_ctx, input) => {
-          calls += 1
-          return { text: `content:${input.text}` }
-        })
-        .finish((_ctx, { content }) => ({ text: content.text }))
+        .content((input) =>
+          fromPromise(async () => {
+            calls += 1
+            return { text: `content:${input.text}` }
+          }),
+        )
+        .finish(({ content }) => fromPromise(() => ({ text: content.text })))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { text: 'alpha' })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-crash',
       })
@@ -293,7 +302,7 @@ describe.skipIf(!postgresTarget.url)(
       await runExecutionWorker({
         tasks: [],
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'activity-reclaimer',
         leaseMs: 200,
@@ -301,7 +310,7 @@ describe.skipIf(!postgresTarget.url)(
       })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-finish',
       })
@@ -314,7 +323,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('keeps long activity work alive with heartbeats across lease expiry', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       let calls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-heartbeat-workflow'),
@@ -327,17 +336,19 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
-        .content(async (_ctx, input) => {
-          calls += 1
-          await wait(360)
-          return { text: `content:${input.text}` }
-        })
-        .finish((_ctx, { content }) => ({ text: content.text }))
+        .content((input) =>
+          fromPromise(async () => {
+            calls += 1
+            await wait(360)
+            return { text: `content:${input.text}` }
+          }),
+        )
+        .finish(({ content }) => fromPromise(() => ({ text: content.text })))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { text: 'alpha' })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-heartbeat',
       })
@@ -346,7 +357,7 @@ describe.skipIf(!postgresTarget.url)(
         runExecutionWorker({
           tasks: [],
           ...runtime,
-          container,
+          context,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-1',
           leaseMs: 180,
@@ -355,7 +366,7 @@ describe.skipIf(!postgresTarget.url)(
         runExecutionWorker({
           tasks: [],
           ...runtime,
-          container,
+          context,
           workflows: [workflowImpl],
           workerId: 'activity-heartbeat-2',
           leaseMs: 180,
@@ -364,7 +375,7 @@ describe.skipIf(!postgresTarget.url)(
       ])
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-heartbeat-finish',
       })
@@ -378,7 +389,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('aborts completion after activity lease loss and lets another worker finish', async () => {
       const { pool, runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       let calls = 0
       let firstStarted!: () => void
       const firstStartedPromise = new Promise<void>((resolve) => {
@@ -395,21 +406,23 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
-        .content(async (_ctx, input) => {
-          calls += 1
-          if (calls === 1) {
-            firstStarted()
-            await wait(220)
-            return { text: `stale:${input.text}` }
-          }
-          return { text: `fresh:${input.text}` }
-        })
-        .finish((_ctx, { content }) => ({ text: content.text }))
+        .content((input) =>
+          fromPromise(async () => {
+            calls += 1
+            if (calls === 1) {
+              firstStarted()
+              await wait(220)
+              return { text: `stale:${input.text}` }
+            }
+            return { text: `fresh:${input.text}` }
+          }),
+        )
+        .finish(({ content }) => fromPromise(() => ({ text: content.text })))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { text: 'alpha' })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-lease-loss',
       })
@@ -417,7 +430,7 @@ describe.skipIf(!postgresTarget.url)(
       const staleWorker = runExecutionWorker({
         tasks: [],
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'activity-stale',
         leaseMs: 60,
@@ -441,7 +454,7 @@ describe.skipIf(!postgresTarget.url)(
       await runExecutionWorker({
         tasks: [],
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'activity-fresh',
         leaseMs: 200,
@@ -449,7 +462,7 @@ describe.skipIf(!postgresTarget.url)(
       })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-lease-loss-finish',
       })
@@ -464,7 +477,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('cancels parent and child workflows and absorbs late in-flight completion', async () => {
       const { pool, runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       let releaseSlow!: () => void
       let slowStarted!: () => void
       const slowStartedPromise = new Promise<void>((resolve) => {
@@ -492,27 +505,28 @@ describe.skipIf(!postgresTarget.url)(
         .build()
       const childImpl = implementWorkflow(childWorkflow)
         .slow(
-          async (_ctx, input) => {
-            slowStarted()
-            await releaseSlowPromise
-            return { text: `late:${input.text}` }
-          },
+          (input) =>
+            fromPromise(async () => {
+              slowStarted()
+              await releaseSlowPromise
+              return { text: `late:${input.text}` }
+            }),
           {
-            input: (_ctx, _outputs, input) => ({ text: input.text }),
+            input: (_outputs, input) => ({ text: input.text }),
           },
         )
-        .finish((_ctx, { slow }) => ({ text: slow.text }))
+        .finish(({ slow }) => fromPromise(() => ({ text: slow.text })))
       const parentImpl = implementWorkflow(parentWorkflow)
         .child(childWorkflow, {
-          input: (_ctx, _outputs, input) => ({ text: input.text }),
+          input: (_outputs, input) => ({ text: input.text }),
         })
-        .finish((_ctx, { child }) => ({ text: child.text }))
+        .finish(({ child }) => fromPromise(() => ({ text: child.text })))
       const client = createWorkflowRuntimeClient(runtime)
       const parentRun = await client.start(parentWorkflow, { text: 'alpha' })
 
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel-prime',
         leaseMs: 200,
@@ -521,7 +535,7 @@ describe.skipIf(!postgresTarget.url)(
       const activityWorker = runExecutionWorker({
         tasks: [],
         ...runtime,
-        container,
+        context,
         workflows: [childImpl],
         workerId: 'activity-cancel-late',
         leaseMs: 500,
@@ -531,7 +545,7 @@ describe.skipIf(!postgresTarget.url)(
       await client.cancel(parentRun.id)
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel',
         leaseMs: 200,
@@ -562,7 +576,7 @@ describe.skipIf(!postgresTarget.url)(
       await expect(activityWorker).resolves.toStrictEqual({ processed: 1 })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [parentImpl, childImpl],
         workerId: 'coordinator-cancel-after-late',
         leaseMs: 200,
@@ -579,7 +593,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('delivers cancellation to an in-flight activity via heartbeat without retrying it', async () => {
       const { pool, runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const leaseMs = 180
       let calls = 0
       let cancelRequestedAt = 0
@@ -600,30 +614,32 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
-        .slow(async (_ctx, input, lifecycle) => {
-          calls += 1
-          activityStarted()
-          await new Promise<void>((resolve) => {
-            const timeout = setTimeout(resolve, leaseMs * 3)
-            lifecycle?.signal.addEventListener(
-              'abort',
-              () => {
-                abortAfterMs = Date.now() - cancelRequestedAt
-                abortReason = lifecycle.signal.reason
-                clearTimeout(timeout)
-                resolve()
-              },
-              { once: true },
-            )
-          })
-          return { text: `late:${input.text}` }
-        })
-        .finish((_ctx, { slow }) => ({ text: slow.text }))
+        .slow((input, lifecycle) =>
+          fromPromise(async () => {
+            calls += 1
+            activityStarted()
+            await new Promise<void>((resolve) => {
+              const timeout = setTimeout(resolve, leaseMs * 3)
+              lifecycle?.signal.addEventListener(
+                'abort',
+                () => {
+                  abortAfterMs = Date.now() - cancelRequestedAt
+                  abortReason = lifecycle.signal.reason
+                  clearTimeout(timeout)
+                  resolve()
+                },
+                { once: true },
+              )
+            })
+            return { text: `late:${input.text}` }
+          }),
+        )
+        .finish(({ slow }) => fromPromise(() => ({ text: slow.text })))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { text: 'alpha' })
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-cancel-signal-prime',
         leaseMs,
@@ -632,7 +648,7 @@ describe.skipIf(!postgresTarget.url)(
       const activityWorker = runExecutionWorker({
         tasks: [],
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'activity-cancel-signal',
         leaseMs,
@@ -643,7 +659,7 @@ describe.skipIf(!postgresTarget.url)(
       await client.cancel(run.id)
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'coordinator-cancel-signal',
         leaseMs,
@@ -670,7 +686,7 @@ describe.skipIf(!postgresTarget.url)(
 
     it('keeps idempotent starts and duplicate continues consistent under contention', async () => {
       const { pool, runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       let finishCalls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-contention-workflow'),
@@ -678,10 +694,11 @@ describe.skipIf(!postgresTarget.url)(
         output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => {
-          finishCalls += 1
-          return { text: input.text }
-        },
+        (_outputs, input) =>
+          fromPromise(() => {
+            finishCalls += 1
+            return { text: input.text }
+          }),
       )
       const client = createWorkflowRuntimeClient(runtime)
       const starts = await Promise.all(
@@ -710,7 +727,7 @@ describe.skipIf(!postgresTarget.url)(
         Array.from({ length: 4 }, (_, index) =>
           runWorkflowWorker({
             ...runtime,
-            container,
+            context,
             workflows: [workflowImpl],
             workerId: `coordinator-contention-${index}`,
             leaseMs: 200,
@@ -731,14 +748,14 @@ describe.skipIf(!postgresTarget.url)(
 
     it('fires a due schedule exactly once across concurrent coordinator workers', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const workflow = defineWorkflow({
         name: createTestName('postgres-scheduled-once'),
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => ({ text: input.text }),
+        (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const schedule = defineSchedule({
         name: createTestName('postgres-schedule-once'),
@@ -753,7 +770,7 @@ describe.skipIf(!postgresTarget.url)(
         Array.from({ length: 3 }, (_, index) =>
           runWorkflowWorker({
             ...runtime,
-            container,
+            context,
             workflows: [workflowImpl],
             workerId: `schedule-coordinator-${index}`,
             scheduling: { everyMs: 0, batchSize: 10 },
@@ -772,14 +789,14 @@ describe.skipIf(!postgresTarget.url)(
 
     it('stops firing disabled schedules', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const workflow = defineWorkflow({
         name: createTestName('postgres-disabled-schedule-workflow'),
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => ({ text: input.text }),
+        (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const schedule = defineSchedule({
         name: createTestName('postgres-disabled-schedule'),
@@ -794,7 +811,7 @@ describe.skipIf(!postgresTarget.url)(
       await runtime.scheduler!.reconcile([schedule])
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'schedule-disable-first',
         scheduling: { everyMs: 0, batchSize: 10 },
@@ -817,14 +834,14 @@ describe.skipIf(!postgresTarget.url)(
 
     it('keeps delayed starts visible before command dispatch is due', async () => {
       const { runtime } = await createHarness()
-      const container = createTestContainer()
+      const context = createTestContext()
       const workflow = defineWorkflow({
         name: createTestName('postgres-delayed-start'),
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => ({ text: input.text }),
+        (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(
@@ -835,7 +852,7 @@ describe.skipIf(!postgresTarget.url)(
 
       await runWorkflowWorker({
         ...runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         workerId: 'delayed-start-before',
         idleDelayMs: 20,
@@ -846,7 +863,7 @@ describe.skipIf(!postgresTarget.url)(
       await wait(250)
       const [completed] = await runWorkersUntilCompleted({
         runtime,
-        container,
+        context,
         workflows: [workflowImpl],
         runIds: [run.id],
         workerCount: 1,
@@ -858,7 +875,7 @@ describe.skipIf(!postgresTarget.url)(
 
 type RunWorkersUntilCompletedInput = {
   readonly runtime: PostgresWorkflowHarness['runtime']
-  readonly container: ReturnType<typeof createTestContainer>
+  readonly context: ReturnType<typeof createTestContext>
   readonly workflows: readonly WorkflowImplementation[]
   readonly tasks?: readonly TaskImplementation[]
   readonly runIds: readonly string[]
@@ -877,7 +894,7 @@ async function runWorkersUntilCompleted(
       ...Array.from({ length: workerCount }, (_, index) =>
         runWorkflowWorker({
           ...input.runtime,
-          container: input.container,
+          context: input.context,
           workflows: input.workflows,
           workerId: `coordinator-${round}-${index}`,
           leaseMs: input.leaseMs ?? 300,
@@ -888,7 +905,7 @@ async function runWorkersUntilCompleted(
         runExecutionWorker({
           tasks: [],
           ...input.runtime,
-          container: input.container,
+          context: input.context,
           workflows: input.workflows,
           workerId: `activity-${round}-${index}`,
           leaseMs: input.leaseMs ?? 300,
@@ -901,7 +918,7 @@ async function runWorkersUntilCompleted(
           runExecutionWorker({
             workflows: [],
             ...input.runtime,
-            container: input.container,
+            context: input.context,
             tasks,
             workerId: `task-${round}-${index}`,
             leaseMs: input.leaseMs ?? 300,

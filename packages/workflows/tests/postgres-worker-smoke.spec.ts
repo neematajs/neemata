@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
@@ -13,10 +13,10 @@ import {
   createWorkflowRuntimeClient,
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
-function createTestContainer() {
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-  return new Container({ logger })
+function createTestContext() {
+  return Context.empty()
 }
 
 test('runs direct child and mapWorkflow through postgres workers', async () => {
@@ -24,7 +24,7 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
   await installPostgresWorkflowSchemaForTesting(connection)
   const runtime = createPostgresWorkflowRuntime({ connection })
   const client = createWorkflowRuntimeClient(runtime)
-  const container = createTestContainer()
+  const context = createTestContext()
 
   const childWorkflow = defineWorkflow({
     name: 'postgres-smoke-child',
@@ -48,22 +48,24 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
     })
     .build()
 
-  const childImpl = implementWorkflow(childWorkflow).finish(
-    (_ctx, _outputs, input) => ({ id: `child:${input.text}` }),
+  const childImpl = implementWorkflow(childWorkflow).finish((_outputs, input) =>
+    fromPromise(() => ({ id: `child:${input.text}` })),
   )
   const parentImpl = implementWorkflow(parentWorkflow)
     .primary(childWorkflow, {
-      input: (_ctx, _outputs, input) => ({ text: input.scenario }),
+      input: (_outputs, input) => ({ text: input.scenario }),
     })
     .children(childWorkflow, {
-      items: (_ctx, { primary }, input) =>
+      items: ({ primary }, input) =>
         input.items.map((item) => `${primary.id}:${item}`),
-      input: (_ctx, _outputs, item) => ({ text: item }),
+      input: (_outputs, item) => ({ text: item }),
     })
-    .finish((_ctx, { primary, children }) => ({
-      primaryId: primary.id,
-      ids: children.items.map((item) => item.output.id),
-    }))
+    .finish(({ primary, children }) =>
+      fromPromise(() => ({
+        primaryId: primary.id,
+        ids: children.items.map((item) => item.output.id),
+      })),
+    )
 
   const run = await client.start(parentWorkflow, {
     scenario: 'alpha',
@@ -72,7 +74,7 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
 
   await runWorkflowWorker({
     ...runtime,
-    container,
+    context,
     workflows: [parentImpl, childImpl],
     workerId: 'postgres-smoke-worker',
   })

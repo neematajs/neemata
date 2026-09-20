@@ -12,6 +12,7 @@ import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 describe('workflow runtime client', () => {
   it('starts workflows and reads their snapshots', async () => {
@@ -26,7 +27,7 @@ describe('workflow runtime client', () => {
       idempotency: (input) => ['wf', input.scenario],
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -164,7 +165,7 @@ describe('workflow runtime client', () => {
       idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -344,7 +345,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -389,7 +390,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -423,7 +424,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -454,7 +455,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -485,7 +486,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -531,7 +532,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -664,7 +665,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
 

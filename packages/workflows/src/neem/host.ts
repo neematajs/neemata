@@ -1,8 +1,10 @@
 import { defineRuntimeHost } from '@nmtjs/neem'
 
-import type { WorkflowsConfig } from './runtime.ts'
+import type { AnyWorkflowsConfig } from './runtime.ts'
 
-type WorkflowsPlannerFactory = () => Promise<WorkflowsConfig> | WorkflowsConfig
+type WorkflowsPlannerFactory = () =>
+  | Promise<AnyWorkflowsConfig>
+  | AnyWorkflowsConfig
 
 export default defineRuntimeHost<WorkflowsPlannerFactory | undefined>(
   async (params) => ({

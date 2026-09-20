@@ -1,7 +1,6 @@
-import type { DependencyContext } from '@nmtjs/core'
-
 import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type { HandlerRuntime } from '../handler.ts'
 import type { StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 
@@ -22,8 +21,11 @@ export type AdvanceOutcome = 'local' | 'parked' | 'terminal'
 
 export type AdvanceCtx = RuntimeDeps & {
   readonly workflow: WorkflowImplementation
-  readonly workflowCtx: DependencyContext<any>
+  readonly signal: AbortSignal
+  readonly handlers: HandlerRuntime
   readonly run: StoredRun
+  /** Decoded Type for user callbacks; run retains its stored JSON representation. */
+  readonly workflowInput: unknown
   readonly outputs: Record<string, unknown>
   readonly advance: (ctx: AdvanceCtx) => Promise<AdvanceOutcome>
 }

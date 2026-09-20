@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
 import { getTableName } from 'drizzle-orm'
 import { getTableConfig } from 'drizzle-orm/pg-core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { expectTypeOf, test, expect } from 'vitest'
 
@@ -27,6 +27,7 @@ import {
   runWorkflowWorker,
   type WorkflowRuntimeAtomicContinuation,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const createPgliteConnection = (db = new PGlite()) =>
   createPostgresWorkflowConnection(db)
@@ -1344,8 +1345,8 @@ test('postgres workflow worker survives a release racing a fresh continue', asyn
     input: Schema.Struct({ text: Schema.String }),
     output: Schema.Struct({ text: Schema.String }),
   }).build()
-  const implementation = implementWorkflow(workflow).finish(
-    (_ctx, _outputs, input) => input,
+  const implementation = implementWorkflow(workflow).finish((_outputs, input) =>
+    fromPromise(() => input),
   )
   const run = await runtime.store.createRun({
     workflowName: workflow.name,
@@ -1384,15 +1385,15 @@ test('postgres workflow worker survives a release racing a fresh continue', asyn
         return handler({ ...scoped, store })
       }),
   }
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-  const container = new Container({ logger })
+
+  const context = Context.empty()
 
   const result = await runWorkflowWorker({
     store: runtime.store,
     runCoordinationExecutor: runtime.runCoordinationExecutor,
     attemptExecutor: runtime.attemptExecutor,
     atomicContinuation,
-    container,
+    context,
     workflows: [implementation],
     workerId: 'postgres-release-race-worker',
   })
@@ -2315,12 +2316,12 @@ test('worker retention pruning takes the Postgres advisory transaction lock', as
   })
   await runtime.store.completeRun({ runId: run.id, output: { ok: true } })
   await new Promise((resolve) => setTimeout(resolve, 5))
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-  const container = new Container({ logger })
+
+  const context = Context.empty()
 
   await runWorkflowWorker({
     ...runtime,
-    container,
+    context,
     workflows: [],
     workerId: 'postgres-retention-worker',
     retention: {

@@ -16,8 +16,9 @@ import {
   serveExecutionWorker,
   serveWorkflowWorker,
 } from '../../src/runtime/index.ts'
+import { fromPromise } from '../support/effect.ts'
 import {
-  createTestContainer,
+  createTestContext,
   createTestName,
   postgresTarget,
   requireServiceEnv,
@@ -112,7 +113,7 @@ describe.skipIf(!postgresTarget.url)(
         connection: harness.runtime.connection,
         wakeEvents,
       })
-      const container = createTestContainer()
+      const context = createTestContext()
 
       const workflow = defineWorkflow({
         name: createTestName('postgres-wake-dispatch'),
@@ -125,14 +126,14 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const implementation = implementWorkflow(workflow)
-        .echo(async (_ctx, input) => input)
-        .finish((_ctx, { echo }) => echo)
+        .echo((input) => fromPromise(async () => input))
+        .finish(({ echo }) => fromPromise(() => echo))
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
         serveWorkflowWorker({
           ...runtime,
-          container,
+          context,
           workflows: [implementation],
           workerId: 'wake-coordinator',
           idleDelayMs: LONG_DELAY_MS,
@@ -143,7 +144,7 @@ describe.skipIf(!postgresTarget.url)(
         serveExecutionWorker({
           tasks: [],
           ...runtime,
-          container,
+          context,
           workflows: [implementation],
           workerId: 'wake-activity',
           idleDelayMs: LONG_DELAY_MS,
@@ -269,7 +270,7 @@ describe.skipIf(!postgresTarget.url)(
         connection: harness.runtime.connection,
         wakeEvents,
       })
-      const container = createTestContainer()
+      const context = createTestContext()
 
       const workflow = defineWorkflow({
         name: createTestName('postgres-wake-cancel'),
@@ -286,24 +287,26 @@ describe.skipIf(!postgresTarget.url)(
         activityStarted = resolve
       })
       const implementation = implementWorkflow(workflow)
-        .hold(async (_ctx, input, lifecycle) => {
-          activityStarted()
-          await new Promise<never>((_resolve, reject) => {
-            lifecycle?.signal.addEventListener(
-              'abort',
-              () => reject(new Error('activity aborted')),
-              { once: true },
-            )
-          })
-          return input
-        })
-        .finish((_ctx, { hold }) => hold)
+        .hold((input, lifecycle) =>
+          fromPromise(async () => {
+            activityStarted()
+            await new Promise<never>((_resolve, reject) => {
+              lifecycle?.signal.addEventListener(
+                'abort',
+                () => reject(new Error('activity aborted')),
+                { once: true },
+              )
+            })
+            return input
+          }),
+        )
+        .finish(({ hold }) => fromPromise(() => hold))
 
       const abort = new AbortController()
       const workers = Promise.allSettled([
         serveWorkflowWorker({
           ...runtime,
-          container,
+          context,
           workflows: [implementation],
           workerId: 'cancel-coordinator',
           idleDelayMs: 25,
@@ -314,7 +317,7 @@ describe.skipIf(!postgresTarget.url)(
         serveExecutionWorker({
           tasks: [],
           ...runtime,
-          container,
+          context,
           workflows: [implementation],
           workerId: 'cancel-activity',
           // heartbeat interval = leaseMs / 3; far beyond the asserted latency

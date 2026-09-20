@@ -34,14 +34,13 @@ export async function dispatchActivityNode(
   if (!hasStoredNodeInput(existing)) {
     const rawInput = input.node.input
       ? runWorkflowUserCallback(() =>
-          input.node.input!(input.workflowCtx, input.outputs, input.run.input),
+          input.node.input!(input.outputs, input.workflowInput),
         )
-      : input.run.input
+      : input.workflowInput
     nodeInput = encodeWorkflowInput(
       declaration.input,
       rawInput,
       `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
-      !input.node.input,
     )
     await input.store.setNodeInput({
       runId: input.run.id,
@@ -77,9 +76,8 @@ export async function dispatchActivityNode(
           ? undefined
           : resolveIdempotency(
               input.node.idempotency,
-              input.workflowCtx,
               input.outputs,
-              input.run.input,
+              input.workflowInput,
             ),
       })
       return {

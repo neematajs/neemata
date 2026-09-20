@@ -36,7 +36,7 @@ import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
 } from './worker.ts'
-import { decodeStoredValue, restoreSubmittedValue } from './codec.ts'
+import { decodeStoredValue } from './codec.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
 import {
@@ -515,7 +515,7 @@ async function restartRun<Connection>(
       }
       return await start(
         workflow,
-        restoreSubmittedValue(
+        decodeStoredValue(
           workflow.input,
           run.input,
           `workflow input [${workflow.name}]`,
@@ -539,11 +539,7 @@ async function restartRun<Connection>(
       }
       return await start(
         task,
-        restoreSubmittedValue(
-          task.input,
-          run.input,
-          `task input [${task.name}]`,
-        ),
+        decodeStoredValue(task.input, run.input, `task input [${task.name}]`),
         {
           tags: run.tags,
           ...(run.unique === undefined ? {} : { unique: run.unique }),

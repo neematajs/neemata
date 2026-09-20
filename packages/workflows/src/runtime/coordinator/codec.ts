@@ -8,11 +8,7 @@ import type {
   Schema,
   WorkflowNode,
 } from '../../types/index.ts'
-import {
-  decodeNodeOutput,
-  encodeStoredValue,
-  normalizeStoredValue,
-} from '../codec.ts'
+import { decodeNodeOutput, encodeStoredValue } from '../codec.ts'
 import { runWorkflowUserCallback } from './context.ts'
 
 export function hasStoredNodeInput(node: {
@@ -21,18 +17,13 @@ export function hasStoredNodeInput(node: {
   return Object.prototype.hasOwnProperty.call(node, 'input')
 }
 
-/** Binding callbacks return Encoded; an omitted binding forwards the decoded root input. */
+/** Both explicit mappers and the default binding supply decoded values. */
 export function encodeWorkflowInput(
   schema: Schema,
   value: unknown,
   label: string,
-  decoded = false,
 ): unknown {
-  return runWorkflowUserCallback(() =>
-    decoded
-      ? encodeStoredValue(schema, value, label)
-      : normalizeStoredValue(schema, value, label),
-  )
+  return runWorkflowUserCallback(() => encodeStoredValue(schema, value, label))
 }
 
 export function decodeWorkflowNodeOutput(
@@ -57,7 +48,7 @@ export function encodeMapItems(
 ): readonly unknown[] {
   return runWorkflowUserCallback(() =>
     items.map((item, index) =>
-      normalizeStoredValue(itemSchema, item, `${label}.${index}`),
+      encodeStoredValue(itemSchema, item, `${label}.${index}`),
     ),
   )
 }

@@ -1,5 +1,3 @@
-import type { Dependencies } from '@nmtjs/core'
-
 import type {
   TaskImplementation,
   WorkflowImplementation,
@@ -9,15 +7,13 @@ import type {
   AnyWorkflowDefinition,
   IdempotencyKey,
   RunUniqueConstraint,
-  TaskDecodedInput,
   TaskInput,
-  WorkflowDecodedInput,
   WorkflowInput,
 } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
 import type { CreateRunInput, WorkflowStore } from '../store.ts'
-import { decodeSchemaValue, encodeStoredValue } from '../codec.ts'
+import { encodeStoredValue } from '../codec.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import {
   normalizeRunUnique,
@@ -28,7 +24,7 @@ import {
 
 export type StartTaskRunInput<
   Task extends AnyTaskDefinition,
-  Deps extends Dependencies = Dependencies,
+  Deps = any,
   Connection = never,
 > = {
   readonly store: WorkflowStore
@@ -47,7 +43,7 @@ export type StartTaskRunInput<
 
 export type StartWorkflowRunInput<
   Workflow extends AnyWorkflowDefinition,
-  Deps extends Dependencies = Dependencies,
+  Deps = any,
   Connection = never,
 > = {
   readonly store: WorkflowStore
@@ -67,7 +63,7 @@ type WorkflowStartMetadataInput<Workflow extends AnyWorkflowDefinition> = {
   readonly workflow: Workflow
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
-  readonly input: WorkflowDecodedInput<Workflow>
+  readonly input: WorkflowInput<Workflow>
 }
 
 export type WorkflowRuntimeAtomicStart<Connection = never> = {
@@ -88,7 +84,7 @@ export type WorkflowRuntimeAtomicStart<Connection = never> = {
 
 export async function startWorkflowRun<
   Workflow extends AnyWorkflowDefinition,
-  Deps extends Dependencies = Dependencies,
+  Deps = any,
   Connection = never,
 >(
   input: StartWorkflowRunInput<Workflow, Deps, Connection>,
@@ -98,11 +94,12 @@ export async function startWorkflowRun<
     input.workflow,
     'Workflow start implementation',
   )
-  const workflowInput = decodeSchemaValue(
+  const workflowInput = input.input
+  const storedInput = encodeStoredValue(
     input.workflow.input,
-    input.input,
+    workflowInput,
     `workflow input [${input.workflow.name}]`,
-  ) as WorkflowDecodedInput<Workflow>
+  )
   const metadata = resolveWorkflowStartMetadata({
     ...input,
     input: workflowInput,
@@ -114,11 +111,7 @@ export async function startWorkflowRun<
     kind: 'workflow',
     name: input.workflow.name,
     workflowName: input.workflow.name,
-    input: encodeStoredValue(
-      input.workflow.input,
-      workflowInput,
-      `workflow input [${input.workflow.name}]`,
-    ),
+    input: storedInput,
     tags: metadata.tags,
     idempotencyKey: metadata.idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
@@ -161,7 +154,7 @@ export async function startWorkflowRun<
 
 export async function startTaskRun<
   Task extends AnyTaskDefinition,
-  Deps extends Dependencies = Dependencies,
+  Deps = any,
   Connection = never,
 >(input: StartTaskRunInput<Task, Deps, Connection>): Promise<StoredRun> {
   assertImplementationTarget(
@@ -169,11 +162,12 @@ export async function startTaskRun<
     input.task,
     'Task start implementation',
   )
-  const taskInput = decodeSchemaValue(
+  const taskInput = input.input
+  const storedInput = encodeStoredValue(
     input.task.input,
-    input.input,
+    taskInput,
     `task input [${input.task.name}]`,
-  ) as TaskDecodedInput<Task>
+  )
   const idempotencyKey =
     input.idempotencyKey ??
     resolveIdempotency(input.task.idempotency, taskInput)
@@ -181,11 +175,6 @@ export async function startTaskRun<
     input.unique ?? resolveUnique(input.task.unique, taskInput),
   )
 
-  const storedInput = encodeStoredValue(
-    input.task.input,
-    taskInput,
-    `task input [${input.task.name}]`,
-  )
   const runInput: CreateRunInput = {
     kind: 'task',
     name: input.task.name,

@@ -1,5 +1,3 @@
-import type { Dependencies } from '@nmtjs/core'
-
 import type {
   TaskImplementation,
   WorkflowCaseImplementation,
@@ -11,21 +9,14 @@ import type {
   AnyWorkflowDefinition,
 } from '../types/index.ts'
 
-export type RegisteredWorkflowImplementation = Omit<
-  WorkflowImplementation<AnyWorkflowDefinition, Dependencies>,
-  'dependencies' | 'finish'
-> & {
-  readonly dependencies: Dependencies
-  readonly finish: (...args: any[]) => unknown
-}
-
-export type RegisteredTaskImplementation = Omit<
-  TaskImplementation<AnyTaskDefinition, Dependencies>,
-  'dependencies' | 'handler'
-> & {
-  readonly dependencies: Dependencies
-  readonly handler: (...args: any[]) => unknown
-}
+export type RegisteredWorkflowImplementation = WorkflowImplementation<
+  AnyWorkflowDefinition,
+  any
+>
+export type RegisteredTaskImplementation = TaskImplementation<
+  AnyTaskDefinition,
+  any
+>
 
 export type WorkflowRuntimeRegistry = {
   readonly workflows: ReadonlyMap<string, RegisteredWorkflowImplementation>

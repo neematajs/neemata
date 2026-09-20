@@ -14,11 +14,9 @@ export type IdempotencyKey = readonly unknown[]
 
 export type RunTags = Readonly<Record<string, string>>
 
-export type RunTagsBuilder<Input> = (input: BoundaryOutput<Input>) => RunTags
+export type RunTagsBuilder<Input> = (input: Input) => RunTags
 
-export type RunIdempotencyBuilder<Input> = (
-  input: BoundaryOutput<Input>,
-) => IdempotencyKey
+export type RunIdempotencyBuilder<Input> = (input: Input) => IdempotencyKey
 
 export type RunUniqueScope = 'active' | 'all'
 
@@ -47,9 +45,9 @@ export type ResolvedRunUnique = {
 }
 
 export type RunUniqueBuilder<Input> =
-  | ((input: BoundaryOutput<Input>) => readonly unknown[])
+  | ((input: Input) => readonly unknown[])
   | {
-      readonly key: (input: BoundaryOutput<Input>) => readonly unknown[]
+      readonly key: (input: Input) => readonly unknown[]
       readonly scope?: RunUniqueScope
       readonly behavior?: RunUniqueBehavior
     }
@@ -72,22 +70,7 @@ export type RunKind = 'workflow' | 'task'
 /** Codecs must run synchronously and require no services at durable boundaries. */
 export type Schema = EffectSchema.Codec<unknown, unknown>
 
-export type SchemaInput<T extends Schema> = T['Encoded']
-
 export type SchemaOutput<T extends Schema> = T['Type']
-
-export type SchemaBoundary<In = unknown, Out = In> = {
-  readonly in: In
-  readonly out: Out
-}
-
-export type BoundaryInput<T> = T extends { readonly in: infer Input }
-  ? Input
-  : T
-
-export type BoundaryOutput<T> = T extends { readonly out: infer Output }
-  ? Output
-  : T
 
 export type TaskDefinition<
   Name extends string = string,
@@ -112,19 +95,11 @@ export type TaskDefinition<
 
 export type AnyTaskDefinition = TaskDefinition<string, any, any>
 
-type TaskInputBoundary<T> =
+export type TaskInput<T> =
   T extends TaskDefinition<string, infer Input, any> ? Input : never
 
-type TaskOutputBoundary<T> =
+export type TaskOutput<T> =
   T extends TaskDefinition<string, any, infer Output> ? Output : never
-
-export type TaskInput<T> = BoundaryInput<TaskInputBoundary<T>>
-
-export type TaskDecodedInput<T> = BoundaryOutput<TaskInputBoundary<T>>
-
-export type TaskOutputInput<T> = BoundaryInput<TaskOutputBoundary<T>>
-
-export type TaskOutput<T> = BoundaryOutput<TaskOutputBoundary<T>>
 
 export type ActivityBinding<Input = unknown, Output = unknown> = {
   readonly input: Input
@@ -238,11 +213,8 @@ export type WorkflowMapTaskNode<
   /** Overrides the target task's default timeout for every map task item. */
   readonly timeout?: DurationString
   readonly _types?: ActivityBinding<
-    SchemaBoundary<
-      readonly BoundaryInput<Item>[],
-      readonly BoundaryOutput<Item>[]
-    >,
-    MapNodeOutput<BoundaryOutput<Item>, TaskOutput<Task>>
+    readonly Item[],
+    MapNodeOutput<Item, TaskOutput<Task>>
   >
 }
 
@@ -256,11 +228,8 @@ export type WorkflowMapWorkflowNode<
   readonly concurrency?: number
   readonly cancellation?: CancellationPolicy
   readonly _types?: ActivityBinding<
-    SchemaBoundary<
-      readonly BoundaryInput<Item>[],
-      readonly BoundaryOutput<Item>[]
-    >,
-    MapNodeOutput<BoundaryOutput<Item>, WorkflowOutput<Workflow>>
+    readonly Item[],
+    MapNodeOutput<Item, WorkflowOutput<Workflow>>
   >
 }
 
@@ -312,9 +281,7 @@ export type WorkflowNode =
   | WorkflowMapWorkflowNode
 
 export type BranchCaseOutput<T> =
-  T extends BranchCaseDefinition<any, any, infer Output>
-    ? BoundaryOutput<Output>
-    : never
+  T extends BranchCaseDefinition<any, any, infer Output> ? Output : never
 
 export type BranchCaseOutputs<
   Cases extends Record<string, BranchCaseDefinition>,
@@ -362,19 +329,11 @@ export type AnyWorkflowDefinition = WorkflowDefinition<
   readonly WorkflowNode[]
 >
 
-type WorkflowInputBoundary<T> =
+export type WorkflowInput<T> =
   T extends WorkflowDefinition<string, infer Input, any, any> ? Input : never
 
-type WorkflowOutputBoundary<T> =
+export type WorkflowOutput<T> =
   T extends WorkflowDefinition<string, any, infer Output, any> ? Output : never
-
-export type WorkflowInput<T> = BoundaryInput<WorkflowInputBoundary<T>>
-
-export type WorkflowDecodedInput<T> = BoundaryOutput<WorkflowInputBoundary<T>>
-
-export type WorkflowOutputInput<T> = BoundaryInput<WorkflowOutputBoundary<T>>
-
-export type WorkflowOutput<T> = BoundaryOutput<WorkflowOutputBoundary<T>>
 
 export type WorkflowNodes<T> =
   T extends WorkflowDefinition<string, any, any, infer Nodes> ? Nodes : never
@@ -386,7 +345,7 @@ export type WorkflowRun<
   readonly kind: 'workflow'
   readonly name: Workflow['name']
   readonly status: WorkflowStatus
-  readonly input: WorkflowDecodedInput<Workflow>
+  readonly input: WorkflowInput<Workflow>
   readonly output?: WorkflowOutput<Workflow>
   readonly error?: unknown
   readonly parentRunId?: string
@@ -405,7 +364,7 @@ export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
   readonly kind: 'task'
   readonly name: Task['name']
   readonly status: TaskStatus
-  readonly input: TaskDecodedInput<Task>
+  readonly input: TaskInput<Task>
   readonly output?: TaskOutput<Task>
   readonly error?: unknown
   readonly parentRunId?: string

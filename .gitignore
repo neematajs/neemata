@@ -2,6 +2,7 @@
 .benchmark/
 benchmark-results/
 packages/workflows/bench/.generated-types/
+packages/workflows/tests/.tmp-recovery-*/
 __screenshots__/
 .neemata/
 .neem/

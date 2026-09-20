@@ -16,8 +16,6 @@ import type {
   RunnableInput,
   ScheduleDefinition,
   Schema,
-  SchemaBoundary,
-  SchemaInput,
   SchemaOutput,
   TaskDefinition,
   TaskInput,
@@ -81,11 +79,6 @@ type OutputMatches<
   ? unknown
   : OutputMismatch<Message, Expected, Received>
 
-type SchemaSides<T extends Schema> = SchemaBoundary<
-  SchemaInput<T>,
-  SchemaOutput<T>
->
-
 export type BranchCaseHelpers = {
   activity<
     InputSchema extends Schema,
@@ -99,8 +92,8 @@ export type BranchCaseHelpers = {
     timeout?: DurationString
   }): BranchCaseDefinition<
     'activity',
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    SchemaOutput<InputSchema>,
+    SchemaOutput<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task,
@@ -131,8 +124,8 @@ export type ConvergedBranchCaseHelpers<BranchOutput> = {
     options: BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema>,
   ): BranchCaseDefinition<
     'activity',
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    SchemaOutput<InputSchema>,
+    SchemaOutput<OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task &
@@ -200,8 +193,8 @@ export type WorkflowBuilder<
       ...Nodes,
       WorkflowActivityNode<
         NodeName,
-        SchemaSides<InputSchema>,
-        SchemaSides<OutputSchema>
+        SchemaOutput<InputSchema>,
+        SchemaOutput<OutputSchema>
       >,
     ],
     DeclaredOutput
@@ -308,7 +301,7 @@ export type WorkflowBuilder<
   ): WorkflowBuilder<
     Name,
     Input,
-    [...Nodes, WorkflowMapTaskNode<NodeName, Task, SchemaSides<ItemSchema>>],
+    [...Nodes, WorkflowMapTaskNode<NodeName, Task, SchemaOutput<ItemSchema>>],
     DeclaredOutput
   >
 
@@ -331,7 +324,7 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapWorkflowNode<NodeName, Workflow, SchemaSides<ItemSchema>>,
+      WorkflowMapWorkflowNode<NodeName, Workflow, SchemaOutput<ItemSchema>>,
     ],
     DeclaredOutput
   >
@@ -356,9 +349,9 @@ export type TaskOptions<
   output: OutputSchema
   retry?: RetryPolicy
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
+  tags?: RunTagsBuilder<SchemaOutput<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaOutput<InputSchema>>
+  unique?: RunUniqueBuilder<SchemaOutput<InputSchema>>
 }
 
 export function defineTask<
@@ -367,11 +360,11 @@ export function defineTask<
   OutputSchema extends Schema,
 >(
   options: TaskOptions<Name, InputSchema, OutputSchema>,
-): TaskDefinition<Name, SchemaSides<InputSchema>, SchemaSides<OutputSchema>> {
+): TaskDefinition<Name, SchemaOutput<InputSchema>, SchemaOutput<OutputSchema>> {
   return Object.freeze({ kind: 'task', ...options }) as TaskDefinition<
     Name,
-    SchemaSides<InputSchema>,
-    SchemaSides<OutputSchema>
+    SchemaOutput<InputSchema>,
+    SchemaOutput<OutputSchema>
   >
 }
 
@@ -388,9 +381,9 @@ export type WorkflowOptions<
   retention?: DurationString
   /** Backstop: fail the run (and cancel its children) when it exceeds this age. */
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaSides<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaSides<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaSides<InputSchema>>
+  tags?: RunTagsBuilder<SchemaOutput<InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaOutput<InputSchema>>
+  unique?: RunUniqueBuilder<SchemaOutput<InputSchema>>
 }
 
 export type ScheduleOptions<
@@ -561,9 +554,9 @@ export function defineWorkflow<
   options: WorkflowOptions<Name, InputSchema, OutputSchema>,
 ): WorkflowBuilder<
   Name,
-  SchemaSides<InputSchema>,
+  SchemaOutput<InputSchema>,
   [],
-  OutputSchema extends Schema ? SchemaSides<OutputSchema> : NoDeclaredOutput
+  OutputSchema extends Schema ? SchemaOutput<OutputSchema> : NoDeclaredOutput
 > {
   return new WorkflowDraftBuilder(options) as any
 }

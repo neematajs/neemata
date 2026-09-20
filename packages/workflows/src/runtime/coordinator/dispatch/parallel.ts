@@ -172,21 +172,15 @@ export async function dispatchParallelNode(
           member.target.input,
           member.input
             ? runWorkflowUserCallback(() =>
-                member.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
+                member.input!(input.outputs, input.workflowInput),
               )
-            : input.run.input,
+            : input.workflowInput,
           `${member.kind} input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-          !member.input,
         )
         const idempotencyKey = resolveIdempotency(
           member.idempotency,
-          input.workflowCtx,
           input.outputs,
-          input.run.input,
+          input.workflowInput,
         )
         const created = await input.store.ensureChildRun({
           runId: input.run.id,
@@ -246,20 +240,18 @@ export async function dispatchParallelNode(
       if (!hasAttempt) {
         const value = member.input
           ? runWorkflowUserCallback(() =>
-              member.input!(input.workflowCtx, input.outputs, input.run.input),
+              member.input!(input.outputs, input.workflowInput),
             )
-          : input.run.input
+          : input.workflowInput
         nodeInput = encodeWorkflowInput(
           activity.input,
           value,
           `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
-          !member.input,
         )
         idempotencyKey = resolveIdempotency(
           member.idempotency,
-          input.workflowCtx,
           input.outputs,
-          input.run.input,
+          input.workflowInput,
         )
       }
 

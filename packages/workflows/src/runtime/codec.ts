@@ -141,31 +141,3 @@ export function decodeNodeOutput(
     `node output [${node.name}]`,
   )
 }
-
-/** Slice 4 still accepts authored Encoded values at handler and mapper boundaries. */
-export function normalizeStoredValue(
-  schema: WorkflowSchema | undefined,
-  value: unknown,
-  label: string,
-) {
-  return encodeStoredValue(
-    schema,
-    schema ? decodeSchemaValue(schema, value, label) : value,
-    label,
-  )
-}
-
-/** Restart reconstructs the authored encoding before resubmitting to start. */
-export function restoreSubmittedValue(
-  schema: WorkflowSchema,
-  value: unknown,
-  label: string,
-) {
-  try {
-    return Schema.encodeUnknownSync(schema)(
-      decodeStoredValue(schema, value, label),
-    )
-  } catch (error) {
-    throw new Error(`Invalid ${label}`, { cause: error })
-  }
-}

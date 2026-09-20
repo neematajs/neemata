@@ -8,7 +8,7 @@ import type {
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
-import { decodeSchemaValue, encodeStoredValue } from './codec.ts'
+import { encodeStoredValue } from './codec.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import { resolveTags } from './coordinator/codec.ts'
 import { parseDurationMs } from './duration.ts'
@@ -81,7 +81,8 @@ export function normalizeScheduleDefinition(
   const cadence = normalizeScheduleCadence(definition)
   const runnableKind = definition.runnable.kind
   const runnableName = definition.runnable.name
-  const input = decodeScheduleInput(definition)
+  const input = definition.input
+  const storedInput = encodeScheduleInput(definition)
   const nextRunAt =
     definition.immediately === true ? now : nextScheduleRunAt(cadence, now, now)
 
@@ -89,11 +90,7 @@ export function normalizeScheduleDefinition(
     name: definition.name,
     runnableKind,
     runnableName,
-    input: encodeStoredValue(
-      definition.runnable.input,
-      input,
-      `schedule input [${definition.name}]`,
-    ),
+    input: storedInput,
     tags: definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {},
     ...cadence,
     enabled: definition.enabled ?? true,
@@ -153,9 +150,9 @@ export async function startStoredScheduleRun(
   return run
 }
 
-function decodeScheduleInput(definition: ScheduleDefinition): unknown {
+function encodeScheduleInput(definition: ScheduleDefinition): unknown {
   try {
-    return decodeSchemaValue(
+    return encodeStoredValue(
       definition.runnable.input,
       definition.input,
       `schedule input [${definition.name}]`,

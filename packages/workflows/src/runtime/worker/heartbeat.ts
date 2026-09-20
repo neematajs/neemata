@@ -1,6 +1,7 @@
 import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { WorkflowCleanupTimeoutError } from '../handler.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { DEFAULT_LEASE_MS, isAttemptHeartbeatLeaseLost } from './loop.ts'
 
@@ -102,6 +103,8 @@ export async function runWithAttemptHeartbeat<T>(
   input: {
     readonly attemptExecutor: AttemptExecutor
     readonly claimed: ClaimedAttempt
+    readonly cleanupTimeoutMs?: number
+    readonly onFatal?: (error: unknown) => void
     readonly leaseMs?: number
     readonly signal?: AbortSignal
     readonly wakeEvents?: Pick<WorkflowWakeEvents, 'onCancellation'>
@@ -115,8 +118,10 @@ export async function runWithAttemptHeartbeat<T>(
   const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
   const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
   const attemptAbort = new AbortController()
-  const abortAttempt = (type: AttemptAbortReasonType) => {
+  let abortFailure: unknown
+  const abortAttempt = (type: AttemptAbortReasonType, failure: unknown) => {
     if (attemptAbort.signal.aborted) return
+    abortFailure = failure
     attemptAbort.abort(
       new WorkflowAttemptAbortError({
         type,
@@ -142,19 +147,18 @@ export async function runWithAttemptHeartbeat<T>(
         if (runStatus !== 'cancelling' && !isTerminalRunStatus(runStatus))
           return
         heartbeatFailed = true
-        abortAttempt('cancelled')
-        rejectHeartbeat(
-          new WorkflowAttemptCancellationObservedError({
-            runId: input.claimed.command.runId,
-            nodeName: input.claimed.command.nodeName,
-            attemptId: input.claimed.command.attemptId,
-          }),
-        )
+        const error = new WorkflowAttemptCancellationObservedError({
+          runId: input.claimed.command.runId,
+          nodeName: input.claimed.command.nodeName,
+          attemptId: input.claimed.command.attemptId,
+        })
+        abortAttempt('cancelled', error)
+        rejectHeartbeat(error)
       })
       .catch((error: unknown) => {
         if (!isAttemptHeartbeatLeaseLost(error)) return
         heartbeatFailed = true
-        abortAttempt('leaseLost')
+        abortAttempt('leaseLost', error)
         rejectHeartbeat(error)
       })
       .finally(() => {
@@ -188,7 +192,7 @@ export async function runWithAttemptHeartbeat<T>(
       : new Promise<never>((_resolve, reject) => {
           timeoutHandle = setTimeout(() => {
             const error = timeout.createError()
-            abortAttempt('timeout')
+            abortAttempt('timeout', error)
             reject(error)
           }, timeout.timeoutMs)
         })
@@ -199,14 +203,13 @@ export async function runWithAttemptHeartbeat<T>(
       ? undefined
       : new Promise<never>((_resolve, reject) => {
           const shutdown = () => {
-            abortAttempt('shutdown')
-            reject(
-              new WorkflowAttemptShutdownError({
-                runId: input.claimed.command.runId,
-                nodeName: input.claimed.command.nodeName,
-                attemptId: input.claimed.command.attemptId,
-              }),
-            )
+            const error = new WorkflowAttemptShutdownError({
+              runId: input.claimed.command.runId,
+              nodeName: input.claimed.command.nodeName,
+              attemptId: input.claimed.command.attemptId,
+            })
+            abortAttempt('shutdown', error)
+            reject(error)
           }
           if (shutdownSignal.aborted) {
             shutdown()
@@ -217,13 +220,28 @@ export async function runWithAttemptHeartbeat<T>(
             shutdownSignal.removeEventListener('abort', shutdown)
         })
 
+  const work = Promise.resolve().then(() =>
+    handler({ signal: attemptAbort.signal }),
+  )
+  work.catch(() => {})
   try {
-    const work = handler({ signal: attemptAbort.signal })
-    work.catch(() => {})
     const races = [work, heartbeatFailure]
     if (timeoutFailure !== undefined) races.push(timeoutFailure)
     if (shutdownFailure !== undefined) races.push(shutdownFailure)
-    return await Promise.race(races)
+    const output = await Promise.race(races)
+    // A success racing an engine abort must never reach a commit.
+    if (attemptAbort.signal.aborted) throw abortFailure
+    return output
+  } catch (error) {
+    if (error instanceof WorkflowCleanupTimeoutError) throw error
+    if (attemptAbort.signal.aborted) {
+      // The handler runtime bounds cleanup and retains unfinished fibers for the
+      // owner's final drain. An overrun must reach supervision, not become a retry.
+      await work.catch((failure: unknown) => {
+        if (failure instanceof WorkflowCleanupTimeoutError) throw failure
+      })
+    }
+    throw attemptAbort.signal.aborted ? abortFailure : error
   } finally {
     clearInterval(interval)
     unsubscribeCancellationWake?.()

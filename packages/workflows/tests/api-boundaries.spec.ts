@@ -1,14 +1,14 @@
-import { createValueInjectable } from '@nmtjs/core'
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import * as workflows from '../src/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const { defineTask, defineWorkflow, implementTask, implementWorkflow } =
   workflows
 
 describe('workflow API boundaries', () => {
-  const prefix = createValueInjectable('prefix')
+  const prefix = 'prefix'
 
   const embedding = defineTask({
     name: 'embedding.generate',
@@ -82,52 +82,55 @@ describe('workflow API boundaries', () => {
 
   it('retains definition-owned start metadata and implementation-owned node idempotency', () => {
     const taskImpl = implementTask(embedding, {
-      async handler(_ctx, input) {
-        return { id: input.text }
+      handler(input) {
+        return fromPromise(async () => {
+          return { id: input.text }
+        })
       },
     })
 
-    const workflowImpl = implementWorkflow(workflow, {
-      dependencies: { prefix },
-    })
-      .content(async (_ctx, input) => ({ text: input.scenario }), {
-        input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
-        idempotency: (ctx, _outputs, input) => [ctx.prefix, input.scenario],
+    const workflowImpl = implementWorkflow(workflow)
+      .content((input) => fromPromise(async () => ({ text: input.scenario })), {
+        input: (_outputs, input) => ({ scenario: input.scenario }),
+        idempotency: (_outputs, input) => [prefix, input.scenario],
       })
       .caseContent({
-        select: (_ctx, _outputs, input) => input.kind,
+        select: (_outputs, input) => input.kind,
         cases: ({ activity, workflow }) => ({
           normal: activity(
-            async (_ctx, input) => ({
-              kind: 'normal' as const,
-              text: input.text,
-            }),
+            (input) =>
+              fromPromise(async () => ({
+                kind: 'normal' as const,
+                text: input.text,
+              })),
             {
-              input: (_ctx, { content }) => ({ text: content.text }),
-              idempotency: (_ctx, { content }) => ['normal', content.text],
+              input: ({ content }) => ({ text: content.text }),
+              idempotency: ({ content }) => ['normal', content.text],
             },
           ),
           fallback: workflow(childWorkflow, {
-            input: (_ctx, _outputs, input) => ({ scenario: input.scenario }),
-            idempotency: (_ctx, _outputs, input) => [
-              'fallback',
-              input.scenario,
-            ],
+            input: (_outputs, input) => ({ scenario: input.scenario }),
+            idempotency: (_outputs, input) => ['fallback', input.scenario],
           }),
         }),
       })
       .embedding(embedding, {
-        input: (_ctx, { caseContent }) => ({ text: caseContent.text }),
-        idempotency: (_ctx, { caseContent }) => ['embedding', caseContent.text],
+        input: ({ caseContent }) => ({ text: caseContent.text }),
+        idempotency: ({ caseContent }) => ['embedding', caseContent.text],
       })
-      .saveCase(async (_ctx, input) => ({ caseId: input.embeddingId }), {
-        input: (_ctx, { embedding }, input) => ({
-          scenario: input.scenario,
-          embeddingId: embedding.id,
-        }),
-        idempotency: (_ctx, _outputs, input) => ['save', input.scenario],
-      })
-      .finish((_ctx, { saveCase }) => ({ caseId: saveCase.caseId }))
+      .saveCase(
+        (input) => fromPromise(async () => ({ caseId: input.embeddingId })),
+        {
+          input: ({ embedding }, input) => ({
+            scenario: input.scenario,
+            embeddingId: embedding.id,
+          }),
+          idempotency: (_outputs, input) => ['save', input.scenario],
+        },
+      )
+      .finish(({ saveCase }) =>
+        fromPromise(() => ({ caseId: saveCase.caseId })),
+      )
 
     expect(embedding.idempotency).toBeTypeOf('function')
     expect(workflow.idempotency).toBeTypeOf('function')
@@ -164,14 +167,16 @@ describe('workflow API boundaries', () => {
 
     expect(() =>
       implementWorkflow(workflow)
-        .content(async (_ctx, input) => ({ text: input.scenario }))
+        .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
-          select: (_ctx, _outputs, input) => input.kind,
+          select: (_outputs, input) => input.kind,
           cases: (({ activity }) => ({
-            normal: activity(async (_ctx, input) => ({
-              kind: 'normal' as const,
-              text: input.text,
-            })),
+            normal: activity((input) =>
+              fromPromise(async () => ({
+                kind: 'normal' as const,
+                text: input.text,
+              })),
+            ),
           })) as any,
         }),
     ).toThrow(
@@ -180,33 +185,39 @@ describe('workflow API boundaries', () => {
 
     expect(() =>
       implementWorkflow(workflow)
-        .content(async (_ctx, input) => ({ text: input.scenario }))
+        .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
-          select: (_ctx, _outputs, input) => input.kind,
+          select: (_outputs, input) => input.kind,
           cases: ({ activity, workflow }) => ({
-            normal: activity(async (_ctx, input) => ({
-              kind: 'normal' as const,
-              text: input.text,
-            })),
+            normal: activity((input) =>
+              fromPromise(async () => ({
+                kind: 'normal' as const,
+                text: input.text,
+              })),
+            ),
             fallback: workflow(childWorkflow),
-            extra: activity(async (_ctx) => ({
-              kind: 'normal' as const,
-              text: 'extra',
-            })),
+            extra: activity(() =>
+              fromPromise(async () => ({
+                kind: 'normal' as const,
+                text: 'extra',
+              })),
+            ),
           }),
         }),
     ).toThrow('Unknown workflow branch case implementation [caseContent.extra]')
 
     expect(() =>
       implementWorkflow(workflow)
-        .content(async (_ctx, input) => ({ text: input.scenario }))
+        .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
-          select: (_ctx, _outputs, input) => input.kind,
+          select: (_outputs, input) => input.kind,
           cases: ({ activity, workflow }) => ({
-            normal: activity(async (_ctx, input) => ({
-              kind: 'normal' as const,
-              text: input.text,
-            })),
+            normal: activity((input) =>
+              fromPromise(async () => ({
+                kind: 'normal' as const,
+                text: input.text,
+              })),
+            ),
             fallback: workflow(childWorkflow),
           }),
         })
@@ -236,11 +247,11 @@ describe('workflow API boundaries', () => {
       })
       .build()
 
-    expectTypeOf<workflows.TaskInput<typeof dateTask>>().toEqualTypeOf<string>()
+    expectTypeOf<workflows.TaskInput<typeof dateTask>>().toEqualTypeOf<Date>()
     expectTypeOf<workflows.TaskOutput<typeof dateTask>>().toEqualTypeOf<Date>()
     expectTypeOf<
       workflows.WorkflowInput<typeof dateWorkflow>
-    >().toEqualTypeOf<string>()
+    >().toEqualTypeOf<Date>()
     expectTypeOf<
       workflows.WorkflowOutput<typeof dateWorkflow>
     >().toEqualTypeOf<Date>()
@@ -252,46 +263,50 @@ describe('workflow API boundaries', () => {
     >().toEqualTypeOf<Date | undefined>()
 
     implementTask(dateTask, {
-      handler: async (_ctx, input) => {
-        expectTypeOf(input).toEqualTypeOf<Date>()
-        return input.toISOString()
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          expectTypeOf(input).toEqualTypeOf<Date>()
+          return input
+        }),
     })
 
     implementWorkflow(dateWorkflow)
       .normalize(
-        async (_ctx, input) => {
-          expectTypeOf(input).toEqualTypeOf<Date>()
-          return input.toISOString()
-        },
-        {
-          input: (_ctx, _outputs, input) => {
+        (input) =>
+          fromPromise(async () => {
             expectTypeOf(input).toEqualTypeOf<Date>()
-            return input.toISOString()
+            return input
+          }),
+        {
+          input: (_outputs, input) => {
+            expectTypeOf(input).toEqualTypeOf<Date>()
+            return input
           },
         },
       )
       .dates(dateTask, {
-        items: (_ctx, _outputs, input) => {
+        items: (_outputs, input) => {
           expectTypeOf(input).toEqualTypeOf<Date>()
-          return [input.toISOString()]
+          return [input]
         },
-        input: (_ctx, _outputs, item, input) => {
+        input: (_outputs, item, input) => {
           expectTypeOf(item).toEqualTypeOf<Date>()
           expectTypeOf(input).toEqualTypeOf<Date>()
-          return item.toISOString()
+          return item
         },
       })
-      .finish((_ctx, { normalize, dates }, input) => {
-        expectTypeOf(normalize).toEqualTypeOf<Date>()
-        expectTypeOf(dates.items[0]?.item).toExtend<Date | undefined>()
-        expectTypeOf(dates.items[0]?.output).toExtend<Date | undefined>()
-        expectTypeOf(input).toEqualTypeOf<Date>()
-        return normalize.toISOString()
-      })
+      .finish(({ normalize, dates }, input) =>
+        fromPromise(() => {
+          expectTypeOf(normalize).toEqualTypeOf<Date>()
+          expectTypeOf(dates.items[0]?.item).toExtend<Date | undefined>()
+          expectTypeOf(dates.items[0]?.output).toExtend<Date | undefined>()
+          expectTypeOf(input).toEqualTypeOf<Date>()
+          return normalize
+        }),
+      )
   })
 
-  it('keeps branch and parallel activity mappers encoded while handlers receive decoded input', () => {
+  it('keeps branch and parallel activity mappers and handlers decoded', () => {
     const workflow = defineWorkflow({
       name: 'case-codecs',
       input: Schema.DateFromString,
@@ -319,24 +334,26 @@ describe('workflow API boundaries', () => {
         select: () => 'date',
         cases: (h) => ({
           date: h.activity(
-            async (_ctx, input) => {
-              expectTypeOf(input).toEqualTypeOf<Date>()
-              return input.toISOString()
-            },
-            { input: (_ctx, _outputs, input) => input.toISOString() },
+            (input) =>
+              fromPromise(async () => {
+                expectTypeOf(input).toEqualTypeOf<Date>()
+                return input
+              }),
+            { input: (_outputs, input) => input },
           ),
         }),
       })
       .members((h) => ({
         date: h.activity(
-          async (_ctx, input) => {
-            expectTypeOf(input).toEqualTypeOf<Date>()
-            return input.toISOString()
-          },
-          { input: (_ctx, { choice }) => choice.toISOString() },
+          (input) =>
+            fromPromise(async () => {
+              expectTypeOf(input).toEqualTypeOf<Date>()
+              return input
+            }),
+          { input: ({ choice }) => choice },
         ),
       }))
-      .finish((_ctx, { members }) => members.date.toISOString())
+      .finish(({ members }) => fromPromise(() => members.date))
 
     expectTypeOf<
       Schema.Codec<string, string, { readonly service: 'decode' }>
