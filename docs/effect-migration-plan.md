@@ -701,7 +701,23 @@ maintainability findings are applied on top of the startup-shutdown change:
   interruptible `step`, replacing a stop check after every await. The worker entry
   starts initialization before its users and documents its two stop flags.
 
+An independent review of that cleanup reproduced two defects in it, now fixed:
+
+- The `step` helper checked for a stop only after its step. Returning from the
+  async helper yields, so a stop landing between two steps saw no runtimes and the
+  next step then started them; shutdown waited for readiness. `step` now also
+  checks before invoking its step, and the synchronous state transitions are steps
+  as well. A unit test sweeps the stop across twelve microtask offsets through the
+  real hooks and operation queue; offset 6 failed before the fix.
+- A shared `handlers` runtime erased its requirements, so one built from an empty
+  context was accepted where a `context` was rejected. `HandlerRuntime<R>` now
+  carries the services it provides through a contravariant `run`, the public
+  worker inputs require it, and a negative type test covers the path. The erased
+  form used below the entry points is the type every runtime is assignable to.
+
 Validation (`vp env exec`, unrestricted filesystem): workspace build and typecheck
-passed; workflows **569 passed, 2 skipped**; live PostgreSQL 18 integration **18
-passed**; preset **15** unit/type and **3** e2e passed; Neem **109** unit and **75**
-e2e passed; formatting clean; oxlint reports only the existing Deno warning.
+passed; workflows **569 passed, 2 skipped**; preset **15** unit/type and **3** e2e
+passed; Neem **121** unit and **75** e2e passed; formatting clean; oxlint reports
+only the existing Deno warning. Live PostgreSQL 18 integration (**18 passed**) ran
+before these two fixes and was not rerun: neither touches the adapter or engine
+behaviour it covers.
