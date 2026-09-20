@@ -1,8 +1,14 @@
 import type { MessagePort } from 'node:worker_threads'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { Logger, LoggingOptions } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
+import type {
+  DestinationStream,
+  Level,
+  Logger,
+  LoggerOptions,
+  StreamEntry,
+} from 'pino'
 import type { OutputOptions, RolldownOptions } from 'rolldown'
 
 export type {
@@ -71,7 +77,10 @@ export type NeemArtifactRegistry = {
 
 export type NeemEntryInput = NeemArtifactEntry
 
-export type NeemLoggerOptions = LoggingOptions
+export type NeemLoggerOptions = {
+  destinations?: Array<DestinationStream | StreamEntry<Level>>
+  pinoOptions?: LoggerOptions
+}
 
 export type NeemLoggerInput = NeemLoggerOptions | string | URL
 
@@ -318,13 +327,13 @@ export type NeemConfig = {
   /**
    * Logger configuration for Neem host/runtime logs.
    *
-   * Use a plain options object for simple JSON-compatible settings accepted by
-   * @nmtjs/core createLogger. Neem can serialize these settings into build
+   * Use a plain options object for simple JSON-compatible settings in
+   * NeemLoggerOptions. Neem can serialize these settings into build
    * metadata and create the default logger at runtime.
    *
    * Use a string or URL module specifier when logging setup needs runtime logic,
    * custom transports, streams, env-sensitive setup, or non-serializable values.
-   * The module must default-export an @nmtjs/core Logger.
+   * The module must default-export a Pino Logger.
    *
    * Do not create logger instances or open runtime resources directly in
    * neem.config.ts; config is build/dev declaration only.

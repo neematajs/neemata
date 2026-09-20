@@ -13,7 +13,7 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-type WorkspacePackage = 'common' | 'core' | 'neem' | 'type' | 'unplugin-labels'
+type WorkspacePackage = 'common' | 'neem'
 
 type CommandResult = {
   code: number | null
@@ -30,19 +30,10 @@ const neemPackageDir = resolve(e2eDir, '../..')
 const workspaceRoot = resolve(neemPackageDir, '../..')
 const consumerFixtureDir = resolve(e2eDir, 'fixtures/consumer')
 
-const stagedPackages: readonly WorkspacePackage[] = [
-  'common',
-  'type',
-  'core',
-  'unplugin-labels',
-  'neem',
-]
+const stagedPackages: readonly WorkspacePackage[] = ['common', 'neem']
 
 const internalPackageDirs = new Map<string, WorkspacePackage>([
   ['@nmtjs/common', 'common'],
-  ['@nmtjs/core', 'core'],
-  ['@nmtjs/type', 'type'],
-  ['@nmtjs/unplugin-labels', 'unplugin-labels'],
 ])
 
 afterEach(async () => {

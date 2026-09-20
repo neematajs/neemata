@@ -1,8 +1,8 @@
 import type { Server } from 'node:http'
 import { createServer } from 'node:http'
 
-import type { Logger } from '@nmtjs/core'
 import type { Registry, RegistryContentType } from '@nmtjs/prom-client'
+import type { Logger } from 'pino'
 import { Pushgateway, WorkerRegistry } from '@nmtjs/prom-client'
 
 import { metricsWorkerRegistry } from './registry.ts'

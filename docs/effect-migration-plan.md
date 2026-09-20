@@ -209,3 +209,26 @@ imports; the migrated application and full retained test suite pass.
   version handler behavior or codecs and is not a substitute for format compatibility.
 - Add Temporal codecs or new graph nodes only for a demonstrated application need.
 - No Effect RPC, HTTP, Redis, or workflow reimplementation belongs in the host.
+
+## Slice 1–2 validation — 2026-09-20
+
+Validated in the `dev/effect-migration` worktree with unrestricted filesystem access.
+All commands used `vp env exec`.
+
+| Check                                               | Result                                                                                                                                                                       |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm tsc -b tsconfig.build.json --pretty false`    | Full workspace build passed.                                                                                                                                                 |
+| `pnpm tsc -b tsconfig.json --noEmit --pretty false` | Full workspace typecheck passed.                                                                                                                                             |
+| Neem unit/integration suite                         | 108 tests passed, including logger destination routing and error causes.                                                                                                     |
+| Neem e2e suite                                      | 72 tests passed, including isolated package consumer, reload, failure recovery, and shutdown.                                                                                |
+| Nuxt unit and e2e suites                            | 17 + 11 tests passed; actual development and production apps exercised.                                                                                                      |
+| Metrics suite                                       | 19 tests passed.                                                                                                                                                             |
+| Vite playground smoke                               | Build, production, and development passed; both `/` and `/admin/` pages and script assets served, graceful shutdown verified. Temporary fixture removed.                     |
+| Published dependency audit                          | Neem, Vite, Nuxt, and metrics have no transitive workspace runtime/peer dependencies on retired packages. Generated JS and declarations have no core/type/labels references. |
+| `pnpm run fmt`, `git diff --check`                  | Passed.                                                                                                                                                                      |
+| `pnpm oxlint . --format=agent`                      | No errors; one existing warning in unchanged `transports/src/http-server/deno.ts:32`.                                                                                        |
+
+Vitest used `--reporter=agent` with each package's unit/e2e config (metrics uses
+`vitest.config.ts`). No Effect dependency or workflow implementation changed in
+these slices. The old framework remains available for existing applications until
+its later removal.

@@ -6,7 +6,6 @@ import { basename, dirname, resolve } from 'node:path'
 import type { MaybePromise } from '@nmtjs/common'
 import type { OutputOptions, PreRenderedAsset, RolldownOutput } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
-import injectableLabelsPlugin from '@nmtjs/unplugin-labels/rolldown'
 import * as rolldown from 'rolldown'
 
 import type {
@@ -398,9 +397,6 @@ function createRolldownOptions(
     external: createExternalMatcher(userOptions.external),
     plugins: [
       createNativeAddonPlugin(),
-      // before user plugins: injectables get labeled with their variable
-      // names and declaration sites, so diagnostics stay readable in bundles
-      injectableLabelsPlugin(),
       ...normalizePlugins(userOptions.plugins),
       createArtifactMetadataPlugin(input, metadata),
     ],
@@ -451,9 +447,6 @@ function createGroupedRolldownOptions(
     external: createExternalMatcher(userOptions.external),
     plugins: [
       createNativeAddonPlugin(),
-      // before user plugins: injectables get labeled with their variable
-      // names and declaration sites, so diagnostics stay readable in bundles
-      injectableLabelsPlugin(),
       ...normalizePlugins(userOptions.plugins),
       createArtifactMetadataPlugin(inputs, metadata),
     ],

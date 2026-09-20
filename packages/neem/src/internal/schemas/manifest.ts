@@ -54,8 +54,8 @@ const manifestLoggerSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('module'), file: manifestPathSchema }),
   z.strictObject({
     type: z.literal('options'),
-    // Logger options are @nmtjs/core LoggingOptions; their shape is owned by
-    // core and validated there when the logger is created.
+    // NeemLoggerOptions includes Pino-specific settings; the manifest only
+    // checks the surrounding shape and passes these to logger construction.
     options: z.optional(z.unknown()),
   }),
 ])

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { RuntimeEvent } from './protocol.ts'

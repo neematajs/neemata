@@ -43,13 +43,14 @@
   "dependencies": {
     "@dotenvx/dotenvx": "^2.23.0",
     "@nmtjs/common": "workspace:*",
-    "@nmtjs/core": "workspace:*",
-    "@nmtjs/unplugin-labels": "workspace:*",
     "citty": "^0.2.2",
     "consola": "^3.4.2",
     "defu": "^6.1.7",
     "hookable": "^6.1.1",
     "oxc-resolver": "^11.21.3",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.0.0",
+    "pino-std-serializers": "^7.0.0",
     "rolldown": "^1.2.4",
     "zod": "catalog:"
   },
@@ -62,6 +63,7 @@
     }
   },
   "devDependencies": {
+    "@nmtjs/core": "workspace:*",
     "@nmtjs/gateway": "workspace:*",
     "@nmtjs/metrics": "workspace:*",
     "@nmtjs/protocol": "workspace:*",
