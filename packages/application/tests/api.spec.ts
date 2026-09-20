@@ -1,4 +1,4 @@
-import { once } from '@nmtjs/common'
+import { onceAborted } from '@nmtjs/common'
 import { Container, createLogger, Scope } from '@nmtjs/core'
 import { GatewayInjectables } from '@nmtjs/gateway'
 import { ErrorCode } from '@nmtjs/protocol'
@@ -133,7 +133,7 @@ describe('ApplicationApi timeout', () => {
       dependencies: { signal: GatewayInjectables.rpcAbortSignal },
       handler: async (ctx) => {
         observed = ctx.signal
-        await once(ctx.signal, 'abort')
+        await onceAborted(ctx.signal)
         return 'done'
       },
     })

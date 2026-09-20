@@ -1,6 +1,47 @@
-import type { Pattern } from './types.ts'
+import type { Callback, Pattern } from './types.ts'
 
 export const noopFn = () => {}
+
+export function merge<T extends any[]>(...objects: T) {
+  return Object.assign({}, ...objects)
+}
+
+export function unique<T>(array: Iterable<T>): Iterable<T> {
+  return new Set(array).values()
+}
+
+export function defer<T extends Callback>(
+  cb: T,
+  ms = 1,
+  ...args: Parameters<T>
+): Promise<Awaited<ReturnType<T>>> {
+  return new Promise((resolve, reject) =>
+    globalThis.setTimeout(async () => {
+      try {
+        resolve(await cb(...args))
+      } catch (error) {
+        reject(error)
+      }
+    }, ms),
+  )
+}
+
+export function range(count: number, start = 0) {
+  let current = start
+  return {
+    [Symbol.iterator]() {
+      return {
+        next() {
+          if (current < count) {
+            return { done: false, value: current++ }
+          } else {
+            return { done: true, value: current }
+          }
+        },
+      }
+    },
+  }
+}
 
 export type Future<T = any> = PromiseWithResolvers<T>
 

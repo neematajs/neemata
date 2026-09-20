@@ -1,4 +1,5 @@
 import type { Callback } from './types.ts'
+import { once } from './utils.ts'
 
 /**
  * Combines AbortSignals into one, skipping null/undefined slots so callers can
@@ -26,6 +27,10 @@ export function onAbort<T extends Callback>(
   const listener = () => cb(reason ?? signal.reason)
   signal.addEventListener('abort', listener, { once: true })
   return () => signal.removeEventListener('abort', listener)
+}
+
+export function onceAborted(signal: globalThis.AbortSignal) {
+  return once(signal, 'abort')
 }
 
 export function isAbortError(error: any): error is Error {
