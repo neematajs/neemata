@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import type {
@@ -231,10 +231,13 @@ describe('workflow runtime interfaces', () => {
     >()
     expectTypeOf<RuntimeRunStatus>().toEqualTypeOf<WorkflowStatus>()
     expectTypeOf<
-      SchemaInput<ReturnType<typeof t.date>>
+      Awaited<ReturnType<WorkflowRuntimeClient['restart']>>
+    >().toEqualTypeOf<RunnableRun>()
+    expectTypeOf<
+      SchemaInput<typeof Schema.DateFromString>
     >().toEqualTypeOf<string>()
     expectTypeOf<
-      SchemaOutput<ReturnType<typeof t.date>>
+      SchemaOutput<typeof Schema.DateFromString>
     >().toEqualTypeOf<Date>()
     expectTypeOf<WorkflowRuntimeClient['start']>().toExtend<{
       <Workflow extends AnyWorkflowDefinition>(
@@ -292,8 +295,8 @@ describe('workflow runtime interfaces', () => {
   it('keeps two-arg handlers assignable while allowing lifecycle signals', () => {
     const task = defineTask({
       name: 'handler-lifecycle-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const lifecycleTask = implementTask(task, {
       handler: async (_ctx, input, lifecycle) => {
@@ -480,20 +483,20 @@ describe('workflow runtime interfaces', () => {
   it('routes workflow and task implementations by contract name', () => {
     const task = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
 
     const child = defineWorkflow({
       name: 'child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
 
     const parent = defineWorkflow({
       name: 'parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .workflow('child', child)
@@ -527,13 +530,13 @@ describe('workflow runtime interfaces', () => {
   it('rejects duplicate workflow and task implementation names', () => {
     const task = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
 
     expect(() =>
@@ -562,18 +565,18 @@ describe('workflow runtime interfaces', () => {
   it('requires route implementations to match the node declaration identity', () => {
     const expectedTask = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const sameNameTask = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const parent = defineWorkflow({
       name: 'parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', expectedTask)
       .build()
@@ -594,20 +597,20 @@ describe('workflow runtime interfaces', () => {
   it('reports missing routes from transitive child workflows', () => {
     const childTask = defineTask({
       name: 'child.task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const child = defineWorkflow({
       name: 'child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .task('childTask', childTask)
       .build()
     const parent = defineWorkflow({
       name: 'parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', child)
       .build()
@@ -630,28 +633,28 @@ describe('workflow runtime interfaces', () => {
   it('reports missing routes from branch, parallel, and map nodes', () => {
     const task = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const child = defineWorkflow({
       name: 'child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parent = defineWorkflow({
       name: 'parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ ok: t.boolean() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ ok: Schema.Boolean }),
     })
       .branch('choice', {
         cases: (helpers) => ({ embedding: helpers.task(task) }),
       })
       .parallel('fanout', (helpers) => ({ child: helpers.workflow(child) }))
       .mapTask('embeddings', task, {
-        item: t.object({ text: t.string() }),
+        item: Schema.Struct({ text: Schema.String }),
       })
       .mapWorkflow('children', child, {
-        item: t.object({ text: t.string() }),
+        item: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const parentImpl = implementWorkflow(parent)

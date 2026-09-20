@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import { defineWorkflow } from '../src/index.ts'
@@ -10,7 +10,7 @@ import {
 
 const workflow = defineWorkflow({
   name: 'in-memory-unique-workflow',
-  input: t.object({ value: t.string() }),
+  input: Schema.Struct({ value: Schema.String }),
 }).build()
 
 function createHarness() {

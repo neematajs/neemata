@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -48,8 +48,8 @@ function workflowRuntimeAdapterContract(
     it('starts workflow runs through the runtime client', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-contract-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -86,8 +86,8 @@ function workflowRuntimeAdapterContract(
     it('delays workflow starts without hiding the run row', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-delayed-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -114,8 +114,8 @@ function workflowRuntimeAdapterContract(
     it('keeps delayed idempotent workflow replays from waking early', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-delayed-idempotent-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -146,8 +146,8 @@ function workflowRuntimeAdapterContract(
     it('does not enqueue consumed idempotent workflow starts again', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-consumed-idempotent-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -183,8 +183,8 @@ function workflowRuntimeAdapterContract(
     it('cancels a queued workflow run end-to-end', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-cancel-queued-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const implementation = implementWorkflow(workflow).finish(
         (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -209,13 +209,13 @@ function workflowRuntimeAdapterContract(
     it('recursively cancels a child workflow run end-to-end', async () => {
       const childWorkflow = defineWorkflow({
         name: 'adapter-cancel-child-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const parentWorkflow = defineWorkflow({
         name: 'adapter-cancel-parent-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       })
         .workflow('child', childWorkflow)
         .build()
@@ -263,8 +263,8 @@ function workflowRuntimeAdapterContract(
     it('starts task runs through the runtime client', async () => {
       const task = defineTask({
         name: 'adapter-contract-task',
-        input: t.object({ text: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
       })
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -315,8 +315,8 @@ function workflowRuntimeAdapterContract(
     it('delays task starts without hiding the run row', async () => {
       const task = defineTask({
         name: 'adapter-delayed-task',
-        input: t.object({ text: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
       })
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -341,8 +341,8 @@ function workflowRuntimeAdapterContract(
     it('keeps delayed idempotent task replays parked', async () => {
       const task = defineTask({
         name: 'adapter-delayed-idempotent-task',
-        input: t.object({ text: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
       })
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -385,8 +385,8 @@ function workflowRuntimeAdapterContract(
     it('does not enqueue consumed idempotent task starts again', async () => {
       const task = defineTask({
         name: 'adapter-consumed-idempotent-task',
-        input: t.object({ text: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
       })
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -1760,12 +1760,12 @@ function workflowRuntimeAdapterContract(
     it('threads worker continuation errors into dead-letter metadata', async () => {
       const workflow = defineWorkflow({
         name: 'poison-worker-workflow',
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ ok: t.boolean() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ ok: Schema.Boolean }),
       })
         .activity('content', {
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ ok: t.boolean() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ ok: Schema.Boolean }),
         })
         .build()
       const implementation = implementWorkflow(workflow)

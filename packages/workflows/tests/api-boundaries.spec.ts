@@ -1,5 +1,5 @@
 import { createValueInjectable } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import * as workflows from '../src/index.ts'
@@ -12,45 +12,54 @@ describe('workflow API boundaries', () => {
 
   const embedding = defineTask({
     name: 'embedding.generate',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
     idempotency: (input) => ['embedding.generate', input.text],
   })
 
   const childWorkflow = defineWorkflow({
     name: 'child',
-    input: t.object({ scenario: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ scenario: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   }).build()
 
   const workflow = defineWorkflow({
     name: 'case-generation',
-    input: t.object({
-      kind: t.union(t.literal('normal'), t.literal('fallback')),
-      scenario: t.string(),
+    input: Schema.Struct({
+      kind: Schema.Union([
+        Schema.Literal('normal'),
+        Schema.Literal('fallback'),
+      ]),
+      scenario: Schema.String,
     }),
-    output: t.object({ caseId: t.string() }),
+    output: Schema.Struct({ caseId: Schema.String }),
     retention: '30d',
     idempotency: (input) => ['case-generation', input.scenario],
     tags: (input) => ({ kind: input.kind }),
   })
     .activity('content', {
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     .branch('caseContent', {
       cases: (helpers) => ({
         normal: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ kind: t.literal('normal'), text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({
+            kind: Schema.Literal('normal'),
+            text: Schema.String,
+          }),
         }),
         fallback: helpers.workflow(childWorkflow),
       }),
     })
     .task('embedding', embedding)
     .activity('saveCase', {
-      input: t.object({ scenario: t.string(), embeddingId: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({
+        scenario: Schema.String,
+        embeddingId: Schema.String,
+      }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
     .build()
 
@@ -149,8 +158,8 @@ describe('workflow API boundaries', () => {
   it('rejects missing, extra, and mismatched runnable implementations', () => {
     const otherTask = defineTask({
       name: 'embedding.other',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
 
     expect(() =>
@@ -210,20 +219,20 @@ describe('workflow API boundaries', () => {
   it('separates decode input from decoded handler and output types', () => {
     const dateTask = defineTask({
       name: 'date.normalize',
-      input: t.date(),
-      output: t.date(),
+      input: Schema.DateFromString,
+      output: Schema.DateFromString,
     })
     const dateWorkflow = defineWorkflow({
       name: 'date.workflow',
-      input: t.date(),
-      output: t.date(),
+      input: Schema.DateFromString,
+      output: Schema.DateFromString,
     })
       .activity('normalize', {
-        input: t.date(),
-        output: t.date(),
+        input: Schema.DateFromString,
+        output: Schema.DateFromString,
       })
       .mapTask('dates', dateTask, {
-        item: t.date(),
+        item: Schema.DateFromString,
       })
       .build()
 
@@ -280,5 +289,60 @@ describe('workflow API boundaries', () => {
         expectTypeOf(input).toEqualTypeOf<Date>()
         return normalize.toISOString()
       })
+  })
+
+  it('keeps branch and parallel activity mappers encoded while handlers receive decoded input', () => {
+    const workflow = defineWorkflow({
+      name: 'case-codecs',
+      input: Schema.DateFromString,
+      output: Schema.DateFromString,
+    })
+      .branch('choice', {
+        output: Schema.DateFromString,
+        cases: (h) => ({
+          date: h.activity({
+            input: Schema.DateFromString,
+            output: Schema.DateFromString,
+          }),
+        }),
+      })
+      .parallel('members', (h) => ({
+        date: h.activity({
+          input: Schema.DateFromString,
+          output: Schema.DateFromString,
+        }),
+      }))
+      .build()
+
+    implementWorkflow(workflow)
+      .choice({
+        select: () => 'date',
+        cases: (h) => ({
+          date: h.activity(
+            async (_ctx, input) => {
+              expectTypeOf(input).toEqualTypeOf<Date>()
+              return input.toISOString()
+            },
+            { input: (_ctx, _outputs, input) => input.toISOString() },
+          ),
+        }),
+      })
+      .members((h) => ({
+        date: h.activity(
+          async (_ctx, input) => {
+            expectTypeOf(input).toEqualTypeOf<Date>()
+            return input.toISOString()
+          },
+          { input: (_ctx, { choice }) => choice.toISOString() },
+        ),
+      }))
+      .finish((_ctx, { members }) => members.date.toISOString())
+
+    expectTypeOf<
+      Schema.Codec<string, string, { readonly service: 'decode' }>
+    >().not.toExtend<workflows.Schema>()
+    expectTypeOf<
+      Schema.Codec<string, string, never, { readonly service: 'encode' }>
+    >().not.toExtend<workflows.Schema>()
   })
 })

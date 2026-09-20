@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { defineSchedule, defineTask, defineWorkflow } from '../src/index.ts'
@@ -6,46 +6,49 @@ import { defineSchedule, defineTask, defineWorkflow } from '../src/index.ts'
 describe('workflow contract graph', () => {
   const embedding = defineTask({
     name: 'embedding.generate',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
 
   const fallbackWorkflow = defineWorkflow({
     name: 'fallback-content',
-    input: t.object({ scenario: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ scenario: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   }).build()
   const numberTask = defineTask({
     name: 'number-task',
-    input: t.object({ text: t.string() }),
-    output: t.object({ count: t.number() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ count: Schema.Number }),
   })
   const numberWorkflow = defineWorkflow({
     name: 'number-workflow',
-    input: t.object({ text: t.string() }),
-    output: t.object({ count: t.number() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ count: Schema.Number }),
   }).build()
 
   const workflow = defineWorkflow({
     name: 'case-generation',
-    input: t.object({
-      kind: t.union(t.literal('normal'), t.literal('fallback')),
-      scenario: t.string(),
+    input: Schema.Struct({
+      kind: Schema.Union([
+        Schema.Literal('normal'),
+        Schema.Literal('fallback'),
+      ]),
+      scenario: Schema.String,
     }),
-    output: t.object({ caseId: t.string() }),
+    output: Schema.Struct({ caseId: Schema.String }),
   })
     .activity('content', {
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     .task('embedding', embedding)
     .workflow('fallbackContent', fallbackWorkflow)
     .branch('caseContent', {
-      output: t.object({ text: t.string() }),
+      output: Schema.Struct({ text: Schema.String }),
       cases: (helpers) => ({
         normal: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         fallback: helpers.workflow(fallbackWorkflow),
       }),
@@ -77,15 +80,15 @@ describe('workflow contract graph', () => {
       name: 'metadata-task',
       title: 'Metadata task',
       description: 'Task description',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const metadataWorkflow = defineWorkflow({
       name: 'metadata-child',
       title: 'Metadata child workflow',
       description: 'Child workflow description',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
 
     expect(metadataTask.title).toBe('Metadata task')
@@ -95,14 +98,14 @@ describe('workflow contract graph', () => {
       name: 'metadata-parent',
       title: 'Metadata parent workflow',
       description: 'Parent workflow description',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('activityNode', {
         title: 'Activity node',
         description: 'Activity node description',
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .task('taskNode', metadataTask, {
         title: 'Task node',
@@ -115,13 +118,13 @@ describe('workflow contract graph', () => {
       .branch('branchNode', {
         title: 'Branch node',
         description: 'Branch node description',
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           inline: helpers.activity({
             title: 'Inline case',
             description: 'Inline case description',
-            input: t.object({ text: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
           taskCase: helpers.task(metadataTask, {
             title: 'Task case',
@@ -139,8 +142,8 @@ describe('workflow contract graph', () => {
           inline: helpers.activity({
             title: 'Parallel inline case',
             description: 'Parallel inline case description',
-            input: t.object({ text: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ text: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
           taskCase: helpers.task(metadataTask, {
             title: 'Parallel task case',
@@ -159,12 +162,12 @@ describe('workflow contract graph', () => {
       .mapTask('mapTaskNode', metadataTask, {
         title: 'Map task node',
         description: 'Map task node description',
-        item: t.object({ text: t.string() }),
+        item: Schema.Struct({ text: Schema.String }),
       })
       .mapWorkflow('mapWorkflowNode', metadataWorkflow, {
         title: 'Map workflow node',
         description: 'Map workflow node description',
-        item: t.object({ text: t.string() }),
+        item: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -209,16 +212,16 @@ describe('workflow contract graph', () => {
 
     const withoutMetadata = defineWorkflow({
       name: 'metadata-free',
-      input: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
     })
       .activity('plainActivity', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .parallel('plainParallel', (helpers) => ({
         plainCase: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
       }))
       .build()
@@ -234,11 +237,11 @@ describe('workflow contract graph', () => {
   it('rejects converged branch task and workflow cases with mismatched outputs', () => {
     defineWorkflow({
       name: 'invalid-converged-branch',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           // @ts-expect-error task output must match declared branch output
           task: helpers.task(numberTask),

@@ -1,8 +1,8 @@
 # Neemata × Effect migration
 
 Date: 2026-09-21
-Status: migration direction approved; implementation follows in slices 2–6.
-The decoded-Type decision below supersedes the earlier Encoded submission/mapper decision.
+Status: slices 1–4 implemented and reviewed; GO for slice 5. The decoded-Type
+decision below supersedes the earlier Encoded submission/mapper decision.
 Baseline: `b2602ae0be76e92dfc06f0392977263c2883ff9c` (`main`).
 
 This plan supersedes [Application Interfaces](application-interfaces-plan.md).
@@ -347,3 +347,106 @@ proof's per-call session HTTP hop.
 
 **Gate:** the two preset blockers are fixed and the host limitation is explicit.
 Conditional go for slice 4; production readiness still requires the follow-ups above.
+
+## Slice 4 implementation — 2026-09-20
+
+Work is in `/Users/den/.codex/worktrees/effect-migration/core` on
+`dev/effect-migration`. The workflows package now consumes stable `effect/Schema`
+with the exact `4.0.0-rc.116` peer/development pin. Its direct `@nmtjs/type`
+dependency is removed, and declarations, tests, and benchmarks use native Effect
+schemas. The core DI and async handler execution boundary remain for slice 5.
+
+Durable payloads use `Schema.toCodecJson`. Root and scheduled inputs, task/activity
+inputs and outputs, map items, child-run payloads, and memoized node outputs now
+cross explicit encode/decode boundaries. The submission/mapper convention from
+this slice is superseded by slice 5's decoded-Type decision: all typed APIs use
+Type and JSON encoding is engine-internal. History reads stored payloads without
+definitions; restart decodes stored input before submission. Uniqueness joins
+decode the actual stored run.
+
+Two correctness fixes were necessary for that boundary:
+
+- Activity descriptors for branches and parallel members preserved transforming
+  schema boundaries. Slice 5 removes the temporary mapper/handler type distinction
+  because both now use decoded Type.
+- PostgreSQL projections distinguish SQL NULL from JSON null. Presence is carried
+  only in query results and consumed by row mapping; it is not a new persisted
+  field or format marker. This preserves null-valued node inputs across re-entry
+  and allows `Schema.Null` and `Schema.Undefined` to round trip.
+
+The existing plain-JSON regression fixtures retain their payload expectations.
+Transformed representations are documented in
+[`packages/workflows/README.md`](../packages/workflows/README.md#schema-codecs):
+Date values persist as ISO strings, `NumberFromString` as a JSON string rather
+than the former decoded number, and explicit Undefined as JSON null. Untyped rich
+values cannot be reconstructed and are rejected at persistence boundaries instead
+of silently becoming different values. Custom codecs must run synchronously,
+require no services, and support Effect's JSON derivation.
+
+No stored-format version, legacy-run restriction, retry/restart eligibility change,
+graph guard, database schema migration, or new worker compatibility mechanism was
+added. Existing-data compatibility remains a release assessment in slice 6. The
+CaseNetwork proof and original checkout were not changed by this slice.
+
+Fresh validation (all commands through `vp env exec`):
+
+| Check                                                                                  | Result                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm tsc -b tsconfig.build.json --pretty false`                                       | Full workspace build passed.                                                                                                                                                                                                 |
+| `pnpm tsc -b tsconfig.json --noEmit --pretty false`                                    | Full workspace typecheck passed, including the branch/parallel codec boundary and rejection of service-requiring schemas.                                                                                                    |
+| `pnpm vitest run --config vitest.config.ts --reporter=agent` from `packages/workflows` | 30 files passed; 540 tests passed, 2 existing skips.                                                                                                                                                                         |
+| New codec regression suite (included above)                                            | 16 tests across memory and PostgreSQL via PGlite: every node kind, separate coordination/execution passes, automatic/manual retry, restart, joins, schedules, JSON null/Undefined, and rejection of untyped non-JSON output. |
+| `pnpm oxlint . --format=agent`                                                         | No errors; only the existing Deno transport warning.                                                                                                                                                                         |
+| `pnpm run fmt`, formatting check, `git diff --check`                                   | Passed.                                                                                                                                                                                                                      |
+
+The null-valued PostgreSQL regression failed before the projection fix and passed
+afterwards. An existing race-injection test matched only bare `SELECT *`; its hook
+now recognizes the run-read boundary with additional projected columns, and the
+concurrent-completion protection test passes. Live-service PostgreSQL integration
+specs were typechecked but not run in this slice; database-backed execution used
+PGlite. No deployment, commit, or push was performed.
+
+**Status:** slice 4 complete. Slice 5 is next; stored-format versioning and the other
+deferred engine capabilities remain outside the migration scope.
+
+## Slice 4 review follow-up — 2026-09-20
+
+The output-less child regression was reproduced independently: both parallel and
+mapWorkflow parents completed with memory storage but failed after PostgreSQL
+serialized their aggregates and dropped undefined output keys. Untyped aggregate
+output fields now use `Schema.optionalKey(Schema.Unknown)`; declared outputs remain
+required. Separate PGlite tests exercise each node through a later continuation,
+and a JSON-round-trip negative test protects required declared outputs. The memory
+store remains an in-memory adapter, not a serialization simulator.
+
+The smaller findings are also addressed:
+
+- Parallel/map output codecs are cached per immutable node declaration. Leaf/case
+  codecs retain their existing schema cache. Values are still decoded per pass;
+  this removes repeated schema construction, not the cost of traversing a large map.
+- `restart()` now returns the existing decoded `RunnableRun` model, with the
+  incorrect `StoredRun` casts removed. Its runtime behavior and eligibility are
+  unchanged. A type assertion covers the public return contract.
+- Removed the stray dispatch-object blank lines.
+
+The slice-5 decoded-Type convention supersedes the earlier Encoded-mapper decision:
+all typed submissions, handlers, finish results, mappers, map items and schedules
+carry Type; persistence encodes once and untyped history retains stored JSON.
+The README records that custom
+JSON derivation failures are detected with actual values at runtime, and that an
+explicit undefined optional struct field stores as null while an absent key stays
+absent. A registration-time probe cannot validate arbitrary codecs without suitable
+input values; applications should test representative values.
+
+Slice 6 now requires a drain and exclusion of old writers at cutover. Re-entry decode
+errors are terminal, and draining does not migrate retained history. Historical
+codec compatibility must be assessed separately before resubmission. Format
+versioning and retry/restart restrictions remain deferred.
+
+Fresh validation: the full workspace build and typecheck passed. All 30 workflow
+test files passed: **545 tests passed, 2 existing skips**, including 21 codec tests.
+The two new PostgreSQL regressions failed before the fix and passed afterwards.
+Full oxlint reports only the existing Deno transport warning. Formatting and
+`git diff --check` passed. Live-service integration suites were not rerun; the
+PostgreSQL regression coverage used PGlite. Work remains uncommitted in
+`dev/effect-migration`; slice 5 implementation has not started.

@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type {
@@ -52,24 +52,24 @@ describe.skipIf(!postgresTarget.url)(
       const container = createTestContainer()
       const childWorkflow = defineWorkflow({
         name: createTestName('postgres-retention-child'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }).build()
       const parentWorkflow = defineWorkflow({
         name: createTestName('postgres-retention-parent'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .workflow('child', childWorkflow)
         .build()
       const liveWorkflow = defineWorkflow({
         name: createTestName('postgres-retention-live'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('hold', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const childImpl = implementWorkflow(childWorkflow).finish(
@@ -165,29 +165,29 @@ describe.skipIf(!postgresTarget.url)(
       const effects = new Map<string, number>()
       const task = defineTask({
         name: createTestName('postgres-effect-task'),
-        input: t.object({ runKey: t.string(), item: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ runKey: Schema.String, item: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
       })
       const workflow = defineWorkflow({
         name: createTestName('postgres-effect-workflow'),
-        input: t.object({
-          runKey: t.string(),
-          items: t.array(t.string()),
+        input: Schema.Struct({
+          runKey: Schema.String,
+          items: Schema.Array(Schema.String),
         }),
-        output: t.object({ count: t.number() }),
+        output: Schema.Struct({ count: Schema.Number }),
       })
         .activity('prepare', {
-          input: t.object({ runKey: t.string() }),
-          output: t.object({ prefix: t.string() }),
+          input: Schema.Struct({ runKey: Schema.String }),
+          output: Schema.Struct({ prefix: Schema.String }),
         })
         .mapTask('items', task, {
-          item: t.string(),
+          item: Schema.String,
 
           concurrency: 3,
         })
         .activity('finalize', {
-          input: t.object({ runKey: t.string(), count: t.number() }),
-          output: t.object({ count: t.number() }),
+          input: Schema.Struct({ runKey: Schema.String, count: Schema.Number }),
+          output: Schema.Struct({ count: Schema.Number }),
         })
         .build()
       const taskImpl = implementTask(task, {
@@ -258,12 +258,12 @@ describe.skipIf(!postgresTarget.url)(
       let calls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-crash-redelivery-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('content', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
@@ -318,12 +318,12 @@ describe.skipIf(!postgresTarget.url)(
       let calls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-heartbeat-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('content', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
@@ -386,12 +386,12 @@ describe.skipIf(!postgresTarget.url)(
       })
       const workflow = defineWorkflow({
         name: createTestName('postgres-lease-loss-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('content', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
@@ -475,18 +475,18 @@ describe.skipIf(!postgresTarget.url)(
       })
       const childWorkflow = defineWorkflow({
         name: createTestName('postgres-cancel-child'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('slow', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const parentWorkflow = defineWorkflow({
         name: createTestName('postgres-cancel-parent'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .workflow('child', childWorkflow)
         .build()
@@ -591,12 +591,12 @@ describe.skipIf(!postgresTarget.url)(
       })
       const workflow = defineWorkflow({
         name: createTestName('postgres-cancel-signal-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('slow', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const workflowImpl = implementWorkflow(workflow)
@@ -674,8 +674,8 @@ describe.skipIf(!postgresTarget.url)(
       let finishCalls = 0
       const workflow = defineWorkflow({
         name: createTestName('postgres-contention-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
         (_ctx, _outputs, input) => {
@@ -734,8 +734,8 @@ describe.skipIf(!postgresTarget.url)(
       const container = createTestContainer()
       const workflow = defineWorkflow({
         name: createTestName('postgres-scheduled-once'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
         (_ctx, _outputs, input) => ({ text: input.text }),
@@ -775,8 +775,8 @@ describe.skipIf(!postgresTarget.url)(
       const container = createTestContainer()
       const workflow = defineWorkflow({
         name: createTestName('postgres-disabled-schedule-workflow'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
         (_ctx, _outputs, input) => ({ text: input.text }),
@@ -820,8 +820,8 @@ describe.skipIf(!postgresTarget.url)(
       const container = createTestContainer()
       const workflow = defineWorkflow({
         name: createTestName('postgres-delayed-start'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }).build()
       const workflowImpl = implementWorkflow(workflow).finish(
         (_ctx, _outputs, input) => ({ text: input.text }),

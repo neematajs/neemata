@@ -5,9 +5,9 @@ import { promisify } from 'node:util'
 
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
 import { getTableName } from 'drizzle-orm'
 import { getTableConfig } from 'drizzle-orm/pg-core'
+import * as Schema from 'effect/Schema'
 import { expectTypeOf, test, expect } from 'vitest'
 
 import {
@@ -131,7 +131,8 @@ function completeRunAfterRunLoad(
     ): Promise<WorkflowPostgresQueryResult<T>> {
       const shouldComplete =
         !completed &&
-        /SELECT\s+\*\s+FROM\s+workflow_runs\s+WHERE\s+id\s+=\s+\$1/i.test(
+        // Match the read boundary regardless of the projected payload flags.
+        /^\s*SELECT\b[\s\S]+?\bFROM\s+workflow_runs\s+WHERE\s+id\s+=\s+\$1/i.test(
           sql,
         ) &&
         params[0] === runId
@@ -1340,8 +1341,8 @@ test('postgres workflow worker survives a release racing a fresh continue', asyn
   const runtime = createPostgresWorkflowRuntime({ connection })
   const workflow = defineWorkflow({
     name: 'postgres-release-race-worker',
-    input: t.object({ text: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   }).build()
   const implementation = implementWorkflow(workflow).finish(
     (_ctx, _outputs, input) => input,
@@ -2248,8 +2249,8 @@ test('rolls back workflow start when initial command insert fails', async () => 
   const client = createWorkflowRuntimeClient(runtime)
   const workflow = defineWorkflow({
     name: 'atomic-workflow-start',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   }).build()
 
   await expect(client.start(workflow, { value: 'alpha' })).rejects.toThrow(
@@ -2275,8 +2276,8 @@ test('rolls back task start when initial command insert fails', async () => {
   const client = createWorkflowRuntimeClient(runtime)
   const task = defineTask({
     name: 'atomic-task-start',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
 
   await expect(client.start(task, { text: 'alpha' })).rejects.toThrow(

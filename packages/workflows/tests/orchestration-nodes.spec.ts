@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
@@ -6,44 +6,50 @@ import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
 describe('workflow orchestration nodes', () => {
   const embeddingTask = defineTask({
     name: 'embedding.generate',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
 
   const childWorkflow = defineWorkflow({
     name: 'child-content',
-    input: t.object({ scenario: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ scenario: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   }).build()
 
   const workflow = defineWorkflow({
     name: 'curriculum-generation',
-    input: t.object({
-      scenarios: t.array(t.object({ id: t.string(), text: t.string() })),
+    input: Schema.Struct({
+      scenarios: Schema.Array(
+        Schema.Struct({ id: Schema.String, text: Schema.String }),
+      ),
     }),
-    output: t.object({ ok: t.boolean() }),
+    output: Schema.Struct({ ok: Schema.Boolean }),
   })
     .activity('load', {
-      input: t.object({
-        scenarios: t.array(t.object({ id: t.string(), text: t.string() })),
+      input: Schema.Struct({
+        scenarios: Schema.Array(
+          Schema.Struct({ id: Schema.String, text: Schema.String }),
+        ),
       }),
-      output: t.object({
-        scenarios: t.array(t.object({ id: t.string(), text: t.string() })),
+      output: Schema.Struct({
+        scenarios: Schema.Array(
+          Schema.Struct({ id: Schema.String, text: Schema.String }),
+        ),
       }),
     })
     .parallel('sections', (helpers) => ({
       summary: helpers.activity({
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }),
       embedding: helpers.task(embeddingTask),
       child: helpers.workflow(childWorkflow),
     }))
     .mapWorkflow('caseRuns', childWorkflow, {
-      item: t.object({ id: t.string(), text: t.string() }),
+      item: Schema.Struct({ id: Schema.String, text: Schema.String }),
     })
     .mapTask('embeddings', embeddingTask, {
-      item: t.object({ id: t.string(), text: t.string() }),
+      item: Schema.Struct({ id: Schema.String, text: Schema.String }),
     })
     .build()
 
@@ -73,7 +79,10 @@ describe('workflow orchestration nodes', () => {
         items: (_ctx, { load }) => load.scenarios,
         input: (_ctx, _outputs, item) => {
           const text: string = item.text
-          expectTypeOf(item).toEqualTypeOf<{ id: string; text: string }>()
+          expectTypeOf(item).toEqualTypeOf<{
+            readonly id: string
+            readonly text: string
+          }>()
           return { scenario: text }
         },
       })
@@ -126,10 +135,10 @@ describe('workflow orchestration nodes', () => {
     expect(() =>
       defineWorkflow({
         name: 'invalid-map-task-concurrency',
-        input: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
       })
         .mapTask('embeddings', embeddingTask, {
-          item: t.string(),
+          item: Schema.String,
 
           concurrency: 0,
         })
@@ -139,10 +148,10 @@ describe('workflow orchestration nodes', () => {
     expect(() =>
       defineWorkflow({
         name: 'invalid-map-workflow-concurrency',
-        input: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
       })
         .mapWorkflow('children', childWorkflow, {
-          item: t.string(),
+          item: Schema.String,
 
           concurrency: Number.NaN,
         })

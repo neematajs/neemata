@@ -16,6 +16,7 @@ export type StoredError = {
   readonly cause?: StoredError
 }
 
+/** User payloads in stored records use their codec's JSON encoding, not decoded Types. */
 export type StoredRun = {
   readonly id: string
   readonly kind: RunKind

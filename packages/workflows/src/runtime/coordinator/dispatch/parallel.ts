@@ -13,7 +13,8 @@ import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt, dispatchActivityAttempt } from '../attempt.ts'
 import { loadChildRuns } from '../children.ts'
 import {
-  decodeWorkflowUserSchemaValue,
+  encodeWorkflowInput,
+  decodeWorkflowNodeOutput,
   getWorkflowNodeDeclaration,
   resolveIdempotency,
 } from '../codec.ts'
@@ -167,7 +168,7 @@ export async function dispatchParallelNode(
         }
 
         const memberDeclaration = declaration.cases[memberKey]!
-        const nodeInput = decodeWorkflowUserSchemaValue(
+        const nodeInput = encodeWorkflowInput(
           member.target.input,
           member.input
             ? runWorkflowUserCallback(() =>
@@ -179,6 +180,7 @@ export async function dispatchParallelNode(
               )
             : input.run.input,
           `${member.kind} input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
+          !member.input,
         )
         const idempotencyKey = resolveIdempotency(
           member.idempotency,
@@ -247,10 +249,11 @@ export async function dispatchParallelNode(
               member.input!(input.workflowCtx, input.outputs, input.run.input),
             )
           : input.run.input
-        nodeInput = decodeWorkflowUserSchemaValue(
+        nodeInput = encodeWorkflowInput(
           activity.input,
           value,
           `activity input [${input.workflow.workflow.name}.${input.node.name}.${memberKey}]`,
+          !member.input,
         )
         idempotencyKey = resolveIdempotency(
           member.idempotency,
@@ -310,7 +313,14 @@ export async function dispatchParallelNode(
     })
     return await input.advance({
       ...input,
-      outputs: { ...input.outputs, [input.node.name]: outputs },
+      outputs: {
+        ...input.outputs,
+        [input.node.name]: decodeWorkflowNodeOutput(
+          input.workflow,
+          input.node.name,
+          outputs,
+        ),
+      },
     })
   }
 
@@ -352,7 +362,7 @@ async function redispatchParallelChildRun(
     runCoordinationExecutor: input.runCoordinationExecutor,
     taskName: taskTarget.name,
     taskRunId: childRun.id,
-    taskInput: childRun.input ?? input.run.input,
+    taskInput: childRun.input,
     idempotencyKey: childRun.idempotencyKey,
     timeout: taskDeclaration?.timeout ?? taskTarget.timeout,
   })

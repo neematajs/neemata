@@ -1,5 +1,5 @@
 import { Container, createLogger, createValueInjectable } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -30,8 +30,8 @@ describe('workflow runtime coordinator', () => {
   it('starts a workflow run and enqueues continuation', async () => {
     const workflow = defineWorkflow({
       name: 'started-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
 
@@ -66,8 +66,8 @@ describe('workflow runtime coordinator', () => {
   it('computes workflow start tags and idempotency from its definition', async () => {
     const workflow = defineWorkflow({
       name: 'implemented-start-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
       tags: (input) => ({
         prefix: 'wf',
         scenario: input.scenario,
@@ -94,8 +94,8 @@ describe('workflow runtime coordinator', () => {
   it('computes task start idempotency from its definition', async () => {
     const task = defineTask({
       name: 'implemented-start-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
@@ -122,8 +122,8 @@ describe('workflow runtime coordinator', () => {
     vi.useFakeTimers()
     const workflow = defineWorkflow({
       name: 'lease-renewal-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     let enteredFinish!: () => void
     const finishStarted = new Promise<void>((resolve) => {
@@ -192,8 +192,8 @@ describe('workflow runtime coordinator', () => {
   it('does not complete a run after losing the run lease', async () => {
     const workflow = defineWorkflow({
       name: 'stale-lease-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     let finishEntered = false
     const implementation = implementWorkflow(workflow).finish(
@@ -334,12 +334,12 @@ describe('workflow runtime coordinator', () => {
   it('cancels the run when a node is cancelled', async () => {
     const workflow = defineWorkflow({
       name: 'cancelled-node-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -392,12 +392,12 @@ describe('workflow runtime coordinator', () => {
   it('cancels before failed-node handling when a cancelling run has a failed node', async () => {
     const workflow = defineWorkflow({
       name: 'guard-cancelling-before-failed',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -442,16 +442,16 @@ describe('workflow runtime coordinator', () => {
   it('fails before cancelled-node handling when a run has failed and cancelled nodes', async () => {
     const workflow = defineWorkflow({
       name: 'guard-failed-before-cancelled-node',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('failedContent', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .activity('cancelledContent', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -505,13 +505,13 @@ describe('workflow runtime coordinator', () => {
   it('cancels child task runs and deletes unclaimed child commands', async () => {
     const task = defineTask({
       name: 'cancel-child-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'cancel-child-task-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .build()
@@ -556,13 +556,13 @@ describe('workflow runtime coordinator', () => {
   it('drops a claimed child task attempt after parent cancellation', async () => {
     const task = defineTask({
       name: 'cancel-claimed-child-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'cancel-claimed-child-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .build()
@@ -630,13 +630,13 @@ describe('workflow runtime coordinator', () => {
   it('propagates child workflow cancellation up to the parent run', async () => {
     const childWorkflow = defineWorkflow({
       name: 'cancel-up-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'cancel-up-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -684,8 +684,8 @@ describe('workflow runtime coordinator', () => {
   it('fails the workflow run when start enqueue fails', async () => {
     const workflow = defineWorkflow({
       name: 'enqueue-failing-started-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const store = runtime.store
@@ -719,8 +719,8 @@ describe('workflow runtime coordinator', () => {
   it('fails the task run when initial attempt dispatch fails', async () => {
     const task = defineTask({
       name: 'dispatch-failing-started-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const runtime = createInMemoryWorkflowRuntime()
 
@@ -755,12 +755,12 @@ describe('workflow runtime coordinator', () => {
   it('dispatches an activity attempt, stores node input, and completes run after continuation', async () => {
     const workflow = defineWorkflow({
       name: 'case-generation',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -833,12 +833,12 @@ describe('workflow runtime coordinator', () => {
   it('does not dispatch an activity when createNode observes terminal state', async () => {
     const workflow = defineWorkflow({
       name: 'terminal-node-race-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -905,12 +905,12 @@ describe('workflow runtime coordinator', () => {
   it('propagates store errors inside dispatchers without failing the run as a user error', async () => {
     const workflow = defineWorkflow({
       name: 'dispatcher-store-error-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -954,12 +954,12 @@ describe('workflow runtime coordinator', () => {
   it('recovers an activity attempt after node input was stored without an attempt', async () => {
     const workflow = defineWorkflow({
       name: 'activity-attempt-recovery',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -1023,12 +1023,12 @@ describe('workflow runtime coordinator', () => {
   it('stores activity attempt idempotency from implementation mapper', async () => {
     const workflow = defineWorkflow({
       name: 'activity-idempotency-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -1072,12 +1072,12 @@ describe('workflow runtime coordinator', () => {
   it('passes the workflow run input to an activity input mapper', async () => {
     const workflow = defineWorkflow({
       name: 'activity-input-receives-run-input-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -1120,12 +1120,12 @@ describe('workflow runtime coordinator', () => {
   it('skips activity idempotency resolution when an attempt already exists', async () => {
     const workflow = defineWorkflow({
       name: 'activity-idempotency-replay-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -1180,13 +1180,13 @@ describe('workflow runtime coordinator', () => {
   it('stores child task run idempotency from implementation mapper', async () => {
     const task = defineTask({
       name: 'child-idempotency-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'child-task-idempotency-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .build()
@@ -1235,13 +1235,13 @@ describe('workflow runtime coordinator', () => {
   it('skips child task idempotency resolution when a child link already exists', async () => {
     const task = defineTask({
       name: 'child-idempotency-replay-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'child-task-idempotency-replay-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .build()
@@ -1298,13 +1298,13 @@ describe('workflow runtime coordinator', () => {
   it('skips child workflow idempotency resolution when a child link already exists', async () => {
     const childWorkflow = defineWorkflow({
       name: 'child-idempotency-replay-child-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'child-workflow-idempotency-replay-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -1372,13 +1372,13 @@ describe('workflow runtime coordinator', () => {
   it('re-enqueues an existing started child task attempt without duplicating commands', async () => {
     const task = defineTask({
       name: 'orphaned-child-attempt-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'orphaned-child-attempt-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('embedding', task)
       .build()
@@ -1472,22 +1472,22 @@ describe('workflow runtime coordinator', () => {
   it('ignores a continuation command whose workflow name does not match the stored run', async () => {
     const workflowA = defineWorkflow({
       name: 'stored-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const workflowB = defineWorkflow({
       name: 'command-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -1524,12 +1524,12 @@ describe('workflow runtime coordinator', () => {
     const prefix = createValueInjectable('handled')
     const workflow = defineWorkflow({
       name: 'activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -1604,22 +1604,25 @@ describe('workflow runtime coordinator', () => {
   it('runs a branch activity case and completes from selected output', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-workflow',
-      input: t.object({
-        kind: t.union(t.literal('normal'), t.literal('fallback')),
-        scenario: t.string(),
+      input: Schema.Struct({
+        kind: Schema.Union([
+          Schema.Literal('normal'),
+          Schema.Literal('fallback'),
+        ]),
+        scenario: Schema.String,
       }),
-      output: t.object({ text: t.string() }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
           fallback: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -1735,22 +1738,22 @@ describe('workflow runtime coordinator', () => {
   it('does not reselect or duplicate branch activity attempts on repeated continuation', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-dedupe',
-      input: t.object({
-        kind: t.literal('normal'),
-        scenario: t.string(),
+      input: Schema.Struct({
+        kind: Schema.Literal('normal'),
+        scenario: Schema.String,
       }),
-      output: t.object({ text: t.string() }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
           fallback: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -1831,15 +1834,15 @@ describe('workflow runtime coordinator', () => {
   it('preserves a started branch activity attempt without duplicating its command', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-redispatch-failure',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -1901,15 +1904,15 @@ describe('workflow runtime coordinator', () => {
   it('preserves a completed branch activity attempt without redispatching it', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-completed-redispatch-failure',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -1985,15 +1988,15 @@ describe('workflow runtime coordinator', () => {
   it('reuses original branch activity attempt input on repeated continuation', async () => {
     const workflow = defineWorkflow({
       name: 'branch-activity-input-reuse',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -2061,15 +2064,15 @@ describe('workflow runtime coordinator', () => {
   it('runs a branch activity case with an empty string key', async () => {
     const workflow = defineWorkflow({
       name: 'branch-empty-case',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           '': helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -2134,16 +2137,16 @@ describe('workflow runtime coordinator', () => {
   it('runs a branch task case and completes from selected output', async () => {
     const task = defineTask({
       name: 'branch.generate-summary',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'branch-task-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           summary: helpers.task(task),
         }),
@@ -2250,17 +2253,17 @@ describe('workflow runtime coordinator', () => {
   it('dispatches parallel activity members and completes with member outputs', async () => {
     const workflow = defineWorkflow({
       name: 'parallel-activity-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ summary: t.string(), review: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ summary: Schema.String, review: Schema.String }),
     })
       .parallel('sections', (helpers) => ({
         summary: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         review: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ status: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ status: Schema.String }),
         }),
       }))
       .build()
@@ -2391,17 +2394,17 @@ describe('workflow runtime coordinator', () => {
   it('does not complete a parallel node after only one activity member finishes', async () => {
     const workflow = defineWorkflow({
       name: 'parallel-activity-wait',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ ok: t.boolean() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ ok: Schema.Boolean }),
     })
       .parallel('sections', (helpers) => ({
         first: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         second: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
       }))
       .build()
@@ -2468,27 +2471,27 @@ describe('workflow runtime coordinator', () => {
   it('runs parallel activity, task, and child workflow members', async () => {
     const embeddingTask = defineTask({
       name: 'parallel.embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const childWorkflow = defineWorkflow({
       name: 'parallel-child-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const workflow = defineWorkflow({
       name: 'parallel-mixed-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({
-        summary: t.string(),
-        embeddingId: t.string(),
-        child: t.string(),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({
+        summary: Schema.String,
+        embeddingId: Schema.String,
+        child: Schema.String,
       }),
     })
       .parallel('sections', (helpers) => ({
         summary: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         embedding: helpers.task(embeddingTask),
         child: helpers.workflow(childWorkflow),
@@ -2647,18 +2650,18 @@ describe('workflow runtime coordinator', () => {
   it('preserves in-flight parallel siblings until all members settle', async () => {
     const childWorkflow = defineWorkflow({
       name: 'parallel-cancel-sibling-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const workflow = defineWorkflow({
       name: 'parallel-cancel-sibling-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ ok: t.boolean() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ ok: Schema.Boolean }),
     })
       .parallel('sections', (helpers) => ({
         fail: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         slow: helpers.workflow(childWorkflow),
       }))
@@ -2736,18 +2739,20 @@ describe('workflow runtime coordinator', () => {
   it('runs mapTask wait-all items as child task runs and preserves item order', async () => {
     const embeddingTask = defineTask({
       name: 'map.embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-task-workflow',
-      input: t.object({
-        specs: t.array(t.object({ id: t.string(), text: t.string() })),
+      input: Schema.Struct({
+        specs: Schema.Array(
+          Schema.Struct({ id: Schema.String, text: Schema.String }),
+        ),
       }),
-      output: t.object({ ids: t.array(t.string()) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.object({ id: t.string(), text: t.string() }),
+        item: Schema.Struct({ id: Schema.String, text: Schema.String }),
       })
       .build()
 
@@ -2884,16 +2889,16 @@ describe('workflow runtime coordinator', () => {
   it('preserves in-flight mapTask siblings after one child fails', async () => {
     const embeddingTask = defineTask({
       name: 'map.cancel-sibling-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-cancel-sibling-workflow',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ ids: t.array(t.string()) }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
     const taskImplementation = implementTask(embeddingTask, {
@@ -2977,16 +2982,16 @@ describe('workflow runtime coordinator', () => {
   it('bounds mapTask child run dispatch by node concurrency', async () => {
     const embeddingTask = defineTask({
       name: 'map.bounded-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-task-bounded-workflow',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ ids: t.array(t.string()) }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.string(),
+        item: Schema.String,
 
         concurrency: 2,
       })
@@ -3106,16 +3111,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapTask items and fails the parent after every item settles', async () => {
     const embeddingTask = defineTask({
       name: 'map.settled-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-task-settled-workflow',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ count: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ count: Schema.Number }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
 
@@ -3204,16 +3209,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapTask and waits for started task runs', async () => {
     const embeddingTask = defineTask({
       name: 'map.start-only-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-task-start-only-workflow',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ started: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ started: Schema.Number }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
 
@@ -3254,16 +3259,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapTask with concurrency retaining pending items until child completion', async () => {
     const embeddingTask = defineTask({
       name: 'map.start-only-batched-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-task-start-only-batched-workflow',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ started: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ started: Schema.Number }),
     })
       .mapTask('embeddings', embeddingTask, {
-        item: t.string(),
+        item: Schema.String,
 
         concurrency: 1,
       })
@@ -3333,16 +3338,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapWorkflow wait-all children on separate workers and preserves item order', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-child-content',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'map-workflow-parent',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ ids: t.array(t.string()) }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapWorkflow('children', childWorkflow, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
 
@@ -3473,16 +3478,16 @@ describe('workflow runtime coordinator', () => {
   it('bounds mapWorkflow child run dispatch by node concurrency', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-bounded-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'map-workflow-bounded-parent',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ ids: t.array(t.string()) }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapWorkflow('children', childWorkflow, {
-        item: t.string(),
+        item: Schema.String,
 
         concurrency: 2,
       })
@@ -3602,16 +3607,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapWorkflow children and fails the parent after every child settles', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-settled-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'map-workflow-settled-parent',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ count: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ count: Schema.Number }),
     })
       .mapWorkflow('children', childWorkflow, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
 
@@ -3681,16 +3686,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapWorkflow and waits for started workflow runs', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-start-only-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'map-workflow-start-only-parent',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ started: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ started: Schema.Number }),
     })
       .mapWorkflow('children', childWorkflow, {
-        item: t.string(),
+        item: Schema.String,
       })
       .build()
 
@@ -3731,16 +3736,16 @@ describe('workflow runtime coordinator', () => {
   it('runs mapWorkflow with concurrency retaining pending items until child completion', async () => {
     const childWorkflow = defineWorkflow({
       name: 'map-start-only-batched-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'map-workflow-start-only-batched-parent',
-      input: t.object({ texts: t.array(t.string()) }),
-      output: t.object({ started: t.number() }),
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ started: Schema.Number }),
     })
       .mapWorkflow('children', childWorkflow, {
-        item: t.string(),
+        item: Schema.String,
 
         concurrency: 1,
       })
@@ -3810,16 +3815,16 @@ describe('workflow runtime coordinator', () => {
   it('reuses original branch child task run input on repeated continuation', async () => {
     const task = defineTask({
       name: 'branch.stable-summary',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'branch-task-input-reuse',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           summary: helpers.task(task),
         }),
@@ -3899,16 +3904,16 @@ describe('workflow runtime coordinator', () => {
   it('preserves a started branch child task attempt without duplicating its command', async () => {
     const task = defineTask({
       name: 'branch.redispatch-summary',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'branch-task-redispatch-failure',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           summary: helpers.task(task),
         }),
@@ -3974,16 +3979,16 @@ describe('workflow runtime coordinator', () => {
   it('runs a branch child workflow case on a separate worker', async () => {
     const childWorkflow = defineWorkflow({
       name: 'branch-child-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'branch-child-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           child: helpers.workflow(childWorkflow),
         }),
@@ -4074,15 +4079,15 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when a branch selects an unknown case', async () => {
     const workflow = defineWorkflow({
       name: 'branch-unknown-case',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           normal: helpers.activity({
-            input: t.object({ scenario: t.string() }),
-            output: t.object({ text: t.string() }),
+            input: Schema.Struct({ scenario: Schema.String }),
+            output: Schema.Struct({ text: Schema.String }),
           }),
         }),
       })
@@ -4129,8 +4134,8 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when workflow finish throws', async () => {
     const workflow = defineWorkflow({
       name: 'finish-throws-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(() => {
       throw new Error('finish failed')
@@ -4165,12 +4170,12 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when an activity input mapper throws', async () => {
     const workflow = defineWorkflow({
       name: 'activity-input-throws-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -4211,12 +4216,12 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when mapped activity input fails its schema', async () => {
     const workflow = defineWorkflow({
       name: 'activity-input-schema-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     let handlerCalled = false
@@ -4266,12 +4271,12 @@ describe('workflow runtime coordinator', () => {
   it('decodes mapped activity input before resolving activity idempotency', async () => {
     const workflow = defineWorkflow({
       name: 'activity-input-decode-before-idempotency-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     let idempotencyCalls = 0
@@ -4319,12 +4324,12 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when an activity idempotency mapper throws', async () => {
     const workflow = defineWorkflow({
       name: 'activity-idempotency-throws-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -4366,16 +4371,16 @@ describe('workflow runtime coordinator', () => {
   it('fails the run when a map items mapper throws', async () => {
     const task = defineTask({
       name: 'items-throws-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'map-items-throws-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ ids: t.array(t.string()) }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
     })
       .mapTask('embeddings', task, {
-        item: t.object({ text: t.string() }),
+        item: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -4419,16 +4424,16 @@ describe('workflow runtime coordinator', () => {
   it('re-enqueues a branch child workflow when enqueue fails after link creation', async () => {
     const childWorkflow = defineWorkflow({
       name: 'branch-recover-child-enqueue-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'branch-recover-child-enqueue-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           child: helpers.workflow(childWorkflow),
         }),
@@ -4520,16 +4525,16 @@ describe('workflow runtime coordinator', () => {
   it('retries parent wake for a completed branch child workflow', async () => {
     const childWorkflow = defineWorkflow({
       name: 'branch-recover-parent-wake-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'branch-recover-parent-wake-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           child: helpers.workflow(childWorkflow),
         }),
@@ -4632,16 +4637,16 @@ describe('workflow runtime coordinator', () => {
   it('does not remap branch child workflow input after link exists', async () => {
     const childWorkflow = defineWorkflow({
       name: 'branch-remap-child',
-      input: t.unknown(),
-      output: t.object({ text: t.string() }),
+      input: Schema.Undefined,
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'branch-remap-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .branch('content', {
-        output: t.object({ text: t.string() }),
+        output: Schema.Struct({ text: Schema.String }),
         cases: (helpers) => ({
           child: helpers.workflow(childWorkflow),
         }),
@@ -4698,7 +4703,7 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
     const childLink = snapshot?.children[0]
     expect(mapCalls).toBe(1)
-    expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
+    expect(snapshot?.nodes[0]).toHaveProperty('input', null)
     expect(snapshot?.children).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
       {
@@ -4715,12 +4720,12 @@ describe('workflow runtime coordinator', () => {
   it('releases a claimed activity attempt when no workflow implementation is registered', async () => {
     const workflow = defineWorkflow({
       name: 'unrouted-activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -4776,12 +4781,12 @@ describe('workflow runtime coordinator', () => {
   it('acks a claimed activity attempt when the attempt lease token is stale', async () => {
     const workflow = defineWorkflow({
       name: 'stale-activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -4847,17 +4852,17 @@ describe('workflow runtime coordinator', () => {
     let handlerCalls = 0
     const workflow = defineWorkflow({
       name: 'stale-parallel-activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ summary: t.string(), review: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ summary: Schema.String, review: Schema.String }),
     })
       .parallel('sections', (helpers) => ({
         summary: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         review: helpers.activity({
-          input: t.object({ scenario: t.string() }),
-          output: t.object({ status: t.string() }),
+          input: Schema.Struct({ scenario: Schema.String }),
+          output: Schema.Struct({ status: Schema.String }),
         }),
       }))
       .build()
@@ -4943,12 +4948,12 @@ describe('workflow runtime coordinator', () => {
     let handlerCalls = 0
     const workflow = defineWorkflow({
       name: 'superseded-activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -5019,12 +5024,12 @@ describe('workflow runtime coordinator', () => {
   it('does not mark a successful handler as failed when continuation enqueue throws', async () => {
     const workflow = defineWorkflow({
       name: 'enqueue-failure-activity-worker',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -5146,12 +5151,12 @@ describe('workflow runtime coordinator', () => {
   it('leaves the run non-terminal when dispatching the activity fails', async () => {
     const workflow = defineWorkflow({
       name: 'dispatch-failure',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -5197,12 +5202,12 @@ describe('workflow runtime coordinator', () => {
     const prefix = createValueInjectable('case')
     const workflow = defineWorkflow({
       name: 'dependency-context',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -5277,12 +5282,12 @@ describe('workflow runtime coordinator', () => {
   it('fails the run instead of re-dispatching a failed node', async () => {
     const workflow = defineWorkflow({
       name: 'failed-node',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
 
@@ -5329,13 +5334,13 @@ describe('workflow runtime coordinator', () => {
   it('starts a child task run, runs it, and completes parent after continuation', async () => {
     const embeddingTask = defineTask({
       name: 'embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
     const workflow = defineWorkflow({
       name: 'task-worker',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
       .task('embedding', embeddingTask)
       .build()
@@ -5459,13 +5464,13 @@ describe('workflow runtime coordinator', () => {
     let handlerCalls = 0
     const embeddingTask = defineTask({
       name: 'stale.embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
     const workflow = defineWorkflow({
       name: 'stale-task-worker',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
       .task('embedding', embeddingTask)
       .build()
@@ -5542,13 +5547,13 @@ describe('workflow runtime coordinator', () => {
   it('releases a task attempt when the worker has no matching task implementation', async () => {
     const embeddingTask = defineTask({
       name: 'validated.embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
     const workflow = defineWorkflow({
       name: 'validated-task-worker',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
       .task('embedding', embeddingTask)
       .build()
@@ -5617,13 +5622,13 @@ describe('workflow runtime coordinator', () => {
     let handlerCalls = 0
     const embeddingTask = defineTask({
       name: 'reconciled.embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
     const workflow = defineWorkflow({
       name: 'reconciled-task-worker',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
       .task('embedding', embeddingTask)
       .build()
@@ -5709,13 +5714,13 @@ describe('workflow runtime coordinator', () => {
     let handlerCalls = 0
     const embeddingTask = defineTask({
       name: 'superseded.reconciled.embedding.generate',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
     const workflow = defineWorkflow({
       name: 'superseded-reconciled-task-worker',
-      input: t.object({ text: t.string() }),
-      output: t.object({ vector: t.array(t.number()) }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ vector: Schema.Array(Schema.Number) }),
     })
       .task('embedding', embeddingTask)
       .build()
@@ -5805,18 +5810,18 @@ describe('workflow runtime coordinator', () => {
   it('starts a child workflow run and completes the parent from child output', async () => {
     const childWorkflow = defineWorkflow({
       name: 'child-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('write', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const parentWorkflow = defineWorkflow({
       name: 'parent-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .workflow('content', childWorkflow)
       .build()
@@ -5949,18 +5954,18 @@ describe('workflow runtime coordinator', () => {
   it('dispatches the next node after a child workflow node completes', async () => {
     const childWorkflow = defineWorkflow({
       name: 'child-before-activity',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'parent-child-before-activity',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
       .workflow('content', childWorkflow)
       .activity('summary', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       })
       .build()
 
@@ -6052,13 +6057,13 @@ describe('workflow runtime coordinator', () => {
   it('does not duplicate child workflow runs on repeated parent continuation', async () => {
     const childWorkflow = defineWorkflow({
       name: 'dedup-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'dedup-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6109,13 +6114,13 @@ describe('workflow runtime coordinator', () => {
   it('does not remap direct child workflow input after link exists', async () => {
     const childWorkflow = defineWorkflow({
       name: 'direct-remap-child',
-      input: t.unknown(),
-      output: t.object({ text: t.string() }),
+      input: Schema.Undefined,
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'direct-remap-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6165,7 +6170,7 @@ describe('workflow runtime coordinator', () => {
     const snapshot = await runtime.store.loadRunSnapshot(parentRun.id)
     const childLink = snapshot?.children[0]
     expect(mapCalls).toBe(1)
-    expect(snapshot?.nodes[0]).toHaveProperty('input', undefined)
+    expect(snapshot?.nodes[0]).toHaveProperty('input', null)
     expect(snapshot?.children).toHaveLength(1)
     expect(runtime.inspect().continueRunCommands).toStrictEqual([
       {
@@ -6182,13 +6187,13 @@ describe('workflow runtime coordinator', () => {
   it('re-enqueues an existing non-terminal child workflow after child enqueue fails', async () => {
     const childWorkflow = defineWorkflow({
       name: 'recover-enqueue-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'recover-enqueue-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6268,13 +6273,13 @@ describe('workflow runtime coordinator', () => {
   it('re-enqueues parent continuation after child completion wake enqueue fails', async () => {
     const childWorkflow = defineWorkflow({
       name: 'recover-wake-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'recover-wake-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6365,13 +6370,13 @@ describe('workflow runtime coordinator', () => {
   it('fails the parent node when a child workflow run fails', async () => {
     const childWorkflow = defineWorkflow({
       name: 'failed-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'failed-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6428,13 +6433,13 @@ describe('workflow runtime coordinator', () => {
   it('fails the parent node when a child workflow link points to a missing run', async () => {
     const childWorkflow = defineWorkflow({
       name: 'missing-linked-child',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const parentWorkflow = defineWorkflow({
       name: 'missing-linked-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -6493,13 +6498,13 @@ describe('workflow runtime coordinator', () => {
   it('fails the parent node when a child task link points to a missing run', async () => {
     const childTask = defineTask({
       name: 'missing-linked-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const parentWorkflow = defineWorkflow({
       name: 'missing-linked-task-parent',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .task('child', childTask)
       .build()
@@ -6558,18 +6563,18 @@ describe('workflow runtime coordinator', () => {
   it('wakes and fails the parent run when a real child workflow activity fails', async () => {
     const childWorkflow = defineWorkflow({
       name: 'activity-failed-child',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('write', {
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const parentWorkflow = defineWorkflow({
       name: 'activity-failed-parent',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()

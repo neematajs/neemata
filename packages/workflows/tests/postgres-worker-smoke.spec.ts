@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import {
@@ -28,23 +28,23 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
 
   const childWorkflow = defineWorkflow({
     name: 'postgres-smoke-child',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   }).build()
   const parentWorkflow = defineWorkflow({
     name: 'postgres-smoke-parent',
-    input: t.object({
-      scenario: t.string(),
-      items: t.array(t.string()),
+    input: Schema.Struct({
+      scenario: Schema.String,
+      items: Schema.Array(Schema.String),
     }),
-    output: t.object({
-      primaryId: t.string(),
-      ids: t.array(t.string()),
+    output: Schema.Struct({
+      primaryId: Schema.String,
+      ids: Schema.Array(Schema.String),
     }),
   })
     .workflow('primary', childWorkflow)
     .mapWorkflow('children', childWorkflow, {
-      item: t.string(),
+      item: Schema.String,
     })
     .build()
 

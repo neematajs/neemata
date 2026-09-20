@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -35,8 +35,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('reconciles schedules by inserting, updating, and deleting static declarations', async () => {
       const workflow = defineWorkflow({
         name: `${name}-reconcile-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const alpha = defineSchedule({
         name: `${name}-reconcile-alpha`,
@@ -80,8 +80,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('keeps concurrent reconciles in a consistent cutover state', async () => {
       const workflow = defineWorkflow({
         name: `${name}-concurrent-reconcile-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const left = defineSchedule({
@@ -120,8 +120,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('validates schedule input against the runnable schema during reconcile', async () => {
       const workflow = defineWorkflow({
         name: `${name}-invalid-input-workflow`,
-        input: t.object({ count: t.number() }),
-        output: t.object({ count: t.number() }),
+        input: Schema.Struct({ count: Schema.Number }),
+        output: Schema.Struct({ count: Schema.Number }),
       }).build()
       const runtime = await createRuntime()
       const schedule = defineSchedule({
@@ -139,8 +139,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('computes every and cron next occurrences from reconcile time', async () => {
       const workflow = defineWorkflow({
         name: `${name}-next-run-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const before = Date.now()
@@ -173,8 +173,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('fires due schedules once per slot and advances past now while skipping missed slots', async () => {
       const workflow = defineWorkflow({
         name: `${name}-fire-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -221,8 +221,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('uses runnable definition tags for scheduled runs without explicit schedule tags', async () => {
       const workflow = defineWorkflow({
         name: `${name}-definition-tagged-schedule-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
         tags: (input) => ({ scenario: input.scenario }),
       }).build()
       const runtime = await createRuntime()
@@ -251,8 +251,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('does not fire disabled schedules', async () => {
       const workflow = defineWorkflow({
         name: `${name}-disabled-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -276,8 +276,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
     it('supports client list, trigger, and setEnabled schedule operations', async () => {
       const workflow = defineWorkflow({
         name: `${name}-client-schedule-workflow`,
-        input: t.object({ scenario: t.string() }),
-        output: t.object({ caseId: t.string() }),
+        input: Schema.Struct({ scenario: Schema.String }),
+        output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -313,8 +313,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
 describe('schedule definitions', () => {
   const workflow = defineWorkflow({
     name: 'definition-schedule-workflow',
-    input: t.object({ scenario: t.string() }),
-    output: t.object({ caseId: t.string() }),
+    input: Schema.Struct({ scenario: Schema.String }),
+    output: Schema.Struct({ caseId: Schema.String }),
   }).build()
 
   it('requires exactly one cadence', () => {
@@ -360,8 +360,8 @@ describe('scheduled workflow worker loop', () => {
   it('fires due schedules while normal command processing continues', async () => {
     const workflow = defineWorkflow({
       name: 'worker-scheduled-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),

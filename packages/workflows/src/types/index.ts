@@ -1,4 +1,4 @@
-import type { BaseTypeAny, t } from '@nmtjs/type'
+import type * as EffectSchema from 'effect/Schema'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -69,11 +69,12 @@ export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
 
-export type Schema = BaseTypeAny
+/** Codecs must run synchronously and require no services at durable boundaries. */
+export type Schema = EffectSchema.Codec<unknown, unknown>
 
-export type SchemaInput<T extends Schema> = t.infer.decode.input<T>
+export type SchemaInput<T extends Schema> = T['Encoded']
 
-export type SchemaOutput<T extends Schema> = t.infer.decode.output<T>
+export type SchemaOutput<T extends Schema> = T['Type']
 
 export type SchemaBoundary<In = unknown, Out = In> = {
   readonly in: In

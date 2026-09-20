@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import {
@@ -41,13 +41,13 @@ async function countRows(
 
 const workflow = defineWorkflow({
   name: 'transactional-start-workflow',
-  input: t.object({ value: t.string() }),
+  input: Schema.Struct({ value: Schema.String }),
 }).build()
 
 const task = defineTask({
   name: 'transactional-start-task',
-  input: t.object({ value: t.string() }),
-  output: t.object({ value: t.string() }),
+  input: Schema.Struct({ value: Schema.String }),
+  output: Schema.Struct({ value: Schema.String }),
 })
 
 test('workflow start through a caller transaction commits atomically with domain writes', async () => {

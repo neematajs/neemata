@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -57,8 +57,8 @@ describe('postgres retry scheduling', () => {
     const runtime = createPostgresWorkflowRuntime({ connection })
     const task = defineTask({
       name: 'postgres.retry-backoff-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       retry: { attempts: 3, delay: '10ms', backoff: 'exponential' },
     })
     let activeWorker: AbortController | undefined

@@ -1,5 +1,5 @@
 import { createValueInjectable, type DependencyContext } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
@@ -9,42 +9,48 @@ describe('workflow implementation chain', () => {
 
   const embedding = defineTask({
     name: 'embedding.generate',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
 
   const fallbackWorkflow = defineWorkflow({
     name: 'fallback-content',
-    input: t.object({ scenario: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ scenario: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   }).build()
 
   const workflow = defineWorkflow({
     name: 'case-generation',
-    input: t.object({
-      kind: t.union(t.literal('normal'), t.literal('fallback')),
-      scenario: t.string(),
+    input: Schema.Struct({
+      kind: Schema.Union([
+        Schema.Literal('normal'),
+        Schema.Literal('fallback'),
+      ]),
+      scenario: Schema.String,
     }),
-    output: t.object({ caseId: t.string() }),
+    output: Schema.Struct({ caseId: Schema.String }),
   })
     .activity('content', {
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     .branch('caseContent', {
-      output: t.object({ text: t.string() }),
+      output: Schema.Struct({ text: Schema.String }),
       cases: (helpers) => ({
         normal: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         fallback: helpers.workflow(fallbackWorkflow),
       }),
     })
     .task('embedding', embedding)
     .activity('saveCase', {
-      input: t.object({ scenario: t.string(), embeddingId: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({
+        scenario: Schema.String,
+        embeddingId: Schema.String,
+      }),
+      output: Schema.Struct({ caseId: Schema.String }),
     })
     .build()
 
@@ -56,8 +62,8 @@ describe('workflow implementation chain', () => {
         input: (ctx, _outputs, input) => {
           expectTypeOf(ctx.prefix).toEqualTypeOf<string>()
           expectTypeOf(input).toEqualTypeOf<{
-            kind: 'normal' | 'fallback'
-            scenario: string
+            readonly kind: 'normal' | 'fallback'
+            readonly scenario: string
           }>()
           return { scenario: `${ctx.prefix}:${input.scenario}` }
         },
@@ -67,7 +73,7 @@ describe('workflow implementation chain', () => {
         cases: ({ activity, workflow }) => ({
           normal: activity(async (_ctx, input) => ({ text: input.text }), {
             input: (_ctx, { content }) => {
-              expectTypeOf(content).toEqualTypeOf<{ text: string }>()
+              expectTypeOf(content).toEqualTypeOf<{ readonly text: string }>()
               return { text: content.text }
             },
           }),
@@ -127,12 +133,12 @@ describe('workflow implementation chain', () => {
     })
     const activityWorkflow = defineWorkflow({
       name: 'activity-dependencies',
-      input: t.object({ text: t.string() }),
-      output: t.object({ size: t.number() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ size: Schema.Number }),
     })
       .activity('save', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ size: t.number() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ size: Schema.Number }),
       })
       .build()
 
@@ -168,12 +174,12 @@ describe('workflow implementation chain', () => {
     const service = createValueInjectable({
       decorate: (text: string) => `${text}!`,
     })
-    const io = t.object({ text: t.string() })
+    const io = Schema.Struct({ text: Schema.String })
     const activity = {
       dependencies: { service },
       handler: (
         ctx: DependencyContext<{ service: typeof service }>,
-        input: t.infer.decode.output<typeof io>,
+        input: typeof io.Type,
       ) => ({ text: ctx.service.decorate(input.text) }),
     }
     const branched = defineWorkflow({
@@ -221,14 +227,14 @@ describe('workflow implementation chain', () => {
   })
 
   it('accepts schema-derived annotations for optional parallel activity input', () => {
-    const activityInput = t.object({
-      caseBlueprint: t.string(),
-      name: t.string().optional(),
+    const activityInput = Schema.Struct({
+      caseBlueprint: Schema.String,
+      name: Schema.optional(Schema.String),
     })
-    const activityOutput = t.object({ ok: t.boolean() })
+    const activityOutput = Schema.Struct({ ok: Schema.Boolean })
     const parallelWorkflow = defineWorkflow({
       name: 'optional-parallel-activity-input',
-      input: t.object({ caseBlueprint: t.string() }),
+      input: Schema.Struct({ caseBlueprint: Schema.String }),
       output: activityOutput,
     })
       .parallel('cases', (helpers) => ({
@@ -242,7 +248,7 @@ describe('workflow implementation chain', () => {
     implementWorkflow(parallelWorkflow)
       .cases(({ activity }) => ({
         normal: activity(
-          async (_ctx, input: t.infer.decode.output<typeof activityInput>) => ({
+          async (_ctx, input: typeof activityInput.Type) => ({
             ok: input.name === undefined || input.name.length > 0,
           }),
           {
@@ -258,29 +264,35 @@ describe('workflow implementation chain', () => {
   it('infers branch output union when no common output is declared', () => {
     const outpatientWorkflow = defineWorkflow({
       name: 'outpatient-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({
-        kind: t.literal('outpatient'),
-        text: t.string(),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({
+        kind: Schema.Literal('outpatient'),
+        text: Schema.String,
       }),
     }).build()
 
     const obstetricsWorkflow = defineWorkflow({
       name: 'obstetrics-content',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({
-        kind: t.literal('obstetrics'),
-        obstetricsData: t.string(),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({
+        kind: Schema.Literal('obstetrics'),
+        obstetricsData: Schema.String,
       }),
     }).build()
 
     const branchingWorkflow = defineWorkflow({
       name: 'branching-content',
-      input: t.object({
-        kind: t.union(t.literal('outpatient'), t.literal('obstetrics')),
-        scenario: t.string(),
+      input: Schema.Struct({
+        kind: Schema.Union([
+          Schema.Literal('outpatient'),
+          Schema.Literal('obstetrics'),
+        ]),
+        scenario: Schema.String,
       }),
-      output: t.union(outpatientWorkflow.output!, obstetricsWorkflow.output!),
+      output: Schema.Union([
+        outpatientWorkflow.output!,
+        obstetricsWorkflow.output!,
+      ]),
     })
       .branch('content', {
         cases: (helpers) => ({

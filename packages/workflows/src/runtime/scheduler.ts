@@ -8,8 +8,9 @@ import type {
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
+import { decodeSchemaValue, encodeStoredValue } from './codec.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
-import { decodeSchemaValue, resolveTags } from './coordinator/codec.ts'
+import { resolveTags } from './coordinator/codec.ts'
 import { parseDurationMs } from './duration.ts'
 
 export type StoredWorkflowSchedule = {
@@ -88,7 +89,11 @@ export function normalizeScheduleDefinition(
     name: definition.name,
     runnableKind,
     runnableName,
-    input,
+    input: encodeStoredValue(
+      definition.runnable.input,
+      input,
+      `schedule input [${definition.name}]`,
+    ),
     tags: definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {},
     ...cadence,
     enabled: definition.enabled ?? true,
