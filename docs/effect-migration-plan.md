@@ -675,3 +675,33 @@ The user selected `postgres_postgres_20260920_030000.dump` for the isolated
 cutover assessment. It has not yet been restored or assessed. The assessment covers
 stored workflow inputs/outputs and command payloads, retained-history restart, and
 rollback readability; it does not introduce stored-format versioning.
+
+## Code review cleanup — 2026-09-21
+
+A line-by-line review of the slice 3–6 sources found no correctness defects. Its
+maintainability findings are applied on top of the startup-shutdown change:
+
+- One handler runtime per worker. Entry points resolve it once; continuation and
+  attempt inputs now require `handlers` and no longer carry `context`,
+  `cleanupTimeoutMs`, or `onFatal`. The per-attempt fallback created runtimes whose
+  pending fibers nobody drained.
+- `runWorkflowWorker`/`runExecutionWorker` and their `serve*` forms type `context`
+  by the requirements of the implementations they receive, or accept a shared
+  `handlers` runtime instead. `createHandlerRuntime` and the handler error classes
+  are exported for that purpose. A type test rejects an insufficient context.
+- A failure discarded because the worker is shutting down is reported through
+  `onError` unless it is the abort reason itself.
+- Compiled encoders/decoders are cached per schema; re-entry decodes every
+  completed node.
+- The preset and the workflows worker render a fiber failure the same way: a lone
+  failure keeps its identity, several keep their rendered Cause.
+- `Deps` generics are renamed to `R`; the unused `Deps` parameter on start inputs
+  is removed.
+- Neem's host controller routes each awaited startup/reload step through one
+  interruptible `step`, replacing a stop check after every await. The worker entry
+  starts initialization before its users and documents its two stop flags.
+
+Validation (`vp env exec`, unrestricted filesystem): workspace build and typecheck
+passed; workflows **569 passed, 2 skipped**; live PostgreSQL 18 integration **18
+passed**; preset **15** unit/type and **3** e2e passed; Neem **109** unit and **75**
+e2e passed; formatting clean; oxlint reports only the existing Deno warning.
