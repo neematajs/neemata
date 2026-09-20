@@ -169,6 +169,67 @@ describe('Neem runtime lifecycle failures', () => {
     )
   }, 60_000)
 
+  it.each([
+    { mode: 'production', phase: 'start' },
+    { mode: 'production', phase: 'factory' },
+    { mode: 'development', phase: 'start' },
+  ])(
+    'stops during $phase in $mode and awaits cleanup',
+    async ({ mode, phase }) => {
+      const fixture = await useFixture({ config: 'stop-during-start' })
+      const env = {
+        NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
+        NEEM_STARTUP_PHASE: phase,
+      }
+      if (mode === 'production') {
+        await runNeem([
+          'build',
+          '--config',
+          fixture.configFile,
+          '--outDir',
+          fixture.outDir,
+        ])
+      }
+      const node =
+        mode === 'production'
+          ? spawnTrackedNode([resolve(fixture.outDir, 'start.js')], { env })
+          : spawnTrackedNeem(
+              [
+                'dev',
+                '--config',
+                fixture.configFile,
+                '--outDir',
+                fixture.outDir,
+              ],
+              { env },
+            )
+      await waitFor(
+        async () => {
+          const events = await readRuntimeEvents(fixture.eventsFile)
+          return events.some(
+            ({ event }) =>
+              event ===
+              (phase === 'factory' ? 'startup-create' : 'startup-entered'),
+          )
+        },
+        30_000,
+        () => formatSpawnedOutput(node),
+      )
+
+      const exit = await node.stop({ killAfterMs: 2_500 })
+      const events = await readRuntimeEvents(fixture.eventsFile)
+      expect(exit, formatSpawnedOutput(node)).toEqual({ code: 0, signal: null })
+      expect(countEvents(events, 'startup-stop')).toBe(1)
+      expect(countEvents(events, 'startup-finalized')).toBe(1)
+      if (phase === 'factory')
+        expect(countEvents(events, 'startup-entered')).toBe(0)
+      expect(node.events().some(({ event }) => event === 'runtime:ready')).toBe(
+        false,
+      )
+    },
+    60_000,
+  )
+
   it('runs production SIGTERM shutdown exactly once', async () => {
     const fixture = await useFixture({ config: 'sigterm-exactly-once' })
 

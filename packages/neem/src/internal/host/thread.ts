@@ -154,13 +154,18 @@ export class ThreadController {
 
     try {
       await ready.promise
+      if (this.stopping) return
       await this.callWorkerHook('worker:ready')
+      if (this.stopping) return
       if (this.hasFailed() && this.lastError) throw this.lastError
       this.logger.trace(
         { upstreams: this.upstreams.length },
         'Neem worker ready',
       )
     } catch (error) {
+      // stop() owns its cleanup deadline. Rejecting readiness must not terminate
+      // the thread underneath runtime.stop() and its asynchronous finalizers.
+      if (this.stopping) return
       const normalized = normalizeError(error)
       const handledFailure = this.hasFailed() && this.readySettled
       if (!this.hasFailed()) this.markFailed(normalized)
@@ -178,6 +183,8 @@ export class ThreadController {
     this.stopping = true
     const worker = this.worker
     if (!worker || this.state === 'stopped') {
+      this.port.close()
+      this.transferPort.close()
       this.markStopped()
       return
     }
@@ -215,6 +222,7 @@ export class ThreadController {
 
   private handleMessage(message: WorkerMessage): void {
     if (message.type === 'ready') {
+      if (this.stopping) return
       this.upstreams = message.data.upstreams ?? []
       this.markReady()
       return

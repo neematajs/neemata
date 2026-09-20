@@ -181,10 +181,10 @@ On a requested stop, Neem enforces a separate hard 5,000 ms deadline for the who
 worker. Setting `cleanupTimeoutMs` above 5,000 cannot extend that deadline, and
 `finished` failures after a stop request do not trigger recovery. Budget handler,
 adapter, and Layer cleanup together to finish within the host deadline; otherwise
-Neem terminates the thread, including on deploy. The current Neem host also does
-not call `runtime.stop()` until startup has completed, so a stop during startup
-cannot rely on these cooperative finalizers. Configurable host deadlines and
-startup-stop handling remain separate host lifecycle work.
+Neem terminates the thread, including on deploy. A stop during startup reaches
+`runtime.stop()` once the worker factory has resolved, without waiting for readiness.
+Factory completion and finalizers share the host deadline. Configurable host
+deadlines remain separate lifecycle work.
 
 Interruption cannot stop Promise work that ignores cancellation. Such work can
 continue after its fiber exits, so integrate its AbortSignal or arrange explicit

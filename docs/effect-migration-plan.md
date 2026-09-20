@@ -2,7 +2,7 @@
 
 Date: 2026-09-21
 Status: slices 1–5 implemented and reviewed; slice 5 review fixes applied.
-Slice 6 preparation is next; deletion remains gated on the application proofs and cutover assessment.
+Slice 6 preparation is underway; deletion remains gated on the application proofs and cutover assessment.
 The decoded-Type decision below supersedes the earlier Encoded submission/mapper decision.
 Baseline: `b2602ae0be76e92dfc06f0392977263c2883ff9c` (`main`).
 
@@ -163,42 +163,94 @@ test-only async-to-Effect helper may keep existing engine tests tractable. Add n
 Effect cases for defects, typed errors, interruption, scoped cleanup, overrun, lease
 loss, and late commits. No public async-handler compatibility API.
 
-## Slice 6 — Remove the retired framework and release
+## Slice 6 — Prove the application migration, then remove the framework
+
+The reviewed slices 1–5 are committed separately before any further migration or
+package deletion. The next work is preparation, in this order:
+
+1. Fix Neem stop-during-startup across the host controller queue, worker entry, and
+   thread-controller termination race. Prove cooperative cleanup during startup and
+   preserve the existing hard stop deadline. This retained-code defect comes before
+   application proofs and release; it is independent of CaseNetwork work.
+2. Finish the CaseNetwork Promise-client pattern before adding a second client:
+   normalize aborted/disposed/transport/defect rejections, check request Origin or
+   content type, and log underlying database failures before returning sanitized
+   application errors.
+3. Prove a real stream/upload flow and a real workflow in the isolated CaseNetwork
+   worktree under `pnpm local dev`, with the acceptance criteria below.
+4. Assess the real stored data and rehearse the cutover against an isolated restore
+   of a CaseNetwork database dump. Record the dump provenance without publishing
+   payloads. Only after these gates pass should retired-package deletion begin.
+
+### Application proof gates
+
+For streaming and uploads, chat is the first candidate:
+
+- Use the Neem proxy for every proof request. Observe incremental ndjson delivery
+  before completion to detect proxy buffering.
+- Abort a client mid-stream and observe the server finalizer through the proxy.
+- Exercise multipart metadata and file upload, with a configured size limit and a
+  rejected oversized upload.
+- Authenticate in-process once at stream start; remove the proof's per-call HTTP
+  session lookup. Document what replaces each connection-scoped chat service/state.
+- Keep the application-owned Promise/stream client boundary and browser-safe imports;
+  do not rebuild a generic Neemata transport or client facade.
+
+For workflows, port one existing CaseNetwork workflow whose task uses the database
+and whose schema carries a date. Use native Effect handlers, Layer services, and
+Type-everywhere schemas. Run it under the actual Neem application, prove a retry,
+restart its worker mid-run, and verify durable completion and decoded date values.
+Package tests alone do not satisfy this gate. Record the workflow and transformed
+schemas used, and determine from the installed peer graph whether the new-host alias
+is still required after workflows' core dependency is removed.
+
+### Cutover and retained-data gate
+
+The assessment must use the real dump and report aggregate findings:
+
+- Inventory run statuses and all `workflow_commands` payloads, including queued,
+  delayed, active/leased, and dead-lettered work, plus child runs. No executable old
+  payload may survive into new workers without an explicit compatibility decision.
+- Inventory schemas with transforms across inputs, outputs, nodes, maps and queued
+  payloads. Exercise their new codecs against restored data; plain JSON examples
+  do not establish transformed-value compatibility.
+- Specify application-level controls for pausing every submission route and schedule
+  producer. There is no assumed engine-wide pause capability.
+- **Require a drain before cutover.** Pause submissions and schedule firing, drain
+  runs, children and commands under the old release, resolve retained dead-lettered
+  work explicitly, and stop every old writer before enabling new ones. Re-entry
+  decode mismatches are terminal; a mixed deployment is not the default.
+- Test whether `restart()` of retained historical rows can decode under the new
+  codecs. A drain does not convert history. Record incompatible representations and
+  a concrete application-level handling procedure; do not add a format marker or a
+  general retry/restart ban as part of this migration.
+- Rehearse rollback before and after new writers have written. Once representations
+  diverge, switching binaries alone is not sufficient: record whether rollback needs
+  a quiesced database restore or a validated reverse conversion, and how newer writes
+  and external side effects are reconciled. State any resulting data-loss window.
+
+### Deletion and release
 
 - Delete retired packages and their tests, exports, scripts, CI jobs, fixtures, and
   unused dependencies. Prune common utilities after their consumers disappear.
-- Narrow metrics to Neem observation. Applications can export their metrics directly
-  from each worker through OTLP. Retain cross-worker aggregation only where the host
-  needs it; check whether `@nmtjs/prom-client` can also be removed.
-- Document application migration, client choice, uploads, loss of connection scope,
-  and workflow codec/data compatibility. **Draining is required at cutover:** pause
-  new submissions and schedule firing, drain queued/delayed/active runs and their
-  children under the old release, then stop all old workers before enabling new
-  writers. A re-entry decode mismatch fails an in-flight run terminally, so a mixed
-  deployment is not an acceptable default. Check retained stored data against the
-  new codecs before resubmitting historical runs; a drain does not convert history.
-  This is a deployment procedure, not a change to retry/restart eligibility. No
-  general format-versioning feature or legacy-run ban is required by this migration.
-  For Redis alternatives, state
-  at-most-once delivery and reconnect gaps rather than promising equivalent pubsub.
-- Before removing the old framework, prove one real CaseNetwork stream and one
-  upload flow (chat is a candidate). Unary organization search does not establish
-  either, and neither blocks workflow codec development in slice 4.
-- While old and new runtimes coexist in migration experiments, select the new host
-  through an explicit package alias and keep the old framework's peer graph intact.
-  Do not promise an in-place Neem bump in an otherwise legacy application. The
-  release target remains an explicit complete application migration, followed by
-  removal of the alias and all retired packages; no legacy compatibility release
-  is planned as part of this work.
-- Configure application logging and RPC error metrics. HTTP 200 responses carrying
-  application failures are not visible as failures to the proxy's HTTP status metrics.
-  The slice-3 preset has no automatic Pino bridge; applications own their Effect
-  logger configuration. Preserve complete Cause diagnostics before production.
+- Narrow metrics to Neem observation. Applications can export metrics directly from
+  workers through OTLP; assess whether the forked `@nmtjs/prom-client` can also go.
+- Document application migration, client choice, multipart uploads, replacement of
+  connection scope, actual codec compatibility findings, and the rehearsed cutover.
+  For Redis alternatives, state at-most-once delivery and reconnect gaps.
+- While old/new runtime experiments coexist, keep the legacy peer graph intact.
+  Retain or remove the explicit new-host alias based on the real workflow proof;
+  do not infer that an in-place host upgrade is safe from workflows' decoupling alone.
+  The release target is complete application migration with the alias and retired
+  framework removed; no legacy compatibility release is planned.
+- Configure application logging and RPC error metrics. HTTP 200 application errors
+  do not appear in proxy status metrics. Applications own Effect logger configuration
+  and must preserve complete Cause diagnostics.
 - Publish the new package map and supported exact Effect version. Recheck upstream
-  release status and unstable APIs at this point rather than relying on old research.
+  release status and unstable APIs at release time.
 
-Completion: retained package builds and release artifacts contain no retired framework
-imports; the migrated application and full retained test suite pass.
+Completion: the application proofs and restored-data assessment pass, retained builds
+and release artifacts contain no retired imports, and the retained test suite passes.
 
 ## Separate follow-ups
 
@@ -572,3 +624,47 @@ Fresh follow-up validation, all JavaScript/TypeScript commands via `vp env exec`
 The temporary PostgreSQL container and copied recovery fixtures were removed and
 removal verified. Work remains uncommitted in `dev/effect-migration`; CaseNetwork
 and the original checkout were not changed.
+
+## Reviewed slice commits — 2026-09-21
+
+The five reviewed slices were reconstructed in an isolated worktree. Each commit's
+state passed the required formatting and checks; the restored slice-4 boundary also
+passed all 545 workflow tests with 2 skips. The final commit tree was compared against
+the complete reviewed worktree and matched exactly before advancing the branch.
+
+| Slice | Commit     | Scope                                                              |
+| ----- | ---------- | ------------------------------------------------------------------ |
+| 1     | `2198a37c` | Migration boundary and historical application plan                 |
+| 2     | `b9f9f3b8` | Neem-owned logging and labels-plugin removal                       |
+| 3     | `d2fd6546` | Stable-only Effect preset and its tests                            |
+| 4     | `d44039a8` | Effect Schema codecs and JSON persistence                          |
+| 5     | `5b5dbdbd` | Effect execution, Layer services, and reviewed API/lifecycle fixes |
+
+No packages from slice 6 have been deleted. The real workflow proof and dump-backed
+cutover assessment remain pending, alongside the tightened stream/upload proof.
+
+## Startup shutdown follow-up — 2026-09-21
+
+Neem now delivers stop while runtime startup is pending. The host and development
+supervisor interrupt starting workers before waiting for their operation queues;
+worker cleanup is invoked once even when the asynchronous factory is still resolving.
+The thread controller leaves termination to the stop deadline instead of killing
+finalizers as soon as readiness rejects. Stopped startup cannot emit late readiness.
+The hard 5-second worker stop deadline is unchanged.
+
+Regression tests reproduced the previous failures, then passed in production and
+development: stop during factory creation, stop during pending startup, and an
+asynchronous finalizer that outlives rejection of the start promise.
+
+Fresh validation with unrestricted filesystem access and `vp env exec`:
+
+- Neem unit/integration: **109 passed** across 19 files.
+- Neem e2e: **75 passed** across 13 files, including watcher reload and recovery.
+- Effect preset host e2e: **3 passed**.
+- Workspace build, typecheck, formatting, and `git diff --check` passed.
+- Full `oxlint . --format=agent`: only the existing Deno transport warning.
+
+The user selected `postgres_postgres_20260920_030000.dump` for the isolated
+cutover assessment. It has not yet been restored or assessed. The assessment covers
+stored workflow inputs/outputs and command payloads, retained-history restart, and
+rollback readability; it does not introduce stored-format versioning.

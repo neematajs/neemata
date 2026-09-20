@@ -69,14 +69,11 @@ its logger, mode, and planner data.
   finalizers, including during startup. Repeated start/stop calls
   are idempotent; a stopped instance cannot restart. Finalizer defects remain visible.
 
-**Neem startup limitation:** the host currently queues shutdown behind startup, and
-its worker entry only dispatches normal stop after readiness. SIGTERM during a
-pending start can therefore hit the host's termination deadline without calling the
-preset's `stop()` or running application finalizers. This was reproduced through
-`neem start`, which exited with code 1 after about five seconds. The unit test for
-direct `runtime.stop()` does not establish graceful host shutdown before readiness.
-Resolving this requires a host lifecycle fix before production rollout; this preset
-does not bypass Neem's lifecycle queue.
+Neem delivers stop during startup, including while an asynchronous worker factory
+is resolving. It calls `runtime.stop()` once after the runtime exists and suppresses
+late readiness. The hard five-second worker shutdown deadline still applies to
+factory completion and finalizers together; unbounded startup or cleanup can require
+thread termination.
 
 Compose essential background work into the main effect, or join and supervise its
 fibers explicitly. Forking background work from a layer does not automatically

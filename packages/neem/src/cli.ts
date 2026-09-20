@@ -228,6 +228,7 @@ class DevSupervisor {
   private manifestFile: string | undefined
   private manifestRevision = 0
   private stopped = false
+  private stopping: Promise<void> | undefined
 
   constructor(private readonly options: DevSupervisorOptions) {
     this.closed = this.closedFuture.promise
@@ -248,23 +249,22 @@ class DevSupervisor {
     await this.startWatcher()
   }
 
-  async stop(): Promise<void> {
-    if (this.stopped && !this.watcher && !this.runtime) return
+  stop(): Promise<void> {
+    if (this.stopping) return this.stopping
     this.stopped = true
-    await this.events.waitIdle()
-    const watcher = this.watcher
-    const configSignalWatcher = this.configSignalWatcher
-    const runtime = this.runtime
-    this.watcher = undefined
-    this.configSignalWatcher = undefined
-    this.runtime = undefined
-    await Promise.all([
-      configSignalWatcher?.close(),
-      watcher?.stop(),
-      runtime?.stop(),
-    ])
-    this.options.probe?.emit('cli:dev:closed')
-    this.closedFuture.resolve()
+    // A watcher event may be awaiting runtime readiness. Deliver stop before
+    // draining that queue so a pending start can finish its own cleanup.
+    const runtime = this.stopRuntime()
+    return (this.stopping = (async () => {
+      await Promise.all([runtime, this.events.waitIdle()])
+      const watcher = this.watcher
+      const configSignalWatcher = this.configSignalWatcher
+      this.watcher = undefined
+      this.configSignalWatcher = undefined
+      await Promise.all([configSignalWatcher?.close(), watcher?.stop()])
+      this.options.probe?.emit('cli:dev:closed')
+      this.closedFuture.resolve()
+    })())
   }
 
   private async startWatcher(): Promise<void> {
@@ -289,6 +289,7 @@ class DevSupervisor {
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
       })
+      if (this.stopped) return
       if (result?.manifestFile) this.manifestFile = result.manifestFile
       if (result?.configSignalFiles) {
         await this.startConfigSignalWatcher(result.configSignalFiles)
@@ -354,12 +355,15 @@ class DevSupervisor {
     },
   ): Promise<void> {
     await this.stopConfigSignalWatcher()
+    if (this.stopped) return
     this.configSignalFiles = [...files]
-    this.configSignalWatcher = await watchConfigSignal({
+    const watcher = await watchConfigSignal({
       files,
       tolerateInitialError: options.tolerateInitialError,
       onInvalidated: () => this.handleConfigSignalInvalidated(),
     })
+    if (this.stopped) await watcher.close()
+    else this.configSignalWatcher = watcher
   }
 
   private async stopConfigSignalWatcher(): Promise<void> {
@@ -389,6 +393,7 @@ class DevSupervisor {
   private async restartRuntime(): Promise<void> {
     if (!this.manifestFile) return
     await this.stopRuntime()
+    if (this.stopped) return
     const runtime = createRuntimeClient({
       probe: this.options.probe,
       onEvent: (event) => {

@@ -120,6 +120,7 @@ export class RuntimeController {
         'Neem runtime summary',
       )
     } catch (error) {
+      if (this.stopped) return
       const normalized = normalizeError(error)
       await this.callRuntimeFailHook(normalized)
       await this.cleanup().catch((stopError) => {
