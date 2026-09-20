@@ -51,9 +51,15 @@ function createWorkerRuntime<R, EL, EM>(
   let exit: Exit.Exit<unknown, EL | EM> | undefined
 
   function failure(result: Exit.Exit<unknown, EL | EM>): unknown {
-    return Exit.isFailure(result)
+    if (Exit.isSuccess(result))
+      return new Error('Effect main completed before stop was requested')
+    // A lone failure keeps its identity. Squashing several would hide the
+    // finalizer defects and parallel failures that accompany it.
+    return result.cause.reasons.filter(
+      (reason) => !Cause.isInterruptReason(reason),
+    ).length <= 1
       ? Cause.squash(result.cause)
-      : new Error('Effect main completed before stop was requested')
+      : new Error(Cause.pretty(result.cause), { cause: result.cause })
   }
 
   return {
