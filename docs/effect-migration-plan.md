@@ -165,6 +165,13 @@ loss, and late commits. No public async-handler compatibility API.
 
 ## Slice 6 — Prove the application migration, then remove the framework
 
+**Current execution scope:** the user has restricted further work to Neemata;
+do not edit, rebase, commit, or publish CaseNetwork application code. The existing
+application proof remains unchanged. The CaseNetwork work below records outstanding
+release gates, not authorization to implement it. Read-only source inspection and
+the isolated assessment of the supplied dump can inform this migration; standalone
+Neemata fixtures do not establish completion of the real-application gates.
+
 The reviewed slices 1–5 are committed separately before any further migration or
 package deletion. The next work is preparation, in this order:
 
