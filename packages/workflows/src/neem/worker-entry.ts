@@ -1,4 +1,3 @@
-import type * as Context from 'effect/Context'
 import type * as Layer from 'effect/Layer'
 import { createFuture } from '@nmtjs/common'
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -96,11 +95,9 @@ export function defineWorkflowsWorker<
             runtime,
             config,
             executionPool: pool,
-            context,
             handlers,
             workerId: ctx.name,
             signal: abort.signal,
-            onFatal: fatal,
             onError: (error) =>
               ctx.logger.error({ err: error }, 'Neem workflows worker error'),
           })
@@ -133,9 +130,13 @@ export function defineWorkflowsWorker<
             Exit.isFailure(exit) &&
             !(stopping && Cause.hasInterruptsOnly(exit.cause))
           ) {
-            const error = new Error(Cause.pretty(exit.cause), {
-              cause: exit.cause,
-            })
+            // A lone failure keeps its identity; several keep their rendering.
+            const error =
+              exit.cause.reasons.filter(
+                (reason) => !Cause.isInterruptReason(reason),
+              ).length <= 1
+                ? Cause.squash(exit.cause)
+                : new Error(Cause.pretty(exit.cause), { cause: exit.cause })
             ctx.logger.error(
               { err: error },
               'Neem workflows worker loop failed',
@@ -197,9 +198,7 @@ async function runRoleLoop(input: {
     any
   >
   readonly executionPool?: ResolvedExecutionWorkerPool
-  readonly context: Context.Context<never>
   readonly handlers: HandlerRuntime
-  readonly onFatal: (error: unknown) => void
   readonly workerId: string
   readonly signal: AbortSignal
   readonly onError: (error: unknown) => void
@@ -209,14 +208,11 @@ async function runRoleLoop(input: {
     case 'coordinator':
       await serveWorkflowWorker({
         ...input.runtime,
-        context: input.context,
         handlers: input.handlers,
-        onFatal: input.onFatal,
         workflows: input.config.workflows,
         workerId: input.workerId,
         concurrency: input.config.workers.coordinator.concurrency,
         leaseMs: input.config.workers.coordinator.leaseMs,
-        cleanupTimeoutMs: input.config.workers.coordinator.cleanupTimeoutMs,
         idleDelayMs: input.config.workers.coordinator.pollIntervalMs,
         scheduling:
           input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
@@ -228,9 +224,7 @@ async function runRoleLoop(input: {
     case 'execution':
       await serveExecutionWorker({
         ...input.runtime,
-        context: input.context,
         handlers: input.handlers,
-        onFatal: input.onFatal,
         workflows: input.config.workflows,
         tasks: input.config.tasks,
         activityNames: input.executionPool!.activityNames,
@@ -238,7 +232,6 @@ async function runRoleLoop(input: {
         workerId: input.workerId,
         concurrency: input.executionPool!.concurrency,
         leaseMs: input.executionPool!.leaseMs,
-        cleanupTimeoutMs: input.executionPool!.cleanupTimeoutMs,
         idleDelayMs: input.executionPool!.pollIntervalMs,
         // Coordinators own maintenance so execution capacity is not duplicated
         // across every named pool and thread.

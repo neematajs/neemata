@@ -5,9 +5,18 @@ import * as Exit from 'effect/Exit'
 
 /** Retain mixed failures and finalizer defects instead of squashing their Cause. */
 export class WorkflowHandlerError extends Error {
-  constructor(readonly cause: Cause.Cause<unknown>) {
+  declare readonly cause: Cause.Cause<unknown>
+
+  constructor(cause: Cause.Cause<unknown>) {
     super(Cause.pretty(cause), { cause })
     this.name = 'WorkflowHandlerError'
+  }
+}
+
+export class WorkflowCleanupTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Workflow cleanup exceeded ${timeoutMs}ms; worker recycling required`)
+    this.name = 'WorkflowCleanupTimeoutError'
   }
 }
 
@@ -16,13 +25,10 @@ export type HandlerRuntimeOptions = {
   readonly onFatal?: (error: unknown) => void
 }
 
-export function createHandlerRuntime(
-  context: Context.Context<never>,
+export function createHandlerRuntime<R>(
+  context: Context.Context<R>,
   options: HandlerRuntimeOptions = {},
 ) {
-  // Registration checks the Layer against handler requirements. The durable
-  // registry erases their heterogeneous types at this single execution boundary.
-  const services = context as Context.Context<any>
   const timeoutMs = options.cleanupTimeoutMs ?? 5_000
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new Error(
@@ -32,13 +38,13 @@ export function createHandlerRuntime(
   const pending = new Set<Promise<unknown>>()
   return {
     async run<A>(
-      handler: () => Effect.Effect<A, unknown, any>,
+      handler: () => Effect.Effect<A, unknown, R>,
       signal?: AbortSignal,
     ) {
       // Do not enter user code for an attempt that has already lost ownership.
       if (signal?.aborted) throw signal.reason
       // These entry-point fibers share services, not the main fiber's lifetime.
-      const work = Effect.runPromiseExitWith(services)(
+      const work = Effect.runPromiseExitWith(context)(
         Effect.scoped(Effect.suspend(handler)),
         { signal },
       )
@@ -82,11 +88,8 @@ export function createHandlerRuntime(
   }
 }
 
-export type HandlerRuntime = ReturnType<typeof createHandlerRuntime>
-
-export class WorkflowCleanupTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`Workflow cleanup exceeded ${timeoutMs}ms; worker recycling required`)
-    this.name = 'WorkflowCleanupTimeoutError'
-  }
-}
+/**
+ * The durable registry erases the heterogeneous requirements of its handlers;
+ * the typed entry points prove coverage before constructing this runtime.
+ */
+export type HandlerRuntime = ReturnType<typeof createHandlerRuntime<any>>

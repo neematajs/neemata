@@ -1,17 +1,10 @@
-import type * as Context from 'effect/Context'
-
 import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AnyWorkflowDefinition } from '../../types/index.ts'
 import type { ContinueRunCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
 import { decodeStoredValue, decodeNodeOutput } from '../codec.ts'
-import {
-  createHandlerRuntime,
-  WorkflowCleanupTimeoutError,
-  type HandlerRuntime,
-  type HandlerRuntimeOptions,
-} from '../handler.ts'
+import { WorkflowCleanupTimeoutError, type HandlerRuntime } from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -26,13 +19,21 @@ class StaleRunLeaseError extends Error {
   }
 }
 
-export type ContinueWorkflowRunInput = HandlerRuntimeOptions & {
+class CancelledRunError extends Error {
+  constructor() {
+    super('Workflow run cancellation observed during coordination')
+    this.name = 'CancelledRunError'
+  }
+}
+
+export type ContinueWorkflowRunInput = {
   readonly signal?: AbortSignal
+  /** Receives failures discarded because the worker is already shutting down. */
+  readonly onError?: (error: unknown) => void
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly context: Context.Context<never>
-  readonly handlers?: HandlerRuntime
+  readonly handlers: HandlerRuntime
   readonly workflows: readonly WorkflowImplementation<
     AnyWorkflowDefinition,
     any
@@ -161,8 +162,7 @@ export async function continueWorkflowRun(
           runCoordinationExecutor: input.runCoordinationExecutor,
           workflow: implementation,
           signal,
-          handlers:
-            input.handlers ?? createHandlerRuntime(input.context, input),
+          handlers: input.handlers,
           run: snapshot.run,
           workflowInput,
           outputs,
@@ -177,12 +177,15 @@ export async function continueWorkflowRun(
       if (error instanceof WorkflowCleanupTimeoutError) throw error
       if (
         error instanceof StaleRunLeaseError ||
-        error instanceof CancelledRunError ||
-        input.signal?.aborted
+        error instanceof CancelledRunError
       ) {
         return { status: 'busy' } satisfies ContinueWorkflowRunResult
       }
-      throw error
+      if (!input.signal?.aborted) throw error
+      // Shutdown releases the command for redelivery; a failure that is not the
+      // abort itself would otherwise disappear without a trace.
+      if (error !== input.signal.reason) input.onError?.(error)
+      return { status: 'busy' } satisfies ContinueWorkflowRunResult
     })
   } finally {
     await input.store.releaseRunLease(lease)
@@ -237,13 +240,6 @@ export function createRunLeaseFencedStore(
   }
 }
 
-class CancelledRunError extends Error {
-  constructor() {
-    super('Workflow run cancellation observed during coordination')
-    this.name = 'CancelledRunError'
-  }
-}
-
 async function runWithRunLeaseRenewal<T>(
   store: WorkflowStore,
   lease: RunLease,
@@ -266,6 +262,7 @@ async function runWithRunLeaseRenewal<T>(
         }
         // finish is user Effect work now; a long-running finish must observe
         // cancellation just like an activity, without allowing a late commit.
+        // This costs one run read per renewal tick of a long coordination pass.
         const [run] = await store.loadRuns([lease.runId])
         if (
           run &&

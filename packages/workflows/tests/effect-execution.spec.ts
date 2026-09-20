@@ -157,13 +157,10 @@ describe('Effect workflow execution', () => {
     })
     const running = runExecutionWorker({
       ...runtime,
-      context: Context.empty(),
       handlers,
       tasks: [implementation],
       workflows: [],
       workerId: 'timeout',
-      cleanupTimeoutMs: 10,
-      onFatal: fatal.resolve,
     })
     const failed = expect(running).rejects.toBeInstanceOf(
       WorkflowCleanupTimeoutError,
@@ -249,7 +246,7 @@ describe('Effect workflow execution', () => {
       runTaskAttempt({
         ...runtime,
         attemptExecutor,
-        context: Context.empty(),
+        handlers: createHandlerRuntime(Context.empty()),
         claimed,
         tasks: [implementation],
         workerId: 'lease',

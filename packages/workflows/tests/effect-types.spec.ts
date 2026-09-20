@@ -11,7 +11,11 @@ import {
   implementWorkflow,
 } from '../src/index.ts'
 import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
-import { createInMemoryWorkflowRuntime } from '../src/runtime/index.ts'
+import {
+  createHandlerRuntime,
+  createInMemoryWorkflowRuntime,
+  runExecutionWorker,
+} from '../src/runtime/index.ts'
 
 class Service extends Context.Service<Service, { value: number }>()(
   'test/Service',
@@ -129,6 +133,30 @@ it('retains services from direct, branch and parallel activities', () => {
       workflows: () => [direct, branch, parallel],
     }),
   ).toBeDefined()
+})
+
+it('requires a standalone worker context to cover its handlers', () => {
+  const worker = {
+    ...createInMemoryWorkflowRuntime(),
+    workflows: [],
+    tasks: [implementation],
+    workerId: 'typed',
+  }
+  const context = Context.make(Service, { value: 1 })
+  expectTypeOf(runExecutionWorker).toBeCallableWith({ ...worker, context })
+  expectTypeOf(runExecutionWorker).toBeCallableWith({
+    ...worker,
+    handlers: createHandlerRuntime(context),
+  })
+  // @ts-expect-error The empty context cannot provide Service.
+  void (() => runExecutionWorker({ ...worker, context: Context.empty() }))
+  void (() =>
+    runExecutionWorker({
+      ...worker,
+      handlers: createHandlerRuntime(context),
+      // @ts-expect-error A shared runtime already owns its context and options.
+      context,
+    }))
 })
 
 it('supports scoped handlers and adapter factories with services', () => {

@@ -34,8 +34,6 @@ export type WorkerMaintenanceHook = {
 }
 
 export type WorkerLoopOptions = {
-  readonly cleanupTimeoutMs?: number
-  readonly onFatal?: (error: unknown) => void
   readonly workerId: string
   readonly concurrency?: number
   readonly leaseMs?: number

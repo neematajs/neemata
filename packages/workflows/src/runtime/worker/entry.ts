@@ -1,6 +1,8 @@
 import type * as Context from 'effect/Context'
+import type * as Scope from 'effect/Scope'
 
 import type {
+  Requirements,
   TaskImplementation,
   WorkflowImplementation,
 } from '../../implement/index.ts'
@@ -16,7 +18,11 @@ import type {
   WorkflowWakeEvents,
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
-import { createHandlerRuntime, type HandlerRuntime } from '../handler.ts'
+import {
+  createHandlerRuntime,
+  type HandlerRuntime,
+  type HandlerRuntimeOptions,
+} from '../handler.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
   runAtomicContinuation,
@@ -61,33 +67,51 @@ type AnyWorkflowImplementation = WorkflowImplementation<
 >
 type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
-export type RunWorkflowWorkerInput = WorkerLoopOptions & {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-  readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
-  readonly wakeEvents?: WorkflowWakeEvents
-  readonly workflows: readonly AnyWorkflowImplementation[]
-  readonly context: Context.Context<never>
-  readonly handlers?: HandlerRuntime
-  readonly reaping?: false | WorkerReapingOptions
-  readonly runTimeouts?: false | WorkerRunTimeoutsOptions
+/**
+ * A standalone worker supplies the services its handlers require. A supervisor
+ * that drains handler fibers itself shares its runtime across pools instead.
+ */
+export type WorkerHandlers<R> =
+  | (HandlerRuntimeOptions & {
+      readonly context: Context.Context<Exclude<R, Scope.Scope>>
+      readonly handlers?: undefined
+    })
+  | { readonly handlers: HandlerRuntime }
+
+function resolveHandlers(input: WorkerHandlers<any>): HandlerRuntime {
+  return input.handlers ?? createHandlerRuntime(input.context, input)
 }
 
-export type RunExecutionWorkerInput = WorkerLoopOptions & {
-  readonly store: WorkflowStore
-  readonly runCoordinationExecutor: RunCoordinationExecutor
-  readonly attemptExecutor: AttemptExecutor
-  readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
-  readonly wakeEvents?: WorkflowWakeEvents
-  readonly workflows: readonly AnyWorkflowImplementation[]
-  readonly activityNames?: readonly string[]
-  readonly tasks: readonly AnyTaskImplementation[]
-  readonly taskNames?: readonly string[]
-  readonly context: Context.Context<never>
-  readonly handlers?: HandlerRuntime
-  readonly reaping?: false | WorkerReapingOptions
-}
+export type RunWorkflowWorkerInput<
+  W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
+> = WorkerLoopOptions &
+  WorkerHandlers<Requirements<W>> & {
+    readonly store: WorkflowStore
+    readonly runCoordinationExecutor: RunCoordinationExecutor
+    readonly attemptExecutor: AttemptExecutor
+    readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
+    readonly wakeEvents?: WorkflowWakeEvents
+    readonly workflows: readonly W[]
+    readonly reaping?: false | WorkerReapingOptions
+    readonly runTimeouts?: false | WorkerRunTimeoutsOptions
+  }
+
+export type RunExecutionWorkerInput<
+  W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
+  T extends AnyTaskImplementation = AnyTaskImplementation,
+> = WorkerLoopOptions &
+  WorkerHandlers<Requirements<W | T>> & {
+    readonly store: WorkflowStore
+    readonly runCoordinationExecutor: RunCoordinationExecutor
+    readonly attemptExecutor: AttemptExecutor
+    readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+    readonly wakeEvents?: WorkflowWakeEvents
+    readonly workflows: readonly W[]
+    readonly activityNames?: readonly string[]
+    readonly tasks: readonly T[]
+    readonly taskNames?: readonly string[]
+    readonly reaping?: false | WorkerReapingOptions
+  }
 
 type MaintenanceDeps = {
   readonly store: WorkflowStore
@@ -166,27 +190,21 @@ function executionWake(
   }
 }
 
-export async function runWorkflowWorker(
-  input: RunWorkflowWorkerInput,
+export async function runWorkflowWorker<W extends AnyWorkflowImplementation>(
+  input: RunWorkflowWorkerInput<W>,
 ): Promise<WorkerLoopResult> {
   return drainWorkerPool(
     workflowWorkerOptions(input),
-    workflowDriver({
-      ...input,
-      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
-    }),
+    workflowDriver(input, resolveHandlers(input)),
   )
 }
 
-export async function serveWorkflowWorker(
-  input: RunWorkflowWorkerInput & { readonly signal: AbortSignal },
+export async function serveWorkflowWorker<W extends AnyWorkflowImplementation>(
+  input: RunWorkflowWorkerInput<W> & { readonly signal: AbortSignal },
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
     { ...workflowWorkerOptions(input), signal: input.signal },
-    workflowDriver({
-      ...input,
-      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
-    }),
+    workflowDriver(input, resolveHandlers(input)),
   )
 }
 
@@ -201,6 +219,7 @@ function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
 
 function workflowDriver(
   input: RunWorkflowWorkerInput,
+  handlers: HandlerRuntime,
 ): WorkerDriver<ClaimedCommand> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
@@ -222,11 +241,9 @@ function workflowDriver(
             store: scoped.store,
             runCoordinationExecutor: scoped.runCoordinationExecutor,
             attemptExecutor: scoped.attemptExecutor,
-            context: input.context,
-            handlers: input.handlers,
+            handlers,
             signal,
-            cleanupTimeoutMs: input.cleanupTimeoutMs,
-            onFatal: input.onFatal,
+            onError: input.onError,
             workflows: input.workflows,
             workerId: input.workerId,
             command: claimed.command,
@@ -252,27 +269,25 @@ function workflowDriver(
   }
 }
 
-export async function runExecutionWorker(
-  input: RunExecutionWorkerInput,
-): Promise<WorkerLoopResult> {
+export async function runExecutionWorker<
+  W extends AnyWorkflowImplementation,
+  T extends AnyTaskImplementation,
+>(input: RunExecutionWorkerInput<W, T>): Promise<WorkerLoopResult> {
   return drainWorkerPool(
     executionWorkerOptions(input),
-    executionDriver({
-      ...input,
-      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
-    }),
+    executionDriver(input, resolveHandlers(input)),
   )
 }
 
-export async function serveExecutionWorker(
-  input: RunExecutionWorkerInput & { readonly signal: AbortSignal },
+export async function serveExecutionWorker<
+  W extends AnyWorkflowImplementation,
+  T extends AnyTaskImplementation,
+>(
+  input: RunExecutionWorkerInput<W, T> & { readonly signal: AbortSignal },
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
     { ...executionWorkerOptions(input), signal: input.signal },
-    executionDriver({
-      ...input,
-      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
-    }),
+    executionDriver(input, resolveHandlers(input)),
   )
 }
 
@@ -286,6 +301,7 @@ function executionWorkerOptions(input: RunExecutionWorkerInput) {
 
 function executionDriver(
   input: RunExecutionWorkerInput,
+  handlers: HandlerRuntime,
 ): WorkerDriver<ClaimedAttempt> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
@@ -309,8 +325,8 @@ function executionDriver(
       try {
         const result =
           claimed.command.kind === 'activityAttempt'
-            ? await runActivityAttempt({ ...input, claimed, signal })
-            : await runTaskAttempt({ ...input, claimed, signal })
+            ? await runActivityAttempt({ ...input, handlers, claimed, signal })
+            : await runTaskAttempt({ ...input, handlers, claimed, signal })
         return result.status === 'processed'
       } catch (error) {
         if (

@@ -11,6 +11,9 @@ const jsonCodecs = new WeakMap<
   Schema.Codec<unknown, Schema.Json>
 >()
 const nodeCodecs = new WeakMap<WorkflowNode, WorkflowSchema>()
+// Re-entry decodes every completed node, so parsers are compiled once per schema.
+const decoders = new WeakMap<WorkflowSchema, (value: unknown) => unknown>()
+const encoders = new WeakMap<WorkflowSchema, (value: unknown) => unknown>()
 
 function storedCodec(schema: WorkflowSchema) {
   let codec = jsonCodecs.get(schema)
@@ -21,13 +24,26 @@ function storedCodec(schema: WorkflowSchema) {
   return codec
 }
 
+function compiled(
+  cache: WeakMap<WorkflowSchema, (value: unknown) => unknown>,
+  compile: (schema: WorkflowSchema) => (value: unknown) => unknown,
+  schema: WorkflowSchema,
+) {
+  let run = cache.get(schema)
+  if (!run) {
+    run = compile(schema)
+    cache.set(schema, run)
+  }
+  return run
+}
+
 export function decodeSchemaValue(
   schema: WorkflowSchema,
   value: unknown,
   label: string,
 ) {
   try {
-    return Schema.decodeUnknownSync(schema)(value)
+    return compiled(decoders, Schema.decodeUnknownSync, schema)(value)
   } catch (error) {
     throw new Error(`Invalid ${label}`, { cause: error })
   }
@@ -42,9 +58,11 @@ export function encodeStoredValue(
     // A workflow with no output schema may finish without a value. All other
     // untyped outputs must already be JSON; only a codec can restore rich types.
     if (!schema && value === undefined) return undefined
-    return Schema.encodeUnknownSync(schema ? storedCodec(schema) : Schema.Json)(
-      value,
-    )
+    return compiled(
+      encoders,
+      Schema.encodeUnknownSync,
+      schema ? storedCodec(schema) : Schema.Json,
+    )(value)
   } catch (error) {
     throw new Error(`Invalid ${label}`, { cause: error })
   }

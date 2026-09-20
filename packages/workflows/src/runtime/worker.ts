@@ -12,6 +12,7 @@ export {
   serveWorkflowWorker,
   type RunExecutionWorkerInput,
   type RunWorkflowWorkerInput,
+  type WorkerHandlers,
   type WorkerReapingOptions,
   type WorkerRunTimeoutsOptions,
 } from './worker/entry.ts'

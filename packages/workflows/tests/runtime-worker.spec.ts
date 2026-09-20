@@ -10,17 +10,18 @@ import {
 } from '../src/index.ts'
 import {
   type AttemptExecutor,
-  type RunCoordinationExecutor,
-  type WorkflowRuntimeAtomicCompletion,
-  type WorkflowStore,
+  createHandlerRuntime,
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  type RunCoordinationExecutor,
   runExecutionWorker,
-  runWorkflowWorker,
   runTaskAttempt,
+  runWorkflowWorker,
   startTaskRun,
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
+  type WorkflowRuntimeAtomicCompletion,
+  type WorkflowStore,
 } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
@@ -76,7 +77,7 @@ describe('workflow worker runtime', () => {
       attemptExecutor: runtime.attemptExecutor,
       tasks: [implementation],
       workerId: 'task-worker-1',
-      context: createTestContext(),
+      handlers: createHandlerRuntime(createTestContext()),
       claimed: claimed!,
     })
 
@@ -233,7 +234,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...completionMarker,
-      context,
+      handlers: createHandlerRuntime(context),
       tasks: [completionImplementation],
       workerId: 'task-worker-1',
       claimed: completionClaimed!,
@@ -281,7 +282,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...retryMarker,
-      context,
+      handlers: createHandlerRuntime(context),
       tasks: [retryImplementation],
       workerId: 'task-worker-1',
       claimed: retryClaimed!,
@@ -347,7 +348,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...reconcileMarker,
-      context,
+      handlers: createHandlerRuntime(context),
       tasks: [reconcileTaskImplementation],
       workerId: 'task-worker-1',
       claimed: reconcileClaimed!,
@@ -418,7 +419,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      context,
+      handlers: createHandlerRuntime(context),
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,
