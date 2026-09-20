@@ -150,9 +150,12 @@ export class HostController {
     })
   }
 
-  // Every awaited startup or reload step goes through here, so a stop that
-  // arrives mid-step unwinds the operation without a check after each await.
+  // Every awaited startup or reload step goes through here, so a stop unwinds
+  // the operation without a check after each await. The check before run() is
+  // what closes the gap between steps: returning from this async function
+  // yields, and a stop landing there must not let the next step begin.
   private async step(run: () => MaybePromise<void>): Promise<void> {
+    if (this.stopRequested) throw new StopRequested()
     await run()
     if (this.stopRequested) throw new StopRequested()
   }
@@ -172,10 +175,14 @@ export class HostController {
       await this.step(() => this.callServerHook('server:start'))
       await this.step(() => this.startRuntimes())
       await this.step(() => this.startProxy())
-      this.markState('running')
+      // Synchronous effects are steps too: a stop in the gap before them must
+      // not publish a running state or announce readiness.
+      await this.step(() => this.markState('running'))
       await this.step(() => this.callServerHook(options.readyHook))
-      options.onReady()
-      this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+      await this.step(() => {
+        options.onReady()
+        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+      })
     } catch (error) {
       if (this.stopRequested) return
       const normalized = normalizeError(error)
@@ -233,7 +240,7 @@ export class HostController {
         const attachProxyStartedAt = performance.now()
         await this.step(() => this.syncProxyUpstreams())
         attachProxyMs = performance.now() - attachProxyStartedAt
-        this.markState('running')
+        await this.step(() => this.markState('running'))
         const hooksStartedAt = performance.now()
         await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
           mode: this.snapshot.mode,
