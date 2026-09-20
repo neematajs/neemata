@@ -23,6 +23,8 @@ const workerData = rawWorkerData as RuntimeWorkerData
 
 let runtime: NeemRuntime | undefined
 let logger: Logger | undefined
+// stopping memoizes runtime cleanup, which a failed start also needs;
+// stopRequested records that the host asked for it, so exits are not failures.
 let stopping: Promise<void> | undefined
 let stopRequested = false
 
@@ -142,6 +144,9 @@ process.on('unhandledRejection', (error) => {
   process.exit(1)
 })
 
+// Started before main so a stop that arrives during bootstrap can await it.
+const initialization = createRuntime(workerData)
+
 async function main(): Promise<void> {
   try {
     runtime = await initialization
@@ -175,5 +180,4 @@ async function main(): Promise<void> {
   }
 }
 
-const initialization = createRuntime(workerData)
 void main()
