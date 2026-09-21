@@ -52,7 +52,11 @@ type Provided<E> = 0 extends 1 & E
     [HandlerRuntime] extends [E]
     ? never
     : E extends HandlerRuntime<infer R>
-      ? R
+      ? // The runtime is the whole env an Effect worker passes: a subtype
+        // asking for more than it would find those members undefined.
+        [HandlerRuntime<R>] extends [E]
+        ? R
+        : UnsupportedEnv<E>
       : UnsupportedEnv<E>
 
 /**

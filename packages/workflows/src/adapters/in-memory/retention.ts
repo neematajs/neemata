@@ -65,6 +65,13 @@ function collectRunDescendantIds(state: State, rootId: string) {
   return descendantIds
 }
 
+function isTerminalFamily(state: State, familyRunIds: ReadonlySet<string>) {
+  return Array.from(familyRunIds).every((familyRunId) => {
+    const familyRun = state.runs.get(familyRunId)
+    return familyRun !== undefined && isTerminalRunStatus(familyRun.status)
+  })
+}
+
 function deleteRunTrees(state: State, treeIds: ReadonlySet<string>) {
   const {
     runs,
@@ -185,6 +192,11 @@ export function createRetentionStore(state: State): RetentionStore {
           if (byUpdatedAt !== 0) return byUpdatedAt
           return left.id.localeCompare(right.id)
         })
+        // A detached child outlives its terminal root, so the root alone
+        // does not make the family prunable.
+        .filter((run) =>
+          isTerminalFamily(state, collectRunDescendantIds(state, run.id)),
+        )
         .slice(0, batchSize)
       const treeIds = collectRunTreeIds(
         state,
@@ -203,14 +215,7 @@ export function createRetentionStore(state: State): RetentionStore {
       }
 
       const familyRunIds = collectRunDescendantIds(state, runId)
-      if (
-        Array.from(familyRunIds).some((familyRunId) => {
-          const familyRun = runs.get(familyRunId)
-          return (
-            familyRun === undefined || !isTerminalRunStatus(familyRun.status)
-          )
-        })
-      ) {
+      if (!isTerminalFamily(state, familyRunIds)) {
         throw new Error(`Run [${runId}] has non-terminal runs`)
       }
 

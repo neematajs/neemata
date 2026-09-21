@@ -220,6 +220,17 @@ export function createNodeStore(
           `Missing node child [${childRef(input.runId, input.nodeName, input.childKey)}]`,
         )
       }
+      // A retry whose predecessor was already superseded is a replay by a
+      // worker that lost the claim: hand back the successor instead of
+      // superseding the new claimant's attempt. Checked before the terminal
+      // guard because that successor may already have settled the child.
+      if (
+        input.after !== undefined &&
+        child.currentAttemptId !== undefined &&
+        child.currentAttemptId !== input.after
+      ) {
+        return attempts.get(child.currentAttemptId)!
+      }
       if (isTerminalNodeStatus(child.status)) {
         throw new Error(
           `Terminal node child [${childRef(input.runId, input.nodeName, input.childKey)}] cannot create attempt`,
