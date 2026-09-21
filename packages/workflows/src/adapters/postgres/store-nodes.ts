@@ -30,7 +30,7 @@ import {
   notifyRunStatusEventColumnsSql,
   one,
   runStatusSourcesSql,
-  withDateColumns,
+  timestampParam,
 } from './sql.ts'
 
 type PostgresWorkflowNodeStoreContext = {
@@ -110,7 +110,7 @@ export const createPostgresWorkflowNodeStore = (
   return {
     async createNode(input) {
       await ready
-      const date = new Date()
+      const date = Date.now()
       const row = await one(
         db,
         `
@@ -121,7 +121,7 @@ export const createPostgresWorkflowNodeStore = (
         ON CONFLICT (run_id, name) DO UPDATE SET name = workflow_nodes.name
         RETURNING *, ${payloadColumnsSql()}
       `,
-        [input.runId, input.name, input.kind, date],
+        [input.runId, input.name, input.kind, timestampParam(date)],
       )
       return mapNode(row!)
     },
@@ -190,18 +190,14 @@ export const createPostgresWorkflowNodeStore = (
       const node = jsonRecordColumn(snapshot?.node)
       if (!node) return undefined
 
-      const children = jsonRecordArrayColumn(snapshot.children).map((child) =>
-        withDateColumns(child, ['created_at', 'updated_at']),
+      const children = jsonRecordArrayColumn(snapshot.children).map(
+        (child) => child,
       )
-      const attempts = jsonRecordArrayColumn(snapshot.attempts).map((attempt) =>
-        withDateColumns(attempt, [
-          'dispatched_at',
-          'heartbeat_at',
-          'completed_at',
-        ]),
+      const attempts = jsonRecordArrayColumn(snapshot.attempts).map(
+        (attempt) => attempt,
       )
       return {
-        node: mapNode(withDateColumns(node, ['created_at', 'updated_at'])),
+        node: mapNode(node),
         children: children.map(mapNodeChild),
         attempts: attempts.map(mapAttempt),
       }

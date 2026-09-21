@@ -113,7 +113,7 @@ function workflowRuntimeAdapterContract(
       }).build()
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
-      const startAt = new Date(Date.now() + 60_000)
+      const startAt = Date.now() + 60_000
 
       const run = await client.start(
         workflow,
@@ -142,7 +142,7 @@ function workflowRuntimeAdapterContract(
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
       const idempotencyKey = ['workflow', 'delayed-idempotent-alpha']
-      const startAt = new Date(Date.now() + 60_000)
+      const startAt = Date.now() + 60_000
 
       const run = await client.start(
         workflow,
@@ -348,7 +348,7 @@ function workflowRuntimeAdapterContract(
       })
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
-      const startAt = new Date(Date.now() + 60_000)
+      const startAt = Date.now() + 60_000
 
       const run = await client.start(task, { text: 'alpha' }, { startAt })
 
@@ -375,7 +375,7 @@ function workflowRuntimeAdapterContract(
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
       const idempotencyKey = ['task', 'delayed-idempotent-alpha']
-      const startAt = new Date(Date.now() + 60_000)
+      const startAt = Date.now() + 60_000
 
       const run = await client.start(
         task,
@@ -573,7 +573,7 @@ function workflowRuntimeAdapterContract(
 
       await runtime.runCoordinationExecutor.enqueueDelayed(
         delayed,
-        new Date(Date.now() + 60_000),
+        Date.now() + 60_000,
       )
       await runtime.runCoordinationExecutor.enqueue(immediate)
 
@@ -751,7 +751,7 @@ function workflowRuntimeAdapterContract(
           lastError: { name: 'Error', message: 'poison continue' },
         },
       ])
-      expect(dead[0]?.deadAt).toBeInstanceOf(Date)
+      expect(dead[0]?.deadAt).toEqual(expect.any(Number))
       await expect(
         runtime.runCoordinationExecutor.claim({
           workerId: 'worker-2',
@@ -899,7 +899,7 @@ function workflowRuntimeAdapterContract(
           },
         },
       ])
-      expect(dead[0]?.deadAt).toBeInstanceOf(Date)
+      expect(dead[0]?.deadAt).toEqual(expect.any(Number))
 
       await runtime.store.requeueDeadCommand(dead[0]!.id)
       const requeued = await claimWorker('recovered-worker')
@@ -1206,7 +1206,7 @@ function workflowRuntimeAdapterContract(
       await runtime.store.completeRun({ runId: root.id, output: { ok: true } })
 
       const result = await runtime.store.pruneTerminalRuns({
-        olderThan: new Date(Date.now() + 1_000),
+        olderThan: Date.now() + 1_000,
         batchSize: 1,
       })
 
@@ -1254,7 +1254,7 @@ function workflowRuntimeAdapterContract(
       })
 
       await expect(
-        runtime.store.pruneTerminalRuns({ olderThan: new Date(0) }),
+        runtime.store.pruneTerminalRuns({ olderThan: 0 }),
       ).resolves.toStrictEqual({ deleted: 0 })
       await expect(
         runtime.store.loadRunSnapshot(queuedRoot.id),
@@ -1293,7 +1293,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({
-          olderThan: new Date(Date.now() + 1_000),
+          olderThan: Date.now() + 1_000,
         }),
       ).resolves.toStrictEqual({ deleted: 1 })
       await expect(
@@ -1443,7 +1443,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({
-          olderThan: new Date(Date.now() + 1_000),
+          olderThan: Date.now() + 1_000,
           statuses: [],
         }),
       ).resolves.toStrictEqual({ deleted: 0 })
@@ -1467,7 +1467,7 @@ function workflowRuntimeAdapterContract(
           return run
         }),
       )
-      const olderThan = new Date(Date.now() + 1_000)
+      const olderThan = Date.now() + 1_000
 
       await expect(
         runtime.store.pruneTerminalRuns({ olderThan, batchSize: 2 }),
@@ -2043,12 +2043,12 @@ function workflowRuntimeAdapterContract(
 
       // Both due by a wide margin: a broker reads its own clock, which may
       // trail this process by a few milliseconds.
-      const firstRunAt = new Date(Date.now() - 2_000)
+      const firstRunAt = Date.now() - 2_000
       await runtime.attemptExecutor.dispatchTask(taskCommand, {
         runAt: firstRunAt,
       })
       await runtime.attemptExecutor.dispatchActivity(activityCommand, {
-        runAt: new Date(firstRunAt.getTime() + 1_000),
+        runAt: firstRunAt + 1_000,
       })
 
       const selectors = {
@@ -2505,7 +2505,7 @@ function workflowRuntimeAdapterContract(
       expect(
         snapshot?.attempts.map((attempt) => [attempt.id, attempt.status]),
       ).toEqual([[startedAttempt.id, 'cancelled']])
-      expect(snapshot?.attempts[0]?.completedAt).toBeInstanceOf(Date)
+      expect(snapshot?.attempts[0]?.completedAt).toEqual(expect.any(Number))
       expect(snapshot?.nodes.map((node) => [node.name, node.status])).toEqual([
         ['first', 'completed'],
         ['second', 'cancelled'],
@@ -2542,7 +2542,7 @@ function workflowRuntimeAdapterContract(
         leaseToken: `lease-${attemptId}`,
         input: {},
       })
-      const firstRunAt = new Date(Date.now() - 1_000)
+      const firstRunAt = Date.now() - 1_000
 
       await runtime.attemptExecutor.dispatchActivity(
         command(run.id, '00000000-0000-4000-8000-000000000301'),
@@ -2550,11 +2550,11 @@ function workflowRuntimeAdapterContract(
       )
       await runtime.attemptExecutor.dispatchActivity(
         command(run.id, '00000000-0000-4000-8000-000000000302'),
-        { runAt: new Date(firstRunAt.getTime() + 1) },
+        { runAt: firstRunAt + 1 },
       )
       await runtime.attemptExecutor.dispatchActivity(
         command(otherRun.id, '00000000-0000-4000-8000-000000000303'),
-        { runAt: new Date(firstRunAt.getTime() + 2) },
+        { runAt: firstRunAt + 2 },
       )
       const claimed = await runtime.attemptExecutor.claim({
         taskNames: [],
@@ -2885,7 +2885,7 @@ function workflowRuntimeAdapterContract(
 
       const before = await runtime.store.listRuns({
         name: 'cutoff-workflow',
-        createdBefore: new Date(run.createdAt.getTime() + 1),
+        createdBefore: run.createdAt + 1,
       })
       expect(before.runs.map((row) => row.id)).toStrictEqual([run.id])
 

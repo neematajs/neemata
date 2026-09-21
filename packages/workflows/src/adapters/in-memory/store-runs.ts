@@ -301,7 +301,7 @@ export function createRunStore(state: State): RunStore {
         runId,
         leaseToken: id('run-lease'),
         version: run.version,
-        expiresAt: new Date(date.getTime() + leaseMs),
+        expiresAt: date + leaseMs,
       }
       runLeases.set(runId, lease)
       return lease
@@ -312,7 +312,7 @@ export function createRunStore(state: State): RunStore {
       if (existingLease?.leaseToken !== lease.leaseToken) return undefined
       const renewedLease = {
         ...existingLease,
-        expiresAt: new Date(now().getTime() + leaseMs),
+        expiresAt: now() + leaseMs,
       }
       runLeases.set(lease.runId, renewedLease)
       return renewedLease

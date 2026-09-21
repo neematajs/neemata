@@ -10,13 +10,14 @@ import type {
   StoredRun,
 } from '../../runtime/state.ts'
 import type { RunLease } from '../../runtime/store.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { ClaimedQueueItem, QueueItem } from './commands.ts'
 import { createWakeEvents } from './wake-events.ts'
 
 export type State = ReturnType<typeof createState>
 
 type InMemoryRunLease = RunLease & {
-  readonly expiresAt: Date
+  readonly expiresAt: Timestamp
 }
 
 export function createState(maxDeliveries = 20) {
@@ -31,7 +32,7 @@ export function createState(maxDeliveries = 20) {
   // lease fencing remain deterministic even within the same millisecond.
   function now() {
     lastTimestamp = Math.max(Date.now(), lastTimestamp + 1)
-    return new Date(lastTimestamp)
+    return lastTimestamp
   }
 
   const runs = new Map<string, StoredRun>()

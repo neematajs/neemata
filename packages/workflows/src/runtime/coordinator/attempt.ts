@@ -1,4 +1,4 @@
-import type { DurationString } from '../../types/index.ts'
+import type { DurationString, Timestamp } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
@@ -16,7 +16,7 @@ export type DispatchTaskRunAttemptInput = {
   readonly taskInput: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString
-  readonly startAt?: Date
+  readonly startAt?: Timestamp
   readonly throwOnDispatchFailure?: boolean
 }
 
@@ -112,7 +112,7 @@ export async function dispatchTaskAttempt(input: {
   readonly nodeName: string
   readonly childKey: string
   readonly timeout?: DurationString
-  readonly runAt?: Date
+  readonly runAt?: Timestamp
   readonly throwOnDispatchFailure?: boolean
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt

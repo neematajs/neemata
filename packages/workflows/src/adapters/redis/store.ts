@@ -31,6 +31,7 @@ import type {
   TerminalRunStatus,
   WorkflowStore,
 } from '../../runtime/store.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
 import type { Keys } from './keys.ts'
 import {
@@ -71,7 +72,7 @@ export type StoreDelegates = {
   markDeadCommandReaped(id: string): Promise<void>
   requeueDeadCommand(id: string): Promise<void>
   deleteCommands(runIds: ReadonlySet<string>): Promise<void>
-  pruneDeadCommands(olderThan: Date): Promise<void>
+  pruneDeadCommands(olderThan: Timestamp): Promise<void>
 }
 
 export type StoreOptions = {
@@ -100,11 +101,11 @@ export class StoreRuntime {
 
   async createRun(
     input: CreateRunInput,
-    startAt?: Date,
+    startAt?: Timestamp,
   ): Promise<{
     readonly run: StoredRun
     readonly created: boolean
-    readonly startAt: Date | undefined
+    readonly startAt: Timestamp | undefined
   }> {
     const normalized = await this.#normalizeRun(input)
     const run = this.#buildRun(normalized)
@@ -120,7 +121,7 @@ export class StoreRuntime {
       uniqueBehavior = run.unique.behavior
     }
     let encodedStartAt = ''
-    if (startAt !== undefined) encodedStartAt = String(startAt.getTime())
+    if (startAt !== undefined) encodedStartAt = String(startAt)
     const result = scriptResult(
       await this.#scripts.run(
         'createRun',
@@ -153,8 +154,8 @@ export class StoreRuntime {
       throw new Error(`Terminal workflow family [${rootRunId}]`)
     }
     const stored = decodeScriptValue<StoredRun>(result[1])
-    let storedStartAt: Date | undefined
-    if (result[3]) storedStartAt = new Date(Number(result[3]))
+    let storedStartAt: Timestamp | undefined
+    if (result[3]) storedStartAt = Number(result[3])
     if (result[0] === 'created') {
       return { run: stored, created: true, startAt: storedStartAt }
     }
@@ -218,7 +219,7 @@ export class StoreRuntime {
       }
     }
     const root = runs[params.runId]!
-    const date = new Date()
+    const date = Date.now()
     let attempt: StoredAttempt | undefined
     let command: ContinueRunCommand | TaskAttemptCommand = {
       kind: 'continueRun',
@@ -298,7 +299,7 @@ export class StoreRuntime {
             rootRunId,
             deliveryCount: 0,
             createdAt: date,
-            createdAtScore: date.getTime(),
+            createdAtScore: date,
           }),
           root.id,
           this.#keys.prefix,
@@ -340,7 +341,7 @@ export class StoreRuntime {
   }
 
   #buildRun(input: CreateRunInput): StoredRun {
-    const date = new Date()
+    const date = Date.now()
     const id = randomUUID()
     const run: Mutable<StoredRun> = {
       id,
@@ -729,7 +730,7 @@ export class StoreRuntime {
 
   async #createNode(input: CreateNodeInput) {
     const rootRunId = await this.#requireRootRunId(input.runId)
-    const date = new Date()
+    const date = Date.now()
     const node: StoredNode = {
       runId: input.runId,
       name: input.name,
@@ -803,7 +804,7 @@ export class StoreRuntime {
     const rootRunId = await this.#requireRootRunId(params.runId)
     const nodeField = nodeKey(params.runId, params.nodeName)
     const indexField = `children:${nodeField}`
-    const date = new Date()
+    const date = Date.now()
     const created: StoredNodeChild[] = []
     const rows: { field: string; raw: string }[] = []
     for (const input of params.children) {
@@ -965,7 +966,7 @@ export class StoreRuntime {
       attemptNumber: 0,
       retryAttemptNumber: 1,
       input: input.input,
-      dispatchedAt: new Date(),
+      dispatchedAt: Date.now(),
     }
     if (input.idempotencyKey !== undefined) {
       attempt.idempotencyKey = input.idempotencyKey
@@ -1286,9 +1287,7 @@ export class StoreRuntime {
     for (const run of result.runs) {
       if (run.updatedAt < params.olderThan) roots.push(run)
     }
-    roots.sort(
-      (left, right) => left.updatedAt.getTime() - right.updatedAt.getTime(),
-    )
+    roots.sort((left, right) => left.updatedAt - right.updatedAt)
     let deleted = 0
     for (const root of roots) {
       if (await this.#deleteFamily(root.id, params)) deleted += 1
@@ -1331,7 +1330,7 @@ export class StoreRuntime {
     const stateKeys = this.#keys.familyStateKeys(rootRunId)
     const args = prune
       ? [
-          String(prune.olderThan.getTime()),
+          String(prune.olderThan),
           JSON.stringify(normalizePruneStatuses(prune.statuses)),
         ]
       : []
@@ -1375,12 +1374,10 @@ const runMatchesCreateInput = (run: StoredRun, input: CreateRunInput) =>
   sameValue(run.input, input.input)
 
 const compareRunsOldest = (left: StoredRun, right: StoredRun) =>
-  left.createdAt.getTime() - right.createdAt.getTime() ||
-  left.id.localeCompare(right.id)
+  left.createdAt - right.createdAt || left.id.localeCompare(right.id)
 
 const compareAttempts = (left: StoredAttempt, right: StoredAttempt) =>
-  left.dispatchedAt.getTime() - right.dispatchedAt.getTime() ||
-  left.id.localeCompare(right.id)
+  left.dispatchedAt - right.dispatchedAt || left.id.localeCompare(right.id)
 
 const compareChildrenForDetail = (
   left: StoredNodeChild,

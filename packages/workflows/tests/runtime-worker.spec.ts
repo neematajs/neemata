@@ -1376,11 +1376,11 @@ describe('workflow worker runtime', () => {
         tasks: [implementation],
         workerId: 'task-worker-1',
       })
-      expect(runtime.inspect().taskCommands[0]?.runAt?.toISOString()).toBe(
-        '2026-01-01T00:00:01.000Z',
+      expect(runtime.inspect().taskCommands[0]?.runAt).toBe(
+        Date.parse('2026-01-01T00:00:01.000Z'),
       )
 
-      vi.setSystemTime(new Date('2026-01-01T00:00:01.000Z'))
+      vi.setSystemTime(Date.parse('2026-01-01T00:00:01.000Z'))
       await runExecutionWorker({
         workflows: [],
         store: runtime.store,
@@ -1390,11 +1390,11 @@ describe('workflow worker runtime', () => {
         tasks: [implementation],
         workerId: 'task-worker-1',
       })
-      expect(runtime.inspect().taskCommands[0]?.runAt?.toISOString()).toBe(
-        '2026-01-01T00:00:03.000Z',
+      expect(runtime.inspect().taskCommands[0]?.runAt).toBe(
+        Date.parse('2026-01-01T00:00:03.000Z'),
       )
 
-      vi.setSystemTime(new Date('2026-01-01T00:00:03.000Z'))
+      vi.setSystemTime(Date.parse('2026-01-01T00:00:03.000Z'))
       await runExecutionWorker({
         workflows: [],
         store: runtime.store,

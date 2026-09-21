@@ -484,7 +484,7 @@ for (const target of targets) {
         await runtime.store.completeRun({ runId: eligible.id, output: null })
         expect(
           await runtime.store.pruneTerminalRuns({
-            olderThan: new Date(Date.now() + 1000),
+            olderThan: Date.now() + 1000,
             batchSize: 1,
           }),
         ).toEqual({ deleted: 1 })
@@ -503,10 +503,8 @@ for (const target of targets) {
           runId: run.id,
           error: new Error('retry'),
         })
-        const olderThan = new Date(failed!.updatedAt.getTime() + 1)
-        await expect
-          .poll(() => Date.now())
-          .toBeGreaterThanOrEqual(olderThan.getTime())
+        const olderThan = failed!.updatedAt + 1
+        await expect.poll(() => Date.now()).toBeGreaterThanOrEqual(olderThan)
         // oxlint-disable-next-line typescript/unbound-method -- Rebound to the intercepted instance with call below.
         const original = StoreScripts.prototype.run
         let retried = false
@@ -546,7 +544,7 @@ for (const target of targets) {
         const run = await runtime.store.createRun(input)
         expect(run.input).toStrictEqual(payload)
         expect(run.tags).toStrictEqual(input.tags)
-        expect(run.createdAt).toBeInstanceOf(Date)
+        expect(run.createdAt).toEqual(expect.any(Number))
         const running = await runtime.store.markRunRunning({ runId: run.id })
         expect(running?.input).toStrictEqual(payload)
         const replay = await runtime.store.createRun(input)
@@ -612,7 +610,7 @@ for (const target of targets) {
         expect(snapshot?.children[0]?.item).toStrictEqual(payload)
         expect(snapshot?.children[0]?.output).toStrictEqual(payload)
         expect(snapshot?.attempts[0]?.output).toStrictEqual(payload)
-        expect(snapshot?.attempts[0]?.completedAt).toBeInstanceOf(Date)
+        expect(snapshot?.attempts[0]?.completedAt).toEqual(expect.any(Number))
       })
 
       it('keeps empty child indexes and empty cancellation results as arrays', async () => {
@@ -843,7 +841,7 @@ for (const target of targets) {
           scope: 'active',
           behavior: 'join',
         } as const
-        const startAt = new Date(Date.now() + 60_000)
+        const startAt = Date.now() + 60_000
         vi.spyOn(runtime.store, 'createNode').mockRejectedValueOnce(
           new Error('interrupted task setup'),
         )
@@ -873,7 +871,7 @@ for (const target of targets) {
           '-1',
           'WITHSCORES',
         )
-        expect(Number(ready[1])).toBe(startAt.getTime())
+        expect(Number(ready[1])).toBe(startAt)
         await expect(
           runtime.attemptExecutor.claim({
             workerId: 'early',

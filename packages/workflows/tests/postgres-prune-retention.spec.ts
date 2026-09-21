@@ -48,7 +48,7 @@ test('postgres retention pruning preserves terminal roots with live descendants'
 
   await expect(
     runtime.store.pruneTerminalRuns({
-      olderThan: new Date(Date.now() + 1_000),
+      olderThan: Date.now() + 1_000,
     }),
   ).resolves.toStrictEqual({ deleted: 0 })
   await expect(runtime.store.loadRunSnapshot(root.id)).resolves.toBeDefined()
@@ -67,7 +67,7 @@ test('postgres retention pruning removes terminal roots after descendants finish
 
   await expect(
     runtime.store.pruneTerminalRuns({
-      olderThan: new Date(Date.now() + 1_000),
+      olderThan: Date.now() + 1_000,
     }),
   ).resolves.toStrictEqual({ deleted: 1 })
   await expect(runtime.store.loadRunSnapshot(root.id)).resolves.toBeUndefined()

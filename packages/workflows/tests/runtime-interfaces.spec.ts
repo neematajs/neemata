@@ -169,7 +169,7 @@ describe('workflow runtime interfaces', () => {
       kind?: RunKind
       name?: string
       status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
-      createdBefore?: Date
+      createdBefore?: number
       parentRunId?: string | null
       rootRunId?: string
       tags?: Readonly<Record<string, string>>

@@ -942,12 +942,12 @@ describe('in-memory workflow store', () => {
 
     await runtime.runCoordinationExecutor.enqueueDelayed(
       { ...continueCommand, runId: 'run-2' },
-      new Date(Date.now() + 3_600_000),
+      Date.now() + 3_600_000,
     )
     await runtime.runCoordinationExecutor.enqueue(continueCommand)
     await runtime.runCoordinationExecutor.enqueueDelayed(
       { ...continueCommand, runId: 'run-3' },
-      new Date(Date.now() - 1_000),
+      Date.now() - 1_000,
     )
     const claimedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',

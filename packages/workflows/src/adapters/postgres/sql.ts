@@ -21,7 +21,7 @@ import type {
   RunSummary,
   TerminalRunStatus,
 } from '../../runtime/store.ts'
-import type { ResolvedRunUnique } from '../../types/index.ts'
+import type { ResolvedRunUnique, Timestamp } from '../../types/index.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import {
   NODE_TRANSITIONS,
@@ -56,7 +56,7 @@ let lastTimestamp = 0
 export const now = () => {
   const current = Date.now()
   lastTimestamp = Math.max(current, lastTimestamp + 1)
-  return new Date(lastTimestamp)
+  return lastTimestamp
 }
 export const json = (value: unknown) => JSON.stringify(value)
 export const fromOptional = (value: unknown) =>
@@ -190,9 +190,9 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
         },
       }),
   version: row.version as number,
-  activeSince: row.active_since as Date,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  activeSince: timestampColumn(row.active_since),
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
 })
 
 export const mapRunSummary = (row: JsonRecord): RunSummary => ({
@@ -212,9 +212,9 @@ export const mapRunSummary = (row: JsonRecord): RunSummary => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   version: row.version as number,
-  activeSince: row.active_since as Date,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  activeSince: timestampColumn(row.active_since),
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
   nodesTotal: Number(row.nodes_total ?? 0),
   nodesCompleted: Number(row.nodes_completed ?? 0),
 })
@@ -229,8 +229,8 @@ export const mapNode = (row: JsonRecord): StoredNode => ({
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('selectedCase', row.selected_case as string | undefined),
   version: row.version as number,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
 })
 
 export const mapNodeSummary = (row: JsonRecord): NodeSummary => ({
@@ -241,8 +241,8 @@ export const mapNodeSummary = (row: JsonRecord): NodeSummary => ({
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('selectedCase', row.selected_case as string | undefined),
   version: row.version as number,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
 })
 
 export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
@@ -262,9 +262,9 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
   ),
   ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
-  dispatchedAt: row.dispatched_at as Date,
-  ...optional('heartbeatAt', row.heartbeat_at as Date | undefined),
-  ...optional('completedAt', row.completed_at as Date | undefined),
+  dispatchedAt: timestampColumn(row.dispatched_at),
+  ...optional('heartbeatAt', optionalTimestampColumn(row.heartbeat_at)),
+  ...optional('completedAt', optionalTimestampColumn(row.completed_at)),
 })
 
 export const mapAttemptSummary = (row: JsonRecord): AttemptSummary => ({
@@ -282,9 +282,9 @@ export const mapAttemptSummary = (row: JsonRecord): AttemptSummary => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
-  dispatchedAt: row.dispatched_at as Date,
-  ...optional('heartbeatAt', row.heartbeat_at as Date | undefined),
-  ...optional('completedAt', row.completed_at as Date | undefined),
+  dispatchedAt: timestampColumn(row.dispatched_at),
+  ...optional('heartbeatAt', optionalTimestampColumn(row.heartbeat_at)),
+  ...optional('completedAt', optionalTimestampColumn(row.completed_at)),
 })
 
 export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
@@ -308,8 +308,8 @@ export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
   attemptCount: row.attempt_count as number,
   version: row.version as number,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
 })
 
 export const mapNodeChildSummary = (row: JsonRecord): NodeChildSummary => ({
@@ -325,8 +325,8 @@ export const mapNodeChildSummary = (row: JsonRecord): NodeChildSummary => ({
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
   attemptCount: row.attempt_count as number,
   version: row.version as number,
-  createdAt: row.created_at as Date,
-  updatedAt: row.updated_at as Date,
+  createdAt: timestampColumn(row.created_at),
+  updatedAt: timestampColumn(row.updated_at),
 })
 
 export const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
@@ -344,8 +344,8 @@ export const mapDeadCommand = (row: JsonRecord): DeadWorkflowCommand => ({
     'lastError',
     fromOptional(row.last_error) as StoredError | undefined,
   ),
-  deadAt: row.dead_at as Date,
-  createdAt: row.created_at as Date,
+  deadAt: timestampColumn(row.dead_at),
+  createdAt: timestampColumn(row.created_at),
 })
 
 export const notifyRunStatusEventSql = (cteName: string) => `
@@ -396,26 +396,16 @@ export const jsonRecordArrayColumn = (value: unknown): JsonRecord[] => {
   return Array.isArray(parsed) ? parsed.filter(isRecord) : []
 }
 
-export const dateColumn = (value: unknown): unknown => {
-  if (value instanceof Date) return value
-  if (typeof value === 'string' || typeof value === 'number') {
-    return new Date(value)
-  }
-  return value
-}
+// Columns stay timestamptz: leases and claims compare against the server
+// clock, and the tables stay readable. Records carry Unix milliseconds.
+export const timestampColumn = (value: unknown): Timestamp =>
+  value instanceof Date ? value.getTime() : new Date(value as string).getTime()
 
-export const withDateColumns = (
-  row: JsonRecord,
-  columns: readonly string[],
-): JsonRecord => {
-  const next = { ...row }
-  for (const column of columns) {
-    if (next[column] !== null && next[column] !== undefined) {
-      next[column] = dateColumn(next[column])
-    }
-  }
-  return next
-}
+export const optionalTimestampColumn = (value: unknown) =>
+  value === null || value === undefined ? undefined : timestampColumn(value)
+
+export const timestampParam = (value: Timestamp | undefined | null) =>
+  value === undefined || value === null ? null : new Date(value)
 
 export const one = async <T extends JsonRecord>(
   db: WorkflowPostgresConnection,

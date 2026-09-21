@@ -2,6 +2,7 @@ import type {
   ResolvedRunUnique,
   RunKind,
   WorkflowNodeKind,
+  Timestamp,
 } from '../types/index.ts'
 import type {
   NodeChildKind,
@@ -49,8 +50,8 @@ export type ListRunsFilter = {
   readonly kind?: RunKind
   readonly name?: string
   readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
-  readonly activeBefore?: Date
-  readonly createdBefore?: Date
+  readonly activeBefore?: Timestamp
+  readonly createdBefore?: Timestamp
   readonly parentRunId?: string | null
   readonly rootRunId?: string
   readonly tags?: Readonly<Record<string, string>>
@@ -101,7 +102,7 @@ export type RunFamilyEntry = {
 }
 
 export type PruneTerminalRunsParams = {
-  readonly olderThan: Date
+  readonly olderThan: Timestamp
   readonly statuses?: readonly TerminalRunStatus[]
   readonly batchSize?: number
 }
@@ -130,8 +131,8 @@ export type DeadWorkflowCommand = {
   readonly payload: unknown
   readonly deliveryCount: number
   readonly lastError?: StoredError
-  readonly deadAt: Date
-  readonly createdAt: Date
+  readonly deadAt: Timestamp
+  readonly createdAt: Timestamp
 }
 
 /**

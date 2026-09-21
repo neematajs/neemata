@@ -3,6 +3,7 @@ import type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
 } from '../../runtime/executors.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import {
   COMMAND_LEASE_EXPIRED_ERROR,
@@ -16,6 +17,7 @@ import {
   id,
   json,
   one,
+  timestampParam,
 } from './sql.ts'
 
 export type PostgresWorkflowCommandContext = {
@@ -25,10 +27,10 @@ export type PostgresWorkflowCommandContext = {
 }
 
 type ReleasedCommandRow = {
-  readonly dead_at: Date | null
+  readonly dead_at: Timestamp | null
   readonly delivery_count: number
   readonly last_error: unknown
-  readonly run_at: Date
+  readonly run_at: Timestamp
 }
 
 // One source for the dead-letter threshold so the release path and the
@@ -115,7 +117,7 @@ export const createPostgresWorkflowCommandHelpers = (
 
   const insertContinueCommand = async (
     command: ContinueRunCommand,
-    runAt?: Date,
+    runAt?: Timestamp,
   ) => {
     // pg_notify piggybacks on the upsert so no enqueue path can forget the
     // wake-up hint; inside a transaction it is delivered on commit. Delayed
@@ -138,7 +140,13 @@ export const createPostgresWorkflowCommandHelpers = (
       FROM upserted
       WHERE run_at <= now()
     `,
-      [id(), command.runId, command.workflowName, json(command), runAt ?? null],
+      [
+        id(),
+        command.runId,
+        command.workflowName,
+        json(command),
+        timestampParam(runAt),
+      ],
     )
   }
 

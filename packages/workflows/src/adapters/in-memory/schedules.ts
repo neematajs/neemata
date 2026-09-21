@@ -20,7 +20,7 @@ function compareSchedulesByDueDate(
   left: StoredWorkflowSchedule,
   right: StoredWorkflowSchedule,
 ) {
-  const byDate = left.nextRunAt.getTime() - right.nextRunAt.getTime()
+  const byDate = left.nextRunAt - right.nextRunAt
   if (byDate !== 0) return byDate
   return left.name.localeCompare(right.name)
 }

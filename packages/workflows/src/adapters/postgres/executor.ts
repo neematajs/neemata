@@ -9,7 +9,14 @@ import type { StoredRun } from '../../runtime/state.ts'
 import type { PostgresWorkflowCommandContext } from './queue.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import { createPostgresWorkflowCommandHelpers } from './queue.ts'
-import { WORKFLOW_COMMANDS_CHANNEL, id, json, many, one } from './sql.ts'
+import {
+  WORKFLOW_COMMANDS_CHANNEL,
+  id,
+  json,
+  many,
+  one,
+  timestampParam,
+} from './sql.ts'
 
 export const createAttemptExecutor = (
   ctx: PostgresWorkflowCommandContext,
@@ -68,7 +75,7 @@ export const createAttemptExecutor = (
           command.nodeName,
           command.attemptId,
           json(command),
-          options?.runAt ?? null,
+          timestampParam(options?.runAt),
         ],
       )
     },
@@ -106,7 +113,7 @@ export const createAttemptExecutor = (
           command.nodeName,
           command.attemptId,
           json(command),
-          options?.runAt ?? null,
+          timestampParam(options?.runAt),
         ],
       )
     },

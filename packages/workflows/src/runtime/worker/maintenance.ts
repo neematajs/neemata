@@ -1,5 +1,5 @@
 import type { WorkflowImplementation } from '../../implement/index.ts'
-import type { AnyWorkflowDefinition } from '../../types/index.ts'
+import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunSnapshot } from '../state.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
@@ -203,7 +203,7 @@ export type TimeoutExpiredWorkflowRunsInput = {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflows: readonly AnyWorkflowImplementation[]
   readonly batchSize?: number
-  readonly now?: Date
+  readonly now?: Timestamp
 }
 
 export type TimeoutExpiredWorkflowRunsResult = {
@@ -217,7 +217,7 @@ export type TimeoutExpiredWorkflowRunsResult = {
 export async function timeoutExpiredWorkflowRuns(
   input: TimeoutExpiredWorkflowRunsInput,
 ): Promise<TimeoutExpiredWorkflowRunsResult> {
-  const now = input.now ?? new Date()
+  const now = input.now ?? Date.now()
   let timedOut = 0
 
   for (const implementation of input.workflows) {
@@ -231,7 +231,7 @@ export async function timeoutExpiredWorkflowRuns(
       kind: 'workflow',
       name: implementation.workflow.name,
       status: ['queued', 'running', 'waiting', 'cancelling'],
-      activeBefore: new Date(now.getTime() - timeoutMs),
+      activeBefore: now - timeoutMs,
       limit: input.batchSize,
     })
     for (const candidate of runs) {
@@ -252,7 +252,7 @@ export async function timeoutExpiredWorkflowRuns(
           !['queued', 'running', 'waiting', 'cancelling'].includes(
             run.status,
           ) ||
-          run.activeSince.getTime() >= now.getTime() - timeoutMs
+          run.activeSince >= now - timeoutMs
         )
           continue
         await cancelDescendants(scoped, snapshot!)

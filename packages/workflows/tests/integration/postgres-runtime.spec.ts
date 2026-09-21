@@ -131,7 +131,7 @@ describe.skipIf(!postgresTarget.url)(
       await wait(5)
 
       const pruned = await client.pruneRuns({
-        olderThan: new Date(),
+        olderThan: Date.now(),
         batchSize: 1,
       })
 
@@ -822,7 +822,7 @@ describe.skipIf(!postgresTarget.url)(
       // probe far past the next slot: due if it were still enabled, so a zero
       // fire count isolates the enabled predicate from clock timing
       const probe = await runtime.scheduler!.fireDue({
-        now: new Date(Date.now() + 300_000),
+        now: Date.now() + 300_000,
         limit: 10,
       })
       expect(probe.fired).toBe(0)
@@ -848,7 +848,7 @@ describe.skipIf(!postgresTarget.url)(
       const run = await client.start(
         workflow,
         { text: 'alpha' },
-        { startAt: new Date(Date.now() + 200) },
+        { startAt: Date.now() + 200 },
       )
 
       await runWorkflowWorker({

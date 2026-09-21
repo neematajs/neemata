@@ -969,7 +969,7 @@ test('postgres continue enqueue coalesces via partial-index upsert', async () =>
 
   await runtime.runCoordinationExecutor.enqueueDelayed(
     delayed,
-    new Date(Date.now() + 60_000),
+    Date.now() + 60_000,
   )
   await runtime.runCoordinationExecutor.enqueue(immediate)
 
@@ -1089,7 +1089,7 @@ test.each([
       workflowName: 'postgres-release-continue-workflow',
       generation: 2,
     }
-    const delayedUntil = new Date(Date.now() + 60_000)
+    const delayedUntil = Date.now() + 60_000
 
     await runtime.runCoordinationExecutor.enqueue(first)
     const leased = await runtime.runCoordinationExecutor.claim({
@@ -1132,9 +1132,7 @@ test.each([
         run_at: expect.any(Date),
       },
     ])
-    expect(commands.rows[0]!.run_at.getTime()).toBeLessThan(
-      delayedUntil.getTime(),
-    )
+    expect(commands.rows[0]!.run_at.getTime()).toBeLessThan(delayedUntil)
   },
 )
 
@@ -1852,8 +1850,8 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     attemptCount: 1,
     version: 2,
   })
-  expect(snapshot?.children[1]?.createdAt).toBeInstanceOf(Date)
-  expect(snapshot?.children[1]?.updatedAt).toBeInstanceOf(Date)
+  expect(snapshot?.children[1]?.createdAt).toEqual(expect.any(Number))
+  expect(snapshot?.children[1]?.updatedAt).toEqual(expect.any(Number))
   expect(snapshot?.children[2]).toStrictEqual(mapChildren.children[0])
   expect(snapshot?.nodes).toHaveLength(3)
   expect(snapshot?.nodes[0]).toMatchObject({
@@ -1863,8 +1861,8 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     status: 'running',
     version: 2,
   })
-  expect(snapshot?.nodes[0]?.createdAt).toBeInstanceOf(Date)
-  expect(snapshot?.nodes[0]?.updatedAt).toBeInstanceOf(Date)
+  expect(snapshot?.nodes[0]?.createdAt).toEqual(expect.any(Number))
+  expect(snapshot?.nodes[0]?.updatedAt).toEqual(expect.any(Number))
   expect(snapshot?.nodes.slice(1)).toStrictEqual([childNode, mapNode])
 })
 

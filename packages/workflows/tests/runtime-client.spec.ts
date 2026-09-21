@@ -65,7 +65,7 @@ describe('workflow runtime client', () => {
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
-    const startAt = new Date(Date.now() + 60_000)
+    const startAt = Date.now() + 60_000
 
     const run = await client.start(workflow, { scenario: 'alpha' }, { startAt })
 
@@ -205,7 +205,7 @@ describe('workflow runtime client', () => {
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
-    const startAt = new Date(Date.now() + 60_000)
+    const startAt = Date.now() + 60_000
 
     const run = await client.start(task, { text: 'alpha' }, { startAt })
 

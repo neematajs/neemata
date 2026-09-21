@@ -47,7 +47,7 @@ function claimedAttempt(
     item: {
       ...item,
       leaseToken,
-      leaseExpiresAt: new Date(now().getTime() + leaseMs),
+      leaseExpiresAt: now() + leaseMs,
     },
   }
 }
@@ -61,7 +61,7 @@ export function createAttemptExecutor(state: State): AttemptExecutor {
       attemptCommands.push(
         queueItem(state, id('activity-command'), command, options?.runAt),
       )
-      if (options?.runAt === undefined || options.runAt <= new Date()) {
+      if (options?.runAt === undefined || options.runAt <= Date.now()) {
         wake.command('activity')
       }
     },
@@ -70,7 +70,7 @@ export function createAttemptExecutor(state: State): AttemptExecutor {
       attemptCommands.push(
         queueItem(state, id('task-command'), command, options?.runAt),
       )
-      if (options?.runAt === undefined || options.runAt <= new Date()) {
+      if (options?.runAt === undefined || options.runAt <= Date.now()) {
         wake.command('task')
       }
     },
@@ -114,7 +114,7 @@ export function createAttemptExecutor(state: State): AttemptExecutor {
       }
       claimedAttemptCommands.set(attempt.id, {
         ...claimed,
-        leaseExpiresAt: new Date(now().getTime() + leaseMs),
+        leaseExpiresAt: now() + leaseMs,
       })
       return { runStatus: runs.get(attempt.command.runId)?.status ?? 'queued' }
     },
