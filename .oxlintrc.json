@@ -92,7 +92,7 @@
             "patterns": [
               {
                 "group": ["effect", "effect/**", "@effect/**"],
-                "message": "The workflows core is Effect-free; Effect support belongs in src/effect and the Neem integration."
+                "message": "The workflows core is Effect-free; Effect support belongs in src/effect."
               }
             ]
           }
@@ -100,10 +100,7 @@
       }
     },
     {
-      "files": [
-        "packages/workflows/src/effect/**",
-        "packages/workflows/src/neem/**"
-      ],
+      "files": ["packages/workflows/src/effect/**"],
       "rules": {
         "no-restricted-imports": [
           "error",

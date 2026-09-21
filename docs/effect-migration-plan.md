@@ -780,11 +780,19 @@ pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
   through a type-level function for context-sensitive handlers such as
   `(input) => Effect.gen(...)`. The Effect chain therefore mirrors the core chain's
   types and the two must change together; both share one runtime builder.
-- **Neem integration** stays Effect-based under `@nmtjs/workflows/neem`: it builds
-  the Layer, passes a `HandlerRuntime` as env and drains a shared runner before
-  disposing services. A non-Effect Neem worker has no consumer yet.
-- oxlint forbids `effect` imports in `packages/workflows/src` outside `src/effect`
-  and `src/neem`.
+- **Neem integration.** `defineWorkflows` is now topology only (implementations,
+  schedules, pools): the planner reads it on the main thread and never needed the
+  services it used to carry. Services belong to the worker definition.
+  `@nmtjs/workflows/neem` is Effect-free and its `defineWorkflowsWorker(config,
+{ setup })` returns the adapter, the handlers' env and a `dispose`; the env is
+  checked against every registered handler. It owns the shutdown ordering (stop
+  claims, abort, join loops, drain handlers, dispose) and the cleanup deadline, so
+  non-Effect applications do not reimplement them. The Effect worker moved to
+  `@nmtjs/workflows/effect/neem` as `defineWorkflowsWorker(config, { layer,
+runtime })`, unchanged in behaviour, with the Layer coverage check on that call.
+  Both share the role loop and pool routing. A separate subpath keeps
+  `@nmtjs/neem` out of the `/effect` entry that browser clients import.
+- oxlint forbids `effect` imports in `packages/workflows/src` outside `src/effect`.
 
 Existing tests moved to the adapter's imports; only tests of the changed API shapes
 (runner options, shared-runtime typing, schema reuse from a definition) were edited. A new
@@ -793,7 +801,7 @@ rejection of a lone transforming schema, stored JSON Schema, Promise handlers, t
 parallel and map decoding, and the cleanup deadline.
 
 Validation (`vp env exec`, unrestricted filesystem): workspace build, typecheck and
-formatting passed; oxlint reports only the existing Deno warning; workflows **575
+formatting passed; oxlint reports only the existing Deno warning; workflows **580
 passed, 2 skipped**; preset **15** unit/type passed; live PostgreSQL 18 integration
 **18 passed**. Neem and the preset e2e suites were not rerun: neither package
 changed.

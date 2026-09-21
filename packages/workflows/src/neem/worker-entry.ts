@@ -1,42 +1,54 @@
-import type * as Layer from 'effect/Layer'
+import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import { createFuture } from '@nmtjs/common'
 import { defineRuntimeWorker } from '@nmtjs/neem'
-import * as Cause from 'effect/Cause'
-import * as Effect from 'effect/Effect'
-import * as Exit from 'effect/Exit'
-import * as Fiber from 'effect/Fiber'
 
+import type { Env } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
-import type { AnyScheduleDefinition } from '../types/index.ts'
+import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
 import type {
   AnyTaskImplementation,
   AnyWorkflowsConfig,
   AnyWorkflowImplementation,
-  ResolvedExecutionWorkerPool,
-  ResolvedWorkflowsConfig,
   WorkflowsConfig,
   WorkflowsWorkerData,
 } from './runtime.ts'
-import { createHandlerRuntime, type HandlerRuntime } from '../effect/handler.ts'
 import {
   createHandlerRunner,
   WorkflowCleanupTimeoutError,
-  type HandlerRunner,
 } from '../runtime/handler.ts'
-import { serveExecutionWorker, serveWorkflowWorker } from '../runtime/worker.ts'
 import { resolveWorkflowsConfig } from './runtime.ts'
+import { resolveExecutionWorkerPool, runRoleLoop } from './serve.ts'
 
-export type WorkflowsWorkerConfig<
+// A stop during startup ends initialization without being a failure.
+class WorkerStopped extends Error {
+  constructor() {
+    super('Workflows worker stopped')
+  }
+}
+
+/** What one worker thread owns: the adapter, the handlers' env and its disposal. */
+export type WorkflowsWorkerResources<E> = {
+  readonly runtime: WorkflowRuntimeAdapter
+  /** Runs after the loops have stopped and every handler has settled. */
+  readonly dispose?: () => MaybePromise<void>
+} & (unknown extends E ? { readonly env?: E } : { readonly env: E })
+
+export type WorkflowsWorkerOptions<
   W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
-  T extends AnyTaskImplementation = never,
-  R = never,
-> = WorkflowsConfig<W, T, AnyScheduleDefinition, R>
+  T extends AnyTaskImplementation = AnyTaskImplementation,
+> = {
+  readonly setup: (
+    ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, AnyWorkflowsConfig>,
+  ) => MaybePromise<WorkflowsWorkerResources<Env<W | T>>>
+}
 
 export function defineWorkflowsWorker<
-  const W extends AnyWorkflowImplementation = never,
-  const T extends AnyTaskImplementation = never,
-  R = never,
->(definition: WorkflowsWorkerConfig<W, T, R>) {
+  W extends AnyWorkflowImplementation,
+  T extends AnyTaskImplementation,
+>(
+  definition: WorkflowsConfig<W, T, AnyScheduleDefinition>,
+  options: WorkflowsWorkerOptions<W, T>,
+) {
   return defineRuntimeWorker<WorkflowsWorkerData, AnyWorkflowsConfig>({
     definition,
     createRuntime(ctx) {
@@ -45,119 +57,106 @@ export function defineWorkflowsWorker<
       const finished = createFuture<void>()
       void ready.promise.catch(() => {})
       void finished.promise.catch(() => {})
-      let fiber: Fiber.Fiber<void, unknown> | undefined
       let start: Promise<undefined> | undefined
-      let stopping = false
       let stop: Promise<void> | undefined
-      let cleanupTimer: ReturnType<typeof setTimeout> | undefined
-      const fatal = (error: unknown) => {
-        // finished is observed by Neem before scope cleanup completes. An overrun
-        // requires thread recycling, not disposal of services still in use.
-        abort.abort(error)
+      let stopping = false
+      let initialization: Promise<void> | undefined
+      let cleanup: (() => Promise<void>) | undefined
+      let failure: { readonly error: unknown } | undefined
+
+      const fail = (error: unknown) => {
+        failure ??= { error }
+        ready.reject(error)
         finished.reject(error)
       }
-      // Workflow supervision deliberately lives here: it needs the worker
-      // definition and can report fatal overruns before scoped cleanup finishes.
+
       async function initialize() {
         const config = await resolveWorkflowsConfig(ctx.definition)
-        if (stopping) throw new Error('Workflows worker stopped')
         const pool =
           ctx.data.role === 'execution'
             ? resolveExecutionWorkerPool(config, ctx.data)
             : undefined
         const timeoutMs =
           pool?.cleanupTimeoutMs ?? config.workers.coordinator.cleanupTimeoutMs
-        const main = Effect.gen(function* () {
-          const context = yield* Effect.context<any>()
-          const env = createHandlerRuntime(context)
-          const handlers = createHandlerRunner({
-            cleanupTimeoutMs: timeoutMs,
-            onFatal: fatal,
-          })
-          const runtime = yield* Effect.acquireRelease(
-            config.runtime,
-            (runtime) =>
-              Effect.promise(async () => {
-                await runtime.dispose?.()
-              }),
-          )
-          if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
-            if (!runtime.scheduler)
-              return yield* Effect.die(
-                new Error(
-                  'Workflow runtime adapter does not support schedules',
-                ),
-              )
-            yield* Effect.promise(() =>
-              runtime.scheduler!.reconcile(config.schedules),
+        if (stopping) throw new WorkerStopped()
+        const resources = await options.setup(ctx)
+        const handlers = createHandlerRunner({
+          cleanupTimeoutMs: timeoutMs,
+          // finished is observed by Neem before cleanup completes. An overrun
+          // requires thread recycling, not disposal of an env still in use.
+          onFatal: (error) => {
+            abort.abort(error)
+            fail(error)
+          },
+        })
+        // Cleanup can run before the loop exists, when a later startup step fails.
+        const serving: { loop?: Promise<void> } = {}
+        let cleaning: Promise<void> | undefined
+        cleanup = () =>
+          (cleaning ??= (async () => {
+            abort.abort()
+            // Keep the deadline armed through adapter and env disposal, so a
+            // failed worker cannot hang in cleanup while appearing live.
+            const timer = setTimeout(
+              () => fail(new WorkflowCleanupTimeoutError(timeoutMs)),
+              timeoutMs,
             )
-          }
-          const loop = runRoleLoop({
-            data: ctx.data,
-            runtime,
-            config,
-            executionPool: pool,
-            handlers,
-            env,
-            workerId: ctx.name,
-            signal: abort.signal,
-            onError: (error) =>
-              ctx.logger.error({ err: error }, 'Neem workflows worker error'),
-          })
-          void loop.catch(() => {})
-          yield* Effect.addFinalizer(() =>
-            Effect.promise(async () => {
-              abort.abort()
-              // Keep the deadline armed through adapter and Layer finalizers,
-              // so a failed worker cannot hang in cleanup while appearing live.
-              cleanupTimer = setTimeout(
-                () => fatal(new WorkflowCleanupTimeoutError(timeoutMs)),
-                timeoutMs,
-              )
+            try {
               // Stop claims and abort attempts, then join engine work before
               // draining handlers: an execution awaiting storage may register one.
-              await loop.catch(() => {})
+              await serving.loop?.catch(() => {})
               await handlers.drain()
-            }),
-          )
-          ready.resolve(undefined)
-          yield* Effect.promise(() => loop)
+              await resources.runtime.dispose?.()
+              await resources.dispose?.()
+            } finally {
+              clearTimeout(timer)
+            }
+          })())
+        // A stop that arrived during setup still owns what setup acquired.
+        if (stopping) throw new WorkerStopped()
+
+        if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
+          if (!resources.runtime.scheduler)
+            throw new Error(
+              'Workflow runtime adapter does not support schedules',
+            )
+          await resources.runtime.scheduler.reconcile(config.schedules)
+        }
+        if (stopping) throw new WorkerStopped()
+        serving.loop = runRoleLoop({
+          data: ctx.data,
+          runtime: resources.runtime,
+          config,
+          executionPool: pool,
+          handlers,
+          env: resources.env,
+          workerId: ctx.name,
+          signal: abort.signal,
+          onError: (error) =>
+            ctx.logger.error({ err: error }, 'Neem workflows worker error'),
         })
-        // The public config checks service coverage; the registry erases the
-        // distinct requirements of its handlers and adapter factory here.
-        const layer = config.layer as Layer.Layer<any, unknown>
-        fiber = Effect.runFork(Effect.scoped(main).pipe(Effect.provide(layer)))
-        fiber.addObserver((exit) => {
-          if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
-          if (
-            Exit.isFailure(exit) &&
-            !(stopping && Cause.hasInterruptsOnly(exit.cause))
-          ) {
-            // A lone failure keeps its identity; several keep their rendering.
-            const error =
-              exit.cause.reasons.filter(
-                (reason) => !Cause.isInterruptReason(reason),
-              ).length <= 1
-                ? Cause.squash(exit.cause)
-                : new Error(Cause.pretty(exit.cause), { cause: exit.cause })
+        // Any exit before a stop is a failure, as is a loop error at any time.
+        // Registered before cleanup joins the loop, so `failure` is set first.
+        void serving.loop.then(
+          () => {
+            if (stopping) return
+            fail(
+              new Error('Workflows worker finished before stop was requested'),
+            )
+            void cleanup!().catch(() => {})
+          },
+          (error: unknown) => {
             ctx.logger.error(
               { err: error },
               'Neem workflows worker loop failed',
             )
-            ready.reject(error)
-            finished.reject(error)
-          } else if (!stopping) {
-            const error = new Error(
-              'Workflows worker finished before stop was requested',
-            )
-            ready.reject(error)
-            finished.reject(error)
-          } else {
-            ready.reject(new Error('Workflows worker stopped before readiness'))
-            finished.resolve()
-          }
-        })
+            fail(error)
+            void cleanup!().catch(() => {})
+          },
+        )
+        ready.resolve(undefined)
       }
+
       return {
         finished: finished.promise,
         start() {
@@ -166,9 +165,10 @@ export function defineWorkflowsWorker<
           if (start) return start
           // Memoize before asynchronous definition resolution can yield.
           start = ready.promise
-          void initialize().catch((error: unknown) => {
-            ready.reject(error)
-            finished.reject(error)
+          initialization = initialize().catch(async (error: unknown) => {
+            // Setup may have succeeded before a later step failed.
+            await cleanup?.().catch(() => {})
+            if (!(error instanceof WorkerStopped)) fail(error)
           })
           return start
         },
@@ -176,99 +176,21 @@ export function defineWorkflowsWorker<
           if (stop) return stop
           stopping = true
           abort.abort()
-          if (!fiber) {
-            ready.reject(new Error('Workflows worker stopped before readiness'))
+          ready.reject(new Error('Workflows worker stopped before readiness'))
+          stop = (async () => {
+            // Setup cannot be interrupted; what it acquired must be disposed.
+            await initialization
+            try {
+              await cleanup?.()
+            } catch (error) {
+              fail(error)
+            }
+            if (failure) throw failure.error
             finished.resolve()
-            return (stop = Promise.resolve())
-          }
-          stop = Effect.runPromise(Fiber.interrupt(fiber)).then(
-            () => finished.promise,
-          )
+          })()
           return stop
         },
       }
     },
   })
-}
-
-async function runRoleLoop(input: {
-  readonly data: WorkflowsWorkerData
-  readonly runtime: WorkflowRuntimeAdapter
-  readonly config: ResolvedWorkflowsConfig<
-    AnyWorkflowImplementation,
-    AnyTaskImplementation,
-    AnyScheduleDefinition,
-    any
-  >
-  readonly executionPool?: ResolvedExecutionWorkerPool
-  readonly handlers: HandlerRunner
-  readonly env: HandlerRuntime<any>
-  readonly workerId: string
-  readonly signal: AbortSignal
-  readonly onError: (error: unknown) => void
-}): Promise<void> {
-  const role = input.data.role
-  switch (role) {
-    case 'coordinator':
-      await serveWorkflowWorker({
-        ...input.runtime,
-        handlers: input.handlers,
-        env: input.env,
-        workflows: input.config.workflows,
-        workerId: input.workerId,
-        concurrency: input.config.workers.coordinator.concurrency,
-        leaseMs: input.config.workers.coordinator.leaseMs,
-        idleDelayMs: input.config.workers.coordinator.pollIntervalMs,
-        scheduling:
-          input.config.schedules.length === 0 ? undefined : { everyMs: 1000 },
-        signal: input.signal,
-        onError: input.onError,
-      })
-      return
-
-    case 'execution':
-      await serveExecutionWorker({
-        ...input.runtime,
-        handlers: input.handlers,
-        env: input.env,
-        workflows: input.config.workflows,
-        tasks: input.config.tasks,
-        activityNames: input.executionPool!.activityNames,
-        taskNames: input.executionPool!.taskNames,
-        workerId: input.workerId,
-        concurrency: input.executionPool!.concurrency,
-        leaseMs: input.executionPool!.leaseMs,
-        idleDelayMs: input.executionPool!.pollIntervalMs,
-        // Coordinators own maintenance so execution capacity is not duplicated
-        // across every named pool and thread.
-        reaping: false,
-        signal: input.signal,
-        onError: input.onError,
-      })
-      return
-  }
-}
-
-export function resolveExecutionWorkerPool(
-  config: ResolvedWorkflowsConfig<
-    AnyWorkflowImplementation,
-    AnyTaskImplementation,
-    AnyScheduleDefinition,
-    any
-  >,
-  data: WorkflowsWorkerData,
-): ResolvedExecutionWorkerPool {
-  const pools = config.workers.execution
-  if (data.pool !== undefined) {
-    const pool = pools.find((candidate) => candidate.name === data.pool)
-    if (!pool) {
-      throw new Error(`Unknown workflows execution worker pool [${data.pool}]`)
-    }
-    return pool
-  }
-  // Hand-written worker data can omit a name only when routing is unambiguous.
-  if (pools.length === 1) return pools[0]!
-  throw new Error(
-    'Workflows execution worker data must name a pool when multiple execution pools are configured',
-  )
 }

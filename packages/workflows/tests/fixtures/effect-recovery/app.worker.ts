@@ -1,5 +1,5 @@
-import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
 
-import { config } from './config.ts'
+import { config, services } from './config.ts'
 
-export default defineWorkflowsWorker(config)
+export default defineWorkflowsWorker(config, services)

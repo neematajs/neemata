@@ -15,7 +15,8 @@ import {
   runExecutionWorker,
   WorkflowHandlerError,
 } from '../src/effect/index.ts'
-import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
+import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import { defineWorkflows } from '../src/neem/index.ts'
 import { WorkflowCleanupTimeoutError } from '../src/runtime/handler.ts'
 import {
   createHandlerRunner,
@@ -303,8 +304,6 @@ it.each([false, true])(
     const adapter = createInMemoryWorkflowRuntime()
     await createWorkflowRuntimeClient(adapter).start(task, 1)
     const config = defineWorkflows({
-      layer,
-      runtime: Effect.succeed(adapter),
       workflows: () => [],
       tasks: () => [implementation],
       workers: {
@@ -314,7 +313,10 @@ it.each([false, true])(
         },
       },
     })
-    const worker = defineWorkflowsWorker(config)
+    const worker = defineWorkflowsWorker(config, {
+      layer,
+      runtime: Effect.succeed(adapter),
+    })
     const channel = new MessageChannel()
     const runtime = await worker.createRuntime({
       mode: 'development',
@@ -371,11 +373,10 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   )
   const worker = defineWorkflowsWorker(
     defineWorkflows({
-      layer,
-      runtime: Effect.sync(createInMemoryWorkflowRuntime),
       workflows: () => [],
       workers: { coordinator: { cleanupTimeoutMs: 10 } },
     }),
+    { layer, runtime: Effect.sync(createInMemoryWorkflowRuntime) },
   )
   const channel = new MessageChannel()
   const runtime = await worker.createRuntime({

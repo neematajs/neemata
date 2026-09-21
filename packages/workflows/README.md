@@ -19,8 +19,8 @@ import {
 `@nmtjs/workflows/effect` exports the same four functions for Effect
 applications: definitions take `effect/Schema` schemas, and handlers return
 Effects whose services come from the worker. It needs the optional `effect` peer,
-pinned to `4.0.0-rc.116`, as does the Effect-based `@nmtjs/workflows/neem`
-integration. Applications and the package must use this exact version during the
+pinned to `4.0.0-rc.116`, as does the Effect worker in
+`@nmtjs/workflows/effect/neem`. Applications and the package must use this exact version during the
 release-candidate period; only stable Effect modules are imported. Definitions
 and implementations from either entry point are interchangeable everywhere else.
 
@@ -86,6 +86,44 @@ The worker input requires an `env` that satisfies every registered handler at
 once; handlers that ignore it require none. Workflow `finish` receives
 `(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
 functions for a library whose schemas are not Standard Schemas themselves.
+
+## Neem worker
+
+`defineWorkflows` declares what runs where: implementations, schedules and worker
+pools. The planner reads it on the main thread and every worker thread reads it
+again, so it holds no connections. Those belong to the worker definition, whose
+`setup` runs once per thread:
+
+```ts
+import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+
+export const config = defineWorkflows({
+  workflows: () => [checkoutImpl],
+  tasks: () => [chargeCardImpl],
+  workers: { execution: { concurrency: 8 } },
+})
+
+export default defineWorkflowsWorker(config, {
+  setup: async (ctx) => {
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+    return {
+      runtime: createPostgresWorkflowRuntime({
+        connection: createPostgresWorkflowConnection(pool),
+      }),
+      env: { db: pool, log: ctx.logger }, // checked against every handler's env
+      dispose: () => pool.end(),
+    }
+  },
+})
+```
+
+On stop the worker stops claiming, aborts attempts, joins the loops, waits for
+every handler to settle, and only then disposes the adapter and calls `dispose`.
+A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem
+recycles the thread, and the env is not disposed while that handler still runs. A
+stop during `setup` waits for it and disposes what it acquired. Effect
+applications use the worker in `@nmtjs/workflows/effect/neem` with the same
+config; see below.
 
 ## Effect schemas
 
@@ -179,7 +217,8 @@ return Effects; synchronous callbacks return values directly.
 ```ts
 import * as Context from 'effect/Context'
 import * as Layer from 'effect/Layer'
-import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
+import { defineWorkflows } from '@nmtjs/workflows/neem'
 import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
 
 class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
@@ -197,20 +236,22 @@ const greeting = implementTask(greet, {
     }),
 })
 
-export default defineWorkflowsWorker(
-  defineWorkflows({
-    layer: Layer.succeed(Prefix, 'Hello'),
-    runtime: Effect.sync(createInMemoryWorkflowRuntime),
-    workflows: () => [],
-    tasks: () => [greeting],
-  }),
-)
+// Shared with the planner: what runs where, without connections or services.
+export const config = defineWorkflows({
+  workflows: () => [],
+  tasks: () => [greeting],
+})
+
+export default defineWorkflowsWorker(config, {
+  layer: Layer.succeed(Prefix, 'Hello'),
+  runtime: Effect.sync(createInMemoryWorkflowRuntime),
+})
 ```
 
 `runtime` is an Effect that acquires the adapter; it may use the same Layer and
 `Effect.acquireRelease` for database connections. A production worker uses a shared
 durable adapter. The in-memory adapter above is only a single-worker example.
-`defineWorkflows`/`defineWorkflowsWorker` check that the Layer provides services
+`defineWorkflowsWorker` checks that the Layer provides services
 required by the adapter, task/activity handlers (including branch/parallel cases),
 and finish. The Layer must not require external services. The worker supplies
 Scope for adapter acquisition, and each handler gets its own Scope.

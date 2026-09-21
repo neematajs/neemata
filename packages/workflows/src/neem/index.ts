@@ -6,11 +6,13 @@ export type {
   WorkflowsNamedExecutionWorkerPoolConfig,
   WorkflowsConfig,
   WorkflowsImplementationsFactory,
-  WorkflowsRuntime,
   WorkflowSchedulesFactory,
   WorkflowsWorkerPoolConfig,
   WorkflowsWorkersConfig,
   WorkflowTaskImplementationsFactory,
 } from './runtime.ts'
 export { defineWorkflowsWorker } from './worker-entry.ts'
-export type { WorkflowsWorkerConfig } from './worker-entry.ts'
+export type {
+  WorkflowsWorkerOptions,
+  WorkflowsWorkerResources,
+} from './worker-entry.ts'
