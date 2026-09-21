@@ -267,6 +267,7 @@ export const createPostgresWorkflowChildStore = (
             updated AS (
             UPDATE workflow_node_children
             SET child_run_id = $4,
+                cancellation = $5,
                 status = 'running',
                 version = version + 1,
                 updated_at = now()
@@ -282,7 +283,13 @@ export const createPostgresWorkflowChildStore = (
             SELECT updated.*${notifyRunStatusEventColumnsSql('child_run_linked')}
             FROM updated
           `,
-            [runId, nodeName, childKey, childRun.id],
+            [
+              runId,
+              nodeName,
+              childKey,
+              childRun.id,
+              params.cancellation ?? null,
+            ],
           )
           if (!updated) throw linkRaced
           return { child: mapNodeChild(updated), childRun, created: true }

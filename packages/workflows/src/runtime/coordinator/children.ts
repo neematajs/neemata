@@ -1,4 +1,8 @@
-import type { DurationString, RetryPolicy } from '../../types/index.ts'
+import type {
+  CancellationPolicy,
+  DurationString,
+  RetryPolicy,
+} from '../../types/index.ts'
 import type { StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
@@ -171,6 +175,7 @@ export async function dispatchChildWorkflow(
     readonly nodeName: string
     readonly childKey: string
     readonly workflowName: string
+    readonly cancellation?: CancellationPolicy
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -280,6 +285,7 @@ export async function dispatchChildWorkflow(
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
+    cancellation: input.cancellation,
   })
 
   await input.runCoordinationExecutor.enqueue({

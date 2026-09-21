@@ -165,6 +165,9 @@ export function createChildStore(state: State): ChildStore {
       const linked: StoredNodeChild = {
         ...child,
         childRunId: childRun.id,
+        ...(params.cancellation === undefined
+          ? {}
+          : { cancellation: params.cancellation }),
         status: 'running',
         version: child.version + 1,
         updatedAt: now(),

@@ -5,6 +5,7 @@ import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchChildWorkflow } from '../children.ts'
 import {
   encodeWorkflowInput,
+  getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   resolveIdempotency,
 } from '../codec.ts'
@@ -27,11 +28,17 @@ export async function dispatchWorkflowNode(
     nodeName: input.node.name,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'workflow' }],
   })
+  const declaration = getWorkflowNodeDeclaration(
+    input.workflow,
+    input.node.name,
+  )
   return await dispatchChildWorkflow({
     ...input,
     nodeName: input.node.name,
     childKey: SELF_CHILD_KEY,
     workflowName: input.node.target.name,
+    cancellation:
+      declaration.kind === 'workflow' ? declaration.cancellation : undefined,
     resolveIdempotencyKey: () =>
       resolveIdempotency(
         input.node.idempotency,

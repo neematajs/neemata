@@ -636,3 +636,20 @@ ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL;
 UPDATE workflow_schema_version SET version = 3 WHERE id = 1;
 COMMIT;
 ```
+
+## Schema version 4 migration
+
+Apply after the version 3 migration, with workflow workers stopped. The column
+records a child workflow's `cancellation: 'detach'` policy, so cancelling a parent
+leaves that child running; existing children keep propagating. The index serves the
+existence check every attempt dispatch makes.
+
+```sql
+BEGIN;
+ALTER TABLE workflow_node_children ADD COLUMN cancellation text;
+CREATE INDEX workflow_commands_attempt_idx
+  ON workflow_commands (attempt_id)
+  WHERE attempt_id IS NOT NULL;
+UPDATE workflow_schema_version SET version = 4 WHERE id = 1;
+COMMIT;
+```

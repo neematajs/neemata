@@ -538,7 +538,7 @@ test('creates drizzle schema with canonical runtime names', () => {
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
   expectTypeOf(schema.tables).toHaveProperty('schedules')
-  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(3)
+  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(4)
 
   expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
   expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()

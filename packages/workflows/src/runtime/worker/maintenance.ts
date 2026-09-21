@@ -3,7 +3,7 @@ import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunSnapshot } from '../state.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
-import { cancelRunTree } from '../coordinator/cancel.ts'
+import { cancelRunTree, isDetachedChild } from '../coordinator/cancel.ts'
 import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
@@ -185,7 +185,7 @@ async function cancelDescendants(
 ): Promise<void> {
   const runId = snapshot.run.id
   for (const child of snapshot.children) {
-    if (child.childRunId === undefined) continue
+    if (child.childRunId === undefined || isDetachedChild(child)) continue
     await cancelRunTree({
       store: input.store,
       attemptExecutor: input.attemptExecutor,

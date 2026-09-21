@@ -320,6 +320,7 @@ export function createSchema(options?: CreateSchemaOptions) {
       output: jsonb('output'),
       error: jsonb('error'),
       childRunId: uuid('child_run_id'),
+      cancellation: text('cancellation'),
       currentAttemptId: uuid('current_attempt_id'),
       attemptCount: integer('attempt_count').notNull().default(0),
       version: integer('version').notNull(),

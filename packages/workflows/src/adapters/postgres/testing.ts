@@ -245,6 +245,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       output jsonb,
       error jsonb,
       child_run_id uuid,
+      cancellation text,
       current_attempt_id uuid,
       attempt_count integer NOT NULL DEFAULT 0,
       version integer NOT NULL,

@@ -124,7 +124,7 @@ export async function dispatchMapWorkflowNode(
         workflowName: childRun.workflowName,
       })
     },
-    startChild: async ({ child, nodeInput, idempotencyKey }) => {
+    startChild: async ({ child, nodeInput, idempotencyKey, declaration }) => {
       const ensured = await input.store.ensureChildRun({
         runId: input.run.id,
         nodeName: input.node.name,
@@ -134,6 +134,7 @@ export async function dispatchMapWorkflowNode(
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
+        cancellation: declaration.cancellation,
       })
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',

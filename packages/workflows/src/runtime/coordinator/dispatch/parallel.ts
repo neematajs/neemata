@@ -191,6 +191,11 @@ export async function dispatchParallelNode(
           input: nodeInput,
           rootRunId: input.run.rootRunId,
           idempotencyKey,
+          cancellation:
+            memberDeclaration.kind === 'workflow'
+              ? (memberDeclaration as BranchCaseDefinition<'workflow'>)
+                  .cancellation
+              : undefined,
         })
         if (member.kind === 'workflow') {
           await input.runCoordinationExecutor.enqueue({

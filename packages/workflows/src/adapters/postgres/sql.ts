@@ -305,6 +305,10 @@ export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
+  ...optional(
+    'cancellation',
+    row.cancellation as StoredNodeChild['cancellation'],
+  ),
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
   attemptCount: row.attempt_count as number,
   version: row.version as number,

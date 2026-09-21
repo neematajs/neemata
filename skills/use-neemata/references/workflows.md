@@ -90,7 +90,8 @@ Builder nodes:
   items. Maps and parallel nodes wait for all children, preserving successful
   work and failing only after all children settle. Maps have no `mode` option.
 - Task-backed nodes accept `retry` / `timeout` overrides; child-workflow nodes
-  accept a `cancellation` policy.
+  accept a `cancellation` policy: `'detach'` leaves the child running when its
+  parent is cancelled, fails or times out; the default propagates.
 - Everything accepts optional `title` / `description` presentation metadata
   (workflow/task options, every node's options — `.parallel()` takes them as a
   third argument — and branch/parallel case helpers). Purely declarative: no

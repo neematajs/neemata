@@ -1,7 +1,15 @@
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { StoredRun } from '../state.ts'
+import type { StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { isTerminalRunStatus } from '../status.ts'
+
+/**
+ * A detached child run outlives its parent's cancellation. Only the parent's
+ * edge to it is cancelled; the run itself stays cancellable by its own id.
+ */
+export function isDetachedChild(child: StoredNodeChild): boolean {
+  return child.cancellation === 'detach'
+}
 
 export async function cancelRunTree(input: {
   readonly store: WorkflowStore
@@ -17,7 +25,7 @@ export async function cancelRunTree(input: {
   await input.store.cancelNonTerminalRunNodes({ runId: input.runId })
 
   for (const child of snapshot.children) {
-    if (child.childRunId === undefined) continue
+    if (child.childRunId === undefined || isDetachedChild(child)) continue
     const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
     if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
       continue
@@ -48,7 +56,7 @@ export async function cancelNodeChildRunsAndCommands(input: {
     nodeName: input.nodeName,
   })
   for (const child of children.children) {
-    if (child.childRunId === undefined) continue
+    if (child.childRunId === undefined || isDetachedChild(child)) continue
     const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
     if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
       continue

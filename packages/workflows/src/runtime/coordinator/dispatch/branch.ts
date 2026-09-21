@@ -139,6 +139,11 @@ export async function dispatchBranchNode(
       nodeName: input.node.name,
       childKey,
       workflowName: selected.target.name,
+      cancellation:
+        selectedDeclaration.kind === 'workflow'
+          ? (selectedDeclaration as BranchCaseDefinition<'workflow'>)
+              .cancellation
+          : undefined,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
