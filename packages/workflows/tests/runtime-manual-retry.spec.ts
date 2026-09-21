@@ -366,11 +366,18 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
           'atomicCompletion' in runtime ? runtime.atomicCompletion : undefined
         if (atomicCompletion) {
           const original = atomicCompletion.run.bind(atomicCompletion)
-          vi.spyOn(atomicCompletion, 'run').mockImplementation((handler) =>
-            original(async (scoped) => {
-              interceptBackoff(scoped.attemptExecutor)
-              return handler(scoped)
-            }),
+          vi.spyOn(atomicCompletion, 'run').mockImplementation(
+            (handler, claimed, context) =>
+              original(
+                async (scoped) => {
+                  // Only a transactional adapter hands back a new executor.
+                  if (scoped.attemptExecutor !== runtime.attemptExecutor)
+                    interceptBackoff(scoped.attemptExecutor)
+                  return handler(scoped)
+                },
+                claimed,
+                context,
+              ),
           )
         }
         const client = createWorkflowRuntimeClient(runtime)

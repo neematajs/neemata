@@ -11,6 +11,7 @@ import type {
   CreateRunInput,
   DeadWorkflowCommand,
 } from '../../runtime/store.ts'
+import type { WorkflowRuntimeAtomicCompletion } from '../../runtime/worker.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
@@ -46,6 +47,7 @@ export type CreateRedisWorkflowRuntimeParams = {
 }
 
 export type RedisWorkflowRuntime = WorkflowRuntimeAdapter & {
+  readonly atomicCompletion: WorkflowRuntimeAtomicCompletion
   readonly client: WorkflowRedisClient
   readonly keyPrefix: string
 }
@@ -155,6 +157,17 @@ export function createRedisWorkflowRuntime(
       attemptQueue.deleteUnclaimed(new Set([runId])),
   }
 
+  // Not a transaction: Redis only fences the attempt settlement by the queue
+  // claim. A worker that lost its claim settles nothing, and the writes that
+  // follow a settlement are idempotent, so the new claimant replays them.
+  const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
+    run: (handler, claimed, context) =>
+      handler({
+        ...context,
+        store: storeRuntime.claimScopedStore(context.store, claimed),
+      }),
+  }
+
   // The start marker commits in the same Redis transaction as the initial
   // queue item. An idempotent retry can therefore distinguish "already
   // dispatched" from the narrow create-before-dispatch failure window and
@@ -234,6 +247,7 @@ export function createRedisWorkflowRuntime(
     retentionPruner: store,
     wakeEvents,
     atomicStart,
+    atomicCompletion,
     client,
     keyPrefix,
     dispose: () => wakeEvents.dispose(),

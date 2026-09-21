@@ -1,3 +1,4 @@
+import type { ClaimedAttempt } from '../../runtime/commands.ts'
 import type {
   StoredAttempt,
   StoredNode,
@@ -20,6 +21,7 @@ import {
   RUN_TRANSITIONS,
   canTransition,
 } from '../../runtime/transitions.ts'
+import { matchesClaim } from './commands.ts'
 import {
   childKey,
   childRef,
@@ -97,10 +99,17 @@ function fencedCurrentAttempt(
   state: State,
   attemptId: string,
   leaseToken: string,
+  claim: ClaimedAttempt | undefined,
 ):
   | { readonly attempt: StoredAttempt; readonly child: StoredNodeChild }
   | undefined {
-  const { attempts, children } = state
+  const { attempts, children, claimedAttemptCommands } = state
+
+  // The attempt's own token never rotates, so only the queue claim tells a
+  // worker that was taken over from the new claimant.
+  if (claim && !matchesClaim(claimedAttemptCommands.get(claim.id), claim)) {
+    return undefined
+  }
 
   const attempt = attempts.get(attemptId)
   if (!attempt || attempt.leaseToken !== leaseToken) return undefined
@@ -140,7 +149,14 @@ type NodeStore = Pick<
   | 'cancelNonTerminalRunNodes'
 >
 
-export function createNodeStore(state: State): NodeStore {
+/**
+ * With a `claim`, attempt settlement also requires that claim to still be the
+ * queue item's; without one (reaping, dispatch failure) it stays unfenced.
+ */
+export function createNodeStore(
+  state: State,
+  claim?: ClaimedAttempt,
+): NodeStore {
   const { now, runs, nodes, attempts, children, wake } = state
 
   return {
@@ -214,7 +230,7 @@ export function createNodeStore(state: State): NodeStore {
     },
 
     async completeCurrentAttempt({ attemptId, leaseToken, output }) {
-      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken, claim)
       if (!fenced) return undefined
 
       const { attempt, child } = fenced
@@ -242,7 +258,7 @@ export function createNodeStore(state: State): NodeStore {
     },
 
     async failCurrentAttempt({ attemptId, leaseToken, error }) {
-      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken, claim)
       if (!fenced) return undefined
 
       const updated: StoredAttempt = {
@@ -257,7 +273,7 @@ export function createNodeStore(state: State): NodeStore {
     },
 
     async timeoutCurrentAttempt({ attemptId, leaseToken, error }) {
-      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken)
+      const fenced = fencedCurrentAttempt(state, attemptId, leaseToken, claim)
       if (!fenced) return undefined
 
       const updated: StoredAttempt = {

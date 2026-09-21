@@ -1,3 +1,4 @@
+import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 
@@ -7,9 +8,20 @@ export type WorkflowRuntimeOperationContext = {
   readonly attemptExecutor: AttemptExecutor
 }
 
+/**
+ * Scopes an attempt's settlement to the queue claim it runs under, so a worker
+ * whose claim was taken over cannot commit its result. How much is atomic is
+ * the adapter's choice: PostgreSQL runs the handler in one transaction that a
+ * stale `ack` rolls back; Redis and in-memory only refuse the attempt
+ * settlement of a lost claim, and rely on the new claimant replaying the
+ * remaining idempotent writes. Those adapters have no connection to bind, so
+ * they fence the caller's `context` instead of replacing it.
+ */
 export type WorkflowRuntimeAtomicCompletion = {
   readonly run: <T>(
     handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
+    claimed: ClaimedAttempt,
+    context: WorkflowRuntimeOperationContext,
   ) => Promise<T>
 }
 
@@ -21,6 +33,7 @@ export type WorkflowRuntimeAtomicContinuation = {
 
 type AtomicCompletionInput = WorkflowRuntimeOperationContext & {
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
+  readonly claimed: ClaimedAttempt
 }
 
 type AtomicContinuationInput = WorkflowRuntimeOperationContext & {
@@ -36,13 +49,16 @@ export async function runAtomicCompletion<
 ): Promise<Result> {
   if (!input.atomicCompletion) return await handler(input)
 
-  return await input.atomicCompletion.run((runtime) =>
-    handler({
-      ...input,
-      store: runtime.store,
-      runCoordinationExecutor: runtime.runCoordinationExecutor,
-      attemptExecutor: runtime.attemptExecutor,
-    }),
+  return await input.atomicCompletion.run(
+    (runtime) =>
+      handler({
+        ...input,
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+      }),
+    input.claimed,
+    input,
   )
 }
 

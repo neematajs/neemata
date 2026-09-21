@@ -123,7 +123,9 @@ describe.skipIf(!postgresTarget.url)(
         `
           UPDATE workflow_commands
           SET delivery_count = 1,
-              dead_at = now() - interval '1 second'
+              dead_at = now() - interval '1 second',
+              -- Retention only collects dead commands the reaper has settled.
+              reaped_at = now() - interval '1 second'
           WHERE run_id = $1
         `,
         [deadCommandRun.id],

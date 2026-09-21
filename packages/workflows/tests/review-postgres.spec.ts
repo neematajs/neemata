@@ -2,6 +2,7 @@ import { PGlite, type Transaction } from '@electric-sql/pglite'
 import * as Schema from 'effect/Schema'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import type { ClaimedAttempt } from '../src/runtime/index.ts'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
@@ -12,6 +13,9 @@ import { defineWorkflow } from '../src/effect/index.ts'
 import { defineSchedule } from '../src/index.ts'
 import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 import { reapDeadWorkflowCommands } from '../src/runtime/worker.ts'
+
+// PostgreSQL fences through its transaction and ignores the claim it is handed.
+const unclaimed = {} as ClaimedAttempt
 
 type Row = Record<string, unknown>
 
@@ -222,12 +226,15 @@ test('a stale completion fence inside atomic completion leaves the attempt untou
 
   interleave = true
   await expect(
-    runtime.atomicCompletion!.run(({ store }) =>
-      store.completeCurrentAttempt({
-        attemptId: attempt.id,
-        leaseToken: attempt.leaseToken!,
-        output: { ok: true },
-      }),
+    runtime.atomicCompletion!.run(
+      ({ store }) =>
+        store.completeCurrentAttempt({
+          attemptId: attempt.id,
+          leaseToken: attempt.leaseToken!,
+          output: { ok: true },
+        }),
+      unclaimed,
+      runtime,
     ),
   ).resolves.toBeUndefined()
 
@@ -248,19 +255,23 @@ test('a failed child run link inside an outer transaction leaves no orphan run',
   )
 
   interleave = true
-  await runtime.atomicCompletion!.run(async ({ store }) => {
-    await expect(
-      store.ensureChildRun({
-        runId: run.id,
-        nodeName: 'step',
-        childKey: '$self',
-        childKind: 'workflow',
-        childName: 'review-postgres-fence-child',
-        input: {},
-        rootRunId: run.id,
-      }),
-    ).rejects.toThrow('cannot start child run')
-  })
+  await runtime.atomicCompletion!.run(
+    async ({ store }) => {
+      await expect(
+        store.ensureChildRun({
+          runId: run.id,
+          nodeName: 'step',
+          childKey: '$self',
+          childKind: 'workflow',
+          childName: 'review-postgres-fence-child',
+          input: {},
+          rootRunId: run.id,
+        }),
+      ).rejects.toThrow('cannot start child run')
+    },
+    unclaimed,
+    runtime,
+  )
 
   expect(await rows(connection, 'SELECT id FROM workflow_runs')).toEqual([
     { id: run.id },

@@ -310,7 +310,9 @@ else
   end
 end
 
-child = applyChanges(child, { childRunId = requested.id, status = 'running' }, ARGV[7])
+local link = { childRunId = requested.id, status = 'running' }
+if ARGV[9] ~= '' then link.cancellation = ARGV[9] end
+child = applyChanges(child, link, ARGV[7])
 local linkedRaw = cjson.encode(child)
 redis.call('HSET', KEYS[3], ARGV[1], linkedRaw)
 redis.call('PUBLISH', KEYS[8], '1')
@@ -466,6 +468,13 @@ if not attemptRaw then return { 'stale' } end
 local attempt = cjson.decode(attemptRaw)
 if attempt.leaseToken ~= ARGV[2] or attempt.status ~= 'started' then
   return { 'stale' }
+end
+-- Reaping, dispatch failure and the continuation fence settle without a claim.
+if ARGV[7] ~= '' then
+  local itemRaw = redis.call('HGET', KEYS[4], ARGV[7])
+  if not itemRaw or cjson.decode(itemRaw).leaseToken ~= ARGV[8] then
+    return { 'stale' }
+  end
 end
 local childRaw = redis.call('HGET', KEYS[2], ARGV[3])
 if not childRaw then return { 'stale' } end

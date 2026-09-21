@@ -167,11 +167,14 @@ for (const target of targets) {
         })
         expect(calls.mock.calls.length).toBeLessThan(15)
         expect(reads).not.toHaveBeenCalled()
-        expect(await client.zcard(queue.dead)).toBe(44)
-        expect(await client.hget(queue.items, 'dead-255')).toBeNull()
+        // Past the cutoff, only reaped records go: an unreaped dead command is
+        // all that can still settle its run.
+        expect(await client.zcard(queue.dead)).toBe(50)
+        expect(await client.hget(queue.items, 'dead-249')).toBeNull()
+        expect(await client.hget(queue.items, 'dead-250')).not.toBeNull()
         expect(await client.hget(queue.items, 'dead-256')).not.toBeNull()
         expect(
-          await client.exists(`${keys.prefix}queue:continue:run:dead-255`),
+          await client.exists(`${keys.prefix}queue:continue:run:dead-249`),
         ).toBe(0)
       })
 

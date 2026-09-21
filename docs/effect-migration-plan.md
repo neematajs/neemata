@@ -890,3 +890,34 @@ payloads are a schema concern and unchanged.
   per-query expressions or stored generated columns, was considered and rejected: it
   guards only against parsers the check already reports, and costs either a column
   list at every query or twenty duplicated columns and a schema version.
+
+## Review fixes — 2026-09-22
+
+Three independent reviews (engine and contracts, PostgreSQL, Redis) of the stack tip
+found defects that mostly predate the migration. Fixed with a regression test each:
+
+- **Stranded work without an atomic completion step** (Redis, in-memory). A redelivered
+  task attempt whose run is already terminal replays the parent wake before it
+  acknowledges. A redelivered superseded attempt re-dispatches the retry whose command
+  was lost, and a retry budget is still spent when the worker died before creating the
+  retry. These live in the engine, so every adapter gets them.
+- **Claim fencing.** `atomicCompletion.run` receives the claim and the caller's context.
+  PostgreSQL still fences through its transaction; Redis and in-memory now refuse a
+  settlement from a worker whose claim was taken over. It is not a transaction there:
+  the new claimant replays the remaining idempotent writes.
+- **Retention** collects a dead command only after the reaper recorded its outcome, in
+  all three adapters; before that it is the only thing that can settle its run.
+- **PostgreSQL.** Nested transactions are savepoints, so a recoverable failure inside an
+  atomic completion rolls back its own writes. A plain client serializes top-level
+  queries with transactions. Schedule rows keep decoded string inputs. Schema version 4
+  adds `workflow_node_children.cancellation` and an index on `workflow_commands.attempt_id`.
+- **Declared but unread options.** A task node's `retry` travels on the command with the
+  task's own policy as fallback. `cancellation: 'detach'` is stored on the child edge,
+  because cancellation and the reaper run without the implementation registry.
+- **Smaller.** Manual schedule triggers have their own identity instead of a millisecond
+  slot. Branch output checks compare whole unions. Reserved node names are rejected.
+  The Effect Neem worker bounds cleanup after a failed startup; Effect workers reject core
+  handlers whose `env` a handler runtime cannot satisfy; registry validation covers
+  schedule targets. The in-memory clock is the wall clock with a separate sequence for
+  ordering. Redis `dispose()` disconnects when `quit()` fails, and maintenance collects
+  commands whose run no longer exists.
