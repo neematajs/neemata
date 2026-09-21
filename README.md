@@ -33,7 +33,7 @@ import {
   implementTask,
   implementWorkflow,
 } from '@nmtjs/workflows'
-import { z } from 'zod'
+import * as z from 'zod'
 
 const normalize = defineTask({
   name: 'normalize',
