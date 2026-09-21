@@ -144,6 +144,9 @@ for (const target of targets) {
             .hset(queue.items, id, encode(item))
             .zadd(queue.dead, 2000 + index, id)
             .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+            // A dead command keeps its run's dedup entry until a successor
+            // command takes it over, as one has for the first run.
+            .hset(queue.dedup, id, index === 0 ? 'successor' : id)
         }
         await seed.exec()
         const calls = vi.spyOn(client, 'evalsha')
@@ -177,6 +180,7 @@ for (const target of targets) {
             .hset(queue.items, id, encode(item))
             .zadd(queue.dead, 1000 + index, id)
             .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+            .hset(queue.dedup, id, id)
         }
         await older.exec()
         calls.mockClear()
@@ -198,6 +202,15 @@ for (const target of targets) {
         expect(
           await client.exists(`${keys.prefix}queue:continue:run:dead-249`),
         ).toBe(0)
+        // Dedup entries go with the pruned commands that own them, and stay
+        // for kept commands and for a successor that took the entry over.
+        expect(await client.hlen(queue.dedup)).toBe(251)
+        expect(await client.hget(queue.dedup, 'dead-0')).toBe('successor')
+        expect(await client.hget(queue.dedup, 'dead-1')).toBeNull()
+        expect(await client.hget(queue.dedup, 'dead-249')).toBeNull()
+        expect(await client.hget(queue.dedup, 'dead-250')).toBe('dead-250')
+        expect(await client.hget(queue.dedup, 'kept-0')).toBe('kept-0')
+        expect(await client.hget(queue.dedup, 'kept-199')).toBe('kept-199')
       })
 
       it('batches deletion across empty run indexes', async () => {

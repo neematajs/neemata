@@ -151,6 +151,7 @@ for _, key in ipairs(external) do
   if redis.call('GET', key) == redis.call('HGET', KEYS[1], 'owner:' .. key) then redis.call('PERSIST', key) end
 end
 redis.call('PERSIST', ARGV[7] .. 'runs:ordered')
+redis.call('PERSIST', KEYS[11])
 local familyIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds'))
 for _, id in ipairs(familyIds) do
   redis.call('ZREM', KEYS[11], id)
@@ -249,6 +250,9 @@ redis.call('SET', ARGV[3], run.rootRunId)
 redis.call('ZADD', KEYS[5], order, run.id)
 redis.call('ZADD', ARGV[8] .. 'runs:ordered', order, run.id)
 redis.call('PERSIST', ARGV[8] .. 'runs:ordered')
+-- Expiry entries must outlive the ids they are needed to remove from the
+-- chronological index, which new work has just made permanent.
+redis.call('PERSIST', ARGV[8] .. 'runs:terminal')
 if ARGV[5] ~= '' then
   redis.call('SET', ARGV[5], run.id)
   trackExternal(KEYS[1], ARGV[5], run.id)
@@ -528,18 +532,25 @@ if remaining == 0 then
       redis.call('PEXPIRE', key, ARGV[5])
     end
   end
-  redis.call('ZREMRANGEBYSCORE', KEYS[4], '-inf', now)
+  -- An active family keeps the chronological index alive, so ids whose
+  -- families expired would stay there for good unless they leave with their
+  -- expiry entries. The batch bounds one transition; the rest waits for the next.
+  local expired = redis.call('ZRANGEBYSCORE', KEYS[4], '-inf', now, 'LIMIT', 0, 1000)
+  if #expired > 0 then
+    redis.call('ZREM', ARGV[7], unpack(expired))
+    redis.call('ZREM', KEYS[4], unpack(expired))
+  end
   local runIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds') or '[]')
   for _, runId in ipairs(runIds) do
     redis.call('ZREM', KEYS[3], runId)
     redis.call('ZADD', KEYS[4], expiresAt, runId)
   end
+  -- The expiry entries may only expire together with the chronological index:
+  -- alone they would take the record of which ids to remove from it with them.
   local latest = redis.call('ZREVRANGE', KEYS[4], 0, 0, 'WITHSCORES')
-  if #latest > 0 then
+  if #latest > 0 and redis.call('ZCARD', KEYS[3]) == 0 then
     redis.call('PEXPIREAT', KEYS[4], latest[2])
-    if redis.call('ZCARD', KEYS[3]) == 0 then
-      redis.call('PEXPIREAT', ARGV[7], latest[2])
-    end
+    redis.call('PEXPIREAT', ARGV[7], latest[2])
   end
 end
 redis.call('PUBLISH', KEYS[5], '1')
