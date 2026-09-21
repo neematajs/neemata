@@ -24,7 +24,6 @@ import workflowsHost from '../src/neem/host.ts'
 import {
   createWorkflowsRuntime,
   defineWorkflowsPlanner,
-  type WorkflowsWorkerData,
 } from '../src/neem/index.ts'
 import {
   resolveWorkflowsPlan,
@@ -46,8 +45,8 @@ describe('workflows Neem integration', () => {
     input: Schema.Struct({ id: Schema.String }),
     output: Schema.Struct({ id: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
-    fromPromise(() => ({ id: input.id })),
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => fromPromise(() => ({ id: input.id })),
   )
 
   it('creates a marked Neem runtime declaration', () => {
@@ -71,11 +70,14 @@ describe('workflows Neem integration', () => {
   it('plans coordinator and pool threads with their settings', async () => {
     const planner = defineWorkflowsPlanner(() => ({
       coordinator: { threads: 2, concurrency: 3 },
-      pools: { pdf: { threads: 2, concurrency: 1, cleanupTimeoutMs: 1_000 } },
+      pools: {
+        io: {},
+        pdf: { threads: 2, concurrency: 1, cleanupTimeoutMs: 1_000 },
+      },
     }))
     const plan = await planner(plannerContext)
 
-    const pools = ['default', 'pdf']
+    const pools = ['io', 'pdf']
     const defaults = { leaseMs: 30_000, pollIntervalMs: 250 }
     const coordinator = {
       role: 'coordinator',
@@ -93,7 +95,7 @@ describe('workflows Neem integration', () => {
       execution: [
         {
           role: 'execution',
-          pool: 'default',
+          pool: 'io',
           settings: { ...defaults, concurrency: 1, cleanupTimeoutMs: 5_000 },
           pools,
         },
@@ -104,28 +106,20 @@ describe('workflows Neem integration', () => {
     expect(Object.keys(plan.options!.pools)).toStrictEqual(pools)
   })
 
-  it('plans one default pool when nothing is declared, and tunes it when listed', async () => {
-    const bare = await defineWorkflowsPlanner()(plannerContext)
-    const execution = (plan: { workers: unknown }) =>
-      (plan.workers as { execution: readonly WorkflowsWorkerData[] }).execution
-    expect(execution(bare)).toHaveLength(1)
-    expect(execution(bare)[0]).toMatchObject({ pool: 'default' })
-
-    const tuned = await defineWorkflowsPlanner(() => ({
-      pools: { default: { threads: 3, concurrency: 8 } },
-    }))(plannerContext)
-    expect(execution(tuned)).toHaveLength(3)
-    expect(execution(tuned)[0]).toMatchObject({
-      pool: 'default',
-      settings: { concurrency: 8 },
-    })
+  it('requires the planner to declare its execution pools', async () => {
+    await expect(
+      defineWorkflowsPlanner(() => ({ pools: {} }))(plannerContext),
+    ).rejects.toThrow(
+      'Workflows planner must declare at least one execution pool',
+    )
   })
 
   it('rejects invalid thread counts and unnamed pools', async () => {
     await expect(
-      defineWorkflowsPlanner(() => ({ coordinator: { threads: 0 } }))(
-        plannerContext,
-      ),
+      defineWorkflowsPlanner(() => ({
+        coordinator: { threads: 0 },
+        pools: { io: {} },
+      }))(plannerContext),
     ).rejects.toThrow('Invalid workflows worker thread count for coordinator')
     await expect(
       defineWorkflowsPlanner(() => ({ pools: { pdf: { threads: 1.5 } } }))(
@@ -156,14 +150,11 @@ describe('workflows Neem integration', () => {
     pool: 'heavy',
     handler: (input) => Effect.succeed(input),
   })
-  const pooledImpl = implementWorkflow(pooledWorkflow)
+  const pooledImpl = implementWorkflow(pooledWorkflow, { pool: 'light' })
     .fast((input) => Effect.succeed(input), {
       input: (_outputs, input) => input,
     })
-    .slow((input) => Effect.succeed(input), {
-      pool: 'heavy',
-      input: ({ fast }) => fast,
-    })
+    .slow((input) => Effect.succeed(input), { input: ({ fast }) => fast })
     .finish(({ slow }) => Effect.succeed(slow))
 
   it('rejects an implementation that names a pool the planner did not declare', async () => {
@@ -174,8 +165,8 @@ describe('workflows Neem integration', () => {
     await expect(
       resolveWorkflowsRegistry(registry, {
         role: 'execution',
-        pool: 'default',
-        pools: ['default', 'heavvy'],
+        pool: 'light',
+        pools: ['light', 'heavvy'],
       }),
     ).rejects.toThrow(
       'Execution pools [heavy] named by implementations are not declared by the workflows planner',
@@ -183,7 +174,7 @@ describe('workflows Neem integration', () => {
     await expect(
       resolveWorkflowsRegistry(registry, {
         role: 'coordinator',
-        pools: ['default', 'heavy'],
+        pools: ['light', 'heavy'],
       }),
     ).resolves.toBeDefined()
     // Hand-written worker data carries no declared pools to check against.
@@ -195,13 +186,14 @@ describe('workflows Neem integration', () => {
   it('fails worker startup for an undeclared pool', async () => {
     const worker = defineWorkflowsWorker({
       workflows: () => [pooledImpl],
+      tasks: () => [pooledTaskImpl],
       runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
     })
     const channel = new MessageChannel()
     const runtime = await worker.createRuntime({
       mode: 'development',
       name: 'workflows:execution:0',
-      data: { role: 'execution', pool: 'default', pools: ['default'] },
+      data: { role: 'execution', pool: 'light', pools: ['light'] },
       logger,
       definition: worker.definition,
       port: channel.port1,
@@ -226,7 +218,7 @@ describe('workflows Neem integration', () => {
     })
       .workflow('child', child)
       .build()
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .child(child)
       .finish(() => fromPromise(() => ({})))
 
@@ -248,7 +240,7 @@ describe('workflows Neem integration', () => {
     })
       .task('work', pooledTask)
       .build()
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .work(pooledTask, { input: (_outputs, input) => input })
       .finish(({ work }) => Effect.succeed(work))
 
@@ -388,6 +380,7 @@ describe('workflows Neem integration', () => {
       handlerStarted = resolve
     })
     const taskImpl = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           handlerStarted()
@@ -529,13 +522,14 @@ describe('workflows Neem integration', () => {
       .task('task', task)
       .build()
     const taskImpl = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         Effect.gen(function* () {
           const prefix = yield* pluginDependency
           return { text: `${prefix}:${input.text}:task` }
         }),
     })
-    const fullWorkflowImpl = implementWorkflow(fullWorkflow)
+    const fullWorkflowImpl = implementWorkflow(fullWorkflow, { pool: 'test' })
       .activity(
         (input) =>
           fromPromise(async () => ({ text: `${input.text}:activity` })),
@@ -657,7 +651,7 @@ describe('workflows Neem integration', () => {
       name: 'workflows',
       logger,
       threads: [],
-      options: resolveWorkflowsPlan({}),
+      options: resolveWorkflowsPlan({ pools: { io: {} } }),
     })
 
     await host.start?.()

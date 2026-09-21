@@ -50,6 +50,7 @@ describe('Effect workflow execution', () => {
       let calls = 0
       let finalized = 0
       const implementation = implementTask(task, {
+        pool: 'test',
         handler: (input) =>
           Effect.suspend(() =>
             ++calls === 1 ? fail() : Effect.succeed(input + 1),
@@ -144,6 +145,7 @@ describe('Effect workflow execution', () => {
     const cleanup = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     const implementation = implementTask(timed, {
+      pool: 'test',
       handler: () =>
         Effect.uninterruptible(Effect.promise(() => release.promise)).pipe(
           Effect.as(99),
@@ -185,6 +187,7 @@ describe('Effect workflow execution', () => {
     const started = Promise.withResolvers<void>()
     let reason: unknown
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (_input, lifecycle) =>
         Effect.gen(function* () {
           lifecycle!.signal.addEventListener(
@@ -225,6 +228,7 @@ describe('Effect workflow execution', () => {
     const run = await client.start(task, 1)
     const released = Promise.withResolvers<void>()
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: () =>
         Effect.uninterruptible(Effect.promise(() => released.promise)).pipe(
           Effect.as(99),
@@ -284,6 +288,7 @@ it.each([false, true])(
     const finalizing = Promise.withResolvers<void>()
     const release = Promise.withResolvers<void>()
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: () =>
         Effect.gen(function* () {
           const service = yield* resource

@@ -77,7 +77,7 @@ describe('workflow fan-out retry state model', () => {
         }
         return { text: `${member}:${input.scenario}` }
       })
-    return implementWorkflow(workflow)
+    return implementWorkflow(workflow, { pool: 'test' })
       .members(({ activity }) => ({
         a: activity(memberHandler('a')),
         b: activity(memberHandler('b')),
@@ -204,7 +204,7 @@ describe('workflow fan-out retry state model', () => {
         output: memberOutput,
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .step((input) =>
         fromPromise(async () => ({ text: `step:${input.scenario}` })),
       )
@@ -265,7 +265,9 @@ describe('workflow fan-out retry state model', () => {
       .workflow('child', childWorkflow)
       .build()
 
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => child))
     const runtime = createInMemoryWorkflowRuntime()
@@ -300,7 +302,7 @@ describe('workflow fan-out retry state model', () => {
         output: memberOutput,
       })
       .build()
-    const implementation = implementWorkflow(declaredWorkflow)
+    const implementation = implementWorkflow(declaredWorkflow, { pool: 'test' })
       .step((input) =>
         fromPromise(async () => ({ text: `step:${input.scenario}` })),
       )
@@ -317,7 +319,9 @@ describe('workflow fan-out retry state model', () => {
         output: memberOutput,
       })
       .build()
-    const driftedImplementation = implementWorkflow(driftedWorkflow)
+    const driftedImplementation = implementWorkflow(driftedWorkflow, {
+      pool: 'test',
+    })
       .stepRenamed((input) =>
         fromPromise(async () => ({ text: input.scenario })),
       )
@@ -347,17 +351,6 @@ describe('workflow fan-out retry state model', () => {
     await runExecutionWorker({
       tasks: [],
       ...runtime,
-      // A worker claims exactly what it implements; a drifted deployment is one
-      // whose claim still covers a node it no longer has.
-      attemptExecutor: {
-        ...runtime.attemptExecutor,
-        claim: (worker) =>
-          runtime.attemptExecutor.claim({
-            ...worker,
-            activities: undefined,
-            activityNames: [command!.activityName],
-          }),
-      },
       context: createTestContext(),
       workflows: [driftedImplementation],
       workerId: 'drifted-worker',
@@ -416,7 +409,7 @@ describe('workflow fan-out retry state model', () => {
       .build()
     // No activity worker ever runs, so without the sweep this run would sit
     // in running forever.
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .step((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ step }) => fromPromise(() => step))
     const runtime = createInMemoryWorkflowRuntime()

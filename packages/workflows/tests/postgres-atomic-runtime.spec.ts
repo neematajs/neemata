@@ -99,8 +99,8 @@ test('rolls back empty workflow completion when command ack fails', async () => 
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.Struct({ value: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
-    fromPromise(() => ({ value: input.value })),
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => fromPromise(() => ({ value: input.value })),
   )
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -136,8 +136,8 @@ test('rolls back workflow continuation when command ack lease is stale', async (
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.Struct({ value: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
-    fromPromise(() => ({ value: input.value })),
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => fromPromise(() => ({ value: input.value })),
   )
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -175,7 +175,7 @@ test('rolls back activity dispatch when command ack fails', async () => {
       output: Schema.Struct({ value: Schema.String }),
     })
     .build()
-  const workflowImpl = implementWorkflow(workflow)
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
     .content((input) => fromPromise(async () => ({ value: input.value })))
     .finish(({ content }) => fromPromise(() => content))
   const client = createWorkflowRuntimeClient(runtime)
@@ -219,6 +219,7 @@ test('rolls back standalone task completion when command ack fails', async () =>
     output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
+    pool: 'test',
     handler: (input) => fromPromise(async () => ({ id: input.text })),
   })
   const client = createWorkflowRuntimeClient(runtime)
@@ -258,6 +259,7 @@ test('rolls back standalone task failure when command ack fails', async () => {
     output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
+    pool: 'test',
     handler: () =>
       fromPromise(async () => {
         throw new Error('task failed')
@@ -307,7 +309,7 @@ test('rolls back activity completion when command ack fails', async () => {
       output: Schema.Struct({ value: Schema.String }),
     })
     .build()
-  const workflowImpl = implementWorkflow(workflow)
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
     .content((input) => fromPromise(async () => ({ value: input.value })))
     .finish(({ content }) => fromPromise(() => content))
   const context = createTestContext()
@@ -369,7 +371,7 @@ test('rolls back activity completion when command ack lease is stale', async () 
       output: Schema.Struct({ value: Schema.String }),
     })
     .build()
-  const workflowImpl = implementWorkflow(workflow)
+  const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
     .content((input) => fromPromise(async () => ({ value: input.value })))
     .finish(({ content }) => fromPromise(() => content))
   const context = createTestContext()

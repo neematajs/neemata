@@ -295,6 +295,7 @@ describe('workflow runtime interfaces', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const lifecycleTask = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           expectTypeOf(lifecycle).toEqualTypeOf<AttemptLifecycle>()
@@ -304,6 +305,7 @@ describe('workflow runtime interfaces', () => {
         }),
     })
     const inputOnlyTask = implementTask(task, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
 
@@ -500,14 +502,16 @@ describe('workflow runtime interfaces', () => {
       .build()
 
     const taskImpl = implementTask(task, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
-    const childImpl = implementWorkflow(child).finish((_outputs, input) =>
-      fromPromise(() => ({
-        text: input.text,
-      })),
+    const childImpl = implementWorkflow(child, { pool: 'test' }).finish(
+      (_outputs, input) =>
+        fromPromise(() => ({
+          text: input.text,
+        })),
     )
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .embedding(task, { input: (_outputs, input) => input })
       .child(child, {
         input: ({ embedding }) => ({ text: embedding.id }),
@@ -540,9 +544,11 @@ describe('workflow runtime interfaces', () => {
       createWorkflowRuntimeRegistry({
         tasks: [
           implementTask(task, {
+            pool: 'test',
             handler: (input) => fromPromise(async () => ({ id: input.text })),
           }),
           implementTask(task, {
+            pool: 'test',
             handler: (input) => fromPromise(async () => ({ id: input.text })),
           }),
         ],
@@ -552,11 +558,11 @@ describe('workflow runtime interfaces', () => {
     expect(() =>
       createWorkflowRuntimeRegistry({
         workflows: [
-          implementWorkflow(workflow).finish((_outputs, input) =>
-            fromPromise(() => input),
+          implementWorkflow(workflow, { pool: 'test' }).finish(
+            (_outputs, input) => fromPromise(() => input),
           ),
-          implementWorkflow(workflow).finish((_outputs, input) =>
-            fromPromise(() => input),
+          implementWorkflow(workflow, { pool: 'test' }).finish(
+            (_outputs, input) => fromPromise(() => input),
           ),
         ],
       }),
@@ -581,10 +587,11 @@ describe('workflow runtime interfaces', () => {
     })
       .task('embedding', expectedTask)
       .build()
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .embedding(expectedTask, { input: (_outputs, input) => input })
       .finish(({ embedding }) => fromPromise(() => ({ id: embedding.id })))
     const wrongTaskImpl = implementTask(sameNameTask, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
 
@@ -615,10 +622,10 @@ describe('workflow runtime interfaces', () => {
     })
       .workflow('child', child)
       .build()
-    const childImpl = implementWorkflow(child)
+    const childImpl = implementWorkflow(child, { pool: 'test' })
       .childTask(childTask, { input: (_outputs, input) => input })
       .finish(({ childTask }) => fromPromise(() => childTask))
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .child(child, { input: (_outputs, input) => input })
       .finish(({ child }) => fromPromise(() => child))
 
@@ -658,7 +665,7 @@ describe('workflow runtime interfaces', () => {
         item: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const parentImpl = implementWorkflow(parent)
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
       .choice({
         select: () => 'embedding',
         cases: (helpers) => ({ embedding: helpers.task(task) }),

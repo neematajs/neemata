@@ -23,15 +23,16 @@ it('interrupts finish on shutdown without failing the durable run', async () => 
   const started = Promise.withResolvers<void>()
   const stop = new AbortController()
   let finalized = false
-  const implementation = implementWorkflow(workflow).finish(() =>
-    Effect.sync(started.resolve).pipe(
-      Effect.andThen(Effect.never),
-      Effect.ensuring(
-        Effect.sync(() => {
-          finalized = true
-        }),
+  const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
+    () =>
+      Effect.sync(started.resolve).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalized = true
+          }),
+        ),
       ),
-    ),
   )
   const runtime = createInMemoryWorkflowRuntime()
   const client = createWorkflowRuntimeClient(runtime)
@@ -52,8 +53,8 @@ it('interrupts finish on shutdown without failing the durable run', async () => 
     input: '1',
   })
   expect((await client.get(run.id))?.run.output).toBeUndefined()
-  const resumed = implementWorkflow(workflow).finish((_outputs, input) =>
-    Effect.succeed(input + 1),
+  const resumed = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => Effect.succeed(input + 1),
   )
   // Released coordination commands retain the engine's normal backoff.
   await expect
@@ -72,15 +73,16 @@ it('interrupts finish on shutdown without failing the durable run', async () => 
 it('observes cancellation while finish is running', async () => {
   const started = Promise.withResolvers<void>()
   let finalized = false
-  const implementation = implementWorkflow(workflow).finish(() =>
-    Effect.sync(started.resolve).pipe(
-      Effect.andThen(Effect.never),
-      Effect.ensuring(
-        Effect.sync(() => {
-          finalized = true
-        }),
+  const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
+    () =>
+      Effect.sync(started.resolve).pipe(
+        Effect.andThen(Effect.never),
+        Effect.ensuring(
+          Effect.sync(() => {
+            finalized = true
+          }),
+        ),
       ),
-    ),
   )
   const runtime = createInMemoryWorkflowRuntime()
   const client = createWorkflowRuntimeClient(runtime)

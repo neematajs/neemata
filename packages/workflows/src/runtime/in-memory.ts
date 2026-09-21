@@ -2041,12 +2041,6 @@ export function createInMemoryWorkflowRuntime(
         if (command.kind === 'taskAttempt') {
           return worker.taskNames.includes(command.taskName)
         }
-        if (worker.activities !== undefined)
-          return worker.activities.some(
-            (activity) =>
-              activity.workflowName === command.workflowName &&
-              activity.activityName === command.activityName,
-          )
         return (
           worker.workflowNames.includes(command.workflowName) &&
           (worker.activityNames === undefined ||

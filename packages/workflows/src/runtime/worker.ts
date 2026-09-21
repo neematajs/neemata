@@ -5,7 +5,6 @@ export {
 export {
   collectChildWorkflowNames,
   collectImplementationPools,
-  collectPoolActivities,
   collectWorkflowTaskNames,
   runExecutionWorker,
   runWorkflowWorker,

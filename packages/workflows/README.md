@@ -87,27 +87,37 @@ once; handlers that ignore it require none. Workflow `finish` receives
 `(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
 functions for a library whose schemas are not Standard Schemas themselves.
 
-## Pools
+## Pools: tasks, workflows and activities
 
-An implementation names the execution pool whose workers run it; one that names
-none belongs to `'default'`. A pool is only a name here: its size and timing are a
-deployment decision.
+Only tasks and workflows carry placement. Each names the execution pool whose
+workers run it, and nothing is placed implicitly:
 
 ```ts
 implementTask(renderPdf, { pool: 'pdf', handler })
 
-implementWorkflow(checkout)
-  .price(loadPrice) // default pool
-  .receipt(renderReceipt, { pool: 'pdf' }) // activities, in their options
+implementWorkflow(checkout, { pool: 'checkout' }) // its activities run here
+  .price(loadPrice) // activity: inherits the pool
+  .receipt(renderPdf, { input: ({ price }) => price }) // task node: pdf pool
   .finish(({ receipt }) => receipt)
 ```
 
-Every handler has exactly one pool, so nothing can be left unserved or served
-twice. Workers claim exactly the `(workflow, activity)` pairs and tasks of their
-pool. Routing is decided by workers, not stamped on queued work, so moving a
-handler to another pool takes effect for already queued work on the next deploy.
-A standalone worker takes `runExecutionWorker({ pool: 'pdf', ... })`; without
-`pool` it serves everything.
+An activity is a private step of its workflow and has no placement options. A
+step that needs its own pool, because it is heavy, risky to clean up, or has to
+be isolated from the rest, should be a task: a task can be a node or a map item,
+has its own retry and timeout policy, and is its own run in the inspector.
+Promoting a step to a task is how it gets isolated, and that decision is then
+visible in the contract. The workflow itself is advanced by coordinator threads,
+so `finish` must be quick.
+
+A pool is only a name here; its size and timing are a deployment decision made
+by the planner. Workers claim the tasks, and the activities of the workflows,
+implemented for their pool. Routing is decided by workers, not stamped on queued
+work, so moving an implementation to another pool takes effect for already
+queued work on the next deploy. A standalone worker takes
+`runExecutionWorker({ pool: 'pdf', ... })`; without `pool` it serves everything.
+
+Pool `concurrency` is capacity per process, not a limit: three instances of a
+pool with two slots run six handlers. Cluster-wide limits are not implemented.
 
 ## Neem integration
 
@@ -121,7 +131,7 @@ import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
 export default defineWorkflowsPlanner(() => ({
   coordinator: { threads: 1, concurrency: 4 },
   pools: {
-    default: { concurrency: 8 }, // always exists; listing it tunes it
+    checkout: { concurrency: 8 },
     pdf: { threads: 2, concurrency: 1, cleanupTimeoutMs: 1_000 },
   },
 }))
@@ -129,8 +139,9 @@ export default defineWorkflowsPlanner(() => ({
 
 Each pool and the coordinator take `threads`, `concurrency`, `leaseMs`,
 `pollIntervalMs` and `cleanupTimeoutMs`. Coordinator threads advance runs and own
-schedules and maintenance; pool threads run handlers. Every thread receives its
-settings and the declared pool names from the planner.
+schedules and maintenance; pool threads run handlers. Every pool an
+implementation names must be declared here; there is no default pool. Every
+thread receives its settings and the declared pool names from the planner.
 
 The worker definition is the application side, and `setup` runs once per thread:
 

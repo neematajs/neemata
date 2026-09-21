@@ -26,7 +26,7 @@ describe('workflow runtime client', () => {
       }),
       idempotency: (input) => ['wf', input.scenario],
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -165,6 +165,7 @@ describe('workflow runtime client', () => {
       idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const runtime = createInMemoryWorkflowRuntime()
@@ -344,7 +345,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -389,7 +390,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -423,7 +424,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -454,7 +455,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -486,6 +487,7 @@ describe('workflow runtime client', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const runtime = createInMemoryWorkflowRuntime()
@@ -531,7 +533,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -664,7 +666,7 @@ describe('workflow runtime client', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()

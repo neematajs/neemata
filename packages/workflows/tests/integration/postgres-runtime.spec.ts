@@ -73,13 +73,13 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const childImpl = implementWorkflow(childWorkflow).finish(
-        (_outputs, input) => fromPromise(() => ({ text: input.text })),
-      )
-      const parentImpl = implementWorkflow(parentWorkflow)
+      const childImpl = implementWorkflow(childWorkflow, {
+        pool: 'test',
+      }).finish((_outputs, input) => fromPromise(() => ({ text: input.text })))
+      const parentImpl = implementWorkflow(parentWorkflow, { pool: 'test' })
         .child(childWorkflow)
         .finish(({ child }) => fromPromise(() => child))
-      const liveImpl = implementWorkflow(liveWorkflow)
+      const liveImpl = implementWorkflow(liveWorkflow, { pool: 'test' })
         .hold((input) => fromPromise(async () => input))
         .finish(({ hold }) => fromPromise(() => hold))
       const client = createWorkflowRuntimeClient(runtime)
@@ -192,13 +192,14 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const taskImpl = implementTask(task, {
+        pool: 'test',
         handler: (input) =>
           fromPromise(async () => {
             increment(effects, `${input.runKey}:item:${input.item}`)
             return { id: `${input.runKey}:${input.item}` }
           }),
       })
-      const workflowImpl = implementWorkflow(workflow)
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
         .prepare((input) =>
           fromPromise(async () => {
             increment(effects, `${input.runKey}:prepare`)
@@ -273,7 +274,7 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const workflowImpl = implementWorkflow(workflow)
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
         .content((input) =>
           fromPromise(async () => {
             calls += 1
@@ -335,7 +336,7 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const workflowImpl = implementWorkflow(workflow)
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
         .content((input) =>
           fromPromise(async () => {
             calls += 1
@@ -405,7 +406,7 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const workflowImpl = implementWorkflow(workflow)
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
         .content((input) =>
           fromPromise(async () => {
             calls += 1
@@ -503,7 +504,7 @@ describe.skipIf(!postgresTarget.url)(
       })
         .workflow('child', childWorkflow)
         .build()
-      const childImpl = implementWorkflow(childWorkflow)
+      const childImpl = implementWorkflow(childWorkflow, { pool: 'test' })
         .slow(
           (input) =>
             fromPromise(async () => {
@@ -516,7 +517,7 @@ describe.skipIf(!postgresTarget.url)(
           },
         )
         .finish(({ slow }) => fromPromise(() => ({ text: slow.text })))
-      const parentImpl = implementWorkflow(parentWorkflow)
+      const parentImpl = implementWorkflow(parentWorkflow, { pool: 'test' })
         .child(childWorkflow, {
           input: (_outputs, input) => ({ text: input.text }),
         })
@@ -613,7 +614,7 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const workflowImpl = implementWorkflow(workflow)
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
         .slow((input, lifecycle) =>
           fromPromise(async () => {
             calls += 1
@@ -693,7 +694,7 @@ describe.skipIf(!postgresTarget.url)(
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
-      const workflowImpl = implementWorkflow(workflow).finish(
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
         (_outputs, input) =>
           fromPromise(() => {
             finishCalls += 1
@@ -754,7 +755,7 @@ describe.skipIf(!postgresTarget.url)(
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
-      const workflowImpl = implementWorkflow(workflow).finish(
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
         (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const schedule = defineSchedule({
@@ -795,7 +796,7 @@ describe.skipIf(!postgresTarget.url)(
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
-      const workflowImpl = implementWorkflow(workflow).finish(
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
         (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const schedule = defineSchedule({
@@ -840,7 +841,7 @@ describe.skipIf(!postgresTarget.url)(
         input: Schema.Struct({ text: Schema.String }),
         output: Schema.Struct({ text: Schema.String }),
       }).build()
-      const workflowImpl = implementWorkflow(workflow).finish(
+      const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
         (_outputs, input) => fromPromise(() => ({ text: input.text })),
       )
       const client = createWorkflowRuntimeClient(runtime)

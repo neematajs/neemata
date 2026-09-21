@@ -9,6 +9,7 @@ export type {
   WorkflowImplementer,
   WorkflowImplementationChain,
   WorkflowImplementation,
+  WorkflowImplementationOptions,
 } from './implement/index.ts'
 export type { WorkflowBuilder } from './contract/index.ts'
 export type {
@@ -72,11 +73,7 @@ export {
   toStoredJsonSchema,
 } from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
-export {
-  DEFAULT_POOL,
-  implementTask,
-  implementWorkflow,
-} from './implement/index.ts'
+export { implementTask, implementWorkflow } from './implement/index.ts'
 export {
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,

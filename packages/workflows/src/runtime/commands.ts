@@ -55,21 +55,10 @@ export type RunCoordinationWorkerClaim = {
   readonly leaseMs: number
 }
 
-export type ActivityRef = {
-  readonly workflowName: string
-  readonly activityName: string
-}
-
 export type ExecutionWorkerClaim = {
   readonly workerId: string
   readonly workflowNames: readonly string[]
   readonly activityNames?: readonly string[]
-  /**
-   * Exactly the activities to claim, replacing the `workflowNames` by
-   * `activityNames` cross product: an activity is named after its node, and two
-   * workflows may use the same node name.
-   */
-  readonly activities?: readonly ActivityRef[]
   readonly taskNames: readonly string[]
   readonly leaseMs: number
 }

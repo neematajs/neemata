@@ -814,17 +814,22 @@ silently, a handler could be claimed by no pool or by two, and an activity is na
 after its node, so the claim's workflow-by-activity cross product could not route
 two workflows' same-named nodes differently.
 
-- An implementation names its pool: `implementTask(task, { pool, handler })` and
-  the activity options of both chains. One that names none belongs to `'default'`.
-  Every handler therefore has exactly one pool.
-- Workers claim exact `(workflow, activity)` pairs and task names for their pool.
-  The executor port gains an optional `activities` filter; the standalone
+- **Only tasks and workflows carry placement.** `implementTask(task, { pool,
+handler })` and `implementWorkflow(workflow, { pool })` require a pool; nothing
+  is placed implicitly and there is no default pool. An activity is a private step
+  of its workflow and runs on the workflow's pool. A step that needs its own pool
+  is a task, which makes the decision visible in the contract. A per-activity pool
+  was built first and removed: it needed exact `(workflow, activity)` claims and
+  left shorthand cases with no way to name a pool.
+- Workers claim by workflow and task names for their pool, so the cross product
+  no longer matters: a workflow's activities all share its pool. The standalone
   execution worker takes `pool` instead of name lists. Routing stays worker-side
   rather than being stamped on commands: no migration, definitions stay free of
-  deployment concerns, and moving a handler reroutes already queued work.
+  deployment concerns, and moving an implementation reroutes already queued work.
 - Pool size and timing are a deployment concern, so they moved from the shared
-  config to `defineWorkflowsPlanner`, which now imports no application code. It
-  sends every thread its loop settings and the declared pool names.
+  config to `defineWorkflowsPlanner`, which now imports no application code and
+  must declare every pool. It sends every thread its loop settings and the declared
+  pool names.
 - With the planner no longer reading it, `defineWorkflows` had no second reader
   and is removed. Each flavour's `defineWorkflowsWorker` takes one object: the
   registry plus `setup`, or plus `layer` and `runtime`. The env and Layer checks
@@ -832,3 +837,10 @@ two workflows' same-named nodes differently.
 - Validation moved from plan time to worker startup: an implementation naming an
   undeclared pool, or a workflow referencing an unregistered child or task, fails
   the thread's start.
+- Pool concurrency is per-process capacity. Cluster-wide limits (named limits on
+  tasks, runs in flight per workflow) are a separate, unbuilt slice. They would
+  attach to tasks and workflows only, and a workflow's run limit must not count a
+  child against a limit its waiting parent already holds.
+- The README and the `use-neemata` workflows skill reference state the
+  task-versus-activity rule; the skill reference was also brought up to date with
+  Standard Schemas, `env` and the Effect adapter.

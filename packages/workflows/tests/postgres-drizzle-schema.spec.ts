@@ -1349,8 +1349,8 @@ test('postgres workflow worker survives a release racing a fresh continue', asyn
     input: Schema.Struct({ text: Schema.String }),
     output: Schema.Struct({ text: Schema.String }),
   }).build()
-  const implementation = implementWorkflow(workflow).finish((_outputs, input) =>
-    fromPromise(() => input),
+  const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => fromPromise(() => input),
   )
   const run = await runtime.store.createRun({
     workflowName: workflow.name,

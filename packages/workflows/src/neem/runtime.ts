@@ -8,7 +8,6 @@ import type {
   AnyTaskDefinition,
   MaybePromise,
 } from '../types/index.ts'
-import { DEFAULT_POOL } from '../implement/index.ts'
 import {
   collectChildWorkflowNames,
   collectImplementationPools,
@@ -41,8 +40,8 @@ export type WorkflowsPoolConfig = Partial<WorkflowsWorkerSettings> & {
  */
 export type WorkflowsPlan = {
   readonly coordinator?: WorkflowsPoolConfig
-  /** Execution pools by name. 'default' always exists; listing it tunes it. */
-  readonly pools?: Readonly<Record<string, WorkflowsPoolConfig>>
+  /** Every execution pool an implementation names, by name. */
+  readonly pools: Readonly<Record<string, WorkflowsPoolConfig>>
 }
 
 export type WorkflowsWorkerData = {
@@ -94,11 +93,16 @@ export type ResolvedWorkflowsPlan = {
 export function resolveWorkflowsPlan(
   plan: WorkflowsPlan,
 ): ResolvedWorkflowsPlan {
-  const pools = { [DEFAULT_POOL]: {}, ...plan.pools }
+  const pools = Object.entries(plan.pools)
+  // Nothing is placed implicitly, so a layout without pools runs no handlers.
+  if (pools.length === 0)
+    throw new Error(
+      'Workflows planner must declare at least one execution pool',
+    )
   return {
     coordinator: resolvePool('coordinator', plan.coordinator),
     pools: Object.fromEntries(
-      Object.entries(pools).map(([name, config]) => {
+      pools.map(([name, config]) => {
         if (!name) throw new Error('Workflows execution pool requires a name')
         return [name, resolvePool(`execution pool [${name}]`, config)]
       }),

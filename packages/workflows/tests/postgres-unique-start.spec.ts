@@ -237,8 +237,8 @@ test('a rejected unique start leaves the caller transaction usable', async () =>
 test('retry rehydrates the stored unique constraint', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
-  const implementation = implementWorkflow(workflow).finish(() =>
-    fromPromise(() => undefined),
+  const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
+    () => fromPromise(() => undefined),
   )
   const client = createWorkflowRuntimeClient({
     ...createPostgresWorkflowRuntime({ connection }),

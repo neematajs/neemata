@@ -32,6 +32,7 @@ type Log = { readonly log: string[] }
 
 const shiftTask = defineTask({ name: 'core.shift', input: date, output: date })
 const shift = implementTask(shiftTask, {
+  pool: 'test',
   handler: (input, _lifecycle, env: Clock) => env.clock.shift(input),
 })
 
@@ -48,7 +49,7 @@ const workflow = defineWorkflow({
   .mapTask('each', shiftTask, { item: date })
   .build()
 
-const implementation = implementWorkflow(workflow)
+const implementation = implementWorkflow(workflow, { pool: 'test' })
   .first(async (input, _lifecycle, env: Log) => {
     env.log.push('first')
     return input
@@ -139,7 +140,10 @@ describe('workflows core without Effect', () => {
       ...runtime,
       workflows: [],
       tasks: [
-        implementTask(greet, { handler: ({ name }) => `Hello, ${name}` }),
+        implementTask(greet, {
+          pool: 'test',
+          handler: ({ name }) => `Hello, ${name}`,
+        }),
       ],
       workerId: 'core',
     }
@@ -174,41 +178,54 @@ describe('workflows core without Effect', () => {
     expect(toStoredJsonSchema(task.output)).toMatchObject({ type: 'string' })
   })
 
-  it('routes same-named activities of different workflows to their own pools', async () => {
+  it('runs activities on their workflow pool and tasks on their own', async () => {
     const io = z.string()
     const define = (name: string) =>
       defineWorkflow({ name, input: io, output: io })
         .activity('step', { input: io, output: io })
         .build()
+    // The same node name in two workflows: each follows its own workflow's pool.
     const heavy = define('core.pool.heavy')
     const light = define('core.pool.light')
+    const echo = defineTask({ name: 'core.pool.echo', input: io, output: io })
     const ran: string[] = []
-    const implement = (workflow: typeof heavy, pool?: string) =>
-      implementWorkflow(workflow)
+    const implement = (workflow: typeof heavy, pool: string) =>
+      implementWorkflow(workflow, { pool })
         .step(
           (input) => {
             ran.push(workflow.name)
             return input
           },
-          { pool, input: (_outputs, input) => input },
+          { input: (_outputs, input) => input },
         )
         .finish(({ step }) => step)
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
     const workers = {
       ...runtime,
-      workflows: [implement(heavy, 'heavy'), implement(light)],
-      tasks: [],
+      workflows: [implement(heavy, 'heavy'), implement(light, 'light')],
+      tasks: [
+        implementTask(echo, {
+          pool: 'heavy',
+          handler: (input) => {
+            ran.push(echo.name)
+            return input
+          },
+        }),
+      ],
       workerId: 'pools',
     }
     await client.start(heavy, 'a')
     await client.start(light, 'b')
+    await client.start(echo, 'c')
     await runWorkflowWorker(workers)
 
+    await runExecutionWorker({ ...workers, pool: 'light' })
+    expect(ran).toEqual([light.name])
     await runExecutionWorker({ ...workers, pool: 'heavy' })
-    expect(ran).toEqual([heavy.name])
-    await runExecutionWorker({ ...workers, pool: 'default' })
-    expect(ran).toEqual([heavy.name, light.name])
+    expect(ran.toSorted()).toEqual(
+      [echo.name, heavy.name, light.name].toSorted(),
+    )
   })
 
   it('reports a handler that keeps running after its attempt was aborted', async () => {

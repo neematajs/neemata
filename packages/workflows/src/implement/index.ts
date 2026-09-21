@@ -66,15 +66,16 @@ export type TaskImplementation<
 > = {
   readonly kind: 'taskImplementation'
   readonly task: Task
-  readonly pool?: string
+  /** The execution pool whose workers run this task. */
+  readonly pool: string
   readonly handler: TaskHandler<Env, TaskInput<Task>, TaskOutput<Task>>
 }
 
 export function implementTask<Task extends AnyTaskDefinition, Env = unknown>(
   task: Task,
   options: {
-    /** Execution pool whose workers run this task. @default 'default' */
-    pool?: string
+    /** The execution pool whose workers run this task. */
+    pool: string
     handler: TaskHandler<Env, TaskInput<Task>, TaskOutput<Task>>
   },
 ): TaskImplementation<Task, Env> {
@@ -151,6 +152,8 @@ export type WorkflowImplementation<
 > = {
   readonly kind: 'workflowImplementation'
   readonly workflow: Workflow
+  /** The execution pool whose workers run this workflow's activities. */
+  readonly pool: string
   readonly nodes: readonly WorkflowNodeImplementation[]
   readonly finish: FinishHandler<
     Env,
@@ -166,7 +169,6 @@ export type ActivityNodeImplementation = {
   readonly kind: 'activity'
   readonly name: string
   readonly activity: ActivityImplementation
-  readonly pool?: string
   readonly retry?: RetryPolicy
   readonly input?: StoredCallback
   readonly idempotency?: unknown
@@ -216,7 +218,6 @@ export type WorkflowCaseImplementation =
       readonly kind: 'activity'
       readonly name: string
       readonly activity: ActivityImplementation
-      readonly pool?: string
       readonly retry?: RetryPolicy
       readonly input?: StoredCallback
       readonly idempotency?: unknown
@@ -230,17 +231,13 @@ export type WorkflowCaseImplementation =
       readonly idempotency?: unknown
     }
 
-/** The pool served when an implementation names none. */
-export const DEFAULT_POOL = 'default'
-
+// Activities take no placement of their own: they are private steps of their
+// workflow and run on its pool. A step that needs its own pool is a task.
 export type ActivityImplementationOptions<
   Outputs extends object,
   Input,
   NodeInput,
-> = WorkflowInputMapper<Outputs, Input, NodeInput> & {
-  /** Execution pool whose workers run this activity. @default 'default' */
-  readonly pool?: string
-}
+> = WorkflowInputMapper<Outputs, Input, NodeInput>
 
 type ActivityImplementationValue<Input, Output, Env = unknown> =
   | ActivityHandler<Env, Input, Output>
@@ -563,11 +560,23 @@ export type WorkflowImplementer<
   WorkflowOutput<Workflow>
 >
 
+export type WorkflowImplementationOptions = {
+  /**
+   * The execution pool whose workers run this workflow's activities. The
+   * workflow itself is advanced by coordinators; tasks and child workflows it
+   * uses run where their own implementations say.
+   */
+  readonly pool: string
+}
+
 export function implementWorkflow<
   Workflow extends AnyWorkflowDefinition,
   WorkflowEnv = unknown,
->(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowEnv> {
-  return createImplementationChain(workflow) as WorkflowImplementer<
+>(
+  workflow: Workflow,
+  options: WorkflowImplementationOptions,
+): WorkflowImplementer<Workflow, WorkflowEnv> {
+  return createImplementationChain(workflow, options) as WorkflowImplementer<
     Workflow,
     WorkflowEnv
   >
@@ -590,10 +599,12 @@ const storedHandlers: HandlerAdapter = {
 
 export function createImplementationChain(
   workflow: AnyWorkflowDefinition,
+  options: WorkflowImplementationOptions,
   adapter: HandlerAdapter = storedHandlers,
 ): unknown {
   return createWorkflowChain({
     workflow,
+    pool: options.pool,
     adapter,
     index: 0,
     implementations: [],
@@ -602,6 +613,7 @@ export function createImplementationChain(
 
 type ChainState = {
   workflow: AnyWorkflowDefinition
+  pool: string
   adapter: HandlerAdapter
   index: number
   implementations: readonly WorkflowNodeImplementation[]
@@ -616,6 +628,7 @@ function createWorkflowChain(state: ChainState): unknown {
         Object.freeze({
           kind: 'workflowImplementation',
           workflow: state.workflow,
+          pool: state.pool,
           nodes: Object.freeze([...state.implementations]),
           finish: state.adapter.finish(finish),
         }),
@@ -632,7 +645,6 @@ function createWorkflowChain(state: ChainState): unknown {
           nextChain(state, {
             kind: 'activity',
             name: node.name,
-            pool: options?.pool,
             activity: createActivityImplementation(
               state.adapter,
               node.name,
@@ -865,7 +877,6 @@ function normalizeCase(
         name,
         descriptor?.value ?? value,
       ),
-      pool: descriptor?.options?.pool,
       retry: 'retry' in branchCase ? branchCase.retry : undefined,
       input: descriptor?.options?.input,
       idempotency: descriptor?.options?.idempotency,

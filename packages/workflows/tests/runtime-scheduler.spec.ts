@@ -363,7 +363,7 @@ describe('scheduled workflow worker loop', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()

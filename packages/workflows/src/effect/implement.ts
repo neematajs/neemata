@@ -9,6 +9,7 @@ import type {
   TaskHandler as StoredTaskHandler,
   TaskImplementation,
   WorkflowImplementation,
+  WorkflowImplementationOptions,
   WorkflowInputMapper,
   WorkflowMapInputMapper,
 } from '../implement/index.ts'
@@ -76,8 +77,8 @@ function storedHandler<R, Input, Output>(
 export function implementTask<Task extends AnyTaskDefinition, R = never>(
   task: Task,
   options: {
-    /** Execution pool whose workers run this task. @default 'default' */
-    pool?: string
+    /** The execution pool whose workers run this task. */
+    pool: string
     handler: TaskHandler<R, TaskInput<Task>, TaskOutput<Task>>
   },
 ): TaskImplementation<Task, HandlerRuntime<R>> {
@@ -367,8 +368,11 @@ export type WorkflowImplementer<
 export function implementWorkflow<
   Workflow extends AnyWorkflowDefinition,
   WorkflowR = never,
->(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowR> {
-  return createImplementationChain(workflow, {
+>(
+  workflow: Workflow,
+  options: WorkflowImplementationOptions,
+): WorkflowImplementer<Workflow, WorkflowR> {
+  return createImplementationChain(workflow, options, {
     handler: storedHandler,
     finish:
       (finish: FinishHandler<unknown, unknown, unknown, unknown>) =>

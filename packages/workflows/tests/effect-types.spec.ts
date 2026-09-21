@@ -37,6 +37,7 @@ const workflow = defineWorkflow({
   output: Schema.NumberFromString,
 }).build()
 const implementation = implementTask(task, {
+  pool: 'test',
   handler: (input) =>
     Effect.gen(function* () {
       const service = yield* Service
@@ -45,7 +46,7 @@ const implementation = implementTask(task, {
 })
 
 it('requires the worker Layer to provide task and finish services', () => {
-  const finish = implementWorkflow(workflow).finish(() =>
+  const finish = implementWorkflow(workflow, { pool: 'test' }).finish(() =>
     Service.pipe(Effect.map(({ value }) => value)),
   )
   const config = {
@@ -88,7 +89,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel('parallel', (cases) => ({ a: cases.activity(io) }))
     .build()
-  const direct = implementWorkflow(declared)
+  const direct = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Service.pipe(Effect.map(({ value }) => value)))
     .branch({
       select: () => 'a',
@@ -96,7 +97,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Effect.succeed(1) })
     .finish(() => Effect.succeed(1))
-  const branch = implementWorkflow(declared)
+  const branch = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Effect.succeed(1))
     .branch({
       select: () => 'a',
@@ -106,7 +107,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Effect.succeed(1) })
     .finish(() => Effect.succeed(1))
-  const parallel = implementWorkflow(declared)
+  const parallel = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Effect.succeed(1))
     .branch({
       select: () => 'a',
@@ -167,6 +168,7 @@ it('requires a standalone worker context to cover its handlers', () => {
 
 it('supports scoped handlers and adapter factories with services', () => {
   const scoped = implementTask(task, {
+    pool: 'test',
     handler: () => Effect.acquireRelease(Effect.succeed(1), () => Effect.void),
   })
   const scopedOnly = {
@@ -186,16 +188,19 @@ it('supports scoped handlers and adapter factories with services', () => {
 
 it('accepts decoded values and Effect handlers without an async compatibility API', () => {
   implementTask(task, {
+    pool: 'test',
     handler: (input) => {
       expectTypeOf(input).toEqualTypeOf<number>()
       return Effect.succeed(input)
     },
   })
   implementTask(task, {
+    pool: 'test',
     // @ts-expect-error Handlers return decoded Type, not authored Encoded.
     handler: () => Effect.succeed('1'),
   })
   implementTask(task, {
+    pool: 'test',
     // @ts-expect-error Only native Effects cross the execution boundary.
     handler: async () => 1,
   })

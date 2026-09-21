@@ -17,7 +17,7 @@ export function createWorkflowsRuntime() {
  * code: every worker receives its loop settings and the declared pool names.
  */
 export function defineWorkflowsPlanner(
-  factory: () => MaybePromise<WorkflowsPlan> = () => ({}),
+  factory: () => MaybePromise<WorkflowsPlan>,
 ) {
   return defineRuntimePlanner<ResolvedWorkflowsPlan, WorkflowsWorkerData>(
     async () => {

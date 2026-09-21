@@ -77,7 +77,7 @@ describe('workflow runtime coordinator', () => {
       }),
       idempotency: (input) => ['wf', 'workflow', input.scenario],
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -102,6 +102,7 @@ describe('workflow runtime coordinator', () => {
       idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const runtime = createInMemoryWorkflowRuntime()
@@ -132,7 +133,7 @@ describe('workflow runtime coordinator', () => {
     const finishStarted = new Promise<void>((resolve) => {
       enteredFinish = resolve
     })
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) =>
         fromPromise(async () => {
           enteredFinish()
@@ -201,7 +202,7 @@ describe('workflow runtime coordinator', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     let finishEntered = false
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) =>
         fromPromise(async () => {
           finishEntered = true
@@ -349,7 +350,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => input))
       .finish(({ content }) => fromPromise(() => content))
     const runtime = createInMemoryWorkflowRuntime()
@@ -408,7 +409,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => input))
       .finish(({ content }) => fromPromise(() => content))
     const runtime = createInMemoryWorkflowRuntime()
@@ -463,7 +464,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .failedContent((input) => fromPromise(async () => input))
       .cancelledContent((input) => fromPromise(async () => input))
       .finish((outputs) => fromPromise(() => outputs.failedContent))
@@ -525,7 +526,7 @@ describe('workflow runtime coordinator', () => {
     })
       .task('embedding', task)
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(task, {
         input: (_outputs, input) => ({ text: input.text }),
       })
@@ -576,13 +577,14 @@ describe('workflow runtime coordinator', () => {
     })
       .task('embedding', task)
       .build()
-    const workflowImplementation = implementWorkflow(workflow)
+    const workflowImplementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(task, {
         input: (_outputs, input) => ({ text: input.text }),
       })
       .finish(({ embedding }) => fromPromise(() => ({ id: embedding.id })))
     let taskCalls = 0
     const taskImplementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           taskCalls += 1
@@ -652,10 +654,12 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) => fromPromise(() => ({ id: input.text })),
-    )
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) => fromPromise(() => ({ id: input.text })))
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ id: child.id })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -776,7 +780,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
       })
@@ -855,7 +859,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -928,7 +932,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -978,7 +982,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
       })
@@ -1050,7 +1054,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
         idempotency: (_outputs, input) => ['content', input.scenario],
@@ -1101,7 +1105,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let observedInput: unknown
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => {
           observedInput = input
@@ -1150,7 +1154,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let idempotencyCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
         idempotency: (_outputs, input) => {
@@ -1213,7 +1217,7 @@ describe('workflow runtime coordinator', () => {
       .task('embedding', task)
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(task, {
         input: (_outputs, input) => ({ text: input.scenario }),
         idempotency: (_outputs, input) => ['embedding', input.scenario],
@@ -1269,7 +1273,7 @@ describe('workflow runtime coordinator', () => {
       .task('embedding', task)
       .build()
     let idempotencyCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(task, {
         input: (_outputs, input) => ({ text: input.scenario }),
         idempotency: (_outputs, input) => {
@@ -1335,7 +1339,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let idempotencyCalls = 0
-    const implementation = implementWorkflow(parentWorkflow)
+    const implementation = implementWorkflow(parentWorkflow, { pool: 'test' })
       .child(childWorkflow, {
         input: (_outputs, input) => ({ scenario: input.scenario }),
         idempotency: (_outputs, input) => {
@@ -1409,7 +1413,7 @@ describe('workflow runtime coordinator', () => {
     })
       .task('embedding', task)
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(task, {
         input: (_outputs, input) => ({ text: input.scenario }),
       })
@@ -1520,7 +1524,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementationB = implementWorkflow(workflowB)
+    const implementationB = implementWorkflow(workflowB, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -1565,7 +1569,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content(
         {
           handler: (input) =>
@@ -1665,7 +1669,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let selectCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: (_outputs, input) => {
           selectCalls += 1
@@ -1801,7 +1805,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let selectCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => {
           selectCalls += 1
@@ -1891,7 +1895,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'normal',
         cases: (helpers) => ({
@@ -1965,7 +1969,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'normal',
         cases: (helpers) => ({
@@ -2054,7 +2058,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let mapCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'normal',
         cases: (helpers) => ({
@@ -2131,7 +2135,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => '',
         cases: (helpers) => ({
@@ -2211,10 +2215,11 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ text: `task:${input.scenario}` })),
     })
-    const workflowImplementation = implementWorkflow(workflow)
+    const workflowImplementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'summary',
         cases: (helpers) => ({
@@ -2329,7 +2334,7 @@ describe('workflow runtime coordinator', () => {
       }))
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity }) => ({
         summary: activity(
           (input) =>
@@ -2477,7 +2482,7 @@ describe('workflow runtime coordinator', () => {
       }))
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity }) => ({
         first: activity((input) =>
           fromPromise(async () => ({
@@ -2573,14 +2578,16 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) =>
-        fromPromise(() => ({ text: `child:${input.scenario}` })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ text: `child:${input.scenario}` })),
     )
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity, task, workflow }) => ({
         summary: activity(
           (input) =>
@@ -2750,7 +2757,7 @@ describe('workflow runtime coordinator', () => {
         slow: helpers.workflow(childWorkflow),
       }))
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity, workflow: child }) => ({
         fail: activity(() =>
           fromPromise(async () => {
@@ -2846,11 +2853,12 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
     let itemCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => {
           itemCalls += 1
@@ -2998,13 +3006,14 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           if (input.text === 'bad') throw new Error('mapped task failed')
           return { id: `embedding:${input.text}` }
         }),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3099,7 +3108,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3232,6 +3241,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           if (input.text === 'beta') {
@@ -3242,7 +3252,7 @@ describe('workflow runtime coordinator', () => {
           return { id: `embedding:${input.text}` }
         }),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3335,7 +3345,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3390,7 +3400,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(embeddingTask, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3471,11 +3481,15 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) => fromPromise(() => ({ id: `child:${input.text}` })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ id: `child:${input.text}` })),
     )
     let itemCalls = 0
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .children(childWorkflow, {
         items: (_outputs, input) => {
           itemCalls += 1
@@ -3619,7 +3633,9 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .children(childWorkflow, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3751,7 +3767,9 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .children(childWorkflow, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3834,7 +3852,9 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .children(childWorkflow, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3889,7 +3909,9 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .children(childWorkflow, {
         items: (_outputs, input) => input.texts,
         input: (_outputs, item) => ({ text: item }),
@@ -3974,7 +3996,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let mapCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'summary',
         cases: (helpers) => ({
@@ -4064,7 +4086,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'summary',
         cases: (helpers) => ({
@@ -4141,11 +4163,14 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) =>
-        fromPromise(() => ({ text: `child:${input.scenario}` })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ text: `child:${input.scenario}` })),
     )
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .content({
         select: () => 'child',
         cases: (helpers) => ({
@@ -4243,7 +4268,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content({
         select: () => 'missing' as 'normal',
         cases: (helpers) => ({
@@ -4290,10 +4315,11 @@ describe('workflow runtime coordinator', () => {
       input: Schema.Struct({ scenario: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(() =>
-      fromPromise(() => {
-        throw new Error('finish failed')
-      }),
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
+      () =>
+        fromPromise(() => {
+          throw new Error('finish failed')
+        }),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -4334,7 +4360,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: () => {
           throw new Error('input mapper failed')
@@ -4382,7 +4408,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
     let handlerCalled = false
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content(
         (input) =>
           fromPromise(async () => {
@@ -4439,7 +4465,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
     let idempotencyCalls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: () => ({ scenario: 123 }) as never,
         idempotency: () => {
@@ -4492,7 +4518,7 @@ describe('workflow runtime coordinator', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
         idempotency: () => {
@@ -4544,7 +4570,7 @@ describe('workflow runtime coordinator', () => {
         item: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embeddings(task, {
         items: () => {
           throw new Error('items mapper failed')
@@ -4603,7 +4629,9 @@ describe('workflow runtime coordinator', () => {
         }),
       })
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .content({
         select: () => 'child',
         cases: (helpers) => ({
@@ -4706,11 +4734,14 @@ describe('workflow runtime coordinator', () => {
         }),
       })
       .build()
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) =>
-        fromPromise(() => ({ text: `child:${input.scenario}` })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ text: `child:${input.scenario}` })),
     )
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .content({
         select: () => 'child',
         cases: (helpers) => ({
@@ -4824,7 +4855,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let mapCalls = 0
-    const implementation = implementWorkflow(parentWorkflow)
+    const implementation = implementWorkflow(parentWorkflow, { pool: 'test' })
       .content({
         select: () => 'child',
         cases: (helpers) => ({
@@ -4901,7 +4932,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -4964,7 +4995,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
 
@@ -5043,7 +5074,7 @@ describe('workflow runtime coordinator', () => {
       }))
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity }) => ({
         summary: activity((input) =>
           fromPromise(async () => {
@@ -5141,7 +5172,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) =>
         fromPromise(async () => {
           handlerCalls += 1
@@ -5221,7 +5252,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
 
@@ -5351,7 +5382,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
 
@@ -5405,7 +5436,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({
           scenario: `case:${input.scenario}`,
@@ -5489,7 +5520,7 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ content }) => fromPromise(() => ({ caseId: content.text })))
 
@@ -5545,10 +5576,11 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ vector: [input.text.length] })),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(embeddingTask, {
         input: (_outputs, input) => ({ text: input.text }),
       })
@@ -5681,13 +5713,14 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           handlerCalls += 1
           return { vector: [input.text.length] }
         }),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(embeddingTask)
       .finish(({ embedding }) =>
         fromPromise(() => ({ vector: embedding.vector })),
@@ -5768,7 +5801,7 @@ describe('workflow runtime coordinator', () => {
       .task('embedding', embeddingTask)
       .build()
 
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(embeddingTask)
       .finish(({ embedding }) =>
         fromPromise(() => ({ vector: embedding.vector })),
@@ -5848,13 +5881,14 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           handlerCalls += 1
           return { vector: [input.text.length] }
         }),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(embeddingTask)
       .finish(({ embedding }) =>
         fromPromise(() => ({ vector: embedding.vector })),
@@ -5945,13 +5979,14 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     const taskImplementation = implementTask(embeddingTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           handlerCalls += 1
           return { vector: [input.text.length] }
         }),
     })
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .embedding(embeddingTask)
       .finish(({ embedding }) =>
         fromPromise(() => ({ vector: embedding.vector })),
@@ -6050,10 +6085,14 @@ describe('workflow runtime coordinator', () => {
       .workflow('content', childWorkflow)
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow)
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    })
       .write((input) => fromPromise(async () => ({ text: input.scenario })))
       .finish(({ write }) => fromPromise(() => ({ text: write.text })))
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .content(childWorkflow, {
         input: (_outputs, input) => ({ scenario: input.scenario }),
       })
@@ -6198,10 +6237,14 @@ describe('workflow runtime coordinator', () => {
       })
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) => fromPromise(() => ({ text: input.scenario })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ text: input.scenario })),
     )
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .content(childWorkflow, {
         input: (_outputs, input) => ({ scenario: input.scenario }),
       })
@@ -6299,7 +6342,9 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ text: child.text })))
 
@@ -6360,7 +6405,7 @@ describe('workflow runtime coordinator', () => {
       .build()
 
     let mapCalls = 0
-    const implementation = implementWorkflow(parentWorkflow)
+    const implementation = implementWorkflow(parentWorkflow, { pool: 'test' })
       .child(childWorkflow, {
         input: () => {
           mapCalls += 1
@@ -6433,7 +6478,9 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ text: child.text })))
 
@@ -6521,10 +6568,14 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const childImplementation = implementWorkflow(childWorkflow).finish(
-      (_outputs, input) => fromPromise(() => ({ text: input.scenario })),
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    }).finish((_outputs, input) =>
+      fromPromise(() => ({ text: input.scenario })),
     )
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ text: child.text })))
 
@@ -6621,7 +6672,9 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ text: child.text })))
 
@@ -6686,7 +6739,9 @@ describe('workflow runtime coordinator', () => {
     })
       .workflow('child', childWorkflow)
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow, { input: (_outputs, input) => input })
       .finish(({ child }) => fromPromise(() => child))
 
@@ -6752,7 +6807,9 @@ describe('workflow runtime coordinator', () => {
     })
       .task('child', childTask)
       .build()
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childTask, { input: (_outputs, input) => input })
       .finish(({ child }) => fromPromise(() => child))
 
@@ -6824,14 +6881,18 @@ describe('workflow runtime coordinator', () => {
       .workflow('child', childWorkflow)
       .build()
 
-    const childImplementation = implementWorkflow(childWorkflow)
+    const childImplementation = implementWorkflow(childWorkflow, {
+      pool: 'test',
+    })
       .write(() =>
         fromPromise(async () => {
           throw new Error('child activity failed')
         }),
       )
       .finish(({ write }) => fromPromise(() => ({ text: write.text })))
-    const parentImplementation = implementWorkflow(parentWorkflow)
+    const parentImplementation = implementWorkflow(parentWorkflow, {
+      pool: 'test',
+    })
       .child(childWorkflow)
       .finish(({ child }) => fromPromise(() => ({ text: child.text })))
 

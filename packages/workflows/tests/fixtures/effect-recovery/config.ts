@@ -44,6 +44,7 @@ export const sibling = defineTask({
 })
 const tasks = [timed, sibling].map((task) =>
   implementTask(task, {
+    pool: 'recovery',
     handler: (input) =>
       Effect.gen(function* () {
         const service = yield* resource

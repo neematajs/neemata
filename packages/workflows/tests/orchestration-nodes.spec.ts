@@ -59,7 +59,7 @@ describe('workflow orchestration nodes', () => {
     .build()
 
   it('keeps orchestration nodes explicit in implementation order', () => {
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .load(
         (input) => fromPromise(async () => ({ scenarios: input.scenarios })),
         {

@@ -9,7 +9,11 @@ delivery and exactly-once state transitions.
 Import rules (no `nmtjs` umbrella exports; always package subpaths):
 
 - `@nmtjs/workflows` - contracts (`defineTask`, `defineWorkflow`) and
-  implementations (`implementTask`, `implementWorkflow`), public types.
+  implementations (`implementTask`, `implementWorkflow`), public types. The
+  core is Effect-free: Standard Schemas, Promise handlers, one `env` value.
+- `@nmtjs/workflows/effect` - the same four functions over `effect/Schema`
+  schemas and Effect handlers, plus Effect worker functions. Needs the optional
+  `effect` peer. `@nmtjs/workflows/effect/neem` has the Effect Neem worker.
 - `@nmtjs/workflows/runtime` - `createWorkflowRuntimeClient`,
   `createInMemoryWorkflowRuntime`, worker loops, store/adapter types.
 - `@nmtjs/workflows/postgres` - `createPostgresWorkflowConnection`,
@@ -20,38 +24,52 @@ Import rules (no `nmtjs` umbrella exports; always package subpaths):
 - `@nmtjs/workflows/postgres/testing` - schema bootstrap helpers for tests.
 - `@nmtjs/workflows/inspector` - UI-facing serialization: workflow graph/
   catalog JSON, wire-safe DTOs, node unit grouping.
-- `@nmtjs/workflows/neem` - Neem runtime integration (`defineWorkflows`,
-  `createWorkflowsRuntime`, `defineWorkflowsPlanner`, `defineWorkflowsWorker`).
+- `@nmtjs/workflows/neem` - Neem runtime integration
+  (`createWorkflowsRuntime`, `defineWorkflowsPlanner`, `defineWorkflowsWorker`).
 
 ## Contracts
 
 Tasks are standalone durable units; workflows are DAGs of named nodes built
-with a fluent builder and finished with `.build()`.
+with a fluent builder and finished with `.build()`. Schemas are
+[Standard Schemas](https://standardschema.dev) (Zod, Valibot, ArkType, ...).
 
 ```ts
 import { defineTask, defineWorkflow } from '@nmtjs/workflows'
-import { t } from '@nmtjs/type'
+import { z } from 'zod'
 
 export const embedTask = defineTask({
   name: 'content.embed',
-  input: t.object({ entityId: t.string(), text: t.string() }),
-  output: t.object({ embeddingId: t.string() }),
+  input: z.object({ entityId: z.string(), text: z.string() }),
+  output: z.object({ embeddingId: z.string() }),
   retry: { attempts: 3, backoff: 'exponential' },
   timeout: '30s',
+  tags: (input) => ({ entityId: input.entityId }),
+  idempotency: (input) => ['content.embed', input.entityId],
 })
 
 export const publishWorkflow = defineWorkflow({
   name: 'content.publish',
-  input: t.object({ draftId: t.string() }),
-  output: t.object({ url: t.string() }),
+  input: z.object({ draftId: z.string() }),
+  output: z.object({ url: z.string() }),
 })
   .activity('render', {
-    input: t.object({ draftId: t.string() }),
-    output: t.object({ html: t.string() }),
+    input: z.object({ draftId: z.string() }),
+    output: z.object({ html: z.string() }),
   })
   .task('embedding', embedTask)
   .build()
 ```
+
+Schema rules:
+
+- A single schema serves values stored as they are; it validates on write and
+  again on read. Handlers, clients and results see its output type.
+- A transformed value (stored string, `Date` in handlers) declares both
+  directions: `{ decode: StandardSchema<stored, Type>, encode:
+StandardSchema<Type, stored> }`. A lone transforming schema is a compile error.
+- Validation must be synchronous and whatever is stored must be JSON.
+- `toStoredJsonSchema(definition.input)` returns the stored form's JSON Schema
+  when the library implements Standard JSON Schema.
 
 Builder nodes:
 
@@ -76,53 +94,89 @@ Builder nodes:
 
 ## Implementations
 
-`implementTask(definition, { handler, idempotency? })`; workflow
-implementations chain one method per node name and end with `.finish(...)`.
-Mapper callbacks receive `(ctx, outputs, input)` where `outputs` holds prior
-node results.
+`implementTask(definition, { pool, handler })`; workflow implementations start
+with `implementWorkflow(definition, { pool })`, chain one method per node name
+and end with `.finish(...)`. Mapper callbacks receive `(outputs, input)` where
+`outputs` holds prior node results.
 
 ```ts
 import { implementTask, implementWorkflow } from '@nmtjs/workflows'
 
+type Env = { embedder: Embedder; renderer: Renderer }
+
 export const embedTaskImpl = implementTask(embedTask, {
-  idempotency: (_, input) => ['content.embed', input.entityId],
-  async handler(_ctx, input, lifecycle) {
-    // lifecycle?.signal aborts with a WorkflowAttemptAbortError whose
-    // .type is timeout/leaseLost/cancelled/shutdown
-    return { embeddingId: await embed(input.text, lifecycle?.signal) }
-  },
+  pool: 'ml',
+  // (input, lifecycle, env). lifecycle.signal aborts with a
+  // WorkflowAttemptAbortError whose .type is timeout/leaseLost/cancelled/shutdown
+  handler: async (input, lifecycle, env: Pick<Env, 'embedder'>) => ({
+    embeddingId: await env.embedder.embed(input.text, lifecycle.signal),
+  }),
 })
 
 export const publishWorkflowImpl = implementWorkflow(publishWorkflow, {
-  tags: (_, input) => ({ draftId: input.draftId }),
-  idempotency: (_, input) => ['content.publish', input.draftId],
+  pool: 'content',
 })
-  .render(async (_, input) => ({ html: await render(input.draftId) }))
+  .render(
+    async (input, _lifecycle, env: Pick<Env, 'renderer'>) => ({
+      html: await env.renderer.render(input.draftId),
+    }),
+    { input: (_outputs, input) => input },
+  )
   .embedding(embedTask, {
-    input: (_, { render }, input) => ({
+    input: ({ render }, input) => ({
       entityId: input.draftId,
       text: render.html,
     }),
   })
-  .finish((_, { embedding }, input) => ({
+  .finish(({ embedding }, input) => ({
     url: `/published/${input.draftId}?emb=${embedding.embeddingId}`,
   }))
 ```
 
 Rules:
 
+- Dependencies are one `env` value, the handler's third argument, typed per
+  handler. The worker must pass an env that satisfies every registered handler
+  at once; the engine neither builds nor disposes it. `finish` receives
+  `(outputs, workflowInput, lifecycle, env)`, runs on a coordinator and must be
+  quick.
 - Handlers run at-least-once; make side effects idempotent and use the
   `idempotency` key builders to deduplicate task/child runs.
 - Branch nodes take `{ select, cases }`; map nodes take
   `{ items, input, idempotency? }` with per-item mappers
-  `(ctx, outputs, item, input)`.
-- The optional third handler argument is `AttemptLifecycle`
-  (`{ signal: AbortSignal }`); cancellation is cooperative - handlers that
-  ignore the signal simply run to completion. Two-argument handlers remain
-  valid. `signal.reason` is a `WorkflowAttemptAbortError` (exported from the
-  root) with `.type`, so libraries given the signal reject with a real Error.
+  `(outputs, item, input, index)`.
+- Cancellation is cooperative: handlers that ignore `lifecycle.signal` run to
+  completion, their result is never committed, and one that outlives the
+  cleanup deadline recycles its worker thread. `signal.reason` is a
+  `WorkflowAttemptAbortError` (exported from the root) with `.type`.
 - Timed-out attempts record status `timedOut` and follow the retry policy;
   `WorkflowAttemptTimeoutError` is exported from the root.
+
+### Task or activity?
+
+Only tasks and workflows carry placement: each names the execution `pool` whose
+workers run it, and nothing is placed implicitly. An activity is a private step
+of its workflow and runs on the workflow's pool; it has no placement options.
+
+- Use an **activity** for a step that belongs to one workflow and can share its
+  pool: glue, lookups, assembling data.
+- Use a **task** when a step needs its own pool (heavy or risky work such as
+  rendering, ML, anything with unreliable cleanup), its own retry/timeout
+  policy or identity, reuse across workflows, or to be started on its own. A
+  task used as a node or map item is a child run, visible in the inspector.
+
+Promoting a step to a task is the way to isolate it. Pool names are declared
+and sized by the Neem planner; an implementation that names an undeclared pool
+fails worker startup.
+
+### Effect applications
+
+Import `defineTask`, `defineWorkflow`, `implementTask`, `implementWorkflow`
+from `@nmtjs/workflows/effect` instead. Schemas are `effect/Schema` (transforms
+such as `Schema.DateFromString` need no pair), handlers and `finish` return
+Effects and take `(input, lifecycle)` / `(outputs, workflowInput)`, and services
+come from the worker's Layer. `pool` works the same. `schemaOf(definition.input)`
+returns the declared Effect schema.
 
 ## Runtime and client
 
@@ -241,7 +295,7 @@ workflow name; there is no per-run definition snapshot yet.
 
 ## Neem runtime integration
 
-A workflows runtime is three files plus a shared config module:
+A workflows runtime is three files:
 
 ```ts
 // neem.runtime.ts
@@ -253,43 +307,54 @@ export default createWorkflowsRuntime()({
   worker: { entry: './neem.worker.ts' },
 })
 
-// neem.planner.ts
+// neem.planner.ts — deployment layout; imports no application code
 import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
-import workflowsConfig from './config.ts'
 
-export default defineWorkflowsPlanner(() => workflowsConfig)
+export default defineWorkflowsPlanner(() => ({
+  coordinator: { threads: 2, concurrency: 2 },
+  pools: {
+    content: { threads: 2, concurrency: 4 },
+    ml: { threads: 1, concurrency: 1, cleanupTimeoutMs: 1_000 },
+  },
+}))
 
-// neem.worker.ts
+// neem.worker.ts — application; setup runs once per worker thread
 import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
-import workflowsConfig from './config.ts'
 
-export default defineWorkflowsWorker(workflowsConfig)
-```
-
-```ts
-// config.ts
-import { defineWorkflows } from '@nmtjs/workflows/neem'
-
-export default defineWorkflows({
-  runtime: createRuntimeAdapter, // async factory returning the runtime
+export default defineWorkflowsWorker({
   workflows: () => workflowImplementations,
   tasks: () => taskImplementations,
-  workers: {
-    coordinator: { threads: 2, concurrency: 2 },
-    execution: { threads: 2, concurrency: 4 },
+  schedules: () => schedules,
+  setup: async (ctx) => {
+    const pool = new Pool({ connectionString: databaseUrl })
+    return {
+      runtime: createPostgresWorkflowRuntime({
+        connection: createPostgresWorkflowConnection(pool),
+      }),
+      env: { embedder, renderer }, // checked against every handler's env
+      dispose: () => pool.end(),
+    }
   },
 })
 ```
 
-Worker pool options are `threads`, `concurrency`, `leaseMs`, and
-`pollIntervalMs`. The execution pool runs both workflow activities and
-standalone tasks. It can instead be an array of named pools with
-`activityNames` and/or `taskNames` selectors; one pool may omit both selectors
-as the catch-all for work not assigned elsewhere. Worker shutdown aborts
-in-flight handlers with reason `shutdown` and releases their commands for
-redelivery. Every task and child workflow referenced by a registered workflow
-must also have an implementation in `tasks` or `workflows`; startup rejects
-incomplete registries before they can create unclaimable work.
+Pool and coordinator options are `threads`, `concurrency`, `leaseMs`,
+`pollIntervalMs` and `cleanupTimeoutMs`. Coordinator threads advance runs and
+own schedules and maintenance; a pool's threads run the tasks, and the
+activities of the workflows, implemented for that pool. Pool `concurrency` is
+per-process capacity, not a cluster-wide limit. Every pool an implementation
+names must be declared; there is no default pool. `ctx.data` names the thread's
+role and pool for a `setup` that needs different resources per pool.
+
+Worker shutdown stops claims, aborts in-flight handlers with reason `shutdown`,
+waits for them, then disposes the adapter and calls `dispose`; aborted commands
+are redelivered. Every task and child workflow referenced by a registered
+workflow must also have an implementation in `tasks` or `workflows`; worker
+startup rejects incomplete registries before they can create unclaimable work.
+
+Effect applications use `defineWorkflowsWorker({ workflows, tasks, schedules,
+layer, runtime })` from `@nmtjs/workflows/effect/neem` with the same planner;
+the Layer must provide every handler's services.
 
 `client.retry(runId, { expectedVersion })` retries failed work in the same root
 run. Preserve the run page, refresh it, and reopen its watch after retry. Completed

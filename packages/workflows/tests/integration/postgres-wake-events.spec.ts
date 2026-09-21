@@ -126,7 +126,7 @@ describe.skipIf(!postgresTarget.url)(
           output: Schema.Struct({ text: Schema.String }),
         })
         .build()
-      const implementation = implementWorkflow(workflow)
+      const implementation = implementWorkflow(workflow, { pool: 'test' })
         .echo((input) => fromPromise(async () => input))
         .finish(({ echo }) => fromPromise(() => echo))
 
@@ -287,7 +287,7 @@ describe.skipIf(!postgresTarget.url)(
       const activityRunning = new Promise<void>((resolve) => {
         activityStarted = resolve
       })
-      const implementation = implementWorkflow(workflow)
+      const implementation = implementWorkflow(workflow, { pool: 'test' })
         .hold((input, lifecycle) =>
           fromPromise(async () => {
             activityStarted()

@@ -22,6 +22,7 @@ const greet = defineTask({
   output: z.string(),
 })
 const greetImpl = implementTask(greet, {
+  pool: 'test',
   handler: (name, _lifecycle, env: Greeter) => env.greeter.greet(name),
 })
 const config = {
@@ -193,7 +194,7 @@ describe('Neem workflows worker without Effect', () => {
           role: 'execution',
           pool,
           settings: { pollIntervalMs: 1 },
-          pools: ['default', 'pdf'],
+          pools: ['io', 'pdf'],
         },
         logger,
         definition: worker.definition,
@@ -209,15 +210,15 @@ describe('Neem workflows worker without Effect', () => {
     const client = createWorkflowRuntimeClient(adapter)
     const run = await client.start(where, 'x')
 
-    // The default pool's worker never claims it.
-    const stopDefault = await start('default')
+    // Another pool's worker never claims it.
+    const stopOther = await start('io')
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect((await client.get(run.id))?.run.output).toBeUndefined()
     const stopPdf = await start('pdf')
     await vi.waitFor(async () =>
       expect((await client.get(run.id))?.run.output).toBe('ran on pdf'),
     )
-    await stopDefault()
+    await stopOther()
     await stopPdf()
   })
 

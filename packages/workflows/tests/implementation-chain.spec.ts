@@ -62,7 +62,7 @@ describe('workflow implementation chain', () => {
     .build()
 
   it('requires explicit runnable declarations in implementation order', () => {
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => {
           expectTypeOf(prefix).toEqualTypeOf<string>()
@@ -155,7 +155,7 @@ describe('workflow implementation chain', () => {
       })
       .build()
 
-    const inferred = implementWorkflow(activityWorkflow)
+    const inferred = implementWorkflow(activityWorkflow, { pool: 'test' })
       .save({
         handler: (input) =>
           Effect.gen(function* () {
@@ -170,7 +170,7 @@ describe('workflow implementation chain', () => {
       })
       .finish(({ save }) => fromPromise(() => save))
 
-    const annotated = implementWorkflow(activityWorkflow)
+    const annotated = implementWorkflow(activityWorkflow, { pool: 'test' })
       .save({
         handler: (input: { readonly text: string }) =>
           service.pipe(
@@ -222,7 +222,7 @@ describe('workflow implementation chain', () => {
       }))
       .build()
 
-    const branchImplementation = implementWorkflow(branched)
+    const branchImplementation = implementWorkflow(branched, { pool: 'test' })
       .chosen({
         select: () => 'normal',
         cases: ({ activity: defineActivity }) => ({
@@ -232,7 +232,7 @@ describe('workflow implementation chain', () => {
         }),
       })
       .finish(({ chosen }) => fromPromise(() => chosen))
-    const parallelImplementation = implementWorkflow(parallel)
+    const parallelImplementation = implementWorkflow(parallel, { pool: 'test' })
       .cases(({ activity: defineActivity }) => ({
         normal: defineActivity(activity, {
           input: (_outputs, input) => input,
@@ -263,7 +263,7 @@ describe('workflow implementation chain', () => {
       }))
       .build()
 
-    implementWorkflow(parallelWorkflow)
+    implementWorkflow(parallelWorkflow, { pool: 'test' })
       .cases(({ activity }) => ({
         normal: activity(
           (input: typeof activityInput.Type) =>
@@ -322,7 +322,9 @@ describe('workflow implementation chain', () => {
       })
       .build()
 
-    const implementation = implementWorkflow(branchingWorkflow)
+    const implementation = implementWorkflow(branchingWorkflow, {
+      pool: 'test',
+    })
       .content({
         select: (_outputs, input) => input.kind,
         cases: ({ workflow }) => ({
