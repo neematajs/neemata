@@ -58,11 +58,32 @@ const queryPostgresClient = <T extends JsonRecord>(
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
 
+// Store methods open a transaction to undo partial work on a recoverable
+// failure and cannot know whether a caller already holds one, so a nested
+// transaction must be a rollback boundary of its own rather than a plain call.
 const createTransactionConnection = (
   client: WorkflowPostgresQueryClient,
+  depth = 0,
 ): WorkflowPostgresConnection => ({
   query: (sql, params = []) => queryPostgresClient(client, sql, params),
-  transaction: (handler) => handler(createTransactionConnection(client)),
+  async transaction(handler) {
+    const savepoint = `workflow_savepoint_${depth + 1}`
+    await client.query(`SAVEPOINT ${savepoint}`)
+    let result: Awaited<ReturnType<typeof handler>>
+    try {
+      result = await handler(createTransactionConnection(client, depth + 1))
+    } catch (error) {
+      // Rolling back also clears the aborted state a failed statement leaves
+      // behind, so the enclosing transaction stays usable for recovery reads.
+      try {
+        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+        await client.query(`RELEASE SAVEPOINT ${savepoint}`)
+      } catch {}
+      throw error
+    }
+    await client.query(`RELEASE SAVEPOINT ${savepoint}`)
+    return result
+  },
 })
 
 const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
@@ -74,13 +95,15 @@ const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
 export function createPostgresWorkflowConnection(
   client: WorkflowPostgresExternalClient,
 ): WorkflowPostgresConnection {
-  let transactionQueue = Promise.resolve()
-  const serializeTransaction = async <T>(
-    handler: () => Promise<T>,
-  ): Promise<T> => {
-    const previous = transactionQueue
+  // A plain client is one session: anything it runs while a transaction is
+  // open joins that transaction and is lost with its rollback. Top-level
+  // queries therefore wait their turn with transactions; queries made through
+  // the transaction-scoped connection go straight to the client.
+  let clientQueue = Promise.resolve()
+  const serializeClient = async <T>(handler: () => Promise<T>): Promise<T> => {
+    const previous = clientQueue
     let release = () => {}
-    transactionQueue = new Promise<void>((resolve) => {
+    clientQueue = new Promise<void>((resolve) => {
       release = resolve
     })
     await previous
@@ -106,8 +129,13 @@ export function createPostgresWorkflowConnection(
     }
   }
 
+  const serializesQueries = !hasTransactionApi(client) && !hasConnectApi(client)
+
   return {
-    query: (sql, params = []) => queryPostgresClient(client, sql, params),
+    query: (sql, params = []) =>
+      serializesQueries
+        ? serializeClient(() => queryPostgresClient(client, sql, params))
+        : queryPostgresClient(client, sql, params),
     async transaction(handler) {
       if (hasTransactionApi(client)) {
         return client.transaction((tx) =>
@@ -124,7 +152,7 @@ export function createPostgresWorkflowConnection(
         }
       }
 
-      return serializeTransaction(() => runTransaction(client, handler))
+      return serializeClient(() => runTransaction(client, handler))
     },
   }
 }

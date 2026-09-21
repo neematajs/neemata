@@ -331,6 +331,11 @@ export async function installPostgresWorkflowSchemaForTesting(
     ON workflow_commands (run_id)
   `)
   await db.query(`
+    CREATE INDEX IF NOT EXISTS workflow_commands_attempt_idx
+    ON workflow_commands (attempt_id)
+    WHERE attempt_id IS NOT NULL
+  `)
+  await db.query(`
     CREATE UNIQUE INDEX IF NOT EXISTS workflow_commands_continue_dedup_idx
     ON workflow_commands (run_id)
     WHERE kind = 'continue' AND lease_token IS NULL

@@ -268,10 +268,14 @@ export const pruneTerminalRunsInTransaction = async (
     deleted = rows.length
   }
 
+  // An unreaped dead command is the only thing that still settles its run,
+  // and maintenance prunes before it reaps: after downtime longer than the
+  // retention window, age alone would strand the run as active.
   await connection.query(
     `
       DELETE FROM workflow_commands
       WHERE dead_at IS NOT NULL
+        AND reaped_at IS NOT NULL
         AND dead_at < $1
     `,
     [timestampParam(params.olderThan)],

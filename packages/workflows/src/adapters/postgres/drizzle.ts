@@ -398,6 +398,11 @@ export function createSchema(options?: CreateSchemaOptions) {
     },
     (t) => [
       index('workflow_commands_run_idx').on(t.runId),
+      // every attempt dispatch checks for an existing command by attempt;
+      // continuations carry no attempt and stay out of the index
+      index('workflow_commands_attempt_idx')
+        .on(t.attemptId)
+        .where(sql.raw('attempt_id IS NOT NULL')),
       // dead-lettered commands accumulate until retention prunes them; keep
       // them out of the claim scan's index entirely
       index('workflow_commands_claim_idx')
