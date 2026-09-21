@@ -134,6 +134,24 @@ export async function resolveWorkflowsRegistry(
   const tasks = [...new Set((await registry.tasks?.()) ?? [])]
   const schedules = (await registry.schedules?.()) ?? []
 
+  // The execution registry refuses a second implementation of a name only when
+  // it is built, at claim time, where it would fail unrelated work as well.
+  const duplicates = [
+    ...findDuplicateNames(
+      'workflow',
+      workflows.map(({ workflow }) => workflow.name),
+    ),
+    ...findDuplicateNames(
+      'task',
+      tasks.map(({ task }) => task.name),
+    ),
+  ]
+  if (duplicates.length > 0) {
+    throw new Error(
+      `Implementations [${duplicates.join(', ')}] are registered more than once; a workflow or task takes exactly one implementation`,
+    )
+  }
+
   const registeredWorkflows = new Set(
     workflows.map((implementation) => implementation.workflow.name),
   )
@@ -206,4 +224,17 @@ export async function resolveWorkflowsRegistry(
   }
 
   return { workflows, tasks, schedules }
+}
+
+function findDuplicateNames(
+  kind: 'workflow' | 'task',
+  names: readonly string[],
+) {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+  for (const name of names) {
+    if (seen.has(name)) duplicates.add(`${kind}:${name}`)
+    seen.add(name)
+  }
+  return duplicates
 }

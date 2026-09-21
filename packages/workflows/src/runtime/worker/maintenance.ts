@@ -2,9 +2,8 @@ import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
 import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { RunSnapshot } from '../state.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
-import { cancelRunTree, isDetachedChild } from '../coordinator/cancel.ts'
+import { cancelRunDescendants } from '../coordinator/cancel.ts'
 import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
@@ -175,9 +174,8 @@ export async function reapDeadWorkflowCommands(
 
       if (run.kind === 'task' || command.kind === 'continue') {
         // No coordination pass will run for this run, so cancel its live
-        // descendants and nodes here — a failed run must not leave children
-        // executing or nodes reporting running/waiting.
-        await cancelDescendants(scopedInput, snapshot!)
+        // descendants and nodes here.
+        await cancelRunDescendants({ ...scopedInput, snapshot: snapshot! })
         const failed = await scopedInput.store.failRun({
           runId: command.runId,
           error,
@@ -228,27 +226,6 @@ function deadAttemptCommand(
     attemptCommandChildKey(command) !== undefined
     ? (payload as AttemptCommand)
     : undefined
-}
-
-async function cancelDescendants(
-  input: Pick<
-    ReapDeadWorkflowCommandsInput,
-    'store' | 'attemptExecutor' | 'runCoordinationExecutor'
-  >,
-  snapshot: RunSnapshot,
-): Promise<void> {
-  const runId = snapshot.run.id
-  for (const child of snapshot.children) {
-    if (child.childRunId === undefined || isDetachedChild(child)) continue
-    await cancelRunTree({
-      store: input.store,
-      attemptExecutor: input.attemptExecutor,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: child.childRunId,
-    })
-  }
-  await input.attemptExecutor.deleteUnclaimed({ runId })
-  await input.store.cancelNonTerminalRunNodes({ runId })
 }
 
 export type TimeoutExpiredWorkflowRunsInput = {
@@ -309,24 +286,24 @@ export async function timeoutExpiredWorkflowRuns(
           run.activeSince >= now - timeoutMs
         )
           continue
-        await cancelDescendants(scoped, snapshot!)
-        // Failing the run and waking its parent are separate writes, and a
-        // later sweep skips the terminal run. The run's own continuation is
-        // the durable intent: it cannot pass while this lease is held, and a
-        // pass over a terminal run replays the parent wake until it lands.
-        if (run.parentRunId !== undefined) {
-          await input.runCoordinationExecutor.enqueue({
-            kind: 'continueRun',
-            runId: run.id,
-            workflowName: run.workflowName,
-          })
-        }
+        // The writes below are separate, and a later sweep skips a terminal
+        // run. The run's own continuation is the durable intent: it cannot
+        // pass while this lease is held, and a pass over a failed run replays
+        // the descendant cancellation and the parent wake until they land.
+        await input.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: run.workflowName,
+        })
+        // Failing first keeps the timeout error: were the nodes cancelled
+        // before a lost `failRun`, that continuation would cancel the run.
         const failed = await scoped.store.failRun({
           runId: run.id,
           error: new Error(
             `Workflow run [${run.id}] timed out after [${implementation.workflow.timeout}]`,
           ),
         })
+        await cancelRunDescendants({ ...scoped, snapshot: snapshot! })
         await wakeParentRun({
           store: scoped.store,
           runCoordinationExecutor: input.runCoordinationExecutor,

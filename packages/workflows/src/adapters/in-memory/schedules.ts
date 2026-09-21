@@ -85,23 +85,35 @@ export function createScheduler(
         .sort(compareSchedulesByDueDate)
         .slice(0, limit)
 
-      for (const schedule of due) {
+      let fired = 0
+      for (const { name } of due) {
+        // Earlier fires await, so a later entry may be disabled or gone by now.
+        const schedule = schedules.get(name)
+        if (!schedule?.enabled || schedule.nextRunAt > date) continue
         const slot = schedule.nextRunAt
         await startStoredScheduleRun(
           { store, runCoordinationExecutor, attemptExecutor },
           schedule,
           slot,
         )
-        const updated: StoredWorkflowSchedule = {
-          ...schedule,
+        fired += 1
+        // `setEnabled` or a reconcile may have landed during the await, so the
+        // fire writes only what it owns onto the record as it is now.
+        const current = schedules.get(name)
+        if (current === undefined) continue
+        schedules.set(name, {
+          ...current,
           lastSlotAt: slot,
-          nextRunAt: nextStoredScheduleRunAt(schedule, date),
+          // Whatever moved the slot meanwhile has already rescheduled it.
+          nextRunAt:
+            current.nextRunAt === slot
+              ? nextStoredScheduleRunAt(current, date)
+              : current.nextRunAt,
           updatedAt: now(),
-        }
-        schedules.set(schedule.name, updated)
+        })
       }
 
-      return { fired: due.length }
+      return { fired }
     },
     async list() {
       return [...schedules.values()].sort((left, right) =>

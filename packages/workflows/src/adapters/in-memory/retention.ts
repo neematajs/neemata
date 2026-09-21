@@ -30,39 +30,49 @@ function normalizePruneStatuses(
   return Array.from(unique)
 }
 
-function collectRunTreeIds(state: State, rootIds: readonly string[]) {
+/** A family is every run linked to its roots by `parentRunId` or `rootRunId`. */
+function collectRunFamilyIds(state: State, rootIds: readonly string[]) {
   const { runs } = state
 
-  const treeIds = new Set(rootIds)
+  const familyIds = new Set(rootIds)
   let checkedSize = -1
-  while (checkedSize !== treeIds.size) {
-    checkedSize = treeIds.size
-    for (const run of runs.values()) {
-      if (run.parentRunId && treeIds.has(run.parentRunId)) {
-        treeIds.add(run.id)
-      }
-    }
-  }
-  return treeIds
-}
-
-function collectRunDescendantIds(state: State, rootId: string) {
-  const { runs } = state
-
-  const descendantIds = new Set([rootId])
-  let checkedSize = -1
-  while (checkedSize !== descendantIds.size) {
-    checkedSize = descendantIds.size
+  while (checkedSize !== familyIds.size) {
+    checkedSize = familyIds.size
     for (const run of runs.values()) {
       if (
-        (run.parentRunId !== undefined && descendantIds.has(run.parentRunId)) ||
-        descendantIds.has(run.rootRunId)
+        (run.parentRunId !== undefined && familyIds.has(run.parentRunId)) ||
+        familyIds.has(run.rootRunId)
       ) {
-        descendantIds.add(run.id)
+        familyIds.add(run.id)
       }
     }
   }
-  return descendantIds
+  return familyIds
+}
+
+/**
+ * Every run whose family holds a non-terminal run, found by climbing the same
+ * links `collectRunFamilyIds` descends. Each run is visited once, where walking
+ * every candidate's family would be quadratic.
+ */
+function collectLiveFamilyRunIds(state: State) {
+  const { runs } = state
+
+  const liveIds = new Set<string>()
+  const pending: string[] = []
+  for (const run of runs.values()) {
+    if (!isTerminalRunStatus(run.status)) pending.push(run.id)
+  }
+  while (pending.length > 0) {
+    const runId = pending.pop()!
+    if (liveIds.has(runId)) continue
+    liveIds.add(runId)
+    const run = runs.get(runId)
+    if (!run) continue
+    if (run.parentRunId !== undefined) pending.push(run.parentRunId)
+    pending.push(run.rootRunId)
+  }
+  return liveIds
 }
 
 function isTerminalFamily(state: State, familyRunIds: ReadonlySet<string>) {
@@ -180,12 +190,7 @@ export function createRetentionStore(state: State): RetentionStore {
         return { deleted: 0 }
       }
 
-      // One pass instead of walking every candidate's family: a family is
-      // live while any run under its root is.
-      const liveRoots = new Set<string>()
-      for (const run of runs.values()) {
-        if (!isTerminalRunStatus(run.status)) liveRoots.add(run.rootRunId)
-      }
+      const liveIds = collectLiveFamilyRunIds(state)
       const roots = [...runs.values()]
         .filter(
           (run) =>
@@ -194,7 +199,7 @@ export function createRetentionStore(state: State): RetentionStore {
             run.updatedAt < params.olderThan &&
             // A detached child outlives its terminal root, so the root alone
             // does not make the family prunable.
-            !liveRoots.has(run.id),
+            !liveIds.has(run.id),
         )
         .sort((left, right) => {
           const byUpdatedAt = left.updatedAt - right.updatedAt
@@ -202,7 +207,7 @@ export function createRetentionStore(state: State): RetentionStore {
           return left.id.localeCompare(right.id)
         })
         .slice(0, batchSize)
-      const treeIds = collectRunTreeIds(
+      const treeIds = collectRunFamilyIds(
         state,
         roots.map((run) => run.id),
       )
@@ -218,7 +223,7 @@ export function createRetentionStore(state: State): RetentionStore {
         throw new Error(`Run [${runId}] is not a root run`)
       }
 
-      const familyRunIds = collectRunDescendantIds(state, runId)
+      const familyRunIds = collectRunFamilyIds(state, [runId])
       if (!isTerminalFamily(state, familyRunIds)) {
         throw new Error(`Run [${runId}] has non-terminal runs`)
       }

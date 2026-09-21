@@ -9,6 +9,7 @@ import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
+import { cancelRunDescendants } from './cancel.ts'
 import { getWorkflowNodeDeclaration } from './codec.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
 
@@ -92,6 +93,16 @@ export async function continueWorkflowRun(
           return { status: 'processed' }
         }
         if (isTerminalRunStatus(snapshot.run.status)) {
+          // A timeout fails the run before cancelling what it started, so an
+          // interrupted sweep leaves the rest to this pass.
+          if (snapshot.run.status === 'failed') {
+            await cancelRunDescendants({
+              store,
+              attemptExecutor: input.attemptExecutor,
+              runCoordinationExecutor: input.runCoordinationExecutor,
+              snapshot,
+            })
+          }
           await wakeParentRun({
             store,
             runCoordinationExecutor: input.runCoordinationExecutor,
