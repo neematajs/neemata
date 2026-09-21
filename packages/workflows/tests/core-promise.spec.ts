@@ -174,6 +174,43 @@ describe('workflows core without Effect', () => {
     expect(toStoredJsonSchema(task.output)).toMatchObject({ type: 'string' })
   })
 
+  it('routes same-named activities of different workflows to their own pools', async () => {
+    const io = z.string()
+    const define = (name: string) =>
+      defineWorkflow({ name, input: io, output: io })
+        .activity('step', { input: io, output: io })
+        .build()
+    const heavy = define('core.pool.heavy')
+    const light = define('core.pool.light')
+    const ran: string[] = []
+    const implement = (workflow: typeof heavy, pool?: string) =>
+      implementWorkflow(workflow)
+        .step(
+          (input) => {
+            ran.push(workflow.name)
+            return input
+          },
+          { pool, input: (_outputs, input) => input },
+        )
+        .finish(({ step }) => step)
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implement(heavy, 'heavy'), implement(light)],
+      tasks: [],
+      workerId: 'pools',
+    }
+    await client.start(heavy, 'a')
+    await client.start(light, 'b')
+    await runWorkflowWorker(workers)
+
+    await runExecutionWorker({ ...workers, pool: 'heavy' })
+    expect(ran).toEqual([heavy.name])
+    await runExecutionWorker({ ...workers, pool: 'default' })
+    expect(ran).toEqual([heavy.name, light.name])
+  })
+
   it('reports a handler that keeps running after its attempt was aborted', async () => {
     const fatal = Promise.withResolvers<unknown>()
     const release = Promise.withResolvers<void>()

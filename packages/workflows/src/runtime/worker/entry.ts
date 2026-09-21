@@ -7,13 +7,18 @@ import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
 } from '../../types/index.ts'
-import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
+import type {
+  ActivityRef,
+  ClaimedAttempt,
+  ClaimedCommand,
+} from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type {
   WorkflowCommandWakeKind,
   WorkflowWakeEvents,
 } from '../wake-events.ts'
+import { DEFAULT_POOL } from '../../implement/index.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
 import {
   createHandlerRunner,
@@ -108,9 +113,12 @@ export type RunExecutionWorkerInput<
     readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
     readonly wakeEvents?: WorkflowWakeEvents
     readonly workflows: readonly W[]
-    readonly activityNames?: readonly string[]
     readonly tasks: readonly T[]
-    readonly taskNames?: readonly string[]
+    /**
+     * Serve only the activities and tasks implemented for this pool; ones that
+     * name no pool belong to 'default'. Omitted, the worker serves all of them.
+     */
+    readonly pool?: string
     readonly reaping?: false | WorkerReapingOptions
   }
 
@@ -308,17 +316,16 @@ function executionDriver(
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
   )
-  const activityNames =
-    input.activityNames ?? collectWorkflowActivityNames(input.workflows)
-  const taskNames =
-    input.taskNames ??
-    input.tasks.map((implementation) => implementation.task.name)
+  const activities = collectPoolActivities(input.workflows, input.pool)
+  const taskNames = input.tasks
+    .filter((implementation) => servedBy(input.pool, implementation.pool))
+    .map((implementation) => implementation.task.name)
   return {
     claim: () =>
       input.attemptExecutor.claim({
         workerId: input.workerId,
         workflowNames,
-        activityNames,
+        activities,
         taskNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
@@ -346,26 +353,52 @@ function executionDriver(
   }
 }
 
-export function collectWorkflowActivityNames(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
-): readonly string[] {
-  const names = new Set<string>()
-  for (const workflow of workflows) {
-    for (const node of workflow.nodes) {
-      if (node.kind === 'activity') {
-        names.add(node.activity.name)
-        continue
-      }
+function servedBy(pool: string | undefined, declared: string | undefined) {
+  return pool === undefined || (declared ?? DEFAULT_POOL) === pool
+}
 
-      if (node.kind === 'branch' || node.kind === 'parallel') {
-        for (const member of Object.values(node.cases)) {
-          if (member.kind === 'activity') names.add(member.activity.name)
-        }
+/** The activities a pool's workers claim; every activity when no pool is given. */
+export function collectPoolActivities(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
+  pool?: string,
+): readonly ActivityRef[] {
+  const activities: ActivityRef[] = []
+  for (const { workflow, nodes } of workflows) {
+    for (const node of nodes) {
+      const members =
+        node.kind === 'branch' || node.kind === 'parallel'
+          ? Object.values(node.cases)
+          : [node]
+      for (const member of members) {
+        if (member.kind === 'activity' && servedBy(pool, member.pool))
+          activities.push({
+            workflowName: workflow.name,
+            activityName: member.activity.name,
+          })
       }
     }
   }
+  return activities
+}
 
-  return [...names]
+/** Every pool named by an implementation, for checking against declared pools. */
+export function collectImplementationPools(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
+  tasks: readonly Pick<AnyTaskImplementation, 'pool'>[],
+): ReadonlySet<string> {
+  const pools = new Set<string>()
+  for (const task of tasks) pools.add(task.pool ?? DEFAULT_POOL)
+  for (const { nodes } of workflows) {
+    for (const node of nodes) {
+      const members =
+        node.kind === 'branch' || node.kind === 'parallel'
+          ? Object.values(node.cases)
+          : [node]
+      for (const member of members)
+        if (member.kind === 'activity') pools.add(member.pool ?? DEFAULT_POOL)
+    }
+  }
+  return pools
 }
 
 export function collectWorkflowTaskNames(

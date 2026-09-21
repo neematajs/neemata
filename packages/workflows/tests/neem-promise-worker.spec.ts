@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 
 import { defineTask, implementTask } from '../src/index.ts'
-import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
+import { defineWorkflowsWorker } from '../src/neem/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
@@ -24,18 +24,20 @@ const greet = defineTask({
 const greetImpl = implementTask(greet, {
   handler: (name, _lifecycle, env: Greeter) => env.greeter.greet(name),
 })
-const config = defineWorkflows({
+const config = {
   workflows: () => [],
   tasks: () => [greetImpl],
-  workers: { execution: { pollIntervalMs: 1, cleanupTimeoutMs: 20 } },
-})
+}
 
 function create(worker: ReturnType<typeof defineWorkflowsWorker>) {
   const channel = new MessageChannel()
   const runtime = worker.createRuntime({
     mode: 'development',
     name: 'workflows:execution:0',
-    data: { role: 'execution' },
+    data: {
+      role: 'execution',
+      settings: { pollIntervalMs: 1, cleanupTimeoutMs: 20 },
+    },
     logger,
     definition: worker.definition,
     port: channel.port1,
@@ -53,22 +55,22 @@ describe('Neem workflows worker without Effect', () => {
   it('checks the env that setup returns against the registered handlers', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const greeter = { greet: (name: string) => `Hello, ${name}` }
-    defineWorkflowsWorker(config, {
+    defineWorkflowsWorker({
+      ...config,
       setup: () => ({ runtime, env: { greeter } }),
     })
     // @ts-expect-error The task handler's greeter is missing.
-    defineWorkflowsWorker(config, { setup: () => ({ runtime, env: {} }) })
+    defineWorkflowsWorker({ ...config, setup: () => ({ runtime, env: {} }) })
     // @ts-expect-error Handlers that use an env need one.
-    defineWorkflowsWorker(config, { setup: () => ({ runtime }) })
-    defineWorkflowsWorker(defineWorkflows({ workflows: () => [] }), {
-      setup: () => ({ runtime }),
-    })
+    defineWorkflowsWorker({ ...config, setup: () => ({ runtime }) })
+    defineWorkflowsWorker({ workflows: () => [], setup: () => ({ runtime }) })
   })
 
   it('runs handlers with the env and disposes it after the adapter', async () => {
     const order: string[] = []
     const adapter = createInMemoryWorkflowRuntime()
-    const worker = defineWorkflowsWorker(config, {
+    const worker = defineWorkflowsWorker({
+      ...config,
       setup: async () => ({
         runtime: { ...adapter, dispose: () => void order.push('adapter') },
         env: { greeter: { greet: (name: string) => `Hello, ${name}` } },
@@ -95,7 +97,8 @@ describe('Neem workflows worker without Effect', () => {
     const entered = Promise.withResolvers<void>()
     const setup = Promise.withResolvers<void>()
     const dispose = vi.fn()
-    const worker = defineWorkflowsWorker(config, {
+    const worker = defineWorkflowsWorker({
+      ...config,
       setup: async () => {
         entered.resolve()
         await setup.promise
@@ -127,7 +130,8 @@ describe('Neem workflows worker without Effect', () => {
     const release = Promise.withResolvers<string>()
     const dispose = vi.fn()
     const adapter = createInMemoryWorkflowRuntime()
-    const worker = defineWorkflowsWorker(config, {
+    const worker = defineWorkflowsWorker({
+      ...config,
       setup: () => ({
         runtime: adapter,
         env: {
@@ -162,8 +166,64 @@ describe('Neem workflows worker without Effect', () => {
     close()
   })
 
+  it('runs each task on the pool its implementation names', async () => {
+    const where = defineTask({
+      name: 'neem.where',
+      input: z.string(),
+      output: z.string(),
+    })
+    type Pool = { readonly pool: string | undefined }
+    const adapter = createInMemoryWorkflowRuntime()
+    const worker = defineWorkflowsWorker({
+      workflows: () => [],
+      tasks: () => [
+        implementTask(where, {
+          pool: 'pdf',
+          handler: (_input, _lifecycle, env: Pool) => `ran on ${env.pool}`,
+        }),
+      ],
+      setup: (ctx) => ({ runtime: adapter, env: { pool: ctx.data.pool } }),
+    })
+    const start = async (pool: string) => {
+      const channel = new MessageChannel()
+      const instance = await worker.createRuntime({
+        mode: 'development',
+        name: `workflows:execution:${pool}`,
+        data: {
+          role: 'execution',
+          pool,
+          settings: { pollIntervalMs: 1 },
+          pools: ['default', 'pdf'],
+        },
+        logger,
+        definition: worker.definition,
+        port: channel.port1,
+      })
+      await instance.start()
+      return async () => {
+        await instance.stop()
+        channel.port1.close()
+        channel.port2.close()
+      }
+    }
+    const client = createWorkflowRuntimeClient(adapter)
+    const run = await client.start(where, 'x')
+
+    // The default pool's worker never claims it.
+    const stopDefault = await start('default')
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect((await client.get(run.id))?.run.output).toBeUndefined()
+    const stopPdf = await start('pdf')
+    await vi.waitFor(async () =>
+      expect((await client.get(run.id))?.run.output).toBe('ran on pdf'),
+    )
+    await stopDefault()
+    await stopPdf()
+  })
+
   it('reports a setup failure through start and finished', async () => {
-    const worker = defineWorkflowsWorker(config, {
+    const worker = defineWorkflowsWorker({
+      ...config,
       setup: () => {
         throw new Error('no database')
       },

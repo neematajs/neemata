@@ -1054,7 +1054,13 @@ describe('workflow worker runtime', () => {
     const attemptExecutor: AttemptExecutor = {
       ...runtime.attemptExecutor,
       claim: async (worker) => {
-        const claimed = await runtime.attemptExecutor.claim(worker)
+        // A worker claims exactly what it implements, so reaching the unroutable
+        // path takes a claim that is broader than its implementations.
+        const claimed = await runtime.attemptExecutor.claim({
+          ...worker,
+          activities: undefined,
+          activityNames: ['missing'],
+        })
         if (!claimed) return null
         claimCount += 1
         if (claimCount > 1) throw new Error('claimed released activity again')
@@ -1073,7 +1079,6 @@ describe('workflow worker runtime', () => {
       attemptExecutor,
       context,
       workflows: [implementation],
-      activityNames: ['missing'],
       workerId: 'activity-worker-1',
     })
 

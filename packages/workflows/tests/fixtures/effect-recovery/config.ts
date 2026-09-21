@@ -2,7 +2,6 @@ import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { threadId } from 'node:worker_threads'
 
 import { defineTask, implementTask } from '@nmtjs/workflows/effect'
-import { defineWorkflows } from '@nmtjs/workflows/neem'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
@@ -75,16 +74,7 @@ export const services = {
   }),
 }
 
-export const config = defineWorkflows({
+export const registry = {
   workflows: () => [],
   tasks: () => tasks,
-  workers: {
-    coordinator: { leaseMs: 600, pollIntervalMs: 10 },
-    execution: {
-      concurrency: 2,
-      leaseMs: 600,
-      pollIntervalMs: 10,
-      cleanupTimeoutMs: 50,
-    },
-  },
-})
+}

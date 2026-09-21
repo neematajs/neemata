@@ -122,7 +122,17 @@ export const createAttemptExecutor = (
           .join(', ')
       const eligible: string[] = []
 
-      if (
+      if (worker.activities !== undefined) {
+        if (worker.activities.length > 0) {
+          const pairs = worker.activities.map(
+            ({ workflowName, activityName }) =>
+              `(${placeholders([workflowName, activityName])})`,
+          )
+          eligible.push(
+            `(kind = 'activity' AND (workflow_name, activity_name) IN (${pairs.join(', ')}))`,
+          )
+        }
+      } else if (
         worker.workflowNames.length > 0 &&
         worker.activityNames?.length !== 0
       ) {

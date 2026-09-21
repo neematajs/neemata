@@ -16,7 +16,6 @@ import {
   WorkflowHandlerError,
 } from '../src/effect/index.ts'
 import { defineWorkflowsWorker } from '../src/effect/neem.ts'
-import { defineWorkflows } from '../src/neem/index.ts'
 import { WorkflowCleanupTimeoutError } from '../src/runtime/handler.ts'
 import {
   createHandlerRunner,
@@ -303,17 +302,12 @@ it.each([false, true])(
     })
     const adapter = createInMemoryWorkflowRuntime()
     await createWorkflowRuntimeClient(adapter).start(task, 1)
-    const config = defineWorkflows({
+    const config = {
       workflows: () => [],
       tasks: () => [implementation],
-      workers: {
-        execution: {
-          pollIntervalMs: 1,
-          cleanupTimeoutMs: overrun ? 10 : 1_000,
-        },
-      },
-    })
-    const worker = defineWorkflowsWorker(config, {
+    }
+    const worker = defineWorkflowsWorker({
+      ...config,
       layer,
       runtime: Effect.succeed(adapter),
     })
@@ -321,7 +315,13 @@ it.each([false, true])(
     const runtime = await worker.createRuntime({
       mode: 'development',
       name: 'effects',
-      data: { role: 'execution' },
+      data: {
+        role: 'execution',
+        settings: {
+          pollIntervalMs: 1,
+          cleanupTimeoutMs: overrun ? 10 : 1_000,
+        },
+      },
       definition: worker.definition,
       logger: pino({ enabled: false }),
       port: channel.port1,
@@ -371,18 +371,16 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
       }),
     ),
   )
-  const worker = defineWorkflowsWorker(
-    defineWorkflows({
-      workflows: () => [],
-      workers: { coordinator: { cleanupTimeoutMs: 10 } },
-    }),
-    { layer, runtime: Effect.sync(createInMemoryWorkflowRuntime) },
-  )
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    layer,
+    runtime: Effect.sync(createInMemoryWorkflowRuntime),
+  })
   const channel = new MessageChannel()
   const runtime = await worker.createRuntime({
     mode: 'development',
     name: 'layer-cleanup',
-    data: { role: 'coordinator' },
+    data: { role: 'coordinator', settings: { cleanupTimeoutMs: 10 } },
     definition: worker.definition,
     logger: pino({ enabled: false }),
     port: channel.port1,

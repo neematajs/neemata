@@ -805,3 +805,30 @@ formatting passed; oxlint reports only the existing Deno warning; workflows **58
 passed, 2 skipped**; preset **15** unit/type passed; live PostgreSQL 18 integration
 **18 passed**. Neem and the preset e2e suites were not rerun: neither package
 changed.
+
+## Execution pools — 2026-09-21
+
+Routing used to be declared away from the handlers: named execution pools listed
+`activityNames`/`taskNames`, with one catch-all pool. A rename broke routing
+silently, a handler could be claimed by no pool or by two, and an activity is named
+after its node, so the claim's workflow-by-activity cross product could not route
+two workflows' same-named nodes differently.
+
+- An implementation names its pool: `implementTask(task, { pool, handler })` and
+  the activity options of both chains. One that names none belongs to `'default'`.
+  Every handler therefore has exactly one pool.
+- Workers claim exact `(workflow, activity)` pairs and task names for their pool.
+  The executor port gains an optional `activities` filter; the standalone
+  execution worker takes `pool` instead of name lists. Routing stays worker-side
+  rather than being stamped on commands: no migration, definitions stay free of
+  deployment concerns, and moving a handler reroutes already queued work.
+- Pool size and timing are a deployment concern, so they moved from the shared
+  config to `defineWorkflowsPlanner`, which now imports no application code. It
+  sends every thread its loop settings and the declared pool names.
+- With the planner no longer reading it, `defineWorkflows` had no second reader
+  and is removed. Each flavour's `defineWorkflowsWorker` takes one object: the
+  registry plus `setup`, or plus `layer` and `runtime`. The env and Layer checks
+  are unchanged.
+- Validation moved from plan time to worker startup: an implementation naming an
+  undeclared pool, or a workflow referencing an unregistered child or task, fails
+  the thread's start.

@@ -72,7 +72,11 @@ export {
   toStoredJsonSchema,
 } from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
-export { implementTask, implementWorkflow } from './implement/index.ts'
+export {
+  DEFAULT_POOL,
+  implementTask,
+  implementWorkflow,
+} from './implement/index.ts'
 export {
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,

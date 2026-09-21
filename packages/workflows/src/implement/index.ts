@@ -66,16 +66,22 @@ export type TaskImplementation<
 > = {
   readonly kind: 'taskImplementation'
   readonly task: Task
+  readonly pool?: string
   readonly handler: TaskHandler<Env, TaskInput<Task>, TaskOutput<Task>>
 }
 
 export function implementTask<Task extends AnyTaskDefinition, Env = unknown>(
   task: Task,
-  options: { handler: TaskHandler<Env, TaskInput<Task>, TaskOutput<Task>> },
+  options: {
+    /** Execution pool whose workers run this task. @default 'default' */
+    pool?: string
+    handler: TaskHandler<Env, TaskInput<Task>, TaskOutput<Task>>
+  },
 ): TaskImplementation<Task, Env> {
   return Object.freeze({
     kind: 'taskImplementation',
     task,
+    pool: options.pool,
     handler: options.handler,
   })
 }
@@ -160,6 +166,7 @@ export type ActivityNodeImplementation = {
   readonly kind: 'activity'
   readonly name: string
   readonly activity: ActivityImplementation
+  readonly pool?: string
   readonly retry?: RetryPolicy
   readonly input?: StoredCallback
   readonly idempotency?: unknown
@@ -209,6 +216,7 @@ export type WorkflowCaseImplementation =
       readonly kind: 'activity'
       readonly name: string
       readonly activity: ActivityImplementation
+      readonly pool?: string
       readonly retry?: RetryPolicy
       readonly input?: StoredCallback
       readonly idempotency?: unknown
@@ -222,11 +230,17 @@ export type WorkflowCaseImplementation =
       readonly idempotency?: unknown
     }
 
-type ActivityImplementationOptions<
+/** The pool served when an implementation names none. */
+export const DEFAULT_POOL = 'default'
+
+export type ActivityImplementationOptions<
   Outputs extends object,
   Input,
   NodeInput,
-> = WorkflowInputMapper<Outputs, Input, NodeInput>
+> = WorkflowInputMapper<Outputs, Input, NodeInput> & {
+  /** Execution pool whose workers run this activity. @default 'default' */
+  readonly pool?: string
+}
 
 type ActivityImplementationValue<Input, Output, Env = unknown> =
   | ActivityHandler<Env, Input, Output>
@@ -238,7 +252,7 @@ type ActivityCaseDescriptor<Input, Output, Env = unknown> = {
   // Type-only: reading Env back out of the value union below infers `any`.
   readonly _env?: (env: Env) => void
   readonly value: ActivityImplementationValue<Input, Output, Env>
-  readonly options?: WorkflowInputMapper<any, any, Input>
+  readonly options?: ActivityImplementationOptions<any, any, Input>
 }
 
 type AnyActivityImplementationValue<Input, Output> =
@@ -285,7 +299,7 @@ type CaseImplementationObject<
 type CaseImplementers<Outputs extends object, Input> = {
   readonly activity: <NodeInput, Output, Env = unknown>(
     value: ActivityImplementationValue<NodeInput, Output, Env>,
-    options?: WorkflowInputMapper<Outputs, Input, NodeInput>,
+    options?: ActivityImplementationOptions<Outputs, Input, NodeInput>,
   ) => ActivityCaseDescriptor<NodeInput, Output, Env>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
@@ -613,11 +627,12 @@ function createWorkflowChain(state: ChainState): unknown {
       return Object.freeze({
         [node.name]: (
           value: ActivityImplementationValue<unknown, unknown>,
-          options?: WorkflowInputMapper<any, any, any>,
+          options?: ActivityImplementationOptions<any, any, any>,
         ) =>
           nextChain(state, {
             kind: 'activity',
             name: node.name,
+            pool: options?.pool,
             activity: createActivityImplementation(
               state.adapter,
               node.name,
@@ -770,7 +785,7 @@ function createCaseImplementers(): CaseImplementers<any, any> {
   const helpers: CaseImplementers<any, any> = {
     activity: <NodeInput, Output, Env = unknown>(
       value: ActivityImplementationValue<NodeInput, Output, Env>,
-      options?: WorkflowInputMapper<any, any, NodeInput>,
+      options?: ActivityImplementationOptions<any, any, NodeInput>,
     ) =>
       Object.freeze({
         kind: 'activityCase',
@@ -850,6 +865,7 @@ function normalizeCase(
         name,
         descriptor?.value ?? value,
       ),
+      pool: descriptor?.options?.pool,
       retry: 'retry' in branchCase ? branchCase.retry : undefined,
       input: descriptor?.options?.input,
       idempotency: descriptor?.options?.idempotency,

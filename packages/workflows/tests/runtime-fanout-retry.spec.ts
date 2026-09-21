@@ -347,9 +347,19 @@ describe('workflow fan-out retry state model', () => {
     await runExecutionWorker({
       tasks: [],
       ...runtime,
+      // A worker claims exactly what it implements; a drifted deployment is one
+      // whose claim still covers a node it no longer has.
+      attemptExecutor: {
+        ...runtime.attemptExecutor,
+        claim: (worker) =>
+          runtime.attemptExecutor.claim({
+            ...worker,
+            activities: undefined,
+            activityNames: [command!.activityName],
+          }),
+      },
       context: createTestContext(),
       workflows: [driftedImplementation],
-      activityNames: [command!.activityName],
       workerId: 'drifted-worker',
       reaping: false,
     })
