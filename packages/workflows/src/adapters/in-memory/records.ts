@@ -26,22 +26,21 @@ export function sortedChildren(rows: readonly StoredNodeChild[]) {
   })
 }
 
+// Records created within one millisecond tie on their timestamp. These
+// comparators leave ties alone: sorting is stable and the state's Maps iterate
+// in insertion order, so ties keep creation order. Ids cannot break them, as
+// `run-10` collates before `run-9`.
 export function compareAttempts(left: StoredAttempt, right: StoredAttempt) {
-  const byDispatchedAt = left.dispatchedAt - right.dispatchedAt
-  if (byDispatchedAt !== 0) return byDispatchedAt
-  return left.id.localeCompare(right.id)
-}
-
-export function compareRunsNewest(left: StoredRun, right: StoredRun) {
-  const byCreatedAt = right.createdAt - left.createdAt
-  if (byCreatedAt !== 0) return byCreatedAt
-  return right.id.localeCompare(left.id)
+  return left.dispatchedAt - right.dispatchedAt
 }
 
 export function compareRunsOldest(left: StoredRun, right: StoredRun) {
-  const byCreatedAt = left.createdAt - right.createdAt
-  if (byCreatedAt !== 0) return byCreatedAt
-  return left.id.localeCompare(right.id)
+  return left.createdAt - right.createdAt
+}
+
+/** Newest first, including among ties: sorts oldest first and reverses. */
+export function sortedRunsNewest(runs: readonly StoredRun[]) {
+  return [...runs].sort(compareRunsOldest).reverse()
 }
 
 export function nodeChildren(state: State, runId: string, nodeName: string) {

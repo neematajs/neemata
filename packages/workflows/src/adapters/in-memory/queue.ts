@@ -82,6 +82,7 @@ export function requeueDeadContinue(state: State, commandId: string) {
     payload: dead.payload,
     deliveryCount: 0,
     createdAt: dead.createdAt,
+    sequence: dead.sequence,
   }
   const pendingIndex = continueRunCommands.findIndex(
     (item, index) =>

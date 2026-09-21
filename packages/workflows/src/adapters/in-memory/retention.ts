@@ -147,7 +147,12 @@ function sweepDeadQueueItems<T extends { readonly runId: string }>(
 ) {
   for (let index = queue.length - 1; index >= 0; index -= 1) {
     const item = queue[index]!
-    if (item.deadAt !== undefined && item.deadAt < deadBefore) {
+    // An unreaped dead command is the only thing left that can settle its run.
+    if (
+      item.deadAt !== undefined &&
+      item.reapedAt !== undefined &&
+      item.deadAt < deadBefore
+    ) {
       queue.splice(index, 1)
     }
   }

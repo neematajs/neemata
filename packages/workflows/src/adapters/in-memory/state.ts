@@ -22,17 +22,22 @@ type InMemoryRunLease = RunLease & {
 
 export function createState(maxDeliveries = 20) {
   let nextId = 1
-  let lastTimestamp = 0
+  let nextSequence = 1
 
   function id(prefix: string) {
     return `${prefix}-${nextId++}`
   }
 
-  // All adapter components share the clock and ID sequence so ordering and
-  // lease fencing remain deterministic even within the same millisecond.
+  // Delays, leases and expiry compare against wall time, so the clock must not
+  // move with the number of reads: a busy adapter would otherwise run delayed
+  // commands early and expire healthy leases.
   function now() {
-    lastTimestamp = Math.max(Date.now(), lastTimestamp + 1)
-    return lastTimestamp
+    return Date.now()
+  }
+
+  // Orders what was created within one millisecond; timestamps cannot.
+  function sequence() {
+    return nextSequence++
   }
 
   const runs = new Map<string, StoredRun>()
@@ -62,6 +67,7 @@ export function createState(maxDeliveries = 20) {
   return {
     id,
     now,
+    sequence,
     maxDeliveries,
     runs,
     nodes,

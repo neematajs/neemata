@@ -37,11 +37,23 @@ import {
   implementTask as implementStoredTask,
 } from '../implement/index.ts'
 
+declare const unsupportedEnv: unique symbol
+
+/**
+ * Stands in for the env of a core handler that an Effect worker cannot supply:
+ * such a worker passes handlers a HandlerRuntime and nothing else. No Layer or
+ * Context provides it, so the worker fails to compile rather than at runtime.
+ */
+type UnsupportedEnv<E> = { readonly [unsupportedEnv]: E }
+
 type Provided<E> = 0 extends 1 & E
   ? any
-  : E extends HandlerRuntime<infer R>
-    ? R
-    : never
+  : // Env-less core handlers accept whatever runtime the worker passes.
+    [HandlerRuntime] extends [E]
+    ? never
+    : E extends HandlerRuntime<infer R>
+      ? R
+      : UnsupportedEnv<E>
 
 /**
  * Services an implementation's handlers require from the worker. Lists in the

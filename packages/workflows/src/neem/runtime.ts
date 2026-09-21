@@ -157,7 +157,35 @@ export async function resolveWorkflowsRegistry(
     )
   }
 
-  const conflicts = findConflictingDefinitions(workflows, tasks)
+  // A schedule starts its target by name as well: an unregistered one would
+  // fire runs nobody can claim, and a same-named copy would encode its input
+  // with another schema than the implementation decodes with.
+  const registered = {
+    workflow: new Map(
+      workflows.map(({ workflow }) => [workflow.name, workflow]),
+    ),
+    task: new Map(tasks.map(({ task }) => [task.name, task])),
+  }
+  const targets = schedules.map(({ runnable }) => ({
+    runnable,
+    registered: registered[runnable.kind].get(runnable.name),
+  }))
+  const missingTargets = targets.filter((target) => !target.registered)
+  if (missingTargets.length > 0) {
+    const names = new Set(missingTargets.map(({ runnable }) => runnable.name))
+    throw new Error(
+      `Workflows or tasks [${[...names].join(', ')}] targeted by schedules have no registered implementation`,
+    )
+  }
+
+  const conflicts = [
+    ...new Set([
+      ...findConflictingDefinitions(workflows, tasks),
+      ...targets
+        .filter((target) => target.registered !== target.runnable)
+        .map(({ runnable }) => runnable.name),
+    ]),
+  ]
   if (conflicts.length > 0) {
     throw new Error(
       `Definitions [${conflicts.join(', ')}] exist as more than one object; a reference and its registered implementation must share one definition`,

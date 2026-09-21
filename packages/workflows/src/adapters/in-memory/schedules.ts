@@ -114,7 +114,7 @@ export function createScheduler(
       return startStoredScheduleRun(
         { store, runCoordinationExecutor, attemptExecutor },
         schedule,
-        now(),
+        'manual',
       )
     },
     async setEnabled(name, enabled) {

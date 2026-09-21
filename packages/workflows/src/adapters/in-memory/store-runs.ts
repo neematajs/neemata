@@ -19,10 +19,10 @@ import type { State } from './state.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import {
   compareAttempts,
-  compareRunsNewest,
   compareRunsOldest,
   runSnapshot,
   sameValue,
+  sortedRunsNewest,
   valueKey,
 } from './records.ts'
 
@@ -264,9 +264,9 @@ export function createRunStore(state: State): RunStore {
         throw new Error(`Invalid run list cursor [${filter.cursor}]`)
       }
 
-      const filtered = [...runs.values()]
-        .filter((run) => runMatchesFilter(run, filter))
-        .sort(compareRunsNewest)
+      const filtered = sortedRunsNewest(
+        [...runs.values()].filter((run) => runMatchesFilter(run, filter)),
+      )
 
       const page = filtered.slice(offset, offset + limit)
       const nextOffset = offset + page.length

@@ -68,6 +68,8 @@ export function defineWorkflowsWorker<
         // finished is observed by Neem before scope cleanup completes. An overrun
         // requires thread recycling, not disposal of services still in use.
         abort.abort(error)
+        // An overrun while startup is failing must settle start() as well.
+        ready.reject(error)
         finished.reject(error)
       }
       // Workflow supervision deliberately lives here: it needs the worker
@@ -77,6 +79,14 @@ export function defineWorkflowsWorker<
         if (stopping) throw new Error('Workflows worker stopped')
         const settings = resolveWorkerSettings(ctx.data.settings)
         const timeoutMs = settings.cleanupTimeoutMs
+        // Keep the deadline armed through adapter and Layer finalizers, so a
+        // failed worker cannot hang in cleanup while appearing live.
+        const armCleanupDeadline = Effect.sync(() => {
+          cleanupTimer ??= setTimeout(
+            () => fatal(new WorkflowCleanupTimeoutError(timeoutMs)),
+            timeoutMs,
+          )
+        })
         const main = Effect.gen(function* () {
           const context = yield* Effect.context<any>()
           const env = createHandlerRuntime(context)
@@ -121,12 +131,6 @@ export function defineWorkflowsWorker<
           yield* Effect.addFinalizer(() =>
             Effect.promise(async () => {
               abort.abort()
-              // Keep the deadline armed through adapter and Layer finalizers,
-              // so a failed worker cannot hang in cleanup while appearing live.
-              cleanupTimer = setTimeout(
-                () => fatal(new WorkflowCleanupTimeoutError(timeoutMs)),
-                timeoutMs,
-              )
               // Stop claims and abort attempts, then join engine work before
               // draining handlers: an execution awaiting storage may register one.
               await loop.catch(() => {})
@@ -142,7 +146,13 @@ export function defineWorkflowsWorker<
           any,
           unknown
         >
-        fiber = Effect.runFork(Effect.scoped(main).pipe(Effect.provide(layer)))
+        // Armed as the worker exits, before its scope closes: a startup step can
+        // fail with the adapter and the Layer already acquired.
+        fiber = Effect.runFork(
+          Effect.scoped(
+            main.pipe(Effect.onExit(() => armCleanupDeadline)),
+          ).pipe(Effect.provide(layer)),
+        )
         fiber.addObserver((exit) => {
           if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)
           if (
