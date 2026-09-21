@@ -21,7 +21,7 @@ use Effect's `HttpApi` and `Rpc` with their derived clients).
 ## References
 
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
-  contracts, implementations, pools, postgres runtime, client (read models, watch,
+  contracts, implementations, pools, Postgres and Redis/Valkey runtimes, client (read models, watch,
   retry/delete), inspector serialization, Neem integration.
 - [PubSub](references/pubsub.md) - typed channels, publish/subscribe, Redis and
   Valkey adapter, Effect service.

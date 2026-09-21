@@ -1,7 +1,11 @@
+import { randomUUID } from 'node:crypto'
+
 import { PGlite } from '@electric-sql/pglite'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
-import { describe, expect, it } from 'vitest'
+import { Redis } from 'ioredis'
+import { Redis as Valkey } from 'iovalkey'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import { createInMemoryWorkflowRuntime } from '../src/adapters/in-memory.ts'
 import {
@@ -9,6 +13,7 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { createRedisWorkflowRuntime } from '../src/adapters/redis.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -46,9 +51,22 @@ const testContext = Context.empty()
 
 function workflowRuntimeAdapterContract(
   name: string,
-  createRuntime: RuntimeFactory,
+  runtimeFactory: RuntimeFactory,
 ) {
   describe(`${name} workflow runtime adapter contract`, () => {
+    const runtimes: WorkflowRuntimeAdapter[] = []
+    const createRuntime: RuntimeFactory = async (options) => {
+      const runtime = await runtimeFactory(options)
+      runtimes.push(runtime)
+      return runtime
+    }
+
+    afterEach(async () => {
+      await Promise.allSettled(
+        runtimes.splice(0).map(async (runtime) => await runtime.dispose?.()),
+      )
+    })
+
     it('starts workflow runs through the runtime client', async () => {
       const workflow = defineWorkflow({
         name: 'adapter-contract-workflow',
@@ -2023,12 +2041,14 @@ function workflowRuntimeAdapterContract(
         input: {},
       }
 
-      const firstRunAt = new Date(Date.now() - 2)
+      // Both due by a wide margin: a broker reads its own clock, which may
+      // trail this process by a few milliseconds.
+      const firstRunAt = new Date(Date.now() - 2_000)
       await runtime.attemptExecutor.dispatchTask(taskCommand, {
         runAt: firstRunAt,
       })
       await runtime.attemptExecutor.dispatchActivity(activityCommand, {
-        runAt: new Date(firstRunAt.getTime() + 1),
+        runAt: new Date(firstRunAt.getTime() + 1_000),
       })
 
       const selectors = {
@@ -2766,6 +2786,12 @@ function workflowRuntimeAdapterContract(
         runtime.store.ensureChildRun({
           ...childParams,
           input: { scenario: 'beta' },
+        }),
+      ).rejects.toThrow('Conflicting child run')
+      await expect(
+        runtime.store.ensureChildRun({
+          ...childParams,
+          idempotencyKey: ['child', 'different-logical-operation'],
         }),
       ).rejects.toThrow('Conflicting child run')
     })
@@ -3709,6 +3735,33 @@ workflowRuntimeAdapterContract('postgres', async (options) => {
   await installPostgresWorkflowSchemaForTesting(connection)
   return createPostgresWorkflowRuntime({ connection, ...options })
 })
+for (const [name, url, Client] of [
+  ['redis', process.env.REDIS_URL, Redis],
+  ['valkey', process.env.VALKEY_URL, Valkey],
+] as const) {
+  if (!url) continue
+  workflowRuntimeAdapterContract(name, (options) => {
+    const client = new Client(url, {
+      maxRetriesPerRequest: 1,
+      commandTimeout: 2_000,
+    })
+    const runtime = createRedisWorkflowRuntime({
+      client,
+      keyPrefix: `nmtjs:test:contract:${name}:${randomUUID()}:`,
+      ...options,
+    })
+    return {
+      ...runtime,
+      async dispose() {
+        try {
+          await runtime.dispose?.()
+        } finally {
+          await client.quit()
+        }
+      },
+    }
+  })
+}
 
 describe('postgres workflow runtime adapter invariant recovery', () => {
   it('lists each run family member once when child origins duplicate', async () => {

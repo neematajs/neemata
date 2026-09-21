@@ -841,3 +841,24 @@ process.
   optional peer there too). Both packages keep their public names as aliases.
 - Nothing was added beyond the previous behaviour. Buffering between the broker and
   a slow local subscriber is still unbounded; see [todo.md](todo.md).
+
+## Redis and Valkey workflows runtime — 2026-09-21
+
+The adapter from #340 (built against `main`) is ported onto the Effect-free core as
+`@nmtjs/workflows/redis`. Redis serves latency-sensitive, high-throughput work whose
+history need not be kept, with state in memory and bounded by terminal retention;
+PostgreSQL remains the adapter for durable, scheduled and long-retained work.
+
+- The adapter needed no change. It stores opaque JSON and routes by workflow, task and
+  activity name, which is exactly what a pool's worker claims: schemas, handlers, `env`
+  and pools all live above the adapter boundary. The port is two exported runtime
+  types it imports and its tests.
+- Its specs moved from the deleted `@nmtjs/type` and DI container to Standard Schemas
+  and the new handler signatures. The shared adapter contract and manual-retry suites
+  run against Redis and Valkey when their URLs are set, as CI does.
+- The contract test for one globally ordered queue dated its commands 2 ms and 1 ms in
+  the past. A broker reads its own clock, which trailed the test process by about
+  1.5 ms, so the margins are now seconds.
+- CI and `compose.yml` gain Toxiproxy and restart policies for the resilience tests:
+  proxy faults, a service restart and memory pressure.
+- Recurring schedules stay unsupported on Redis by design.

@@ -77,6 +77,17 @@ import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
 export default defineWorkflowsWorker(workflowsConfig)
 ```
 
+The workflows worker creates the runtime adapter: in `setup` for the Promise
+worker, or as the `runtime` service for the Effect worker. For the Redis/Valkey
+backend, create the caller-owned Redis client there, not in `neem.config.ts`,
+and use finite per-request behavior such as
+`maxRetriesPerRequest: 1` plus a finite `commandTimeout`. Never use
+`maxRetriesPerRequest: null` for the workflow runtime: it allows one operation
+to remain queued across an unlimited reconnect cycle. Reconnection may remain
+enabled for future work; only each individual operation must terminate in
+bounded time. Close the command client from the worker's resource lifecycle;
+the workflow runtime disposes only its duplicated Pub/Sub client.
+
 ## Custom Runtime
 
 Some packages have no package-owned host entry or worker build defaults, so
