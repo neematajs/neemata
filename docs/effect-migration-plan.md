@@ -739,3 +739,53 @@ passed; Neem **121** unit and **75** e2e passed; formatting clean; oxlint report
 only the existing Deno warning. Live PostgreSQL 18 integration (**18 passed**) ran
 before these two fixes and was not rerun: neither touches the adapter or engine
 behaviour it covers.
+
+## Effect-free workflows core — 2026-09-21
+
+Owner decision: the workflow engine is retained infrastructure and must not depend
+on Effect. Slices 4 and 5 had put `effect/Schema` and Effect-returning handlers into
+its public API, which tied the engine and its stored format to the exact Effect RC
+pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
+
+- **Codecs.** Definitions hold a core `WorkflowCodec<Type, Encoded>`: synchronous
+  `decode(stored)`/`encode(value)` that throw on invalid values, `Encoded` being
+  JSON. A Standard Schema pair was rejected because its `validate` may be async and
+  the durable boundary must stay synchronous. The engine walks the parallel and map
+  envelopes itself and calls each member's codec; "Type everywhere" and the
+  absent-versus-null rules are unchanged, and values are still encoded per member,
+  so the stored format is unchanged.
+- **Dependencies.** No container. Handlers are `(input, lifecycle, env)` and
+  `finish` is `(outputs, workflowInput, lifecycle, env)`, returning values or
+  Promises. The worker input requires one `env` satisfying every registered
+  handler at once (`Env<T>`, an intersection); the engine neither creates nor
+  disposes it. The generic half of the old handler runtime stays in the core as
+  `createHandlerRunner`: the pre-abort check, the cleanup deadline with `onFatal`,
+  and `drain()`.
+- **`@nmtjs/workflows/effect`.** `effect` is now an optional peer. The subpath
+  exports `defineTask`/`defineWorkflow` over Effect schemas (`createContract` with
+  the `codec` conversion), `implementTask`/`implementWorkflow` over Effect handlers,
+  `createHandlerRuntime`, `WorkflowHandlerError`, and worker functions taking a
+  `context`. Effect handlers are stored as core handlers whose env is a
+  `HandlerRuntime<R>`, so the core's env check is the service-coverage check.
+- **Two implementation chains.** The definition builders are shared through a
+  type-level schema function, which only appears in output positions. The same was
+  tried for handlers and abandoned: TypeScript does not infer a handler's services
+  through a type-level function for context-sensitive handlers such as
+  `(input) => Effect.gen(...)`. The Effect chain therefore mirrors the core chain's
+  types and the two must change together; both share one runtime builder.
+- **Neem integration** stays Effect-based under `@nmtjs/workflows/neem`: it builds
+  the Layer, passes a `HandlerRuntime` as env and drains a shared runner before
+  disposing services. A non-Effect Neem worker has no consumer yet.
+- oxlint forbids `effect` imports in `packages/workflows/src` outside `src/effect`
+  and `src/neem`.
+
+Existing tests moved to the adapter's imports; only tests of the changed API shapes
+(runner options, shared-runtime typing, schema reuse from a definition) were edited. A new
+Effect-free spec covers hand-written codecs, Promise handlers, the env type check,
+parallel and map decoding, and the cleanup deadline.
+
+Validation (`vp env exec`, unrestricted filesystem): workspace build, typecheck and
+formatting passed; oxlint reports only the existing Deno warning; workflows **572
+passed, 2 skipped**; preset **15** unit/type passed; live PostgreSQL 18 integration
+**18 passed**. Neem and the preset e2e suites were not rerun: neither package
+changed.
