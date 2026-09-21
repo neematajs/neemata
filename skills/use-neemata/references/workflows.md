@@ -35,7 +35,7 @@ with a fluent builder and finished with `.build()`. Schemas are
 
 ```ts
 import { defineTask, defineWorkflow } from '@nmtjs/workflows'
-import { z } from 'zod'
+import * as z from 'zod'
 
 export const embedTask = defineTask({
   name: 'content.embed',
