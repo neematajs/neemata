@@ -350,7 +350,9 @@ Worker shutdown stops claims, aborts in-flight handlers with reason `shutdown`,
 waits for them, then disposes the adapter and calls `dispose`; aborted commands
 are redelivered. Every task and child workflow referenced by a registered
 workflow must also have an implementation in `tasks` or `workflows`; worker
-startup rejects incomplete registries before they can create unclaimable work.
+startup rejects incomplete registries before they can create unclaimable work. It
+also rejects workflows that start each other unconditionally; recursion through
+a branch case or a map is allowed.
 
 Effect applications use `defineWorkflowsWorker({ workflows, tasks, schedules,
 layer, runtime })` from `@nmtjs/workflows/effect/neem` with the same planner;

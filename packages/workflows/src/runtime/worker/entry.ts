@@ -361,6 +361,50 @@ export function collectImplementationPools(
   return new Set([...workflows, ...tasks].map(({ pool }) => pool))
 }
 
+/**
+ * A path of child workflows that every run follows back to its start, if one
+ * exists. Definitions cannot reference each other as objects, but children are
+ * resolved by name, so such a loop spawns runs without end. Branch cases and
+ * maps are skipped: they may not recurse, which makes bounded recursion valid.
+ */
+export function findUnconditionalWorkflowCycle(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
+): readonly string[] | undefined {
+  const children = new Map<string, readonly string[]>()
+  for (const { workflow, nodes } of workflows) {
+    const names: string[] = []
+    for (const node of nodes) {
+      if (node.kind === 'workflow') names.push(node.target.name)
+      if (node.kind === 'parallel') {
+        for (const member of Object.values(node.cases))
+          if (member.kind === 'workflow') names.push(member.target.name)
+      }
+    }
+    children.set(workflow.name, names)
+  }
+
+  const settled = new Set<string>()
+  const path: string[] = []
+  const visit = (name: string): readonly string[] | undefined => {
+    const index = path.indexOf(name)
+    if (index !== -1) return [...path.slice(index), name]
+    if (settled.has(name)) return undefined
+    path.push(name)
+    for (const child of children.get(name) ?? []) {
+      const cycle = visit(child)
+      if (cycle) return cycle
+    }
+    path.pop()
+    settled.add(name)
+    return undefined
+  }
+  for (const name of children.keys()) {
+    const cycle = visit(name)
+    if (cycle) return cycle
+  }
+  return undefined
+}
+
 export function collectWorkflowTaskNames(
   workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
 ): readonly string[] {

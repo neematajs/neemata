@@ -12,6 +12,7 @@ import {
   collectChildWorkflowNames,
   collectImplementationPools,
   collectWorkflowTaskNames,
+  findUnconditionalWorkflowCycle,
 } from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = WorkflowImplementation<
@@ -152,6 +153,13 @@ export async function resolveWorkflowsRegistry(
   if (missingTasks.length > 0) {
     throw new Error(
       `Tasks [${missingTasks.join(', ')}] referenced by registered workflows have no registered implementation`,
+    )
+  }
+
+  const cycle = findUnconditionalWorkflowCycle(workflows)
+  if (cycle) {
+    throw new Error(
+      `Workflows [${cycle.join(' -> ')}] start each other unconditionally and would never finish`,
     )
   }
 

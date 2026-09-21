@@ -6,6 +6,7 @@ export {
   collectChildWorkflowNames,
   collectImplementationPools,
   collectWorkflowTaskNames,
+  findUnconditionalWorkflowCycle,
   runExecutionWorker,
   runWorkflowWorker,
   serveExecutionWorker,

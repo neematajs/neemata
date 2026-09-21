@@ -836,7 +836,9 @@ handler })` and `implementWorkflow(workflow, { pool })` require a pool; nothing
   are unchanged.
 - Validation moved from plan time to worker startup: an implementation naming an
   undeclared pool, or a workflow referencing an unregistered child or task, fails
-  the thread's start.
+  the thread's start. So does a loop of workflows that start each other
+  unconditionally: definitions cannot reference each other as objects, but children
+  resolve by name. Branch cases and maps are exempt, so bounded recursion is valid.
 - Pool concurrency is per-process capacity. Cluster-wide limits (named limits on
   tasks, runs in flight per workflow) are a separate, unbuilt slice. They would
   attach to tasks and workflows only, and a workflow's run limit must not count a

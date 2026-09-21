@@ -232,6 +232,84 @@ describe('workflows Neem integration', () => {
     )
   })
 
+  it('rejects workflows that start each other unconditionally', async () => {
+    // Definitions cannot reference each other as objects, but children resolve
+    // by name: a same-named definition closes the loop.
+    const aStub = defineWorkflow({
+      name: 'neem.integration.cycle.a',
+      input: io,
+      output: io,
+    }).build()
+    const b = defineWorkflow({
+      name: 'neem.integration.cycle.b',
+      input: io,
+      output: io,
+    })
+      .workflow('next', aStub)
+      .build()
+    const a = defineWorkflow({
+      name: 'neem.integration.cycle.a',
+      input: io,
+      output: io,
+    })
+      .workflow('next', b)
+      .build()
+    const aImpl = implementWorkflow(a, { pool: 'test' })
+      .next(b, { input: (_outputs, input) => input })
+      .finish(({ next }) => Effect.succeed(next))
+    const bImpl = implementWorkflow(b, { pool: 'test' })
+      .next(aStub, { input: (_outputs, input) => input })
+      .finish(({ next }) => Effect.succeed(next))
+
+    await expect(
+      resolveWorkflowsRegistry(
+        { workflows: () => [aImpl, bImpl] },
+        { role: 'coordinator' },
+      ),
+    ).rejects.toThrow(
+      'Workflows [neem.integration.cycle.a -> neem.integration.cycle.b -> neem.integration.cycle.a] start each other unconditionally and would never finish',
+    )
+  })
+
+  it('allows recursion through a branch, which may not recurse', async () => {
+    const leaf = defineWorkflow({
+      name: 'neem.integration.recursive',
+      input: io,
+      output: io,
+    }).build()
+    const recursive = defineWorkflow({
+      name: 'neem.integration.recursive',
+      input: io,
+      output: io,
+    })
+      .branch('step', {
+        output: io,
+        cases: (h) => ({
+          done: h.activity({ input: io, output: io }),
+          deeper: h.workflow(leaf),
+        }),
+      })
+      .build()
+    const recursiveImpl = implementWorkflow(recursive, { pool: 'test' })
+      .step({
+        select: (_outputs, input) => (input.id === '' ? 'done' : 'deeper'),
+        cases: ({ activity, workflow }) => ({
+          done: activity((input) => Effect.succeed(input), {
+            input: (_outputs, input) => input,
+          }),
+          deeper: workflow(leaf, { input: () => ({ id: '' }) }),
+        }),
+      })
+      .finish(({ step }) => Effect.succeed(step))
+
+    await expect(
+      resolveWorkflowsRegistry(
+        { workflows: () => [recursiveImpl] },
+        { role: 'coordinator' },
+      ),
+    ).resolves.toBeDefined()
+  })
+
   it('rejects workflow tasks without a registered implementation', async () => {
     const parent = defineWorkflow({
       name: 'neem.integration.parent-with-unregistered-task',
