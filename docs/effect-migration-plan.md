@@ -1,9 +1,11 @@
 # Neemata × Effect migration
 
 Date: 2026-09-21
-Status: slices 1–5 implemented and reviewed; slice 5 review fixes applied.
-Slice 6 preparation is underway; deletion remains gated on the application proofs and cutover assessment.
-The decoded-Type decision below supersedes the earlier Encoded submission/mapper decision.
+Status: slices 1–5 implemented and reviewed. The workflows core was then made
+Effect-free with an `/effect` adapter, definitions moved to Standard Schemas, and
+execution pools replaced name-list routing; see the dated sections at the end, which
+supersede the slice 4–5 text where they differ. What remains is deleting the retired
+framework and migrating applications.
 Baseline: `b2602ae0be76e92dfc06f0392977263c2883ff9c` (`main`).
 
 This plan supersedes [Application Interfaces](application-interfaces-plan.md).
@@ -11,22 +13,29 @@ The next major version is a clean break: existing applications migrate explicitl
 There will be no parallel Neemata/Effect handler APIs or framework compatibility
 facade. The purpose is to reduce the maintenance and test surface.
 
+**Clean cut (owner decision, 2026-09-21).** Nothing outside our control uses the
+framework, so the new stack does not try to be compatible with the previous one in
+APIs, packages, or stored workflow data. There is no coexistence alias, no mixed
+deployment, no retained-data conversion, and no cutover rehearsal as a release gate.
+An application moves wholesale; in-flight workflow runs are finished under the old
+release or discarded, and the workflow tables start empty.
+
 **Effect executes handlers; Neemata coordinates durable work.** Neem hosts
 applications and supervises their workers. Workflows retains its declared graph,
 durable state, scheduling, leases, retries, and store adapters.
 
 ## Package boundaries
 
-| Package                                                                                                               | Destination                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `@nmtjs/neem`                                                                                                         | Keep the host, compiler, reload, lifecycle, proxy integration, and worker supervision. Own Pino logging; no Effect dependency. |
-| `@nmtjs/vite`, `@nmtjs/nuxt`                                                                                          | Keep the existing Neem presets.                                                                                                |
-| `@nmtjs/workflows`                                                                                                    | Keep the engine and adapters; replace public schemas, handlers, service composition, and client boundaries with Effect APIs.   |
-| `@nmtjs/effect`                                                                                                       | Small Neem adapter for a Layer and a supervised main effect; applications own HTTP/RPC.                                        |
-| `@nmtjs/metrics`                                                                                                      | Retain Neem host/worker observation. Assess whether its forked Prometheus client is still needed.                              |
-| `@nmtjs/common`                                                                                                       | Keep utilities used by surviving packages; prune after consumers are removed.                                                  |
-| `@nmtjs/unplugin-labels`                                                                                              | Remove in slice 2, including compiler transforms.                                                                              |
-| `application`, `gateway`, `core`, `contract`, `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs` | Delete in slice 6 after application and workflow migration.                                                                    |
+| Package                                                                                                               | Destination                                                                                                                                             |
+| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nmtjs/neem`                                                                                                         | Keep the host, compiler, reload, lifecycle, proxy integration, and worker supervision. Own Pino logging; no Effect dependency.                          |
+| `@nmtjs/vite`, `@nmtjs/nuxt`                                                                                          | Keep the existing Neem presets.                                                                                                                         |
+| `@nmtjs/workflows`                                                                                                    | Keep the engine and adapters with an Effect-free core: Standard Schemas, Promise handlers, one `env`. Effect support is the optional `/effect` adapter. |
+| `@nmtjs/effect`                                                                                                       | Small Neem adapter for a Layer and a supervised main effect; applications own HTTP/RPC.                                                                 |
+| `@nmtjs/metrics`                                                                                                      | Retain Neem host/worker observation. Assess whether its forked Prometheus client is still needed.                                                       |
+| `@nmtjs/common`                                                                                                       | Keep utilities used by surviving packages; prune after consumers are removed.                                                                           |
+| `@nmtjs/unplugin-labels`                                                                                              | Remove in slice 2, including compiler transforms.                                                                                                       |
+| `application`, `gateway`, `core`, `contract`, `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs` | Delete in slice 6 after application and workflow migration.                                                                                             |
 
 Applications own RPC, HTTP, MCP, upload protocols, and their Effect integrations.
 Structured metadata plus multipart/HTTP uploads or file references replace nested
@@ -163,103 +172,47 @@ test-only async-to-Effect helper may keep existing engine tests tractable. Add n
 Effect cases for defects, typed errors, interruption, scoped cleanup, overrun, lease
 loss, and late commits. No public async-handler compatibility API.
 
-## Slice 6 — Prove the application migration, then remove the framework
+## Slice 6 — Remove the framework
 
-**Current execution scope:** the user has restricted further work to Neemata;
-do not edit, rebase, commit, or publish CaseNetwork application code. The existing
-application proof remains unchanged. The CaseNetwork work below records outstanding
-release gates, not authorization to implement it. Read-only source inspection and
-the isolated assessment of the supplied dump can inform this migration; standalone
-Neemata fixtures do not establish completion of the real-application gates.
-
-The reviewed slices 1–5 are committed separately before any further migration or
-package deletion. The next work is preparation, in this order:
-
-1. Fix Neem stop-during-startup across the host controller queue, worker entry, and
-   thread-controller termination race. Prove cooperative cleanup during startup and
-   preserve the existing hard stop deadline. This retained-code defect comes before
-   application proofs and release; it is independent of CaseNetwork work.
-2. Finish the CaseNetwork Promise-client pattern before adding a second client:
-   normalize aborted/disposed/transport/defect rejections, check request Origin or
-   content type, and log underlying database failures before returning sanitized
-   application errors.
-3. Prove a real stream/upload flow and a real workflow in the isolated CaseNetwork
-   worktree under `pnpm local dev`, with the acceptance criteria below.
-4. Assess the real stored data and rehearse the cutover against an isolated restore
-   of a CaseNetwork database dump. Record the dump provenance without publishing
-   payloads. Only after these gates pass should retired-package deletion begin.
-
-### Application proof gates
-
-For streaming and uploads, chat is the first candidate:
-
-- Use the Neem proxy for every proof request. Observe incremental ndjson delivery
-  before completion to detect proxy buffering.
-- Abort a client mid-stream and observe the server finalizer through the proxy.
-- Exercise multipart metadata and file upload, with a configured size limit and a
-  rejected oversized upload.
-- Authenticate in-process once at stream start; remove the proof's per-call HTTP
-  session lookup. Document what replaces each connection-scoped chat service/state.
-- Keep the application-owned Promise/stream client boundary and browser-safe imports;
-  do not rebuild a generic Neemata transport or client facade.
-
-For workflows, port one existing CaseNetwork workflow whose task uses the database
-and whose schema carries a date. Use native Effect handlers, Layer services, and
-Type-everywhere schemas. Run it under the actual Neem application, prove a retry,
-restart its worker mid-run, and verify durable completion and decoded date values.
-Package tests alone do not satisfy this gate. Record the workflow and transformed
-schemas used, and determine from the installed peer graph whether the new-host alias
-is still required after workflows' core dependency is removed.
-
-### Cutover and retained-data gate
-
-The assessment must use the real dump and report aggregate findings:
-
-- Inventory run statuses and all `workflow_commands` payloads, including queued,
-  delayed, active/leased, and dead-lettered work, plus child runs. No executable old
-  payload may survive into new workers without an explicit compatibility decision.
-- Inventory schemas with transforms across inputs, outputs, nodes, maps and queued
-  payloads. Exercise their new codecs against restored data; plain JSON examples
-  do not establish transformed-value compatibility.
-- Specify application-level controls for pausing every submission route and schedule
-  producer. There is no assumed engine-wide pause capability.
-- **Require a drain before cutover.** Pause submissions and schedule firing, drain
-  runs, children and commands under the old release, resolve retained dead-lettered
-  work explicitly, and stop every old writer before enabling new ones. Re-entry
-  decode mismatches are terminal; a mixed deployment is not the default.
-- Test whether `restart()` of retained historical rows can decode under the new
-  codecs. A drain does not convert history. Record incompatible representations and
-  a concrete application-level handling procedure; do not add a format marker or a
-  general retry/restart ban as part of this migration.
-- Rehearse rollback before and after new writers have written. Once representations
-  diverge, switching binaries alone is not sufficient: record whether rollback needs
-  a quiesced database restore or a validated reverse conversion, and how newer writes
-  and external side effects are reconciled. State any resulting data-loss window.
+The earlier version of this slice gated deletion on CaseNetwork proofs, a coexistence
+alias for the new host, and a rehearsed cutover of retained workflow data. The clean
+cut above removes those gates: deletion proceeds in this repository on its own, and
+applications migrate against the result.
 
 ### Deletion and release
 
-- Delete retired packages and their tests, exports, scripts, CI jobs, fixtures, and
-  unused dependencies. Prune common utilities after their consumers disappear.
+- Delete retired packages and their tests, exports, scripts, CI jobs, fixtures,
+  skills references and unused dependencies: `application`, `gateway`, `core`,
+  `contract`, `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs`.
+  Prune common utilities after their consumers disappear.
 - Narrow metrics to Neem observation. Applications can export metrics directly from
   workers through OTLP; assess whether the forked `@nmtjs/prom-client` can also go.
-- Document application migration, client choice, multipart uploads, replacement of
-  connection scope, actual codec compatibility findings, and the rehearsed cutover.
-  For Redis alternatives, state at-most-once delivery and reconnect gaps.
-- While old/new runtime experiments coexist, keep the legacy peer graph intact.
-  Retain or remove the explicit new-host alias based on the real workflow proof;
-  do not infer that an in-place host upgrade is safe from workflows' decoupling alone.
-  The release target is complete application migration with the alias and retired
-  framework removed; no legacy compatibility release is planned.
-- Configure application logging and RPC error metrics. HTTP 200 application errors
-  do not appear in proxy status metrics. Applications own Effect logger configuration
-  and must preserve complete Cause diagnostics.
+- Document the new stack: Neem host and presets, the Effect preset, workflows (core,
+  `/effect`, pools, Neem workers). For Redis alternatives to pubsub, state
+  at-most-once delivery and reconnect gaps.
 - Publish the new package map and supported exact Effect version. Recheck upstream
   release status and unstable APIs at release time.
 
-Completion: the application proofs and restored-data assessment pass, retained builds
-and release artifacts contain no retired imports, and the retained test suite passes.
+Completion: retained builds and release artifacts contain no retired imports, and
+the retained test suite passes.
+
+### Application migration (outside this repository)
+
+Applications own RPC, HTTP, uploads and their clients. Effect ships typed clients
+derived from the same definitions (`HttpApiClient`, `RpcClient`, and OpenAPI output
+for any other client), so no Neemata client or transport is rebuilt. The CaseNetwork
+proof recorded what an application still has to get right: one rejection contract
+for a Promise facade over an Effect client (abort, disposal, transport, defect),
+an Origin or content-type check before mutations, logging the underlying cause
+before returning a sanitized error, interruptible HTTP handlers, in-process
+authentication, and RPC failure metrics despite HTTP 200 application errors.
+Workflows can use either flavour; both name a `pool` on tasks and workflows and
+need a planner that declares the pools.
 
 ## Separate follow-ups
+
+- Cluster-wide limits for workflows: named limits on tasks and runs in flight per
+  workflow. Pool concurrency is per-process capacity only.
 
 - After the Effect migration is complete, consider stored-format/codec versioning,
   worker compatibility enforcement, and policies for retrying/restarting older runs.
@@ -677,7 +630,8 @@ records were excluded. The assessment covered payloads, commands, history reads,
 real restart submissions, an old-release drain, and rollback. Snapshot-specific
 aggregate evidence stays in a local report, outside the public repository history.
 
-See the [cutover procedure](./effect-cutover.md) for deployment requirements. The
+The cutover procedure written from this exercise was removed with the clean-cut
+decision: workflow tables start empty, so none of it applies. For the record, the
 exercise identified an existing SQL version-2-to-3 prerequisite, historical definition
 and registry drift, and the need to dispose of stranded commands explicitly. A
 drain does not make completed-node history valid under changed definitions.
