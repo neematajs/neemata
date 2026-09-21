@@ -351,8 +351,9 @@ waits for them, then disposes the adapter and calls `dispose`; aborted commands
 are redelivered. Every task and child workflow referenced by a registered
 workflow must also have an implementation in `tasks` or `workflows`; worker
 startup rejects incomplete registries before they can create unclaimable work. It
-also rejects workflows that start each other in a cycle; recursive workflows are
-not supported.
+also rejects a name carried by more than one definition object: references and
+implementations must share one definition, which also rules out cycles. For
+recurring work use schedules, not recursion.
 
 Effect applications use `defineWorkflowsWorker({ workflows, tasks, schedules,
 layer, runtime })` from `@nmtjs/workflows/effect/neem` with the same planner;

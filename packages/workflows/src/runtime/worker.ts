@@ -6,7 +6,7 @@ export {
   collectChildWorkflowNames,
   collectImplementationPools,
   collectWorkflowTaskNames,
-  findWorkflowCycle,
+  findConflictingDefinitions,
   runExecutionWorker,
   runWorkflowWorker,
   serveExecutionWorker,

@@ -836,10 +836,12 @@ handler })` and `implementWorkflow(workflow, { pool })` require a pool; nothing
   are unchanged.
 - Validation moved from plan time to worker startup: an implementation naming an
   undeclared pool, or a workflow referencing an unregistered child or task, fails
-  the thread's start. So does any cycle of child workflows:
-  definitions cannot reference each other as objects, but children resolve by name,
-  so a same-named definition can close a loop. Recursion is not a supported
-  feature and nothing bounds its depth, so branch cases and maps are not exempt.
+  the thread's start. So does a name carried by more than one
+  definition object. Children and tasks resolve by name, so a same-named copy would
+  be encoded with one schema and decoded with another. It is also the only way to
+  close a cycle, because definitions cannot reference each other as objects, so this
+  check replaced a separate cycle detection. Implementations listed more than once
+  are deduplicated by reference. Recurring work belongs to schedules.
 - Pool concurrency is per-process capacity. Cluster-wide limits (named limits on
   tasks, runs in flight per workflow) are a separate, unbuilt slice. They would
   attach to tasks and workflows only, and a workflow's run limit must not count a

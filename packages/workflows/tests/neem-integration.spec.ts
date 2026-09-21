@@ -232,10 +232,10 @@ describe('workflows Neem integration', () => {
     )
   })
 
-  it('rejects workflows that start each other in a cycle', async () => {
-    // Definitions cannot reference each other as objects, but children resolve
-    // by name: a same-named definition closes the loop.
-    const aStub = defineWorkflow({
+  it('rejects a name carried by more than one definition object', async () => {
+    // Definitions cannot reference each other as objects, so a same-named copy
+    // is the only way to close a cycle; it would also decode with another schema.
+    const aCopy = defineWorkflow({
       name: 'neem.integration.cycle.a',
       input: io,
       output: io,
@@ -245,7 +245,7 @@ describe('workflows Neem integration', () => {
       input: io,
       output: io,
     })
-      .workflow('next', aStub)
+      .workflow('next', aCopy)
       .build()
     const a = defineWorkflow({
       name: 'neem.integration.cycle.a',
@@ -258,7 +258,7 @@ describe('workflows Neem integration', () => {
       .next(b, { input: (_outputs, input) => input })
       .finish(({ next }) => Effect.succeed(next))
     const bImpl = implementWorkflow(b, { pool: 'test' })
-      .next(aStub, { input: (_outputs, input) => input })
+      .next(aCopy, { input: (_outputs, input) => input })
       .finish(({ next }) => Effect.succeed(next))
 
     await expect(
@@ -267,49 +267,42 @@ describe('workflows Neem integration', () => {
         { role: 'coordinator' },
       ),
     ).rejects.toThrow(
-      'Workflows [neem.integration.cycle.a -> neem.integration.cycle.b -> neem.integration.cycle.a] start each other in a cycle',
+      'Definitions [neem.integration.cycle.a] exist as more than one object',
     )
-  })
 
-  it('rejects recursion through a branch case as well', async () => {
-    const leaf = defineWorkflow({
-      name: 'neem.integration.recursive',
-      input: io,
-      output: io,
-    }).build()
-    const recursive = defineWorkflow({
-      name: 'neem.integration.recursive',
+    const taskCopy = defineTask({
+      name: pooledTask.name,
       input: io,
       output: io,
     })
-      .branch('step', {
-        output: io,
-        cases: (h) => ({
-          done: h.activity({ input: io, output: io }),
-          deeper: h.workflow(leaf),
-        }),
-      })
+    const parent = defineWorkflow({
+      name: 'neem.integration.task-copy',
+      input: io,
+      output: io,
+    })
+      .task('work', taskCopy)
       .build()
-    const recursiveImpl = implementWorkflow(recursive, { pool: 'test' })
-      .step({
-        select: (_outputs, input) => (input.id === '' ? 'done' : 'deeper'),
-        cases: ({ activity, workflow }) => ({
-          done: activity((input) => Effect.succeed(input), {
-            input: (_outputs, input) => input,
-          }),
-          deeper: workflow(leaf, { input: () => ({ id: '' }) }),
-        }),
-      })
-      .finish(({ step }) => Effect.succeed(step))
-
+    const parentImpl = implementWorkflow(parent, { pool: 'test' })
+      .work(taskCopy, { input: (_outputs, input) => input })
+      .finish(({ work }) => Effect.succeed(work))
     await expect(
       resolveWorkflowsRegistry(
-        { workflows: () => [recursiveImpl] },
+        { workflows: () => [parentImpl], tasks: () => [pooledTaskImpl] },
         { role: 'coordinator' },
       ),
-    ).rejects.toThrow(
-      'Workflows [neem.integration.recursive -> neem.integration.recursive] start each other in a cycle',
+    ).rejects.toThrow(`Definitions [${pooledTask.name}] exist as more than one`)
+  })
+
+  it('deduplicates an implementation listed more than once', async () => {
+    const resolved = await resolveWorkflowsRegistry(
+      {
+        workflows: () => [workflowImpl, workflowImpl],
+        tasks: () => [pooledTaskImpl, pooledTaskImpl],
+      },
+      { role: 'coordinator' },
     )
+    expect(resolved.workflows).toStrictEqual([workflowImpl])
+    expect(resolved.tasks).toStrictEqual([pooledTaskImpl])
   })
 
   it('rejects workflow tasks without a registered implementation', async () => {

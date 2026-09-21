@@ -362,41 +362,38 @@ export function collectImplementationPools(
 }
 
 /**
- * A path of child workflows that leads back to its start, if one exists.
- * Definitions cannot reference each other as objects, but children are resolved
- * by name, so a same-named definition can close a loop. Recursion is not a
- * supported feature: nothing bounds its depth, so every such loop is rejected.
+ * Names that more than one definition object carries. Children and tasks are
+ * resolved by name, so a same-named copy would be encoded with one schema and
+ * decoded with another, and is the only way workflows could start each other in
+ * a cycle: definitions cannot reference each other as objects.
  */
-export function findWorkflowCycle(
+export function findConflictingDefinitions(
   workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
-): readonly string[] | undefined {
-  const children = new Map(
-    workflows.map((implementation) => [
-      implementation.workflow.name,
-      collectChildWorkflowNames([implementation]),
-    ]),
-  )
-
-  const settled = new Set<string>()
-  const path: string[] = []
-  const visit = (name: string): readonly string[] | undefined => {
-    const index = path.indexOf(name)
-    if (index !== -1) return [...path.slice(index), name]
-    if (settled.has(name)) return undefined
-    path.push(name)
-    for (const child of children.get(name) ?? []) {
-      const cycle = visit(child)
-      if (cycle) return cycle
+  tasks: readonly Pick<AnyTaskImplementation, 'task'>[],
+): readonly string[] {
+  // Workflows and tasks are separate namespaces, as in the registry.
+  const seen = {
+    workflow: new Map<string, object>(),
+    task: new Map<string, object>(),
+  }
+  const conflicts = new Set<string>()
+  const add = (definition: AnyWorkflowDefinition | AnyTaskDefinition) => {
+    const known = seen[definition.kind].get(definition.name)
+    if (known === undefined)
+      seen[definition.kind].set(definition.name, definition)
+    else if (known !== definition) conflicts.add(definition.name)
+  }
+  for (const { task } of tasks) add(task)
+  for (const { workflow, nodes } of workflows) {
+    add(workflow)
+    for (const node of nodes) {
+      if (node.kind === 'branch' || node.kind === 'parallel') {
+        for (const member of Object.values(node.cases))
+          if (member.kind !== 'activity') add(member.target)
+      } else if (node.kind !== 'activity') add(node.target)
     }
-    path.pop()
-    settled.add(name)
-    return undefined
   }
-  for (const name of children.keys()) {
-    const cycle = visit(name)
-    if (cycle) return cycle
-  }
-  return undefined
+  return [...conflicts]
 }
 
 export function collectWorkflowTaskNames(

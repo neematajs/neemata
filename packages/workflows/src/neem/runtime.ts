@@ -12,7 +12,7 @@ import {
   collectChildWorkflowNames,
   collectImplementationPools,
   collectWorkflowTaskNames,
-  findWorkflowCycle,
+  findConflictingDefinitions,
 } from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = WorkflowImplementation<
@@ -129,8 +129,9 @@ export async function resolveWorkflowsRegistry(
   registry: WorkflowsRegistry,
   data: WorkflowsWorkerData,
 ): Promise<ResolvedWorkflowsRegistry> {
-  const workflows = await registry.workflows()
-  const tasks = (await registry.tasks?.()) ?? []
+  // The same implementation may arrive through several module lists.
+  const workflows = [...new Set(await registry.workflows())]
+  const tasks = [...new Set((await registry.tasks?.()) ?? [])]
   const schedules = (await registry.schedules?.()) ?? []
 
   const registeredWorkflows = new Set(
@@ -156,10 +157,10 @@ export async function resolveWorkflowsRegistry(
     )
   }
 
-  const cycle = findWorkflowCycle(workflows)
-  if (cycle) {
+  const conflicts = findConflictingDefinitions(workflows, tasks)
+  if (conflicts.length > 0) {
     throw new Error(
-      `Workflows [${cycle.join(' -> ')}] start each other in a cycle; recursive workflows are not supported`,
+      `Definitions [${conflicts.join(', ')}] exist as more than one object; a reference and its registered implementation must share one definition`,
     )
   }
 
