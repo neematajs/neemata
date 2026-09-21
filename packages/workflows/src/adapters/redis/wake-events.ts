@@ -15,6 +15,7 @@ export class WakeEvents implements WorkflowWakeEvents {
   readonly #uncertain = new Set<string>()
   readonly #pending = new Map<string, Promise<boolean>>()
   #disposed = false
+  #disposal: Promise<void> | undefined
 
   constructor(
     client: WorkflowRedisClient,
@@ -58,14 +59,26 @@ export class WakeEvents implements WorkflowWakeEvents {
     return this.#listen(this.keys.runWake(rootRunId), listener)
   }
 
-  async dispose() {
-    if (this.#disposed) return
+  dispose() {
+    // Every caller awaits the same closure, so none returns while the
+    // privately owned connection may still be open.
+    this.#disposal ??= this.#close()
+    return this.#disposal
+  }
+
+  async #close() {
     this.#disposed = true
     this.#events.removeAllListeners()
     this.#subscriptions.clear()
     this.#subscribed.clear()
     this.#uncertain.clear()
-    await this.#subscriber.quit()
+    try {
+      await this.#subscriber.quit()
+    } catch {
+      // A quit rejected during an outage leaves the driver reconnecting
+      // forever; nothing else holds this connection to close it later.
+      this.#subscriber.disconnect()
+    }
   }
 
   #listen(channel: string, listener: () => void) {

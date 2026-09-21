@@ -143,6 +143,15 @@ end
 local function orphaned(item, prefix)
   return item.rootRunId and redis.call('EXISTS', prefix .. 'family:' .. item.rootRunId) == 0
 end
+
+-- An enqueue that lost the race with its family's deletion or expiry stores no
+-- root, so orphaned() cannot see it. Every run is mapped before its first
+-- command, which makes a live command with no mapping permanently unrunnable.
+-- Dead commands stay inspectable until the dead-letter cutoff collects them.
+local function unmapped(item, prefix)
+  return not item.rootRunId and not item.deadAt and
+    redis.call('EXISTS', prefix .. 'run-root:' .. item.payload.runId) == 0
+end
 `
 
 const COALESCE_READY = `
@@ -426,7 +435,9 @@ for position = 6, #KEYS do
         result[1] = '1'
       else
         local item = cjson.decode(raw)
-        if orphaned(item, ARGV[2]) then
+        -- Only maintenance collects unmapped commands: delivery on a served
+        -- route already ignores or dead-letters a command whose run is gone.
+        if orphaned(item, ARGV[2]) or unmapped(item, ARGV[2]) then
           deleteItem(id, item)
           result[1] = '1'
         end
@@ -500,13 +511,20 @@ return result
 `,
   pruneDead: `
 ${QUEUE_CLEANUP}
-local ids = redis.call('ZRANGEBYSCORE', KEYS[4], '-inf', ARGV[1], 'LIMIT', 0, ARGV[2])
+-- An unreaped dead command is the only thing left that can settle its run, so
+-- age alone must not collect it. Kept items stay in the index: the caller
+-- pages past them by the count returned second.
+local ids = redis.call('ZRANGEBYSCORE', KEYS[4], '-inf', ARGV[1], 'LIMIT', ARGV[3], ARGV[2])
+local kept = 0
 for _, id in ipairs(ids) do
   local raw = redis.call('HGET', KEYS[1], id)
-  if raw then deleteItem(id, cjson.decode(raw))
-  else redis.call('ZREM', KEYS[4], id) end
+  if not raw then redis.call('ZREM', KEYS[4], id)
+  else
+    local item = cjson.decode(raw)
+    if item.reapedAt then deleteItem(id, item) else kept = kept + 1 end
+  end
 end
-return #ids
+return { #ids, kept }
 `,
   transitionDead: `
 ${COALESCE_READY}
