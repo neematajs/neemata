@@ -13,12 +13,12 @@ import { pino } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+} from '../src/effect/index.ts'
+import { defineSchedule } from '../src/index.ts'
 import workflowsHost from '../src/neem/host.ts'
 import {
   createWorkflowsRuntime,

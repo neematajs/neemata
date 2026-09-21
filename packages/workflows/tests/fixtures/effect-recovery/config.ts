@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { threadId } from 'node:worker_threads'
 
-import { defineTask, implementTask } from '@nmtjs/workflows'
+import { defineTask, implementTask } from '@nmtjs/workflows/effect'
 import { defineWorkflows } from '@nmtjs/workflows/neem'
 import {
   createPostgresWorkflowConnection,

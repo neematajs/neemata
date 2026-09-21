@@ -2,8 +2,8 @@ import type * as Effect from 'effect/Effect'
 import type * as Scope from 'effect/Scope'
 import * as Layer from 'effect/Layer'
 
+import type { Requirements } from '../effect/implement.ts'
 import type {
-  Requirements,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'

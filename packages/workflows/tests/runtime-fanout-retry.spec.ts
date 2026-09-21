@@ -2,12 +2,15 @@ import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineWorkflow,
+  implementWorkflow,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   memberChildKey,
-  runExecutionWorker,
-  runWorkflowWorker,
   startWorkflowRun,
 } from '../src/runtime/index.ts'
 import {

@@ -3,20 +3,21 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  createHandlerRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+  runExecutionWorker,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
 import {
+  createHandlerRunner,
   type AttemptExecutor,
-  createHandlerRuntime,
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
   type RunCoordinationExecutor,
-  runExecutionWorker,
   runTaskAttempt,
-  runWorkflowWorker,
   startTaskRun,
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
@@ -77,7 +78,8 @@ describe('workflow worker runtime', () => {
       attemptExecutor: runtime.attemptExecutor,
       tasks: [implementation],
       workerId: 'task-worker-1',
-      handlers: createHandlerRuntime(createTestContext()),
+      handlers: createHandlerRunner(),
+      env: createHandlerRuntime(createTestContext()),
       claimed: claimed!,
     })
 
@@ -234,7 +236,8 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...completionMarker,
-      handlers: createHandlerRuntime(context),
+      handlers: createHandlerRunner(),
+      env: createHandlerRuntime(context),
       tasks: [completionImplementation],
       workerId: 'task-worker-1',
       claimed: completionClaimed!,
@@ -282,7 +285,8 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...retryMarker,
-      handlers: createHandlerRuntime(context),
+      handlers: createHandlerRunner(),
+      env: createHandlerRuntime(context),
       tasks: [retryImplementation],
       workerId: 'task-worker-1',
       claimed: retryClaimed!,
@@ -348,7 +352,8 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...reconcileMarker,
-      handlers: createHandlerRuntime(context),
+      handlers: createHandlerRunner(),
+      env: createHandlerRuntime(context),
       tasks: [reconcileTaskImplementation],
       workerId: 'task-worker-1',
       claimed: reconcileClaimed!,
@@ -419,7 +424,8 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      handlers: createHandlerRuntime(context),
+      handlers: createHandlerRunner(),
+      env: createHandlerRuntime(context),
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,

@@ -8,6 +8,11 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
+    "./effect": {
+      "types": "./src/effect/index.ts",
+      "import": "./dist/effect/index.js",
+      "module-sync": "./dist/effect/index.js"
+    },
     "./runtime": {
       "types": "./src/runtime/index.ts",
       "import": "./dist/runtime/index.js",
@@ -55,6 +60,11 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./effect": {
+        "types": "./dist/effect/index.d.ts",
+        "import": "./dist/effect/index.js",
+        "module-sync": "./dist/effect/index.js"
       },
       "./runtime": {
         "types": "./dist/runtime/index.d.ts",
@@ -113,6 +123,9 @@
   },
   "peerDependenciesMeta": {
     "drizzle-orm": {
+      "optional": true
+    },
+    "effect": {
       "optional": true
     }
   },

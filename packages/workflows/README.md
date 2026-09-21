@@ -4,7 +4,8 @@ Typed workflow and task primitives for Neemata.
 
 ## Imports
 
-Declaration and implementation APIs stay dependency-light:
+The core is Effect-free: definitions take codecs, handlers return values or
+Promises, and the worker passes them one `env` value.
 
 ```ts
 import {
@@ -14,6 +15,14 @@ import {
   implementWorkflow,
 } from '@nmtjs/workflows'
 ```
+
+`@nmtjs/workflows/effect` exports the same four functions for Effect
+applications: definitions take `effect/Schema` schemas, and handlers return
+Effects whose services come from the worker. It needs the optional `effect` peer,
+pinned to `4.0.0-rc.116`, as does the Effect-based `@nmtjs/workflows/neem`
+integration. Applications and the package must use this exact version during the
+release-candidate period; only stable Effect modules are imported. Definitions
+and implementations from either entry point are interchangeable everywhere else.
 
 Postgres runtime code lives behind explicit subpaths:
 
@@ -27,14 +36,52 @@ import {
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
 
-## Schema codecs
+## Codecs, handlers and env
 
-Workflow contracts use `effect/Schema`, pinned to `4.0.0-rc.116`. Applications and
-`@nmtjs/workflows` must use this exact version during the release-candidate period.
-The package imports only stable Effect modules. Task/activity handlers and workflow
-`finish` callbacks return Effects. Their services come from the worker's Layer.
+A codec is the durable boundary of a value. Both directions are synchronous and
+throw on a value they do not accept; `Encoded` must be JSON.
 
 ```ts
+import type { WorkflowCodec } from '@nmtjs/workflows'
+
+const date: WorkflowCodec<Date, string> = {
+  decode: (stored) => new Date(String(stored)),
+  encode: (value) => value.toISOString(),
+}
+
+const normalizeDate = defineTask({
+  name: 'normalize-date',
+  input: date,
+  output: date,
+})
+
+const implementation = implementTask(normalizeDate, {
+  handler: async (value, lifecycle, env: { clock: Clock }) =>
+    env.clock.round(value),
+})
+
+await runExecutionWorker({
+  ...runtime,
+  env: { clock },
+  workflows: [],
+  tasks: [implementation],
+  workerId: 'worker-1',
+})
+```
+
+Dependencies are that one `env` value. The engine neither builds nor disposes
+it: its owner creates it before starting the worker and disposes it afterwards.
+The worker input requires an `env` that satisfies every registered handler at
+once; handlers that ignore it require none. Workflow `finish` receives
+`(outputs, workflowInput, lifecycle, env)`. `createContract` builds the
+definition functions for another schema library from its conversion to codecs.
+
+## Effect schemas
+
+With `@nmtjs/workflows/effect`, contracts use `effect/Schema`:
+
+```ts
+import { defineTask, implementTask } from '@nmtjs/workflows/effect'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
@@ -49,11 +96,14 @@ const implementation = implementTask(normalizeDate, {
 })
 ```
 
+Definitions store the schema's codec (`codec(schema)`), so a schema cannot be read
+back from a definition; compose schemas before defining.
+
 Every typed programmatic API takes and returns decoded **Type**: `client.start`
 input and its returned run input/output, task/activity handlers, workflow finish,
 input mappers, map items and per-item inputs, code-defined schedule inputs, and
-metadata callbacks. The engine validates and encodes once with `Schema.toCodecJson`
-when writing storage/commands/child payloads, and decodes when reading them.
+metadata callbacks. The engine encodes once with the definition's codec (for an
+Effect schema, its `Schema.toCodecJson` form) when writing storage/commands/child payloads, and decodes when reading them.
 Restart decodes the stored input and calls `start(Type)`. Retry/restart eligibility
 is unchanged. Untyped `get`, `list`, `listSummaries`, history and inspector reads
 expose stored JSON without definitions. Raw JSON callers decode explicitly with their authored input schema, for example
@@ -71,8 +121,8 @@ The undefined-to-null encoding also applies inside structs. For example,
 `"a": null`; an absent `a` key remains absent. Decoding restores the supplied
 undefined value, while SQL/history readers see null.
 
-Codecs must be synchronous, require no Effect services, and support JSON encoding.
-Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
+Effect schemas must be synchronous, require no Effect services, and support JSON
+encoding. Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
 JSON derivation support is checked when actual values are encoded, not at definition
 or worker registration. For example, `Schema.instanceOf(URL)` alone accepts a URL
 at the authored boundary but cannot persist it. Test custom codecs with representative
@@ -93,7 +143,8 @@ it. This slice adds no format marker, history restriction, or retry/restart ban.
 
 ## Effect execution and services
 
-Use `Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
+This section describes `@nmtjs/workflows/effect` and the Neem integration. Use
+`Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
 handlers and workflow `finish`. Dependency dictionaries, core Containers, plugins,
 and the old execution environment are removed. Resolve services by yielding a
 `Context.Service` inside an Effect. Callback signatures no longer have a `ctx`
@@ -161,8 +212,11 @@ to distinguish cancellation, timeout, shutdown, or lease loss; the signal provid
 by `Effect.promise` reflects fiber interruption without that engine classification.
 Prefer native Effect interruption and connect cancellable Promise APIs to a signal.
 
-The engine runs a handler with `runPromiseExitWith` using the worker Context and
-its AbortSignal. Single failures keep the existing StoredError representation;
+Effect handlers receive a `HandlerRuntime` as their env: it runs a handler with
+`runPromiseExitWith` using the worker Context and its AbortSignal. The standalone
+Effect worker functions build it from `context`; a supervisor that drains handlers
+itself passes `env: createHandlerRuntime(context)` and a shared
+`handlers: createHandlerRunner(...)` to the core worker functions. Single failures keep the existing StoredError representation;
 mixed Causes retain their rendered failure and finalizer information. There are
 no persisted typed-error codecs yet. Workflow finish failures retain the existing
 terminal-run behavior, rather than gaining an activity retry policy.

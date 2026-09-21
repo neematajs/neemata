@@ -17,10 +17,11 @@ import type {
   WorkflowsConfig,
   WorkflowsWorkerData,
 } from './runtime.ts'
+import { createHandlerRuntime, type HandlerRuntime } from '../effect/handler.ts'
 import {
-  createHandlerRuntime,
+  createHandlerRunner,
   WorkflowCleanupTimeoutError,
-  type HandlerRuntime,
+  type HandlerRunner,
 } from '../runtime/handler.ts'
 import { serveExecutionWorker, serveWorkflowWorker } from '../runtime/worker.ts'
 import { resolveWorkflowsConfig } from './runtime.ts'
@@ -68,7 +69,8 @@ export function defineWorkflowsWorker<
           pool?.cleanupTimeoutMs ?? config.workers.coordinator.cleanupTimeoutMs
         const main = Effect.gen(function* () {
           const context = yield* Effect.context<any>()
-          const handlers = createHandlerRuntime(context, {
+          const env = createHandlerRuntime(context)
+          const handlers = createHandlerRunner({
             cleanupTimeoutMs: timeoutMs,
             onFatal: fatal,
           })
@@ -96,6 +98,7 @@ export function defineWorkflowsWorker<
             config,
             executionPool: pool,
             handlers,
+            env,
             workerId: ctx.name,
             signal: abort.signal,
             onError: (error) =>
@@ -112,7 +115,7 @@ export function defineWorkflowsWorker<
                 timeoutMs,
               )
               // Stop claims and abort attempts, then join engine work before
-              // draining fibers: an execution awaiting storage may register one.
+              // draining handlers: an execution awaiting storage may register one.
               await loop.catch(() => {})
               await handlers.drain()
             }),
@@ -198,7 +201,8 @@ async function runRoleLoop(input: {
     any
   >
   readonly executionPool?: ResolvedExecutionWorkerPool
-  readonly handlers: HandlerRuntime
+  readonly handlers: HandlerRunner
+  readonly env: HandlerRuntime<any>
   readonly workerId: string
   readonly signal: AbortSignal
   readonly onError: (error: unknown) => void
@@ -209,6 +213,7 @@ async function runRoleLoop(input: {
       await serveWorkflowWorker({
         ...input.runtime,
         handlers: input.handlers,
+        env: input.env,
         workflows: input.config.workflows,
         workerId: input.workerId,
         concurrency: input.config.workers.coordinator.concurrency,
@@ -225,6 +230,7 @@ async function runRoleLoop(input: {
       await serveExecutionWorker({
         ...input.runtime,
         handlers: input.handlers,
+        env: input.env,
         workflows: input.config.workflows,
         tasks: input.config.tasks,
         activityNames: input.executionPool!.activityNames,

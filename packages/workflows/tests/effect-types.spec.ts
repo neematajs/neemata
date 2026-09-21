@@ -5,16 +5,19 @@ import * as Schema from 'effect/Schema'
 import { expect, expectTypeOf, it } from 'vitest'
 
 import {
+  createHandlerRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+  runExecutionWorker,
+  type Requirements,
+} from '../src/effect/index.ts'
 import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
 import {
-  createHandlerRuntime,
+  createHandlerRunner,
   createInMemoryWorkflowRuntime,
-  runExecutionWorker,
+  runExecutionWorker as runStoredExecutionWorker,
 } from '../src/runtime/index.ts'
 
 class Service extends Context.Service<Service, { value: number }>()(
@@ -111,15 +114,9 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Service.pipe(Effect.map(({ value }) => value)) })
     .finish(() => Effect.succeed(1))
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof direct.finish>>
-  >().toEqualTypeOf<Service>()
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof branch.finish>>
-  >().toEqualTypeOf<Service>()
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof parallel.finish>>
-  >().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof direct>>().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof branch>>().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof parallel>>().toEqualTypeOf<Service>()
   // @ts-expect-error Direct activity requirements reach the worker boundary.
   defineWorkflows({ runtime, workflows: () => [direct] })
   // @ts-expect-error Branch activity requirements reach the worker boundary.
@@ -145,28 +142,27 @@ it('requires a standalone worker context to cover its handlers', () => {
   const context = Context.make(Service, { value: 1 })
   // Thunks: only the call's types matter, the worker must not run.
   void (() => runExecutionWorker({ ...worker, context }))
+  // A supervisor that drains handlers itself passes the runtime as their env.
+  const handlers = createHandlerRunner()
   void (() =>
-    runExecutionWorker({
+    runStoredExecutionWorker({
       ...worker,
-      handlers: createHandlerRuntime(context),
+      handlers,
+      env: createHandlerRuntime(context),
     }))
   // Built separately, so the call cannot influence what the runtime provides.
   const insufficient = createHandlerRuntime(Context.empty())
   void (() =>
-    runExecutionWorker({
+    runStoredExecutionWorker({
       ...worker,
+      handlers,
       // @ts-expect-error A runtime built from the empty context cannot either.
-      handlers: insufficient,
+      env: insufficient,
     }))
+  // @ts-expect-error Handlers that require services need an env.
+  void (() => runStoredExecutionWorker({ ...worker, handlers }))
   // @ts-expect-error The empty context cannot provide Service.
   void (() => runExecutionWorker({ ...worker, context: Context.empty() }))
-  void (() =>
-    runExecutionWorker({
-      ...worker,
-      handlers: createHandlerRuntime(context),
-      // @ts-expect-error A shared runtime already owns its context and options.
-      context,
-    }))
 })
 
 it('supports scoped handlers and adapter factories with services', () => {

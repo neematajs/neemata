@@ -1,7 +1,11 @@
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementWorkflow,
+} from '../src/effect/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow orchestration nodes', () => {

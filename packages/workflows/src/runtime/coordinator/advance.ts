@@ -29,7 +29,13 @@ export async function advanceWorkflowRun(
     let output: unknown
     try {
       output = await input.handlers.run(
-        () => input.workflow.finish(input.outputs, input.workflowInput),
+        () =>
+          input.workflow.finish(
+            input.outputs,
+            input.workflowInput,
+            { signal: input.signal },
+            input.env,
+          ),
         input.signal,
       )
       input.signal.throwIfAborted()

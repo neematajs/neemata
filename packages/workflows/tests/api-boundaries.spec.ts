@@ -1,11 +1,15 @@
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import * as workflows from '../src/index.ts'
+import type { EffectSchema } from '../src/effect/index.ts'
+import type * as workflows from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementTask,
+  implementWorkflow,
+} from '../src/effect/index.ts'
 import { fromPromise } from './support/effect.ts'
-
-const { defineTask, defineWorkflow, implementTask, implementWorkflow } =
-  workflows
 
 describe('workflow API boundaries', () => {
   const prefix = 'prefix'
@@ -357,9 +361,9 @@ describe('workflow API boundaries', () => {
 
     expectTypeOf<
       Schema.Codec<string, string, { readonly service: 'decode' }>
-    >().not.toExtend<workflows.Schema>()
+    >().not.toExtend<EffectSchema>()
     expectTypeOf<
       Schema.Codec<string, string, never, { readonly service: 'encode' }>
-    >().not.toExtend<workflows.Schema>()
+    >().not.toExtend<EffectSchema>()
   })
 })

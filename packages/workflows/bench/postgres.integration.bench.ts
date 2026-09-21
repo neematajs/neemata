@@ -3,7 +3,7 @@ import { bench, describe } from 'vitest'
 
 import type { WorkflowPostgresConnection } from '../src/adapters/postgres.ts'
 import type { WorkflowRuntimeClient } from '../src/runtime/index.ts'
-import { defineWorkflow } from '../src/index.ts'
+import { defineWorkflow } from '../src/effect/index.ts'
 import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 import {
   createPostgresWorkflowHarness,

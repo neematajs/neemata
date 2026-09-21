@@ -2,12 +2,12 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
-  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+} from '../src/effect/index.ts'
+import { defineSchedule } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,

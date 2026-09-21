@@ -16,7 +16,7 @@ import type {
   RunFamilyEntry,
   RunSummary,
 } from '../src/runtime/store.ts'
-import { defineTask, defineWorkflow } from '../src/index.ts'
+import { defineTask, defineWorkflow } from '../src/effect/index.ts'
 import {
   nodeUnits,
   serializeWorkflowCatalog,

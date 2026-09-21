@@ -3,7 +3,11 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementWorkflow,
+} from '../src/effect/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow implementation chain', () => {
@@ -276,22 +280,25 @@ describe('workflow implementation chain', () => {
   })
 
   it('infers branch output union when no common output is declared', () => {
+    // Definitions hold codecs, so the union below composes the schemas.
+    const outpatientOutput = Schema.Struct({
+      kind: Schema.Literal('outpatient'),
+      text: Schema.String,
+    })
+    const obstetricsOutput = Schema.Struct({
+      kind: Schema.Literal('obstetrics'),
+      obstetricsData: Schema.String,
+    })
     const outpatientWorkflow = defineWorkflow({
       name: 'outpatient-content',
       input: Schema.Struct({ scenario: Schema.String }),
-      output: Schema.Struct({
-        kind: Schema.Literal('outpatient'),
-        text: Schema.String,
-      }),
+      output: outpatientOutput,
     }).build()
 
     const obstetricsWorkflow = defineWorkflow({
       name: 'obstetrics-content',
       input: Schema.Struct({ scenario: Schema.String }),
-      output: Schema.Struct({
-        kind: Schema.Literal('obstetrics'),
-        obstetricsData: Schema.String,
-      }),
+      output: obstetricsOutput,
     }).build()
 
     const branchingWorkflow = defineWorkflow({
@@ -303,10 +310,7 @@ describe('workflow implementation chain', () => {
         ]),
         scenario: Schema.String,
       }),
-      output: Schema.Union([
-        outpatientWorkflow.output!,
-        obstetricsWorkflow.output!,
-      ]),
+      output: Schema.Union([outpatientOutput, obstetricsOutput]),
     })
       .branch('content', {
         cases: (helpers) => ({

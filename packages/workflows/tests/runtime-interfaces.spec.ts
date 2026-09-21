@@ -9,6 +9,7 @@ import type {
   RunKind,
   RunnableRun,
   SchemaOutput,
+  WorkflowCodec,
   TaskInput,
   TaskRun,
   WorkflowBuilder,
@@ -21,7 +22,7 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+} from '../src/effect/index.ts'
 import {
   type AttemptCommand,
   type AttemptExecutor,
@@ -233,12 +234,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<
       Awaited<ReturnType<WorkflowRuntimeClient['restart']>>
     >().toEqualTypeOf<RunnableRun>()
-    expectTypeOf<
-      SchemaOutput<typeof Schema.DateFromString>
-    >().toEqualTypeOf<Date>()
-    expectTypeOf<
-      SchemaOutput<typeof Schema.DateFromString>
-    >().toEqualTypeOf<Date>()
+    expectTypeOf<SchemaOutput<WorkflowCodec<Date>>>().toEqualTypeOf<Date>()
     expectTypeOf<WorkflowRuntimeClient['start']>().toExtend<{
       <Workflow extends AnyWorkflowDefinition>(
         workflow: Workflow,

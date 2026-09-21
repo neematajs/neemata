@@ -1,5 +1,3 @@
-import type * as EffectSchema from 'effect/Schema'
-
 export type MaybePromise<T> = T | Promise<T>
 
 export type DurationString = `${number}${'ms' | 's' | 'm' | 'h' | 'd'}`
@@ -67,10 +65,51 @@ export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
 
-/** Codecs must run synchronously and require no services at durable boundaries. */
-export type Schema = EffectSchema.Codec<unknown, unknown>
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly Json[]
+  | { readonly [key: string]: Json }
 
-export type SchemaOutput<T extends Schema> = T['Type']
+/**
+ * The durable boundary of a value: handlers, clients and results see `Type`,
+ * stores see `Encoded`. Both directions run synchronously, require no services
+ * and throw on a value they do not accept.
+ */
+export type WorkflowCodec<Type = unknown, Encoded extends Json = Json> = {
+  readonly decode: (stored: unknown) => Type
+  readonly encode: (value: Type) => Encoded
+}
+
+export type Schema = WorkflowCodec<any, any>
+
+export type SchemaOutput<T extends Schema> = ReturnType<T['decode']>
+
+/**
+ * A type-level function from the schemas a definition API accepts to the value
+ * type each one describes. It lets an adapter reuse the builders below with its
+ * own schema library while definitions always store a WorkflowCodec.
+ */
+export interface SchemaKind {
+  readonly schema: unknown
+  readonly bound: unknown
+  readonly type: unknown
+}
+
+export interface CodecKind extends SchemaKind {
+  readonly bound: Schema
+  readonly type: this['schema'] extends Schema
+    ? SchemaOutput<this['schema']>
+    : never
+}
+
+export type SchemaBound<K extends SchemaKind> = K['bound']
+
+export type SchemaType<K extends SchemaKind, S> = (K & {
+  readonly schema: S
+})['type']
 
 export type TaskDefinition<
   Name extends string = string,

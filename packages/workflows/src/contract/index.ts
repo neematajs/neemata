@@ -15,8 +15,11 @@ import type {
   RunnableDefinition,
   RunnableInput,
   ScheduleDefinition,
+  CodecKind,
   Schema,
-  SchemaOutput,
+  SchemaBound,
+  SchemaKind,
+  SchemaType,
   TaskDefinition,
   TaskInput,
   TaskOutput,
@@ -45,16 +48,21 @@ type BranchCaseMap = Record<string, BranchCaseDefinition>
 
 type LeafCaseMap = Record<string, BranchCaseDefinition>
 
-type BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema> = {
+type BranchActivityCaseOptions<
+  K extends SchemaKind,
+  BranchOutput,
+  InputSchema,
+  OutputSchema,
+> = {
   input: InputSchema
   output: OutputSchema
   title?: string
   description?: string
   retry?: RetryPolicy
   timeout?: DurationString
-} & (OutputSchema extends Schema
+} & (OutputSchema extends SchemaBound<K>
   ? OutputMatches<
-      SchemaOutput<OutputSchema>,
+      SchemaType<K, OutputSchema>,
       BranchOutput,
       'activity case output does not satisfy branch output'
     >
@@ -79,10 +87,10 @@ type OutputMatches<
   ? unknown
   : OutputMismatch<Message, Expected, Received>
 
-export type BranchCaseHelpers = {
+export type BranchCaseHelpers<K extends SchemaKind = CodecKind> = {
   activity<
-    InputSchema extends Schema,
-    OutputSchema extends Schema = Schema,
+    InputSchema extends SchemaBound<K>,
+    OutputSchema extends SchemaBound<K> = SchemaBound<K>,
   >(options: {
     input: InputSchema
     output: OutputSchema
@@ -92,8 +100,8 @@ export type BranchCaseHelpers = {
     timeout?: DurationString
   }): BranchCaseDefinition<
     'activity',
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
+    SchemaType<K, InputSchema>,
+    SchemaType<K, OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task,
@@ -119,13 +127,21 @@ export type BranchCaseHelpers = {
   >
 }
 
-export type ConvergedBranchCaseHelpers<BranchOutput> = {
-  activity<InputSchema extends Schema, OutputSchema extends Schema = Schema>(
-    options: BranchActivityCaseOptions<BranchOutput, InputSchema, OutputSchema>,
+export type ConvergedBranchCaseHelpers<K extends SchemaKind, BranchOutput> = {
+  activity<
+    InputSchema extends SchemaBound<K>,
+    OutputSchema extends SchemaBound<K> = SchemaBound<K>,
+  >(
+    options: BranchActivityCaseOptions<
+      K,
+      BranchOutput,
+      InputSchema,
+      OutputSchema
+    >,
   ): BranchCaseDefinition<
     'activity',
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
+    SchemaType<K, InputSchema>,
+    SchemaType<K, OutputSchema>
   >
   task<Task extends AnyTaskDefinition>(
     task: Task &
@@ -166,6 +182,7 @@ export type WorkflowBuilder<
   Input = unknown,
   Nodes extends readonly WorkflowNode[] = [],
   DeclaredOutput = NoDeclaredOutput,
+  K extends SchemaKind = CodecKind,
 > = {
   readonly name: Name
   readonly input: Schema
@@ -174,8 +191,8 @@ export type WorkflowBuilder<
 
   activity<
     NodeName extends string,
-    InputSchema extends Schema,
-    OutputSchema extends Schema,
+    InputSchema extends SchemaBound<K>,
+    OutputSchema extends SchemaBound<K>,
   >(
     name: AvailableNodeName<NodeName>,
     options: {
@@ -193,11 +210,12 @@ export type WorkflowBuilder<
       ...Nodes,
       WorkflowActivityNode<
         NodeName,
-        SchemaOutput<InputSchema>,
-        SchemaOutput<OutputSchema>
+        SchemaType<K, InputSchema>,
+        SchemaType<K, OutputSchema>
       >,
     ],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   task<NodeName extends string, Task extends AnyTaskDefinition>(
@@ -213,7 +231,8 @@ export type WorkflowBuilder<
     Name,
     Input,
     [...Nodes, WorkflowTaskNode<NodeName, Task>],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   workflow<NodeName extends string, Workflow extends AnyWorkflowDefinition>(
@@ -228,12 +247,13 @@ export type WorkflowBuilder<
     Name,
     Input,
     [...Nodes, WorkflowChildWorkflowNode<NodeName, Workflow>],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   branch<
     NodeName extends string,
-    OutputSchema extends Schema,
+    OutputSchema extends SchemaBound<K>,
     Cases extends BranchCaseMap,
   >(
     name: AvailableNodeName<NodeName>,
@@ -242,14 +262,18 @@ export type WorkflowBuilder<
       title?: string
       description?: string
       cases: (
-        helpers: ConvergedBranchCaseHelpers<SchemaOutput<OutputSchema>>,
+        helpers: ConvergedBranchCaseHelpers<K, SchemaType<K, OutputSchema>>,
       ) => Cases
     },
   ): WorkflowBuilder<
     Name,
     Input,
-    [...Nodes, WorkflowBranchNode<NodeName, Cases, SchemaOutput<OutputSchema>>],
-    DeclaredOutput
+    [
+      ...Nodes,
+      WorkflowBranchNode<NodeName, Cases, SchemaType<K, OutputSchema>>,
+    ],
+    DeclaredOutput,
+    K
   >
 
   branch<NodeName extends string, Cases extends LeafCaseMap>(
@@ -257,7 +281,7 @@ export type WorkflowBuilder<
     options: {
       title?: string
       description?: string
-      cases: (helpers: BranchCaseHelpers) => Cases
+      cases: (helpers: BranchCaseHelpers<K>) => Cases
     },
   ): WorkflowBuilder<
     Name,
@@ -266,12 +290,13 @@ export type WorkflowBuilder<
       ...Nodes,
       WorkflowBranchNode<NodeName, Cases, BranchCaseOutputUnion<Cases>>,
     ],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   parallel<NodeName extends string, Cases extends LeafCaseMap>(
     name: AvailableNodeName<NodeName>,
-    cases: (helpers: BranchCaseHelpers) => Cases,
+    cases: (helpers: BranchCaseHelpers<K>) => Cases,
     options?: {
       title?: string
       description?: string
@@ -280,13 +305,14 @@ export type WorkflowBuilder<
     Name,
     Input,
     [...Nodes, WorkflowParallelNode<NodeName, Cases, BranchCaseOutputs<Cases>>],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   mapTask<
     NodeName extends string,
     Task extends AnyTaskDefinition,
-    ItemSchema extends Schema,
+    ItemSchema extends SchemaBound<K>,
   >(
     name: AvailableNodeName<NodeName>,
     task: Task,
@@ -301,14 +327,15 @@ export type WorkflowBuilder<
   ): WorkflowBuilder<
     Name,
     Input,
-    [...Nodes, WorkflowMapTaskNode<NodeName, Task, SchemaOutput<ItemSchema>>],
-    DeclaredOutput
+    [...Nodes, WorkflowMapTaskNode<NodeName, Task, SchemaType<K, ItemSchema>>],
+    DeclaredOutput,
+    K
   >
 
   mapWorkflow<
     NodeName extends string,
     Workflow extends AnyWorkflowDefinition,
-    ItemSchema extends Schema,
+    ItemSchema extends SchemaBound<K>,
   >(
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
@@ -324,9 +351,10 @@ export type WorkflowBuilder<
     Input,
     [
       ...Nodes,
-      WorkflowMapWorkflowNode<NodeName, Workflow, SchemaOutput<ItemSchema>>,
+      WorkflowMapWorkflowNode<NodeName, Workflow, SchemaType<K, ItemSchema>>,
     ],
-    DeclaredOutput
+    DeclaredOutput,
+    K
   >
 
   build(): WorkflowDefinition<
@@ -338,9 +366,10 @@ export type WorkflowBuilder<
 }
 
 export type TaskOptions<
+  K extends SchemaKind,
   Name extends string,
-  InputSchema extends Schema,
-  OutputSchema extends Schema,
+  InputSchema extends SchemaBound<K>,
+  OutputSchema extends SchemaBound<K>,
 > = {
   name: Name
   title?: string
@@ -349,29 +378,28 @@ export type TaskOptions<
   output: OutputSchema
   retry?: RetryPolicy
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaOutput<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaOutput<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaOutput<InputSchema>>
+  tags?: RunTagsBuilder<SchemaType<K, InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaType<K, InputSchema>>
+  unique?: RunUniqueBuilder<SchemaType<K, InputSchema>>
 }
 
-export function defineTask<
+export type DefineTask<K extends SchemaKind> = <
   Name extends string,
-  InputSchema extends Schema,
-  OutputSchema extends Schema,
+  InputSchema extends SchemaBound<K>,
+  OutputSchema extends SchemaBound<K>,
 >(
-  options: TaskOptions<Name, InputSchema, OutputSchema>,
-): TaskDefinition<Name, SchemaOutput<InputSchema>, SchemaOutput<OutputSchema>> {
-  return Object.freeze({ kind: 'task', ...options }) as TaskDefinition<
-    Name,
-    SchemaOutput<InputSchema>,
-    SchemaOutput<OutputSchema>
-  >
-}
+  options: TaskOptions<K, Name, InputSchema, OutputSchema>,
+) => TaskDefinition<
+  Name,
+  SchemaType<K, InputSchema>,
+  SchemaType<K, OutputSchema>
+>
 
 export type WorkflowOptions<
+  K extends SchemaKind,
   Name extends string,
-  InputSchema extends Schema,
-  OutputSchema extends Schema | undefined,
+  InputSchema extends SchemaBound<K>,
+  OutputSchema extends SchemaBound<K> | undefined,
 > = {
   name: Name
   title?: string
@@ -381,9 +409,9 @@ export type WorkflowOptions<
   retention?: DurationString
   /** Backstop: fail the run (and cancel its children) when it exceeds this age. */
   timeout?: DurationString
-  tags?: RunTagsBuilder<SchemaOutput<InputSchema>>
-  idempotency?: RunIdempotencyBuilder<SchemaOutput<InputSchema>>
-  unique?: RunUniqueBuilder<SchemaOutput<InputSchema>>
+  tags?: RunTagsBuilder<SchemaType<K, InputSchema>>
+  idempotency?: RunIdempotencyBuilder<SchemaType<K, InputSchema>>
+  unique?: RunUniqueBuilder<SchemaType<K, InputSchema>>
 }
 
 export type ScheduleOptions<
@@ -421,10 +449,23 @@ function assertMapConcurrency(options: { readonly concurrency?: number }) {
   }
 }
 
-function createBranchCaseHelpers(): BranchCaseHelpers {
+type ToCodec = (schema: any) => Schema
+
+const schemaKeys = ['input', 'output', 'item'] as const
+
+// Definitions always store codecs, whichever schema library declared them.
+function withCodecs(options: object, toCodec: ToCodec): any {
+  const result: Record<string, unknown> = { ...options }
+  for (const key of schemaKeys) {
+    if (result[key] !== undefined) result[key] = toCodec(result[key])
+  }
+  return result
+}
+
+function createBranchCaseHelpers(toCodec: ToCodec): BranchCaseHelpers {
   return Object.freeze({
     activity: (options: Parameters<BranchCaseHelpers['activity']>[0]) =>
-      Object.freeze({ kind: 'activity', ...options }),
+      Object.freeze({ kind: 'activity', ...withCodecs(options, toCodec) }),
     task: (
       task: AnyTaskDefinition,
       options?: Parameters<BranchCaseHelpers['task']>[1],
@@ -438,7 +479,8 @@ function createBranchCaseHelpers(): BranchCaseHelpers {
 
 class WorkflowDraftBuilder<Name extends string> {
   constructor(
-    readonly options: WorkflowOptions<Name, any, any>,
+    readonly options: WorkflowOptions<CodecKind, Name, any, any>,
+    readonly toCodec: ToCodec,
     readonly nodes: readonly WorkflowNode[] = [],
   ) {}
 
@@ -456,7 +498,13 @@ class WorkflowDraftBuilder<Name extends string> {
 
   activity(name: string, options: any) {
     assertNodeName(name, this.nodes)
-    return this.withNode(Object.freeze({ kind: 'activity', name, ...options }))
+    return this.withNode(
+      Object.freeze({
+        kind: 'activity',
+        name,
+        ...withCodecs(options, this.toCodec),
+      }),
+    )
   }
 
   task(name: string, task: AnyTaskDefinition, options?: any) {
@@ -483,8 +531,13 @@ class WorkflowDraftBuilder<Name extends string> {
         ...(options.description === undefined
           ? {}
           : { description: options.description }),
-        output: options.output,
-        cases: Object.freeze(options.cases(createBranchCaseHelpers())),
+        output:
+          options.output === undefined
+            ? undefined
+            : this.toCodec(options.output),
+        cases: Object.freeze(
+          options.cases(createBranchCaseHelpers(this.toCodec)),
+        ),
       }),
     )
   }
@@ -499,7 +552,9 @@ class WorkflowDraftBuilder<Name extends string> {
         ...(options?.description === undefined
           ? {}
           : { description: options.description }),
-        cases: Object.freeze(casesFactory(createBranchCaseHelpers())),
+        cases: Object.freeze(
+          casesFactory(createBranchCaseHelpers(this.toCodec)),
+        ),
       }),
     )
   }
@@ -508,7 +563,12 @@ class WorkflowDraftBuilder<Name extends string> {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
     return this.withNode(
-      Object.freeze({ kind: 'mapTask', name, task, ...options }),
+      Object.freeze({
+        kind: 'mapTask',
+        name,
+        task,
+        ...withCodecs(options, this.toCodec),
+      }),
     )
   }
 
@@ -516,7 +576,12 @@ class WorkflowDraftBuilder<Name extends string> {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
     return this.withNode(
-      Object.freeze({ kind: 'mapWorkflow', name, workflow, ...options }),
+      Object.freeze({
+        kind: 'mapWorkflow',
+        name,
+        workflow,
+        ...withCodecs(options, this.toCodec),
+      }),
     )
   }
 
@@ -542,24 +607,47 @@ class WorkflowDraftBuilder<Name extends string> {
   }
 
   private withNode(node: WorkflowNode) {
-    return new WorkflowDraftBuilder(this.options, [...this.nodes, node])
+    return new WorkflowDraftBuilder(this.options, this.toCodec, [
+      ...this.nodes,
+      node,
+    ])
   }
 }
 
-export function defineWorkflow<
+export type DefineWorkflow<K extends SchemaKind> = <
   Name extends string,
-  InputSchema extends Schema,
-  OutputSchema extends Schema | undefined = undefined,
+  InputSchema extends SchemaBound<K>,
+  OutputSchema extends SchemaBound<K> | undefined = undefined,
 >(
-  options: WorkflowOptions<Name, InputSchema, OutputSchema>,
-): WorkflowBuilder<
+  options: WorkflowOptions<K, Name, InputSchema, OutputSchema>,
+) => WorkflowBuilder<
   Name,
-  SchemaOutput<InputSchema>,
+  SchemaType<K, InputSchema>,
   [],
-  OutputSchema extends Schema ? SchemaOutput<OutputSchema> : NoDeclaredOutput
-> {
-  return new WorkflowDraftBuilder(options) as any
+  OutputSchema extends SchemaBound<K>
+    ? SchemaType<K, OutputSchema>
+    : NoDeclaredOutput,
+  K
+>
+
+/** Definition builders for a schema library, given its conversion to codecs. */
+export function createContract<K extends SchemaKind>(
+  toCodec: (schema: SchemaBound<K>) => Schema,
+): {
+  readonly defineTask: DefineTask<K>
+  readonly defineWorkflow: DefineWorkflow<K>
+} {
+  return {
+    defineTask: (options) =>
+      Object.freeze({ kind: 'task', ...withCodecs(options, toCodec) }) as any,
+    defineWorkflow: (options) =>
+      new WorkflowDraftBuilder(withCodecs(options, toCodec), toCodec) as any,
+  }
 }
+
+export const { defineTask, defineWorkflow } = createContract<CodecKind>(
+  (codec) => codec,
+)
 
 export function defineSchedule<
   Name extends string,

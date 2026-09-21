@@ -5,7 +5,7 @@ import * as Schema from 'effect/Schema'
 import { expect, it } from 'vitest'
 
 import { spawnNeem, waitFor } from '../../../neem/tests/e2e/support/e2e.ts'
-import { defineTask } from '../../src/index.ts'
+import { defineTask } from '../../src/effect/index.ts'
 import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
 import {
   createPostgresWorkflowHarness,

@@ -1,6 +1,10 @@
 export type {
+  ActivityHandler,
   ActivityImplementation,
   AttemptLifecycle,
+  Env,
+  FinishHandler,
+  TaskHandler,
   TaskImplementation,
   WorkflowImplementer,
   WorkflowImplementationChain,
@@ -13,8 +17,10 @@ export type {
   AnyWorkflowDefinition,
   BranchCaseDefinition,
   CancellationPolicy,
+  CodecKind,
   DurationString,
   IdempotencyKey,
+  Json,
   MapNodeOutput,
   MaybePromise,
   RetryPolicy,
@@ -32,7 +38,10 @@ export type {
   ResolvedRunUnique,
   ScheduleDefinition,
   Schema,
+  SchemaBound,
+  SchemaKind,
   SchemaOutput,
+  SchemaType,
   TaskInput,
   TaskDefinition,
   TaskOutput,
@@ -42,6 +51,7 @@ export type {
   WorkflowActivityNode,
   WorkflowBranchNode,
   WorkflowChildWorkflowNode,
+  WorkflowCodec,
   WorkflowDefinition,
   WorkflowMapTaskNode,
   WorkflowMapWorkflowNode,
@@ -54,7 +64,12 @@ export type {
   WorkflowStatus,
   WorkflowTaskNode,
 } from './types/index.ts'
-export { defineSchedule, defineTask, defineWorkflow } from './contract/index.ts'
+export {
+  createContract,
+  defineSchedule,
+  defineTask,
+  defineWorkflow,
+} from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'
 export {

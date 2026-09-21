@@ -8,11 +8,12 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
-  createWorkflowRuntimeClient,
+  defineWorkflow,
+  implementWorkflow,
   runWorkflowWorker,
-} from '../src/runtime/index.ts'
+} from '../src/effect/index.ts'
+import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 function createTestContext() {

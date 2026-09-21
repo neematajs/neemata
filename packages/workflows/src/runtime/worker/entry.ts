@@ -1,8 +1,5 @@
-import type * as Context from 'effect/Context'
-import type * as Scope from 'effect/Scope'
-
 import type {
-  Requirements,
+  Env,
   TaskImplementation,
   WorkflowImplementation,
 } from '../../implement/index.ts'
@@ -19,9 +16,9 @@ import type {
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
 import {
-  createHandlerRuntime,
-  type HandlerRuntime,
-  type HandlerRuntimeOptions,
+  createHandlerRunner,
+  type HandlerRunner,
+  type HandlerRunnerOptions,
 } from '../handler.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
@@ -68,27 +65,28 @@ type AnyWorkflowImplementation = WorkflowImplementation<
 type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
 /**
- * A standalone worker supplies the services its handlers require. A supervisor
- * that drains handler fibers itself shares its runtime across pools instead.
+ * A standalone worker bounds handler cleanup itself. A supervisor that owns the
+ * env and must drain handlers before disposing it shares its runner instead.
  */
-export type WorkerHandlers<R> =
-  | (HandlerRuntimeOptions & {
-      readonly context: Context.Context<Exclude<R, Scope.Scope>>
-      readonly handlers?: undefined
-    })
-  | { readonly handlers: HandlerRuntime<SharedRequirements<R>> }
+export type WorkerHandlers<E> = WorkerEnv<E> &
+  (
+    | (HandlerRunnerOptions & { readonly handlers?: undefined })
+    | { readonly handlers: HandlerRunner }
+  )
 
-// Implementation lists typed as `any` carry no requirement to check.
-type SharedRequirements<R> = 0 extends 1 & R ? never : Exclude<R, Scope.Scope>
+// Handlers that ignore their env, and lists in the erased form, require none.
+type WorkerEnv<E> = unknown extends E
+  ? { readonly env?: E }
+  : { readonly env: E }
 
-function resolveHandlers(input: WorkerHandlers<any>): HandlerRuntime {
-  return input.handlers ?? createHandlerRuntime(input.context, input)
+function resolveHandlers(input: WorkerHandlers<any>): HandlerRunner {
+  return input.handlers ?? createHandlerRunner(input)
 }
 
 export type RunWorkflowWorkerInput<
   W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
 > = WorkerLoopOptions &
-  WorkerHandlers<Requirements<W>> & {
+  WorkerHandlers<Env<W>> & {
     readonly store: WorkflowStore
     readonly runCoordinationExecutor: RunCoordinationExecutor
     readonly attemptExecutor: AttemptExecutor
@@ -103,7 +101,7 @@ export type RunExecutionWorkerInput<
   W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
   T extends AnyTaskImplementation = AnyTaskImplementation,
 > = WorkerLoopOptions &
-  WorkerHandlers<Requirements<W | T>> & {
+  WorkerHandlers<Env<W | T>> & {
     readonly store: WorkflowStore
     readonly runCoordinationExecutor: RunCoordinationExecutor
     readonly attemptExecutor: AttemptExecutor
@@ -222,7 +220,7 @@ function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
 
 function workflowDriver(
   input: RunWorkflowWorkerInput,
-  handlers: HandlerRuntime,
+  handlers: HandlerRunner,
 ): WorkerDriver<ClaimedCommand> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
@@ -235,7 +233,7 @@ function workflowDriver(
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
     abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
-    // Signal only user Effects; storage operations still finish atomically.
+    // Signal only user handlers; storage operations still finish atomically.
     async execute(claimed, signal) {
       try {
         return await runAtomicContinuation(input, async (scoped) => {
@@ -245,6 +243,7 @@ function workflowDriver(
             runCoordinationExecutor: scoped.runCoordinationExecutor,
             attemptExecutor: scoped.attemptExecutor,
             handlers,
+            env: input.env,
             signal,
             onError: input.onError,
             workflows: input.workflows,
@@ -304,7 +303,7 @@ function executionWorkerOptions(input: RunExecutionWorkerInput) {
 
 function executionDriver(
   input: RunExecutionWorkerInput,
-  handlers: HandlerRuntime,
+  handlers: HandlerRunner,
 ): WorkerDriver<ClaimedAttempt> {
   const workflowNames = input.workflows.map(
     (implementation) => implementation.workflow.name,
