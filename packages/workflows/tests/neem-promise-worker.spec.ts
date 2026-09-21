@@ -1,6 +1,6 @@
 import pino from 'pino'
 import { describe, expect, it, vi } from 'vitest'
-import { z } from 'zod'
+import * as z from 'zod'
 
 import { defineTask, implementTask } from '../src/index.ts'
 import { defineWorkflowsWorker } from '../src/neem/index.ts'
