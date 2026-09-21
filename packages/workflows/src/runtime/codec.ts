@@ -1,9 +1,30 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec'
+
 import type {
   BranchCaseDefinition,
   Json,
   Schema,
   WorkflowNode,
 } from '../types/index.ts'
+
+/** The issues a schema reported for a value crossing the durable boundary. */
+export class WorkflowSchemaError extends Error {
+  constructor(readonly issues: readonly StandardSchemaV1.Issue[]) {
+    super(
+      issues
+        .map((issue) => {
+          const path = (issue.path ?? [])
+            .map((segment) =>
+              typeof segment === 'object' ? segment.key : segment,
+            )
+            .join('.')
+          return path ? `${path}: ${issue.message}` : issue.message
+        })
+        .join('; '),
+    )
+    this.name = 'WorkflowSchemaError'
+  }
+}
 
 function invalid(label: string, cause: unknown): Error {
   return new Error(`Invalid ${label}`, { cause })
@@ -13,13 +34,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// Without a codec nothing can restore a rich value, so it must survive JSON.
+function validate(schema: StandardSchemaV1, value: unknown): unknown {
+  const result = schema['~standard'].validate(value)
+  // Commits and re-entry decode inside synchronous engine sections.
+  if (result instanceof Promise)
+    throw new TypeError('Workflow schemas must validate synchronously')
+  if (result.issues) throw new WorkflowSchemaError(result.issues)
+  return result.value
+}
+
+// No schema library guarantees JSON, and nothing can restore what JSON drops.
+// Undefined properties are the exception: JSON omits them, as readers expect.
 function assertJson(value: unknown, path: string): asserts value is Json {
   if (value === null) return
   if (
     typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
   )
     return
   if (Array.isArray(value)) {
@@ -29,10 +60,14 @@ function assertJson(value: unknown, path: string): asserts value is Json {
   const prototype = isRecord(value) ? Object.getPrototypeOf(value) : undefined
   if (prototype === Object.prototype || prototype === null) {
     for (const [key, member] of Object.entries(value as object))
-      assertJson(member, `${path}.${key}`)
+      if (member !== undefined) assertJson(member, `${path}.${key}`)
     return
   }
   throw new TypeError(`Expected a JSON value at ${path}`)
+}
+
+function decode(schema: Schema, stored: unknown): unknown {
+  return validate('~standard' in schema ? schema : schema.decode, stored)
 }
 
 export function encodeStoredValue(
@@ -42,11 +77,13 @@ export function encodeStoredValue(
 ) {
   try {
     // A workflow with no output schema may finish without a value. All other
-    // untyped outputs must already be JSON; only a codec can restore rich types.
+    // untyped outputs must already be JSON; only a schema can restore rich types.
     if (!schema && value === undefined) return undefined
-    if (schema) return schema.encode(value)
-    assertJson(value, '$')
-    return value
+    const encoded = !schema
+      ? value
+      : validate('~standard' in schema ? schema : schema.encode, value)
+    assertJson(encoded, '$')
+    return encoded
   } catch (error) {
     throw invalid(label, error)
   }
@@ -59,7 +96,7 @@ export function decodeStoredValue(
 ) {
   if (!schema) return value
   try {
-    return schema.decode(value)
+    return decode(schema, value)
   } catch (error) {
     throw invalid(label, error)
   }
@@ -83,7 +120,7 @@ function decodeOutputField(
   key: string,
   target: Record<string, unknown>,
 ) {
-  if (schema) target[key] = schema.decode(owner[key])
+  if (schema) target[key] = decode(schema, owner[key])
   else if (key in owner) target[key] = owner[key]
 }
 
@@ -94,11 +131,11 @@ function decodeAggregate(
 ): unknown {
   switch (node.kind) {
     case 'activity':
-      return node.output.decode(value)
+      return decode(node.output, value)
     case 'task':
-      return node.task.output.decode(value)
+      return decode(node.task.output, value)
     case 'workflow':
-      return node.workflow.output ? node.workflow.output.decode(value) : value
+      return node.workflow.output ? decode(node.workflow.output, value) : value
     case 'branch': {
       const member =
         selectedCase === undefined ? undefined : node.cases[selectedCase]
@@ -109,7 +146,7 @@ function decodeAggregate(
       // Cases may converge on the same Type with different Encoded forms.
       // The selected case owns the stored encoding, not the convergence schema.
       const schema = caseOutput(member)
-      return schema ? schema.decode(value) : value
+      return schema ? decode(schema, value) : value
     }
     case 'parallel': {
       const stored = decodeRecord(value)
@@ -132,7 +169,7 @@ function decodeAggregate(
           if (typeof entry.runId !== 'string')
             throw new TypeError('Expected an item run id')
           const item: Record<string, unknown> = {
-            item: node.item.decode(entry.item),
+            item: decode(node.item, entry.item),
             index: entry.index,
             runId: entry.runId,
           }

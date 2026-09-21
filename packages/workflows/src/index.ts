@@ -69,6 +69,7 @@ export {
   defineSchedule,
   defineTask,
   defineWorkflow,
+  toStoredJsonSchema,
 } from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
 export { implementTask, implementWorkflow } from './implement/index.ts'

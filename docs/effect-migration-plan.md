@@ -747,13 +747,17 @@ on Effect. Slices 4 and 5 had put `effect/Schema` and Effect-returning handlers 
 its public API, which tied the engine and its stored format to the exact Effect RC
 pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
 
-- **Codecs.** Definitions hold a core `WorkflowCodec<Type, Encoded>`: synchronous
-  `decode(stored)`/`encode(value)` that throw on invalid values, `Encoded` being
-  JSON. A Standard Schema pair was rejected because its `validate` may be async and
-  the durable boundary must stay synchronous. The engine walks the parallel and map
-  envelopes itself and calls each member's codec; "Type everywhere" and the
-  absent-versus-null rules are unchanged, and values are still encoded per member,
-  so the stored format is unchanged.
+- **Schemas.** Definitions take Standard Schemas, so they keep a real schema
+  object: types, validation and, through Standard JSON Schema, the JSON Schema of
+  the stored form (`toStoredJsonSchema`) for code generation and tooling. A first
+  cut used opaque `decode`/`encode` functions and lost exactly that. Standard
+  Schema validates in one direction, so a single schema serves values stored as
+  they are, and a transformed value declares a `{ decode, encode }` pair; the
+  definition API rejects a single schema whose output is not assignable to its
+  input. Validation must be synchronous, and the engine asserts that whatever is
+  stored is JSON. The engine walks the parallel and map envelopes itself; "Type
+  everywhere" and the absent-versus-null rules are unchanged, and values are still
+  encoded per member, so the stored format is unchanged.
 - **Dependencies.** No container. Handlers are `(input, lifecycle, env)` and
   `finish` is `(outputs, workflowInput, lifecycle, env)`, returning values or
   Promises. The worker input requires one `env` satisfying every registered
@@ -763,7 +767,8 @@ pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
   and `drain()`.
 - **`@nmtjs/workflows/effect`.** `effect` is now an optional peer. The subpath
   exports `defineTask`/`defineWorkflow` over Effect schemas (`createContract` with
-  the `codec` conversion), `implementTask`/`implementWorkflow` over Effect handlers,
+  the `codec` conversion: the schema's JSON codec and the same codec flipped, via
+  Effect's Standard Schema converters, derived on first use), `implementTask`/`implementWorkflow` over Effect handlers,
   `createHandlerRuntime`, `WorkflowHandlerError`, and worker functions taking a
   `context`. Effect handlers are stored as core handlers whose env is a
   `HandlerRuntime<R>`, so the core's env check is the service-coverage check.
@@ -783,11 +788,12 @@ pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
 
 Existing tests moved to the adapter's imports; only tests of the changed API shapes
 (runner options, shared-runtime typing, schema reuse from a definition) were edited. A new
-Effect-free spec covers hand-written codecs, Promise handlers, the env type check,
+Effect-free spec uses Zod and covers single and paired schemas, the compile-time
+rejection of a lone transforming schema, stored JSON Schema, Promise handlers, the env type check,
 parallel and map decoding, and the cleanup deadline.
 
 Validation (`vp env exec`, unrestricted filesystem): workspace build, typecheck and
-formatting passed; oxlint reports only the existing Deno warning; workflows **572
+formatting passed; oxlint reports only the existing Deno warning; workflows **575
 passed, 2 skipped**; preset **15** unit/type passed; live PostgreSQL 18 integration
 **18 passed**. Neem and the preset e2e suites were not rerun: neither package
 changed.

@@ -1,11 +1,13 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import { z } from 'zod'
 
-import type { Env, WorkflowCodec } from '../src/index.ts'
+import type { Env } from '../src/index.ts'
 import {
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
+  toStoredJsonSchema,
 } from '../src/index.ts'
 import {
   createHandlerRunner,
@@ -16,25 +18,14 @@ import {
   WorkflowCleanupTimeoutError,
 } from '../src/runtime/index.ts'
 
-// The core runs without Effect: hand-written codecs, Promise handlers and an env.
-const text: WorkflowCodec<string, string> = {
-  decode: (stored) => {
-    if (typeof stored !== 'string') throw new TypeError('Expected a string')
-    return stored
-  },
-  encode: (value) => value,
+// The core runs without Effect: any Standard Schema library, Promise handlers
+// and an env. A single schema serves values that are stored as they are; a
+// transformed value declares both directions.
+const date = {
+  decode: z.iso.datetime().transform((stored) => new Date(stored)),
+  encode: z.date().transform((value) => value.toISOString()),
 }
-const date: WorkflowCodec<Date, string> = {
-  decode: (stored) => new Date(text.decode(stored)),
-  encode: (value) => value.toISOString(),
-}
-const dates: WorkflowCodec<readonly Date[], readonly string[]> = {
-  decode: (stored) => {
-    if (!Array.isArray(stored)) throw new TypeError('Expected an array')
-    return stored.map(date.decode)
-  },
-  encode: (value) => value.map(date.encode),
-}
+const dates = { decode: z.array(date.decode), encode: z.array(date.encode) }
 
 type Clock = { readonly clock: { readonly shift: (value: Date) => Date } }
 type Log = { readonly log: string[] }
@@ -133,6 +124,54 @@ describe('workflows core without Effect', () => {
       '2026-01-01T00:00:01.000Z',
     ])
     expect(log).toEqual(['first', 'finish'])
+  })
+
+  it('accepts a single schema only for values stored as they are', async () => {
+    const greeting = z.object({ name: z.string().min(1) })
+    const greet = defineTask({
+      name: 'core.greet',
+      input: greeting,
+      output: z.string(),
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [],
+      tasks: [
+        implementTask(greet, { handler: ({ name }) => `Hello, ${name}` }),
+      ],
+      workerId: 'core',
+    }
+
+    await expect(client.start(greet, { name: '' })).rejects.toThrow(
+      'Invalid task input [core.greet]',
+    )
+    const run = await client.start(greet, { name: 'Ada' })
+    await runExecutionWorker(workers)
+    expect((await client.get(run.id))?.run.output).toBe('Hello, Ada')
+
+    void (() =>
+      defineTask({
+        name: 'core.transformed',
+        // Its Date output cannot be validated as its string input again.
+        // @ts-expect-error A transforming schema must declare both directions.
+        input: date.decode,
+        output: z.string(),
+      }))
+  })
+
+  it('exposes the stored JSON Schema of a definition', () => {
+    const task = defineTask({
+      name: 'core.described',
+      input: z.object({ at: z.string() }),
+      output: date,
+    })
+    expect(toStoredJsonSchema(task.input)).toMatchObject({
+      type: 'object',
+      properties: { at: { type: 'string' } },
+    })
+    expect(toStoredJsonSchema(task.output)).toMatchObject({ type: 'string' })
   })
 
   it('reports a handler that keeps running after its attempt was aborted', async () => {

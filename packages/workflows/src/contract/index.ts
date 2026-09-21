@@ -1,3 +1,4 @@
+import type { StandardJSONSchemaV1 } from '@standard-schema/spec'
 import { CronExpressionParser } from 'cron-parser'
 
 import type {
@@ -18,6 +19,7 @@ import type {
   CodecKind,
   Schema,
   SchemaBound,
+  SchemaCheck,
   SchemaKind,
   SchemaType,
   TaskDefinition,
@@ -54,8 +56,8 @@ type BranchActivityCaseOptions<
   InputSchema,
   OutputSchema,
 > = {
-  input: InputSchema
-  output: OutputSchema
+  input: InputSchema & SchemaCheck<K, InputSchema>
+  output: OutputSchema & SchemaCheck<K, OutputSchema>
   title?: string
   description?: string
   retry?: RetryPolicy
@@ -92,8 +94,8 @@ export type BranchCaseHelpers<K extends SchemaKind = CodecKind> = {
     InputSchema extends SchemaBound<K>,
     OutputSchema extends SchemaBound<K> = SchemaBound<K>,
   >(options: {
-    input: InputSchema
-    output: OutputSchema
+    input: InputSchema & SchemaCheck<K, InputSchema>
+    output: OutputSchema & SchemaCheck<K, OutputSchema>
     title?: string
     description?: string
     retry?: RetryPolicy
@@ -196,8 +198,8 @@ export type WorkflowBuilder<
   >(
     name: AvailableNodeName<NodeName>,
     options: {
-      input: InputSchema
-      output: OutputSchema
+      input: InputSchema & SchemaCheck<K, InputSchema>
+      output: OutputSchema & SchemaCheck<K, OutputSchema>
       title?: string
       description?: string
       retry?: RetryPolicy
@@ -258,7 +260,7 @@ export type WorkflowBuilder<
   >(
     name: AvailableNodeName<NodeName>,
     options: {
-      output: OutputSchema
+      output: OutputSchema & SchemaCheck<K, OutputSchema>
       title?: string
       description?: string
       cases: (
@@ -317,7 +319,7 @@ export type WorkflowBuilder<
     name: AvailableNodeName<NodeName>,
     task: Task,
     options: {
-      item: ItemSchema
+      item: ItemSchema & SchemaCheck<K, ItemSchema>
       title?: string
       description?: string
       concurrency?: number
@@ -340,7 +342,7 @@ export type WorkflowBuilder<
     name: AvailableNodeName<NodeName>,
     workflow: Workflow,
     options: {
-      item: ItemSchema
+      item: ItemSchema & SchemaCheck<K, ItemSchema>
       title?: string
       description?: string
       concurrency?: number
@@ -374,8 +376,8 @@ export type TaskOptions<
   name: Name
   title?: string
   description?: string
-  input: InputSchema
-  output: OutputSchema
+  input: InputSchema & SchemaCheck<K, InputSchema>
+  output: OutputSchema & SchemaCheck<K, OutputSchema>
   retry?: RetryPolicy
   timeout?: DurationString
   tags?: RunTagsBuilder<SchemaType<K, InputSchema>>
@@ -404,8 +406,8 @@ export type WorkflowOptions<
   name: Name
   title?: string
   description?: string
-  input: InputSchema
-  output?: OutputSchema
+  input: InputSchema & SchemaCheck<K, InputSchema>
+  output?: OutputSchema & SchemaCheck<K, OutputSchema>
   retention?: DurationString
   /** Backstop: fail the run (and cancel its children) when it exceeds this age. */
   timeout?: DurationString
@@ -693,4 +695,19 @@ function assertScheduleCadence(input: {
       cause: error,
     })
   }
+}
+
+/**
+ * JSON Schema of a value as stores and raw JSON callers see it, for code
+ * generation and tooling. Undefined when the schema's library does not implement
+ * Standard JSON Schema.
+ */
+export function toStoredJsonSchema(
+  schema: Schema,
+  options: StandardJSONSchemaV1.Options = { target: 'draft-2020-12' },
+): Record<string, unknown> | undefined {
+  const props: Partial<StandardJSONSchemaV1.Props> = (
+    '~standard' in schema ? schema : schema.decode
+  )['~standard']
+  return props.jsonSchema?.input(options)
 }

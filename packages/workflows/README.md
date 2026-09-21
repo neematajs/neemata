@@ -4,8 +4,8 @@ Typed workflow and task primitives for Neemata.
 
 ## Imports
 
-The core is Effect-free: definitions take codecs, handlers return values or
-Promises, and the worker passes them one `env` value.
+The core is Effect-free: definitions take Standard Schemas, handlers return values
+or Promises, and the worker passes them one `env` value.
 
 ```ts
 import {
@@ -36,28 +36,35 @@ import {
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
 
-## Codecs, handlers and env
+## Schemas, handlers and env
 
-A codec is the durable boundary of a value. Both directions are synchronous and
-throw on a value they do not accept; `Encoded` must be JSON.
+Definitions take [Standard Schemas](https://standardschema.dev), so any library
+that implements the spec works: Zod, Valibot, ArkType, or Effect through the
+adapter below. Handlers, clients and results see a schema's output type; stores
+see JSON. Schemas must validate synchronously.
+
+A single schema serves values that are stored as they are: it validates them on
+the way in and again when they are read back. Standard Schema validates in one
+direction only, so a transformed value declares both directions, and a single
+transforming schema is rejected at compile time.
 
 ```ts
-import type { WorkflowCodec } from '@nmtjs/workflows'
+import { z } from 'zod'
 
-const date: WorkflowCodec<Date, string> = {
-  decode: (stored) => new Date(String(stored)),
-  encode: (value) => value.toISOString(),
+const date = {
+  decode: z.iso.datetime().transform((stored) => new Date(stored)),
+  encode: z.date().transform((value) => value.toISOString()),
 }
 
 const normalizeDate = defineTask({
   name: 'normalize-date',
-  input: date,
+  input: z.object({ at: z.string() }),
   output: date,
 })
 
 const implementation = implementTask(normalizeDate, {
-  handler: async (value, lifecycle, env: { clock: Clock }) =>
-    env.clock.round(value),
+  handler: async ({ at }, lifecycle, env: { clock: Clock }) =>
+    env.clock.round(new Date(at)),
 })
 
 await runExecutionWorker({
@@ -69,12 +76,16 @@ await runExecutionWorker({
 })
 ```
 
+Whatever a schema produces must be JSON when it is stored; the engine checks.
+`toStoredJsonSchema(definition.input)` returns the JSON Schema of the stored form
+when the library implements Standard JSON Schema, for code generation and tooling.
+
 Dependencies are that one `env` value. The engine neither builds nor disposes
 it: its owner creates it before starting the worker and disposes it afterwards.
 The worker input requires an `env` that satisfies every registered handler at
 once; handlers that ignore it require none. Workflow `finish` receives
-`(outputs, workflowInput, lifecycle, env)`. `createContract` builds the
-definition functions for another schema library from its conversion to codecs.
+`(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
+functions for a library whose schemas are not Standard Schemas themselves.
 
 ## Effect schemas
 
@@ -96,14 +107,16 @@ const implementation = implementTask(normalizeDate, {
 })
 ```
 
-Definitions store the schema's codec (`codec(schema)`). `schemaOf(definition.input)`
-returns the declared schema, for composing schemas from existing definitions and for
-tooling that reads their structure.
+Effect schemas are not Standard Schemas themselves. The adapter stores each one as
+a `{ decode, encode }` pair: its `Schema.toCodecJson` form and the same codec flipped,
+both through Effect's Standard Schema and Standard JSON Schema converters.
+`schemaOf(definition.input)` returns the declared Effect schema, for composing
+schemas from existing definitions.
 
 Every typed programmatic API takes and returns decoded **Type**: `client.start`
 input and its returned run input/output, task/activity handlers, workflow finish,
 input mappers, map items and per-item inputs, code-defined schedule inputs, and
-metadata callbacks. The engine encodes once with the definition's codec (for an
+metadata callbacks. The engine encodes once with the definition's schema (for an
 Effect schema, its `Schema.toCodecJson` form) when writing storage/commands/child payloads, and decodes when reading them.
 Restart decodes the stored input and calls `start(Type)`. Retry/restart eligibility
 is unchanged. Untyped `get`, `list`, `listSummaries`, history and inspector reads

@@ -10,6 +10,7 @@ import {
   implementWorkflow,
   schemaOf,
 } from '../src/effect/index.ts'
+import { toStoredJsonSchema } from '../src/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow API boundaries', () => {
@@ -383,9 +384,10 @@ describe('workflow API boundaries', () => {
     expect(schemaOf(workflow.nodes[0].output)).toBe(output)
     expect(schemaOf(workflow.nodes[1].item)).toBe(item)
     expect(schemaOf(workflow.output)).toBeUndefined()
-    // A hand-written codec has no schema to give back.
-    expect(
-      schemaOf({ decode: (stored) => stored, encode: () => null }),
-    ).toBeUndefined()
+    // The JSON Schema of the stored form comes from the same definition.
+    expect(toStoredJsonSchema(task.input)).toMatchObject({
+      type: 'object',
+      properties: { at: { type: 'string' } },
+    })
   })
 })
