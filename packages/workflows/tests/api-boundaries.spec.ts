@@ -8,6 +8,7 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
+  schemaOf,
 } from '../src/effect/index.ts'
 import { fromPromise } from './support/effect.ts'
 
@@ -365,5 +366,26 @@ describe('workflow API boundaries', () => {
     expectTypeOf<
       Schema.Codec<string, string, never, { readonly service: 'encode' }>
     >().not.toExtend<EffectSchema>()
+  })
+
+  it('reads a declared schema back from a definition', () => {
+    const input = Schema.Struct({ at: Schema.DateFromString })
+    const output = Schema.DateFromString
+    const item = Schema.Number
+    const task = defineTask({ name: 'schema-of', input, output })
+    const workflow = defineWorkflow({ name: 'schema-of', input })
+      .activity('step', { input, output })
+      .mapTask('each', task, { item })
+      .build()
+
+    expect(schemaOf(task.input)).toBe(input)
+    expect(schemaOf(task.output)).toBe(output)
+    expect(schemaOf(workflow.nodes[0].output)).toBe(output)
+    expect(schemaOf(workflow.nodes[1].item)).toBe(item)
+    expect(schemaOf(workflow.output)).toBeUndefined()
+    // A hand-written codec has no schema to give back.
+    expect(
+      schemaOf({ decode: (stored) => stored, encode: () => null }),
+    ).toBeUndefined()
   })
 })

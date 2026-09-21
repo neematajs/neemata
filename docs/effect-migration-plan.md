@@ -767,6 +767,8 @@ pin and excluded non-Effect runtimes. Effect support is now an adapter on top.
   `createHandlerRuntime`, `WorkflowHandlerError`, and worker functions taking a
   `context`. Effect handlers are stored as core handlers whose env is a
   `HandlerRuntime<R>`, so the core's env check is the service-coverage check.
+  `schemaOf` returns the schema a definition was declared with, so composing
+  schemas from definitions and structure-reading tooling keep working.
 - **Two implementation chains.** The definition builders are shared through a
   type-level schema function, which only appears in output positions. The same was
   tried for handlers and abandoned: TypeScript does not infer a handler's services

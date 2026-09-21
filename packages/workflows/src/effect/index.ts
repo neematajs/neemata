@@ -1,4 +1,4 @@
-export { codec } from './codec.ts'
+export { codec, schemaOf } from './codec.ts'
 export type { EffectSchema, EffectSchemaKind } from './codec.ts'
 export { defineTask, defineWorkflow } from './contract.ts'
 export { createHandlerRuntime, WorkflowHandlerError } from './handler.ts'

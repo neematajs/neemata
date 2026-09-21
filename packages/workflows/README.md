@@ -96,8 +96,9 @@ const implementation = implementTask(normalizeDate, {
 })
 ```
 
-Definitions store the schema's codec (`codec(schema)`), so a schema cannot be read
-back from a definition; compose schemas before defining.
+Definitions store the schema's codec (`codec(schema)`). `schemaOf(definition.input)`
+returns the declared schema, for composing schemas from existing definitions and for
+tooling that reads their structure.
 
 Every typed programmatic API takes and returns decoded **Type**: `client.start`
 input and its returned run input/output, task/activity handlers, workflow finish,

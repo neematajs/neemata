@@ -13,6 +13,7 @@ export interface EffectSchemaKind extends SchemaKind {
 }
 
 const codecs = new WeakMap<EffectSchema, WorkflowCodec<any>>()
+const schemas = new WeakMap<WorkflowCodec<any, any>, EffectSchema>()
 
 /**
  * Stores a schema's `Type` through its JSON encoding. Definitions are shared
@@ -34,6 +35,18 @@ export function codec<Type>(
         (encode ??= Schema.encodeUnknownSync(stored()))(value) as Json,
     }
     codecs.set(schema, result)
+    schemas.set(result, schema)
   }
   return result
+}
+
+/**
+ * The schema a definition's `input`, `output` or `item` was declared with, for
+ * composing schemas and for tooling that reads their structure. Undefined for a
+ * codec that did not come from this adapter.
+ */
+export function schemaOf(
+  declared: WorkflowCodec<any, any> | undefined,
+): EffectSchema | undefined {
+  return declared && schemas.get(declared)
 }
