@@ -53,6 +53,15 @@ export function defineWorkflowsWorker<
 >(definition: WorkflowsWorkerDefinition<W, T, R>) {
   return defineRuntimeWorker<WorkflowsWorkerData, unknown>({
     definition,
+    // Production builds erase this branch and its adapter import.
+    ...((import.meta as ImportMeta & { readonly hot?: unknown }).hot
+      ? {
+          async hmr() {
+            const { hmrAdapter } = await import('../neem/hmr.ts')
+            return hmrAdapter
+          },
+        }
+      : {}),
     createRuntime(ctx) {
       const abort = new AbortController()
       const ready = createFuture<undefined>()

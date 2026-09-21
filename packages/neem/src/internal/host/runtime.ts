@@ -1,5 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from 'pino'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type {
   NeemResolvedArtifact,
@@ -53,6 +54,55 @@ export class RuntimeController {
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
     return this.threads.flatMap((thread) => thread.getUpstreams())
+  }
+
+  async applyHmr(updates: readonly BindingClientHmrUpdate[]): Promise<{
+    accepted: boolean
+    deliveredFiles: readonly string[]
+    reason?: string
+  }> {
+    const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
+    const results = await Promise.all(
+      updates.map(async ({ clientId, update }) => {
+        const thread = threads.get(clientId)
+        if (!thread) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: `HMR client [${clientId}] is no longer running`,
+            },
+          }
+        }
+
+        try {
+          return { update, result: await thread.applyHmr(update) }
+        } catch (error) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: normalizeError(error).message,
+            },
+          }
+        }
+      }),
+    )
+    let reason: string | undefined
+    let accepted = true
+    const delivered = new Set<string>()
+    for (const { update, result } of results) {
+      if (!result.accepted && accepted) {
+        accepted = false
+        reason = result.reason
+      }
+      if (result.delivered && update.type === 'Patch')
+        delivered.add(update.filename)
+    }
+    const deliveredFiles = Array.from(delivered)
+    return { accepted, deliveredFiles, reason }
   }
 
   getHealth(): NeemRuntimeServerRuntimeHealth {

@@ -32,3 +32,31 @@ values count as existing process variables and take precedence over `--env-files
 Bun also loads `.env.local` in development, but skips it with `NODE_ENV=test`.
 
 `NeemConfig.env` remains an inline environment map included in the manifest.
+
+## Experimental worker HMR
+
+Enable Rolldown's native DevEngine in `neem.config.ts`:
+
+```ts
+import { defineConfig } from '@nmtjs/neem'
+
+export default defineConfig({
+  build: { experimentalDev: true },
+  runtimes: ['./src/runtimes/*'],
+})
+```
+
+Worker implementation edits can then update the running thread. Workers opt in
+through a `NeemRuntimeHmrAdapter`, loaded by their `hmr()` method behind
+`import.meta.hot`. The adapter owns how an updated definition replaces its
+resources. An unsupported or rejected update rebuilds the full artifact and
+restarts the runtime. Planner, host, and config changes use the existing reload
+path. Vite and Nuxt keep their own application HMR.
+
+Both `@nmtjs/workflows/neem` and `@nmtjs/workflows/effect/neem` provide this
+adapter: they stop the old worker generation, dispose its resources, and start
+the updated generation in the same thread. Keep planner imports limited to the
+thread layout so implementation edits do not also rebuild the planner.
+
+Normal development and production builds remove the HMR bootstrap and guarded
+adapter imports. `experimentalDev` affects only `neem dev`.

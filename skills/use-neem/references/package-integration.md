@@ -88,6 +88,12 @@ enabled for future work; only each individual operation must terminate in
 bounded time. Close the command client from the worker's resource lifecycle;
 the workflow runtime disposes only its duplicated Pub/Sub client.
 
+With `build.experimentalDev: true`, both workflows worker helpers support
+in-process HMR. The previous generation is stopped and disposed before the next
+starts. Keep the planner graph limited to its `WorkflowsPlan`; importing worker
+implementations there also invalidates the planner and forces a full reload.
+See [experimental worker HMR](../../../packages/neem/README.md#experimental-worker-hmr).
+
 ## Custom Runtime
 
 Some packages have no package-owned host entry or worker build defaults, so

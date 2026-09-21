@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks'
 
 import type { MaybePromise } from '@nmtjs/common'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -277,6 +278,34 @@ export class HostController {
           `Failed to reload Neem runtime ${runtimeName}`,
         )
         await this.callServerFailHook(normalized)
+      }
+    })
+  }
+
+  applyHmr(
+    runtimeName: string,
+    updates: readonly BindingClientHmrUpdate[],
+  ): Promise<{
+    accepted: boolean
+    deliveredFiles: readonly string[]
+    reason?: string
+  }> {
+    return this.operations.run(async () => {
+      const runtime = this.runtimes.get(runtimeName)
+      if (!runtime || this.stopRequested) {
+        return {
+          accepted: false,
+          deliveredFiles: [],
+          reason: `Runtime [${runtimeName}] is not running`,
+        }
+      }
+      // HMR can await replacement readiness just like a full reload. Expose
+      // that state so stop interrupts workers before joining the operation queue.
+      this.markState('reloading')
+      try {
+        return await runtime.applyHmr(updates)
+      } finally {
+        if (!this.stopRequested) this.markState('running')
       }
     })
   }

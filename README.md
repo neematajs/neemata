@@ -89,6 +89,10 @@ Use `neem dev --env-files ../../.env` to load environment variables before confi
 evaluation and worker startup. See [development environment files](packages/neem/README.md)
 for precedence and multiple-file usage.
 
+For in-process worker updates, enable [experimental worker HMR](packages/neem/README.md#experimental-worker-hmr).
+The workflows Promise and Effect workers include an adapter that replaces worker
+generations while keeping the thread and planner topology.
+
 ## Service integration tests
 
 Service-backed integration tests live beside package owners under

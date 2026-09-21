@@ -26,11 +26,13 @@ import { toFilePath } from '../utils.ts'
 
 type ArtifactInput = { entry: string; input: string; targetKey?: string }
 
-type ArtifactBuildMetadata = {
+export type ArtifactBuildMetadata = {
   entryFileName?: string
   entryFileNames?: Map<string, string | undefined>
   watch: boolean
 }
+
+export type RuntimeHmrBuildMode = 'disabled' | 'bootstrap' | 'runtime'
 
 export type CompiledTarget = {
   target: BuildTarget
@@ -153,36 +155,38 @@ export async function watchGraph(
   }
 }
 
-type BuildGroupWatcher = {
+export type BuildGroupWatcher = {
   ready: Promise<readonly CompiledTarget[]>
   close: () => Promise<void>
 }
 
-async function watchBuildGroup(
+export async function watchBuildGroup(
   group: BuildGroup,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
   watchConfig?: NeemBuildWatchConfig,
+  hmr: RuntimeHmrBuildMode = 'disabled',
 ): Promise<BuildGroupWatcher> {
   if (group.kind === 'target') {
-    const watcher = await watchTarget(group.target, handlers, watchConfig)
+    const watcher = await watchTarget(group.target, handlers, watchConfig, hmr)
     return {
       ready: watcher.ready.then((target) => [target]),
       close: watcher.close,
     }
   }
 
-  return watchTargetGroup(group.targets, handlers, watchConfig)
+  return watchTargetGroup(group.targets, handlers, watchConfig, hmr)
 }
 
 export async function watchTarget(
   target: BuildTarget,
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
   watchConfig?: NeemBuildWatchConfig,
+  hmr: RuntimeHmrBuildMode = 'disabled',
 ): Promise<TargetWatcher> {
   const metadata: ArtifactBuildMetadata = { watch: true }
   await mkdir(target.outDir, { recursive: true })
   const watcher = rolldown.watch({
-    ...createRolldownOptions(target, metadata),
+    ...createRolldownOptions(target, metadata, hmr),
     watch: createWatchOptions(watchConfig),
   })
 
@@ -244,6 +248,7 @@ async function watchTargetGroup(
   targets: readonly BuildTarget[],
   handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
   watchConfig?: NeemBuildWatchConfig,
+  hmr: RuntimeHmrBuildMode = 'disabled',
 ): Promise<BuildGroupWatcher> {
   const metadata: ArtifactBuildMetadata = {
     entryFileNames: new Map(),
@@ -251,7 +256,7 @@ async function watchTargetGroup(
   }
   await mkdirTargetDirs(targets)
   const watcher = rolldown.watch({
-    ...createGroupedRolldownOptions(targets, metadata),
+    ...createGroupedRolldownOptions(targets, metadata, hmr),
     watch: createWatchOptions(watchConfig),
   })
 
@@ -357,9 +362,10 @@ export function createCompiledGraph(
   return { graph, runtimes, plugins, targets }
 }
 
-function createRolldownOptions(
+export function createRolldownOptions(
   target: BuildTarget,
   metadata: ArtifactBuildMetadata,
+  hmr: RuntimeHmrBuildMode = 'disabled',
 ): rolldown.BuildOptions {
   const userOptions = mergeRolldownOptions(target.artifact.rolldown) ?? {}
   const userOutput =
@@ -387,6 +393,7 @@ function createRolldownOptions(
     input: input.input,
     platform: 'node',
     ...userOptions,
+    transform: createTransformOptions(userOptions.transform, hmr),
     experimental: {
       // Chunk optimization may regroup chunks between rebuilds; artifact file
       // names must stay stable for running dev workers.
@@ -407,6 +414,7 @@ function createRolldownOptions(
 function createGroupedRolldownOptions(
   targets: readonly BuildTarget[],
   metadata: ArtifactBuildMetadata,
+  hmr: RuntimeHmrBuildMode = 'disabled',
 ): rolldown.BuildOptions {
   const firstTarget = targets[0]
   if (!firstTarget) throw new Error('Cannot compile an empty build group')
@@ -443,6 +451,7 @@ function createGroupedRolldownOptions(
     ),
     platform: 'node',
     ...userOptions,
+    transform: createTransformOptions(userOptions.transform, hmr),
     experimental: { chunkOptimization: false, ...userOptions.experimental },
     external: createExternalMatcher(userOptions.external),
     plugins: [
@@ -452,6 +461,21 @@ function createGroupedRolldownOptions(
     ],
     output,
   }
+}
+
+function createTransformOptions(
+  transform: rolldown.BuildOptions['transform'],
+  hmr: RuntimeHmrBuildMode,
+): rolldown.BuildOptions['transform'] {
+  const { define: _reservedDefine, ...rest } = transform ?? {}
+  const define = { ...transform?.define }
+  delete define['import.meta.hot']
+
+  if (hmr !== 'runtime') {
+    define['import.meta.hot'] = hmr === 'bootstrap' ? 'true' : 'undefined'
+  }
+
+  return Object.keys(define).length > 0 ? { ...rest, define } : rest
 }
 
 const DEFAULT_DEPS_CHUNK_TEST = /node_modules/
@@ -538,7 +562,7 @@ function getArtifactInputName(target: BuildTarget): string {
   }
 }
 
-function createResolvedArtifact(
+export function createResolvedArtifact(
   target: BuildTarget,
   bundle: RolldownOutput | undefined,
   metadata: ArtifactBuildMetadata,
@@ -589,7 +613,7 @@ function createArtifactMetadataPlugin(
   metadata: ArtifactBuildMetadata,
 ): rolldown.RolldownPlugin {
   const inputs = Array.isArray(input) ? input : [input]
-  const collect = (bundle: rolldown.OutputBundle) => {
+  function collect(bundle: rolldown.OutputBundle) {
     for (const input of inputs) {
       const entryChunk = Object.values(bundle).find(
         (chunk) =>
