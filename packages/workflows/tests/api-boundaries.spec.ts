@@ -196,11 +196,13 @@ describe('workflow API boundaries', () => {
         .caseContent({
           select: (_outputs, input) => input.kind,
           cases: ({ activity, workflow }) => ({
-            normal: activity((input) =>
-              fromPromise(async () => ({
-                kind: 'normal' as const,
-                text: input.text,
-              })),
+            normal: activity(
+              (input) =>
+                fromPromise(async () => ({
+                  kind: 'normal' as const,
+                  text: input.text,
+                })),
+              { input: ({ content }) => ({ text: content.text }) },
             ),
             fallback: workflow(childWorkflow),
             extra: activity(() =>
@@ -219,16 +221,20 @@ describe('workflow API boundaries', () => {
         .caseContent({
           select: (_outputs, input) => input.kind,
           cases: ({ activity, workflow }) => ({
-            normal: activity((input) =>
-              fromPromise(async () => ({
-                kind: 'normal' as const,
-                text: input.text,
-              })),
+            normal: activity(
+              (input) =>
+                fromPromise(async () => ({
+                  kind: 'normal' as const,
+                  text: input.text,
+                })),
+              { input: ({ content }) => ({ text: content.text }) },
             ),
             fallback: workflow(childWorkflow),
           }),
         })
-        .embedding(otherTask as any),
+        .embedding(otherTask as any, {
+          input: ({ caseContent }) => ({ text: caseContent.text }),
+        }),
     ).toThrow(
       'Workflow task implementation [embedding] does not match contract',
     )

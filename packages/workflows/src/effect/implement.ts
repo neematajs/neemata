@@ -10,7 +10,7 @@ import type {
   TaskImplementation,
   WorkflowImplementation,
   WorkflowImplementationOptions,
-  WorkflowInputMapper,
+  WorkflowInputMapperArguments,
   WorkflowMapInputMapper,
 } from '../implement/index.ts'
 import type {
@@ -125,41 +125,61 @@ type AnyActivityCaseDescriptor<Input, Output> = ActivityCaseDescriptor<
   any
 >
 
-type CaseImplementationValue<Case> =
+// A case given as a bare value has no mapper, so it is accepted only where the
+// workflow input is what the case takes; otherwise a helper must supply one.
+type BareCaseValue<WorkflowArgs, Input, Value> = [WorkflowArgs] extends [Input]
+  ? Value
+  : never
+
+type CaseImplementationValue<Case, WorkflowArgs> =
   Case extends BranchCaseDefinition<'activity', infer Input, infer Output>
     ?
-        | AnyActivityImplementationValue<Input, Output>
+        | BareCaseValue<
+            WorkflowArgs,
+            Input,
+            AnyActivityImplementationValue<Input, Output>
+          >
         | AnyActivityCaseDescriptor<Input, Output>
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
-        ? Task | RunnableCaseDescriptor<Task, TaskInput<Task>>
+        ?
+            | BareCaseValue<WorkflowArgs, TaskInput<Task>, Task>
+            | RunnableCaseDescriptor<Task, TaskInput<Task>>
         : never
       : Case extends BranchCaseDefinition<'workflow', any, any, infer Workflow>
         ? Workflow extends AnyWorkflowDefinition
-          ? Workflow | RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
+          ?
+              | BareCaseValue<WorkflowArgs, WorkflowInput<Workflow>, Workflow>
+              | RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
           : never
         : never
 
 type CaseImplementationObject<
   Cases extends Record<string, BranchCaseDefinition>,
+  WorkflowArgs,
 > = {
   readonly [CaseName in keyof Cases & string]: CaseImplementationValue<
-    Cases[CaseName]
+    Cases[CaseName],
+    WorkflowArgs
   >
 }
 
 type CaseImplementers<Outputs extends object, Input> = {
   readonly activity: <NodeInput, Output, R = never>(
     value: ActivityImplementationValue<NodeInput, Output, R>,
-    options?: ActivityImplementationOptions<Outputs, Input, NodeInput>,
+    ...options: WorkflowInputMapperArguments<Outputs, Input, NodeInput>
   ) => ActivityCaseDescriptor<NodeInput, Output, R>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
-    options?: WorkflowInputMapper<Outputs, Input, TaskInput<Task>>,
+    ...options: WorkflowInputMapperArguments<Outputs, Input, TaskInput<Task>>
   ) => RunnableCaseDescriptor<Task, TaskInput<Task>>
   readonly workflow: <Workflow extends AnyWorkflowDefinition>(
     workflow: Workflow,
-    options?: WorkflowInputMapper<Outputs, Input, WorkflowInput<Workflow>>,
+    ...options: WorkflowInputMapperArguments<
+      Outputs,
+      Input,
+      WorkflowInput<Workflow>
+    >
   ) => RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
 }
 
@@ -175,16 +195,16 @@ type CaseImplementationFactory<
   Cases extends Record<string, BranchCaseDefinition>,
   Outputs extends object,
   Input,
-  Values extends CaseImplementationObject<Cases> =
-    CaseImplementationObject<Cases>,
+  Values extends CaseImplementationObject<Cases, Input> =
+    CaseImplementationObject<Cases, Input>,
 > = (helpers: CaseImplementers<Outputs, Input>) => Values
 
 type CaseImplementationArgument<
   Cases extends Record<string, BranchCaseDefinition>,
   Outputs extends object,
   Input,
-  Values extends CaseImplementationObject<Cases> =
-    CaseImplementationObject<Cases>,
+  Values extends CaseImplementationObject<Cases, Input> =
+    CaseImplementationObject<Cases, Input>,
 > = Values | CaseImplementationFactory<Cases, Outputs, Input, Values>
 
 // The chain below mirrors the one in ../implement/index.ts with Effect handlers.
@@ -209,7 +229,7 @@ export type WorkflowImplementationChain<
     ? {
         readonly [Key in Name]: <R = never>(
           value: ActivityImplementationValue<Input, Output, R>,
-          options?: ActivityImplementationOptions<Outputs, WorkflowArgs, Input>,
+          ...options: WorkflowInputMapperArguments<Outputs, WorkflowArgs, Input>
         ) => WorkflowImplementationChain<
           Workflow,
           WorkflowR | R,
@@ -226,11 +246,11 @@ export type WorkflowImplementationChain<
       ? {
           readonly [Key in Name]: (
             task: Task,
-            options?: WorkflowInputMapper<
+            ...options: WorkflowInputMapperArguments<
               Outputs,
               WorkflowArgs,
               TaskInput<Task>
-            >,
+            >
           ) => WorkflowImplementationChain<
             Workflow,
             WorkflowR,
@@ -247,11 +267,11 @@ export type WorkflowImplementationChain<
         ? {
             readonly [Key in Name]: (
               workflow: Child,
-              options?: WorkflowInputMapper<
+              ...options: WorkflowInputMapperArguments<
                 Outputs,
                 WorkflowArgs,
                 WorkflowInput<Child>
-              >,
+              >
             ) => WorkflowImplementationChain<
               Workflow,
               WorkflowR,
@@ -267,7 +287,10 @@ export type WorkflowImplementationChain<
             >
           ? {
               readonly [Key in Name]: <
-                const Values extends CaseImplementationObject<Cases>,
+                const Values extends CaseImplementationObject<
+                  Cases,
+                  WorkflowArgs
+                >,
               >(options: {
                 select: (
                   outputs: Outputs,
@@ -294,7 +317,10 @@ export type WorkflowImplementationChain<
               >
             ? {
                 readonly [Key in Name]: <
-                  const Values extends CaseImplementationObject<Cases>,
+                  const Values extends CaseImplementationObject<
+                    Cases,
+                    WorkflowArgs
+                  >,
                 >(
                   cases: CaseImplementationArgument<
                     Cases,
