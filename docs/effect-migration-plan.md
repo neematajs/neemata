@@ -921,3 +921,31 @@ found defects that mostly predate the migration. Fixed with a regression test ea
   schedule targets. The in-memory clock is the wall clock with a separate sequence for
   ordering. Redis `dispose()` disconnects when `quit()` fails, and maintenance collects
   commands whose run no longer exists.
+
+### Second review pass
+
+A second pass over the fixes found gaps in them and a few new defects:
+
+- Settlement was fenced but retry creation was not: a stalled worker could create a
+  second successor and supersede the new claimant's work. `createAttempt` takes
+  `after`, the attempt being retried, and creates the successor only while that attempt
+  is still current; otherwise it returns the existing successor, even one that already
+  settled the child. The check is atomic in each adapter and independent of the claim.
+- The reaper marked a dead command reaped when its attempt had already completed,
+  without finishing the node and run, so exhausted deliveries stranded the run. It now
+  replays the recorded outcome through the same helpers redelivery uses, including a
+  lost retry dispatch and a lost parent wake.
+- A repeated `cancel` of a terminal run replays the parent wake a failed first cancel
+  lost.
+- In-memory retention requires the whole family to be terminal, as PostgreSQL and
+  Redis already did, so a running detached child survives its parent being pruned.
+- PostgreSQL: sibling nested scopes and parent-level queries on one transaction
+  connection are serialized, since savepoints form a stack; an empty `status` filter
+  returns nothing instead of invalid SQL; run detail reports a stored `detach`; run
+  summaries carry the `unique` key.
+- The Effect env check requires that a plain handler runtime satisfies the whole env.
+
+Deferred to [todo.md](todo.md): run-lease fencing that is atomic with the mutation,
+a startup deadline for workers (a Layer that fails part-way can hang inside its own
+build), the reaper's missing backoff for activity retries, and batched dead-command
+deletion in PostgreSQL retention.

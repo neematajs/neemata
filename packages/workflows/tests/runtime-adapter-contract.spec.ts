@@ -2802,6 +2802,54 @@ function workflowRuntimeAdapterContract(
       ).rejects.toThrow('Conflicting child run')
     })
 
+    it('creates one successor for an attempt, however many workers retry it', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'retry-successor-workflow',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'step',
+        kind: 'activity',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'step',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      const child = { runId: run.id, nodeName: 'step', childKey: '$self' }
+      const first = await runtime.store.createAttempt({ ...child, input: 1 })
+      await runtime.store.failCurrentAttempt({
+        attemptId: first.id,
+        leaseToken: first.leaseToken!,
+        error: new Error('first failed'),
+      })
+
+      const retry = { ...child, input: 1, after: first.id }
+      const [second, replay] = await Promise.all([
+        runtime.store.createAttempt(retry),
+        runtime.store.createAttempt(retry),
+      ])
+      expect(replay.id).toBe(second.id)
+      expect(second.attemptNumber).toBe(2)
+
+      // A successor that already settled the child is still what a late
+      // retry of the first attempt gets back.
+      await runtime.store.completeCurrentAttempt({
+        attemptId: second.id,
+        leaseToken: second.leaseToken!,
+        output: 'done',
+      })
+      const late = await runtime.store.createAttempt(retry)
+      expect(late).toMatchObject({ id: second.id, status: 'completed' })
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(snapshot?.attempts.map((attempt) => attempt.id).sort()).toEqual(
+        [first.id, second.id].sort(),
+      )
+      expect(snapshot?.children[0]?.attemptCount).toBe(2)
+    })
+
     it('persists the child cancellation policy outside the child run identity', async () => {
       const runtime = await createRuntime()
       const parent = await runtime.store.createRun({
@@ -3424,10 +3472,19 @@ function workflowRuntimeAdapterContract(
         parentNodeName: 'done',
         rootRunId: first.rootRunId,
       })
+      const unique = {
+        key: ['summary'],
+        scope: 'active',
+        behavior: 'reject',
+      } as const
       const second = await runtime.store.createRun({
         workflowName: 'summary-root',
         input: { root: 2 },
+        unique,
       })
+      await expect(
+        runtime.store.listRunSummaries({ name: 'summary-root', limit: 1 }),
+      ).resolves.toMatchObject({ runs: [{ id: second.id, unique }] })
 
       const roots = await runtime.store.listRunSummaries({
         name: 'summary-root',

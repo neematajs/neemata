@@ -58,33 +58,62 @@ const queryPostgresClient = <T extends JsonRecord>(
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
 
+const createSerializer = () => {
+  let queue = Promise.resolve()
+  return async <T>(handler: () => Promise<T>): Promise<T> => {
+    const previous = queue
+    let release = () => {}
+    queue = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
+    try {
+      return await handler()
+    } finally {
+      release()
+    }
+  }
+}
+
 // Store methods open a transaction to undo partial work on a recoverable
 // failure and cannot know whether a caller already holds one, so a nested
 // transaction must be a rollback boundary of its own rather than a plain call.
+//
+// Savepoints form a stack on one session: a sibling scope or a parent-level
+// query that overlapped an open scope would run inside that scope's savepoint
+// and be undone, or kept, by its outcome. Each connection therefore runs its
+// scopes and queries one at a time, while a scope's own connection has its own
+// queue, so work inside the scope never waits on the scope itself. The cost is
+// that a scope must not await its parent connection: that waits on itself.
 const createTransactionConnection = (
   client: WorkflowPostgresQueryClient,
   depth = 0,
-): WorkflowPostgresConnection => ({
-  query: (sql, params = []) => queryPostgresClient(client, sql, params),
-  async transaction(handler) {
-    const savepoint = `workflow_savepoint_${depth + 1}`
-    await client.query(`SAVEPOINT ${savepoint}`)
-    let result: Awaited<ReturnType<typeof handler>>
-    try {
-      result = await handler(createTransactionConnection(client, depth + 1))
-    } catch (error) {
-      // Rolling back also clears the aborted state a failed statement leaves
-      // behind, so the enclosing transaction stays usable for recovery reads.
-      try {
-        await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+): WorkflowPostgresConnection => {
+  const serialize = createSerializer()
+  return {
+    query: (sql, params = []) =>
+      serialize(() => queryPostgresClient(client, sql, params)),
+    transaction: (handler) =>
+      serialize(async () => {
+        const savepoint = `workflow_savepoint_${depth + 1}`
+        await client.query(`SAVEPOINT ${savepoint}`)
+        let result: Awaited<ReturnType<typeof handler>>
+        try {
+          result = await handler(createTransactionConnection(client, depth + 1))
+        } catch (error) {
+          // Rolling back also clears the aborted state a failed statement leaves
+          // behind, so the enclosing transaction stays usable for recovery reads.
+          try {
+            await client.query(`ROLLBACK TO SAVEPOINT ${savepoint}`)
+            await client.query(`RELEASE SAVEPOINT ${savepoint}`)
+          } catch {}
+          throw error
+        }
         await client.query(`RELEASE SAVEPOINT ${savepoint}`)
-      } catch {}
-      throw error
-    }
-    await client.query(`RELEASE SAVEPOINT ${savepoint}`)
-    return result
-  },
-})
+        return result
+      }),
+  }
+}
 
 const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
   try {
@@ -99,20 +128,7 @@ export function createPostgresWorkflowConnection(
   // open joins that transaction and is lost with its rollback. Top-level
   // queries therefore wait their turn with transactions; queries made through
   // the transaction-scoped connection go straight to the client.
-  let clientQueue = Promise.resolve()
-  const serializeClient = async <T>(handler: () => Promise<T>): Promise<T> => {
-    const previous = clientQueue
-    let release = () => {}
-    clientQueue = new Promise<void>((resolve) => {
-      release = resolve
-    })
-    await previous
-    try {
-      return await handler()
-    } finally {
-      release()
-    }
-  }
+  const serializeClient = createSerializer()
 
   const runTransaction = async <T>(
     connection: WorkflowPostgresQueryClient,

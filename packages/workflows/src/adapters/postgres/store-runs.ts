@@ -388,6 +388,9 @@ const runSummaryColumnsSql = (alias: string) => `
   ${alias}.root_run_id,
   ${alias}.tags,
   ${alias}.idempotency_key,
+  ${alias}.unique_key,
+  ${alias}.unique_scope,
+  ${alias}.unique_behavior,
   ${alias}.version,
   ${alias}.active_since,
   ${alias}.created_at,
@@ -439,6 +442,8 @@ const buildListRunsQueryParts = (
     const statuses = Array.isArray(filter.status)
       ? filter.status
       : [filter.status]
+    // No status matches an empty selection, and `IN ()` is not valid SQL.
+    if (statuses.length === 0) return undefined
     where.push(
       `r.status IN (${statuses.map((status) => push(status)).join(', ')})`,
     )

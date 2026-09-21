@@ -162,6 +162,17 @@ export const optional = <K extends string, V>(
 export const runnableName = (input: CreateRunInput) =>
   input.name ?? input.taskName ?? input.workflowName
 
+const uniqueOf = (row: JsonRecord): Pick<StoredRun, 'unique'> =>
+  fromOptional(row.unique_key) === undefined
+    ? {}
+    : {
+        unique: {
+          key: row.unique_key as readonly unknown[],
+          scope: row.unique_scope as ResolvedRunUnique['scope'],
+          behavior: row.unique_behavior as ResolvedRunUnique['behavior'],
+        },
+      }
+
 export const mapRun = (row: JsonRecord): StoredRun => ({
   id: row.id as string,
   kind: row.kind as StoredRun['kind'],
@@ -180,15 +191,7 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
-  ...(fromOptional(row.unique_key) === undefined
-    ? {}
-    : {
-        unique: {
-          key: row.unique_key as readonly unknown[],
-          scope: row.unique_scope as ResolvedRunUnique['scope'],
-          behavior: row.unique_behavior as ResolvedRunUnique['behavior'],
-        },
-      }),
+  ...uniqueOf(row),
   version: row.version as number,
   activeSince: timestampColumn(row.active_since),
   createdAt: timestampColumn(row.created_at),
@@ -211,6 +214,7 @@ export const mapRunSummary = (row: JsonRecord): RunSummary => ({
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
+  ...uniqueOf(row),
   version: row.version as number,
   activeSince: timestampColumn(row.active_since),
   createdAt: timestampColumn(row.created_at),
@@ -326,6 +330,10 @@ export const mapNodeChildSummary = (row: JsonRecord): NodeChildSummary => ({
   ...optional('itemKey', row.item_key as string | undefined),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
+  ...optional(
+    'cancellation',
+    row.cancellation as NodeChildSummary['cancellation'],
+  ),
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),
   attemptCount: row.attempt_count as number,
   version: row.version as number,

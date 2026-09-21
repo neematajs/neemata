@@ -44,6 +44,26 @@ migration unless a section says otherwise; that migration's remaining steps live
   now rejects `NaN` and `Infinity`, which JSON would turn into `null`. No test
   covers it.
 
+- **Run-lease fencing is renew-then-operate.** The coordinator renews its run lease
+  and then performs the store mutation as a second step, on every adapter. A single
+  store call that stalls for longer than the whole lease after renewing can therefore
+  commit under a lease another coordinator has taken. Closing it means passing the
+  lease token into every protected mutation so the adapter checks it atomically
+  (one statement in PostgreSQL, inside the script in Redis): a `WorkflowStore`
+  contract change.
+- **No startup deadline for workers.** Cleanup is bounded by `cleanupTimeoutMs`, but
+  acquisition is not. In the Effect worker a Layer that fails part-way runs its
+  finalizers inside the build, before the worker sees the failure, so a finalizer
+  that hangs there looks like a slow startup and `start()` never settles. A separate
+  startup timeout (a new worker setting) would bound Layer and adapter acquisition
+  in both workers.
+- **The reaper has no registry.** When it re-dispatches a retry whose command was
+  lost, only a task command carries its retry policy; an activity's lost retry is
+  dispatched immediately instead of after its backoff.
+- **PostgreSQL retention deletes dead commands in one statement.** `batchSize` bounds
+  only root deletion, so the first prune after a large dead-letter backlog is one
+  long delete.
+
 ## Pubsub
 
 - **Overflow policy.** The Redis adapter buffers a channel's messages for a slow
