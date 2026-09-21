@@ -1,5 +1,7 @@
+import type { AddressInfo, Socket } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
+import { connect, createServer } from 'node:net'
 
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
@@ -30,10 +32,6 @@ import { matchingKeys } from './helpers.ts'
 type ServiceTarget = {
   readonly name: string
   readonly url: string | undefined
-  readonly proxyName: string
-  readonly proxyUrl: string | undefined
-  readonly proxyListen: string
-  readonly proxyUpstream: string
   readonly createClient: (
     url?: string,
     commandTimeout?: number,
@@ -45,10 +43,6 @@ const targets: readonly ServiceTarget[] = [
   {
     name: 'Redis',
     url: process.env.REDIS_URL,
-    proxyName: 'workflows-redis',
-    proxyUrl: process.env.REDIS_PROXY_URL,
-    proxyListen: '0.0.0.0:6382',
-    proxyUpstream: process.env.REDIS_PROXY_UPSTREAM ?? 'redis:6379',
     createClient: (
       url = process.env.REDIS_URL!,
       commandTimeout = 2_000,
@@ -62,10 +56,6 @@ const targets: readonly ServiceTarget[] = [
   {
     name: 'Valkey',
     url: process.env.VALKEY_URL,
-    proxyName: 'workflows-valkey',
-    proxyUrl: process.env.VALKEY_PROXY_URL,
-    proxyListen: '0.0.0.0:6383',
-    proxyUpstream: process.env.VALKEY_PROXY_UPSTREAM ?? 'valkey:6379',
     createClient: (
       url = process.env.VALKEY_URL!,
       commandTimeout = 2_000,
@@ -118,20 +108,12 @@ for (const target of targets) {
   if (!target.url && process.env.NMTJS_REQUIRE_SERVICE_TESTS === '1') {
     throw new Error(`${target.name} integration tests require a service URL`)
   }
-  if (
-    process.env.NMTJS_REQUIRE_REDIS_RESILIENCE_TESTS === '1' &&
-    (!target.proxyUrl || !process.env.TOXIPROXY_URL)
-  ) {
-    throw new Error(
-      `${target.name} resilience tests require its proxy URL and TOXIPROXY_URL`,
-    )
-  }
-
   describe.skipIf(!target.url)(
     `Redis workflow runtime against ${target.name}`,
     () => {
       const clients: Array<Redis | Valkey> = []
       const runtimes: ReturnType<typeof createRedisWorkflowRuntime>[] = []
+      const proxies: TcpProxy[] = []
 
       afterEach(async () => {
         await Promise.allSettled(
@@ -140,6 +122,7 @@ for (const target of targets) {
         await Promise.allSettled(
           clients.splice(0).map(async (client) => await client.quit()),
         )
+        for (const proxy of proxies.splice(0)) proxy.close()
       })
 
       const createHarness = (
@@ -731,56 +714,54 @@ for (const target of targets) {
         },
       )
 
-      it.skipIf(!target.proxyUrl || !process.env.TOXIPROXY_URL)(
-        'bounds failures during a sustained disconnect and recovers cleanly',
-        async () => {
-          await replaceProxy(target)
-          const proxyClient = target.createClient(target.proxyUrl!, 250)
-          proxyClient.on('error', () => {})
-          const { runtime } = createHarness(5_000, proxyClient)
-          const first = {
-            kind: 'continueRun' as const,
-            runId: randomUUID(),
-            workflowName: 'network-recovery',
-          }
-          const interrupted = {
-            ...first,
-            runId: randomUUID(),
-          }
-          await runtime.runCoordinationExecutor.enqueue(first)
+      it('bounds failures during a sustained disconnect and recovers cleanly', async () => {
+        const proxy = await createTcpProxy(target.url!)
+        proxies.push(proxy)
+        const proxyClient = target.createClient(proxy.url, 250)
+        proxyClient.on('error', () => {})
+        const { runtime } = createHarness(5_000, proxyClient)
+        const first = {
+          kind: 'continueRun' as const,
+          runId: randomUUID(),
+          workflowName: 'network-recovery',
+        }
+        const interrupted = {
+          ...first,
+          runId: randomUUID(),
+        }
+        await runtime.runCoordinationExecutor.enqueue(first)
 
-          await setProxyEnabled(target, false)
-          try {
-            await wait(100)
-            const startedAt = Date.now()
-            await expect(
-              runtime.runCoordinationExecutor.enqueue(interrupted),
-            ).rejects.toThrow()
-            expect(Date.now() - startedAt).toBeLessThan(1_500)
-            await wait(500)
-          } finally {
-            await setProxyEnabled(target, true)
-          }
-
-          await waitForRedis(proxyClient)
-          await runtime.runCoordinationExecutor.enqueue(interrupted)
-          const worker = {
-            workerId: 'network-recovery-worker',
-            workflowNames: ['network-recovery'],
-            leaseMs: 1_000,
-          }
-          const firstClaim = await claimContinue(runtime, worker)
-          const secondClaim = await claimContinue(runtime, worker)
-          expect(
-            new Set([firstClaim?.command.runId, secondClaim?.command.runId]),
-          ).toStrictEqual(new Set([first.runId, interrupted.runId]))
-          await runtime.runCoordinationExecutor.ack(firstClaim!)
-          await runtime.runCoordinationExecutor.ack(secondClaim!)
+        proxy.setEnabled(false)
+        try {
+          await wait(100)
+          const startedAt = Date.now()
           await expect(
-            runtime.runCoordinationExecutor.claim(worker),
-          ).resolves.toBeNull()
-        },
-      )
+            runtime.runCoordinationExecutor.enqueue(interrupted),
+          ).rejects.toThrow()
+          expect(Date.now() - startedAt).toBeLessThan(1_500)
+          await wait(500)
+        } finally {
+          proxy.setEnabled(true)
+        }
+
+        await waitForRedis(proxyClient)
+        await runtime.runCoordinationExecutor.enqueue(interrupted)
+        const worker = {
+          workerId: 'network-recovery-worker',
+          workflowNames: ['network-recovery'],
+          leaseMs: 1_000,
+        }
+        const firstClaim = await claimContinue(runtime, worker)
+        const secondClaim = await claimContinue(runtime, worker)
+        expect(
+          new Set([firstClaim?.command.runId, secondClaim?.command.runId]),
+        ).toStrictEqual(new Set([first.runId, interrupted.runId]))
+        await runtime.runCoordinationExecutor.ack(firstClaim!)
+        await runtime.runCoordinationExecutor.ack(secondClaim!)
+        await expect(
+          runtime.runCoordinationExecutor.claim(worker),
+        ).resolves.toBeNull()
+      })
 
       it.skipIf(process.env.NMTJS_ALLOW_REDIS_SERVICE_RESTARTS !== '1')(
         'preserves queued work and state across a service restart',
@@ -893,49 +874,47 @@ async function claimContinue(
   return null
 }
 
-async function replaceProxy(target: ServiceTarget) {
-  const response = await toxiproxyRequest(`/proxies/${target.proxyName}`, {
-    method: 'DELETE',
-  })
-  if (!response.ok && response.status !== 404) {
-    throw new Error(
-      `Toxiproxy could not remove [${target.proxyName}]: ${response.status}`,
-    )
-  }
-  const created = await toxiproxyRequest('/proxies', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      name: target.proxyName,
-      listen: target.proxyListen,
-      upstream: target.proxyUpstream,
-      enabled: true,
-    }),
-  })
-  if (!created.ok) {
-    throw new Error(
-      `Toxiproxy could not create [${target.proxyName}]: ${created.status}`,
-    )
-  }
+type TcpProxy = {
+  readonly url: string
+  setEnabled(enabled: boolean): void
+  close(): void
 }
 
-async function setProxyEnabled(target: ServiceTarget, enabled: boolean) {
-  const response = await toxiproxyRequest(`/proxies/${target.proxyName}`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ enabled }),
+// Stands between a client and the service so a test can take the network away:
+// while disabled it drops open connections and refuses new ones.
+async function createTcpProxy(upstream: string): Promise<TcpProxy> {
+  const { hostname, port } = new URL(upstream)
+  const sockets = new Set<Socket>()
+  let enabled = true
+  const server = createServer((client) => {
+    if (!enabled) return void client.destroy()
+    const service = connect(Number(port || 6379), hostname)
+    for (const socket of [client, service]) {
+      sockets.add(socket)
+      socket.on('error', () => {})
+      socket.on('close', () => {
+        sockets.delete(socket)
+        client.destroy()
+        service.destroy()
+      })
+    }
+    client.pipe(service).pipe(client)
   })
-  if (!response.ok) {
-    throw new Error(
-      `Toxiproxy could not update [${target.proxyName}]: ${response.status}`,
-    )
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const drop = () => {
+    for (const socket of sockets) socket.destroy()
   }
-}
-
-function toxiproxyRequest(path: string, init: RequestInit) {
-  const url = process.env.TOXIPROXY_URL
-  if (!url) throw new Error('Missing TOXIPROXY_URL')
-  return fetch(`${url}${path}`, init)
+  return {
+    url: `redis://127.0.0.1:${(server.address() as AddressInfo).port}`,
+    setEnabled(next) {
+      enabled = next
+      if (!next) drop()
+    },
+    close() {
+      drop()
+      server.close()
+    },
+  }
 }
 
 async function restartService(target: ServiceTarget) {

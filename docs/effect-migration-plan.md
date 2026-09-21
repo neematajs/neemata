@@ -859,6 +859,8 @@ PostgreSQL remains the adapter for durable, scheduled and long-retained work.
 - The contract test for one globally ordered queue dated its commands 2 ms and 1 ms in
   the past. A broker reads its own clock, which trailed the test process by about
   1.5 ms, so the margins are now seconds.
-- CI and `compose.yml` gain Toxiproxy and restart policies for the resilience tests:
-  proxy faults, a service restart and memory pressure.
+- #340 brought a Toxiproxy service for one test, which only switched the connection
+  off and on. A TCP proxy inside the spec does that, so the disconnect test runs
+  wherever the broker URLs are set and no extra service exists. CI and `compose.yml`
+  keep restart policies for the service-restart test.
 - Recurring schedules stay unsupported on Redis by design.

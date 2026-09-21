@@ -23,18 +23,6 @@ services:
       start_period: 10s
       retries: 5
 
-  toxiproxy:
-    image: ghcr.io/shopify/toxiproxy:2.12.0
-    ports:
-      - '${TOXIPROXY_PORT:-8474}:8474'
-      - '${REDIS_PROXY_PORT:-6382}:6382'
-      - '${VALKEY_PROXY_PORT:-6383}:6383'
-    depends_on:
-      redis:
-        condition: service_healthy
-      valkey:
-        condition: service_healthy
-
   postgres:
     image: postgres:17-alpine
     ports:
