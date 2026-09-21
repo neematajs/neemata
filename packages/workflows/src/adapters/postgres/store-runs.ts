@@ -70,12 +70,35 @@ export type CreateStoredRunOptions = {
   readonly recoverUniqueViolation?: boolean
 }
 
-export const createStoredRunWithState = async (
+// A self-rooted child would sit outside the family that pruning and family
+// listings select by root. A run's root never changes, so reading it ahead of
+// the insert is safe; a missing parent still fails the insert's foreign key.
+const inheritParentRoot = async (
   connection: WorkflowPostgresConnection,
   input: CreateRunInput,
+): Promise<CreateRunInput> => {
+  if (
+    input.rootRunId !== undefined ||
+    input.parentRunId === undefined ||
+    !isUuid(input.parentRunId)
+  ) {
+    return input
+  }
+  const parent = await one<{ root_run_id: string }>(
+    connection,
+    'SELECT root_run_id FROM workflow_runs WHERE id = $1',
+    [input.parentRunId],
+  )
+  return parent ? { ...input, rootRunId: parent.root_run_id } : input
+}
+
+export const createStoredRunWithState = async (
+  connection: WorkflowPostgresConnection,
+  rawInput: CreateRunInput,
   options: CreateStoredRunOptions = {},
 ): Promise<{ readonly run: StoredRun; readonly created: boolean }> => {
   const recoverUniqueViolation = options.recoverUniqueViolation ?? true
+  const input = await inheritParentRoot(connection, rawInput)
   const loadIdempotentRun = async () => {
     if (!input.idempotencyKey) return undefined
     const existing = await one(
@@ -252,11 +275,23 @@ export const pruneTerminalRunsInTransaction = async (
             AND r.status IN (${statusList})
             AND r.updated_at < $1
             AND NOT EXISTS (
+              -- Deleting the root cascades over both links, so liveness has
+              -- to be checked over both as well.
+              WITH RECURSIVE descendants AS (
+                SELECT c.id, c.status
+                FROM workflow_runs c
+                WHERE (c.parent_run_id = r.id OR c.root_run_id = r.id)
+                  AND c.id <> r.id
+                UNION
+                SELECT c.id, c.status
+                FROM workflow_runs c
+                JOIN descendants d
+                  ON (c.parent_run_id = d.id OR c.root_run_id = d.id)
+                 AND c.id <> d.id
+              )
               SELECT 1
-              FROM workflow_runs d
-              WHERE d.root_run_id = r.id
-                AND d.id <> r.id
-                AND d.status NOT IN (${terminalStatusList})
+              FROM descendants
+              WHERE status NOT IN (${terminalStatusList})
             )
           ORDER BY r.updated_at, r.id
           LIMIT ${batchParam}

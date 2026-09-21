@@ -21,21 +21,26 @@ const text = z.string()
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe('in-memory retention', () => {
-  it('keeps a terminal parent whose child run carries its own root id', async () => {
+  it('keeps a terminal parent whose child run carries a foreign root id', async () => {
     const { store } = createInMemoryWorkflowRuntime()
     const parent = await store.createRun({
       workflowName: 'review4.retention.parent',
       input: null,
     })
-    // `rootRunId` is optional, so this child becomes the root of its own family
-    // while still hanging off the parent.
+    const elsewhere = await store.createRun({
+      workflowName: 'review4.retention.elsewhere',
+      input: null,
+    })
+    // A child normally inherits its parent's root; an explicit foreign root
+    // still hangs off the parent, and deletion follows that link.
     const child = await store.createRun({
       workflowName: 'review4.retention.child',
       input: null,
       parentRunId: parent.id,
       parentNodeName: 'sub',
+      rootRunId: elsewhere.id,
     })
-    expect(child.rootRunId).toBe(child.id)
+    expect(child.rootRunId).toBe(elsewhere.id)
     await store.completeRun({ runId: parent.id, output: null })
 
     const olderThan = Date.now() + 60_000

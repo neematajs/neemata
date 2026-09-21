@@ -998,3 +998,23 @@ No P1 findings; PostgreSQL came back clean. Fixed:
   chunks below Lua's `unpack` limit), so large families no longer outpace it.
 - The PostgreSQL test installer scopes its constraint, index and enum checks to the
   target schema; the isolated integration harness now verifies its schema.
+
+### Fifth review pass
+
+No P1 findings; Redis came back clean. Fixed:
+
+- Cancelling a parent terminalized child workflow runs without their coordination lease,
+  so a child coordinator paused mid-pass could resume and create a grandchild that
+  nothing cancelled. A child workflow run is now settled only under its own lease: if a
+  coordinator holds it, cancellation is requested and the child's continuation settles
+  it, including what it created meanwhile. The lease-fenced `ensureChildRun` also
+  refuses to create a child for a run that is `cancelling` or terminal. The timeout and
+  reaper path shares the helper.
+- A manual retry could not advance an activity whose child had completed while its node
+  was cancelled by a timeout in between; activity dispatch now completes the node from
+  the child's output, as branch dispatch already did.
+- A run created with `parentRunId` and no `rootRunId` takes its parent's root, in
+  in-memory and PostgreSQL as Redis already did, and PostgreSQL pruning checks live
+  descendants through both links, matching what deletion cascades over. The shared
+  contract suite holds every adapter to both.
+- Both Redis script loaders are covered for `SCRIPT FLUSH` recovery.

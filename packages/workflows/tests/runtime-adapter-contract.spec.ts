@@ -1304,6 +1304,80 @@ function workflowRuntimeAdapterContract(
       ).resolves.toBeDefined()
     })
 
+    it('roots a parent-linked run in its parent family when the root id is omitted', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'inherited-root-parent',
+        input: {},
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'inherited-root-child',
+        input: {},
+        parentRunId: root.id,
+        idempotencyKey: ['inherited-root-child'],
+      })
+      const grandchild = await runtime.store.createRun({
+        workflowName: 'inherited-root-grandchild',
+        input: {},
+        parentRunId: child.id,
+      })
+
+      expect(child.rootRunId).toBe(root.id)
+      expect(grandchild.rootRunId).toBe(root.id)
+      await expect(
+        runtime.store.createRun({
+          workflowName: 'inherited-root-child',
+          input: {},
+          parentRunId: root.id,
+          idempotencyKey: ['inherited-root-child'],
+        }),
+      ).resolves.toMatchObject({ id: child.id, rootRunId: root.id })
+      const family = await runtime.store.listRunFamily(root.id)
+      expect(family.map((member) => member.run.id).sort()).toStrictEqual(
+        [root.id, child.id, grandchild.id].sort(),
+      )
+    })
+
+    it('keeps a terminal parent while a run linked only by parent id is live', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'prune-parent-link-parent',
+        input: {},
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'prune-parent-link-child',
+        input: {},
+        parentRunId: parent.id,
+      })
+      await runtime.store.markRunRunning({ runId: child.id })
+      await runtime.store.completeRun({
+        runId: parent.id,
+        output: { ok: true },
+      })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
+      ).resolves.toStrictEqual({ deleted: 0 })
+      await expect(
+        runtime.store.loadRunSnapshot(parent.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toMatchObject({ run: { status: 'running' } })
+
+      await runtime.store.completeRun({ runId: child.id, output: { ok: true } })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
+      ).resolves.toStrictEqual({ deleted: 1 })
+      await expect(
+        runtime.store.loadRunSnapshot(parent.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toBeUndefined()
+    })
+
     it('loads run rows in batch, skipping unknown ids', async () => {
       const runtime = await createRuntime()
       const first = await runtime.store.createRun({
