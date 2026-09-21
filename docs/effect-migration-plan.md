@@ -978,3 +978,23 @@ Findings fell from nineteen to twelve to seven. Fixed:
 
 Deferred to [todo.md](todo.md): fencing the writes after settlement by the originating
 attempt on Redis and in-memory, which only matters once a manual retry reopens the records.
+
+### Fourth review pass
+
+No P1 findings; PostgreSQL came back clean. Fixed:
+
+- Two regressions from the third pass. In-memory retention grouped families by
+  `rootRunId` while deletion followed `parentRunId`; both now use one family function.
+  An interrupted timeout turned into a cancellation, because descendants were cancelled
+  before the run was failed: the sweep now enqueues the run's continuation, fails the
+  run, then cancels descendants and wakes the parent, and a coordination pass over a
+  `failed` run cancels its live non-detached descendants, so either interruption
+  recovers with the timeout error intact.
+- Neem startup rejects two distinct implementations of one definition, which the
+  execution registry otherwise rejects at claim time, failing unrelated work.
+- In-memory `fireDue` re-reads the schedule after creating the run and writes only the
+  fields a fire owns, so a `setEnabled` during the await is kept.
+- Redis expired-index cleanup scales with the ids a transition adds (`1000 + 2n`, in
+  chunks below Lua's `unpack` limit), so large families no longer outpace it.
+- The PostgreSQL test installer scopes its constraint, index and enum checks to the
+  target schema; the isolated integration harness now verifies its schema.

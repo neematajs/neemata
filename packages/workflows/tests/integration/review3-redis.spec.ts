@@ -140,8 +140,9 @@ for (const target of targets) {
         }
         await seed.exec()
         const first = await completeFamily(runtime.store)
-        expect(await client.zcard(ordered)).toBe(502)
-        expect(await client.zcard(terminal)).toBe(501)
+        // The batch is 1,000 ids plus two for every run the transition indexes.
+        expect(await client.zcard(ordered)).toBe(500)
+        expect(await client.zcard(terminal)).toBe(499)
         const second = await completeFamily(runtime.store)
         expect(await client.zrange(ordered, '-inf', '+inf', 'BYSCORE')).toEqual(
           [active.id, first.id, second.id],

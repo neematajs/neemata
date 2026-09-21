@@ -14,6 +14,8 @@ import {
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
+  verifyPostgresWorkflowSchema,
+  WORKFLOW_POSTGRES_SCHEMA_MANIFEST,
 } from '../../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
 import { postgresTarget, requireServiceEnv, wait } from './helpers.ts'
@@ -22,8 +24,7 @@ requireServiceEnv(postgresTarget)
 
 describe.skipIf(!postgresTarget.url)('review 3: PostgreSQL adapter', () => {
   // The database is shared and other specs truncate its workflow tables, so
-  // these sessions work in a schema of their own. The enum types stay the
-  // shared ones, which the installer finds through `public`.
+  // these sessions work in a schema of their own.
   const schema = `review3_${randomUUID().replaceAll('-', '')}`
   const sessionOptions = (applicationName: string) => ({
     connectionString: postgresTarget.url,
@@ -77,6 +78,40 @@ describe.skipIf(!postgresTarget.url)('review 3: PostgreSQL adapter', () => {
         `SELECT count(*)::int AS count FROM ${table} WHERE ${where}`,
       )
     ).rows[0]!.count
+
+  it('has the foreign keys and the claim index in its own schema', async () => {
+    // The shared `public` schema holds the same names, which the installer
+    // once took for this schema's: the specs here then ran without them.
+    const foreignKeys = await pool.query<{ name: string }>(
+      `
+        SELECT c.conname AS name
+        FROM pg_constraint c
+        JOIN pg_class rel ON rel.oid = c.conrelid
+        JOIN pg_namespace n ON n.oid = rel.relnamespace
+        WHERE n.nspname = $1 AND c.contype = 'f'
+      `,
+      [schema],
+    )
+    expect(foreignKeys.rows.map((row) => row.name).sort()).toStrictEqual(
+      WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraints
+        .filter((name) => name.endsWith('_fk'))
+        .sort(),
+    )
+    const claimIndex = await pool.query<{ predicate: string | null }>(
+      `
+        SELECT pg_get_expr(i.indpred, i.indrelid) AS predicate
+        FROM pg_index i
+        JOIN pg_class c ON c.oid = i.indexrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = $1 AND c.relname = 'workflow_commands_claim_idx'
+      `,
+      [schema],
+    )
+    expect(claimIndex.rows).toStrictEqual([{ predicate: '(dead_at IS NULL)' }])
+    await expect(
+      verifyPostgresWorkflowSchema(createPostgresWorkflowConnection(pool)),
+    ).resolves.toBeUndefined()
+  })
 
   it.each([
     ['a pool', async () => pool],

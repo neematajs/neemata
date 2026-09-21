@@ -532,15 +532,22 @@ if remaining == 0 then
       redis.call('PEXPIRE', key, ARGV[5])
     end
   end
+  local runIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds') or '[]')
   -- An active family keeps the chronological index alive, so ids whose
   -- families expired would stay there for good unless they leave with their
-  -- expiry entries. The batch bounds one transition; the rest waits for the next.
-  local expired = redis.call('ZRANGEBYSCORE', KEYS[4], '-inf', now, 'LIMIT', 0, 1000)
-  if #expired > 0 then
-    redis.call('ZREM', ARGV[7], unpack(expired))
-    redis.call('ZREM', KEYS[4], unpack(expired))
+  -- expiry entries. This transition indexes every run of the family, so the
+  -- batch has to grow with the family or large families outpace it for good;
+  -- twice the inflow also drains a backlog while keeping the work
+  -- proportional to what the transition does anyway.
+  local expired = redis.call(
+    'ZRANGEBYSCORE', KEYS[4], '-inf', now, 'LIMIT', 0, 1000 + 2 * #runIds
+  )
+  -- unpack() is limited by the Lua stack, far below what a large family removes.
+  for first = 1, #expired, 1000 do
+    local last = math.min(first + 999, #expired)
+    redis.call('ZREM', ARGV[7], unpack(expired, first, last))
+    redis.call('ZREM', KEYS[4], unpack(expired, first, last))
   end
-  local runIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds') or '[]')
   for _, runId in ipairs(runIds) do
     redis.call('ZREM', KEYS[3], runId)
     redis.call('ZADD', KEYS[4], expiresAt, runId)

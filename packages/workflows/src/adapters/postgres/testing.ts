@@ -23,10 +23,10 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_kind') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_kind' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_run_kind AS ENUM ('workflow', 'task');
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_kind') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_kind' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_node_kind AS ENUM (
           'activity',
           'task',
@@ -37,14 +37,14 @@ export async function installPostgresWorkflowSchemaForTesting(
           'mapWorkflow'
         );
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_child_kind') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_child_kind' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_node_child_kind AS ENUM (
           'activity',
           'task',
           'workflow'
         );
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_status') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_run_status' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_run_status AS ENUM (
           'queued',
           'running',
@@ -55,7 +55,7 @@ export async function installPostgresWorkflowSchemaForTesting(
           'completed'
         );
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_status') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_node_status' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_node_status AS ENUM (
           'pending',
           'running',
@@ -66,7 +66,7 @@ export async function installPostgresWorkflowSchemaForTesting(
           'completed'
         );
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_attempt_status') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_attempt_status' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_attempt_status AS ENUM (
           'started',
           'completed',
@@ -75,7 +75,7 @@ export async function installPostgresWorkflowSchemaForTesting(
           'cancelled'
         );
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_command_kind') THEN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'workflow_command_kind' AND typnamespace = current_schema()::regnamespace) THEN
         CREATE TYPE workflow_command_kind AS ENUM (
           'continue',
           'activity',
@@ -302,19 +302,27 @@ export async function installPostgresWorkflowSchemaForTesting(
   `)
   // drop-and-create: pre-existing test databases may hold the older
   // non-partial shape under the same name; the advisory lock serializes
-  // concurrent installers (integration spec files share one database)
+  // concurrent installers (integration spec files share one database).
+  // The lookup goes through the table rather than the index name: a name
+  // resolves along the whole search_path, so an index of another schema
+  // would pass for this one, or get dropped in its place.
   await db.query(`
     DO $$
+    DECLARE
+      existing regclass;
+      is_partial boolean;
     BEGIN
       PERFORM pg_advisory_xact_lock(hashtext('workflow_commands_claim_idx_install'));
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_index i
-        JOIN pg_class c ON c.oid = i.indexrelid
-        WHERE c.relname = 'workflow_commands_claim_idx'
-          AND i.indpred IS NOT NULL
-      ) THEN
-        DROP INDEX IF EXISTS workflow_commands_claim_idx;
+      SELECT i.indexrelid::regclass, i.indpred IS NOT NULL
+      INTO existing, is_partial
+      FROM pg_index i
+      JOIN pg_class c ON c.oid = i.indexrelid
+      WHERE c.relname = 'workflow_commands_claim_idx'
+        AND i.indrelid = 'workflow_commands'::regclass;
+      IF existing IS NOT NULL AND NOT is_partial THEN
+        EXECUTE format('DROP INDEX %s', existing);
+      END IF;
+      IF existing IS NULL OR NOT is_partial THEN
         CREATE INDEX workflow_commands_claim_idx
         ON workflow_commands (kind, priority DESC, run_at, created_at, id)
         WHERE dead_at IS NULL;
@@ -353,10 +361,15 @@ export async function installPostgresWorkflowSchemaForTesting(
     CREATE INDEX IF NOT EXISTS workflow_node_children_child_run_idx
     ON workflow_node_children (child_run_id)
   `)
+  // Constraint names are only unique per table, so each check names the table:
+  // the same schema installed elsewhere in the database must not satisfy it.
   await db.query(`
     DO $$
     BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_parent_run_fk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
         ALTER TABLE workflow_runs
         ADD CONSTRAINT workflow_runs_parent_run_fk
         FOREIGN KEY (parent_run_id)
@@ -364,7 +377,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_root_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_root_run_fk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
         ALTER TABLE workflow_runs
         ADD CONSTRAINT workflow_runs_root_run_fk
         FOREIGN KEY (root_run_id)
@@ -372,7 +388,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_parent_node_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_parent_node_fk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
         ALTER TABLE workflow_runs
         ADD CONSTRAINT workflow_runs_parent_node_fk
         FOREIGN KEY (parent_run_id, parent_node_name)
@@ -380,7 +399,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_nodes_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_nodes_run_fk' AND conrelid = 'workflow_nodes'::regclass
+      ) THEN
         ALTER TABLE workflow_nodes
         ADD CONSTRAINT workflow_nodes_run_fk
         FOREIGN KEY (run_id)
@@ -388,7 +410,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_node_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_attempts_node_fk' AND conrelid = 'workflow_attempts'::regclass
+      ) THEN
         ALTER TABLE workflow_attempts
         ADD CONSTRAINT workflow_attempts_node_fk
         FOREIGN KEY (run_id, node_name)
@@ -396,13 +421,19 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_attempts_child_attempt_key') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_attempts_child_attempt_key' AND conrelid = 'workflow_attempts'::regclass
+      ) THEN
         ALTER TABLE workflow_attempts
         ADD CONSTRAINT workflow_attempts_child_attempt_key
         UNIQUE (run_id, node_name, child_key, attempt_number);
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_node_children_run_fk' AND conrelid = 'workflow_node_children'::regclass
+      ) THEN
         ALTER TABLE workflow_node_children
         ADD CONSTRAINT workflow_node_children_run_fk
         FOREIGN KEY (run_id)
@@ -410,7 +441,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_node_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_node_children_node_fk' AND conrelid = 'workflow_node_children'::regclass
+      ) THEN
         ALTER TABLE workflow_node_children
         ADD CONSTRAINT workflow_node_children_node_fk
         FOREIGN KEY (run_id, node_name)
@@ -418,7 +452,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_child_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_node_children_child_run_fk' AND conrelid = 'workflow_node_children'::regclass
+      ) THEN
         ALTER TABLE workflow_node_children
         ADD CONSTRAINT workflow_node_children_child_run_fk
         FOREIGN KEY (child_run_id)
@@ -426,7 +463,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE SET NULL;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_node_children_current_attempt_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_node_children_current_attempt_fk' AND conrelid = 'workflow_node_children'::regclass
+      ) THEN
         ALTER TABLE workflow_node_children
         ADD CONSTRAINT workflow_node_children_current_attempt_fk
         FOREIGN KEY (current_attempt_id)
@@ -434,7 +474,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE SET NULL;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_run_leases_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_run_leases_run_fk' AND conrelid = 'workflow_run_leases'::regclass
+      ) THEN
         ALTER TABLE workflow_run_leases
         ADD CONSTRAINT workflow_run_leases_run_fk
         FOREIGN KEY (run_id)
@@ -442,7 +485,10 @@ export async function installPostgresWorkflowSchemaForTesting(
         ON DELETE CASCADE;
       END IF;
 
-      IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'workflow_commands_run_fk') THEN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_commands_run_fk' AND conrelid = 'workflow_commands'::regclass
+      ) THEN
         ALTER TABLE workflow_commands
         ADD CONSTRAINT workflow_commands_run_fk
         FOREIGN KEY (run_id)
