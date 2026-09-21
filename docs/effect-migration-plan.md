@@ -1036,3 +1036,12 @@ fifth-pass fixes. Fixed:
   attempt. Dispatch now completes the node and run from the stored output and wakes the
   parent without rerunning the handler. Covered on in-memory, Redis and Valkey, along
   with the lease-held cancellation scenario.
+
+### Seventh review pass
+
+PostgreSQL and Redis both clean, no defect found in the sixth-pass fixes, and one P2 in
+the engine: an activity attempt ran its handler for a run that was already `cancelling`,
+starting side effects after the cancellation had been observed. The attempt is now
+acknowledged without running and the coordinator settles the run. The review series ends
+here: findings went nineteen, twelve, seven, five, three, two, one, with no P1 since the
+third pass.

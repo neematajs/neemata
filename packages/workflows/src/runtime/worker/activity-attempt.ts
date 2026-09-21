@@ -84,7 +84,13 @@ export async function runActivityAttempt(
   const storedAttempt = snapshot?.attempts.find(
     (attempt) => attempt.id === command.attemptId,
   )
-  if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
+  // A cancelling run is the coordinator's to settle. Running the handler here
+  // would start new side effects after the cancellation was already observed.
+  if (
+    snapshot &&
+    (snapshot.run.status === 'cancelling' ||
+      isTerminalRunStatus(snapshot.run.status))
+  ) {
     return await ackTerminalAttempt(input)
   }
 
