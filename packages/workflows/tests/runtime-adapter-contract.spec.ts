@@ -3,6 +3,7 @@ import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
+import { createInMemoryWorkflowRuntime } from '../src/adapters/in-memory.ts'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
@@ -15,7 +16,6 @@ import {
   runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
-  createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'

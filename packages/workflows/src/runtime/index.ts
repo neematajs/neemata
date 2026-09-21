@@ -38,8 +38,8 @@ export type {
 export { WorkflowRunConflictError } from './errors.ts'
 export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
 export type { HandlerRunner, HandlerRunnerOptions } from './handler.ts'
-export { createInMemoryWorkflowRuntime } from './in-memory.ts'
-export type { InMemoryWorkflowRuntime } from './in-memory.ts'
+export { createInMemoryWorkflowRuntime } from '../adapters/in-memory.ts'
+export type { InMemoryWorkflowRuntime } from '../adapters/in-memory.ts'
 export type {
   StoredWorkflowSchedule,
   WorkflowScheduler,
