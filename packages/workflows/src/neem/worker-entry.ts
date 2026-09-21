@@ -99,8 +99,12 @@ export function defineWorkflowsWorker<
               // draining handlers: an execution awaiting storage may register one.
               await serving.loop?.catch(() => {})
               await handlers.drain()
-              await resources.runtime.dispose?.()
-              await resources.dispose?.()
+              // A failing adapter disposer must not leak what the env holds.
+              try {
+                await resources.runtime.dispose?.()
+              } finally {
+                await resources.dispose?.()
+              }
             } finally {
               clearTimeout(timer)
             }
