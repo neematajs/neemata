@@ -17,7 +17,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
 })
 
-describe('Neem proxy with a shared transport server', () => {
+describe('Neem proxy with a shared server', () => {
   it('routes HTTP and WS traffic to one upstream registered under both types', async () => {
     const fixture = await createNeemFixture({ config: 'shared-server' })
     fixtures.push(fixture)
@@ -36,7 +36,7 @@ describe('Neem proxy with a shared transport server', () => {
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
 
-    // the gateway reported one bound URL under both proxyable types
+    // the worker reported one bound URL under both proxyable types
     const hostsEvent = await waitFor(async () => {
       const events = await readRuntimeEvents(fixture.eventsFile)
       return events.find((event) => event.event === 'shared-server-hosts')
@@ -49,7 +49,7 @@ describe('Neem proxy with a shared transport server', () => {
     const details = () =>
       [neem.stdout(), neem.stderr()].filter(Boolean).join('\n')
 
-    // HTTP RPC round-trips through the real native proxy
+    // an HTTP request round-trips through the real native proxy
     const echoed = await waitFor(
       async () => {
         const response = await fetch(`http://127.0.0.1:${proxyPort}/echo`, {
@@ -69,16 +69,13 @@ describe('Neem proxy with a shared transport server', () => {
     const healthy = await fetch(`http://127.0.0.1:${proxyPort}/healthy`)
     expect(healthy.status).toBe(200)
 
-    // a WS upgrade through the same proxy port reaches the ws transport:
-    // open fires only after the gateway accepted the connection (format
-    // negotiation via query params), proving upgrade headers and query
-    // traversed the proxy onto the shared socket
+    // a WS upgrade through the same proxy port reaches the shared socket:
+    // open fires only after the worker answered the handshake, proving the
+    // upgrade headers traversed the proxy
     const socket = await waitFor(
       () =>
         new Promise<WebSocket | false>((resolve) => {
-          const ws = new WebSocket(
-            `ws://127.0.0.1:${proxyPort}/?accept=application/json&content-type=application/json`,
-          )
+          const ws = new WebSocket(`ws://127.0.0.1:${proxyPort}/`)
           // bound per attempt: a socket that neither opens nor errors would
           // otherwise pin waitFor past its own deadline
           const timeout = setTimeout(() => {

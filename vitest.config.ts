@@ -8,7 +8,6 @@ export default defineConfig({
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],
-      exclude: ['packages/nmtjs/**'],
       reporter: ['text', 'text-summary', 'html'],
     },
   },

@@ -75,5 +75,4 @@ Rules:
 - Metrics server resource creation happens inside the plugin hooks, not in
   `neem.config.ts`.
 - The plugin combines main-controller metrics with worker metrics.
-- Custom application metrics use the root metrics helpers from `nmtjs` or
-  `@nmtjs/metrics`; the Neem plugin exposes and pushes the collected registry.
+- Custom application metrics use the root metrics helpers from `@nmtjs/metrics`; the Neem plugin exposes and pushes the collected registry.

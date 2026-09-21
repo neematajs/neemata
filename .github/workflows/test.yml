@@ -75,18 +75,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - name: Install Playwright browser (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Install Playwright browser (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          pnpm exec playwright install chromium firefox webkit
       - run: |
           pnpm run test --reporter=agent --reporter=github-actions
           pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
-          pnpm run test:browser:client --reporter=agent --reporter=github-actions
 
   tests-bun:
     needs: [lint]
@@ -129,24 +120,6 @@ jobs:
     needs: [lint]
     runs-on: ubuntu-24.04
     services:
-      redis:
-        image: redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-      valkey:
-        image: valkey/valkey:9-alpine
-        ports:
-          - 6380:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
       postgres:
         image: postgres:17-alpine
         ports:
@@ -187,6 +160,4 @@ jobs:
       - run: pnpm run test:integration:services
         env:
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
-          REDIS_URL: redis://localhost:6379
-          VALKEY_URL: redis://localhost:6380
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata

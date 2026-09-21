@@ -4,11 +4,12 @@ Date: 2026-09-21
 Status: slices 1–5 implemented and reviewed. The workflows core was then made
 Effect-free with an `/effect` adapter, definitions moved to Standard Schemas, and
 execution pools replaced name-list routing; see the dated sections at the end, which
-supersede the slice 4–5 text where they differ. What remains is deleting the retired
-framework and migrating applications.
+supersede the slice 4–5 text where they differ. The retired framework packages are
+deleted (slice 6); what remains is documentation and release, then application
+migration outside this repository.
 Baseline: `b2602ae0be76e92dfc06f0392977263c2883ff9c` (`main`).
 
-This plan supersedes [Application Interfaces](application-interfaces-plan.md).
+This plan supersedes the Application Interfaces plan, removed with the framework.
 The next major version is a clean break: existing applications migrate explicitly.
 There will be no parallel Neemata/Effect handler APIs or framework compatibility
 facade. The purpose is to reduce the maintenance and test surface.
@@ -181,10 +182,10 @@ applications migrate against the result.
 
 ### Deletion and release
 
-- Delete retired packages and their tests, exports, scripts, CI jobs, fixtures,
-  skills references and unused dependencies: `application`, `gateway`, `core`,
-  `contract`, `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs`.
-  Prune common utilities after their consumers disappear.
+- Done: retired packages deleted with their tests, scripts, CI jobs, fixtures, skills
+  references and unused dependencies (`application`, `gateway`, `core`, `contract`,
+  `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs`), and
+  `@nmtjs/common` pruned to what the retained packages import.
 - Narrow metrics to Neem observation. Applications can export metrics directly from
   workers through OTLP; assess whether the forked `@nmtjs/prom-client` can also go.
 - Document the new stack: Neem host and presets, the Effect preset, workflows (core,

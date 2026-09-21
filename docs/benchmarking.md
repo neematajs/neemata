@@ -5,11 +5,10 @@ unrelated CI machines.
 
 ## Suites
 
-- `runtime` contains deterministic in-memory benchmarks for protocol codecs, dependency
-  injection, the application API pipeline, and workflow storage operations.
-- `integration` measures loopback transports and service-backed Postgres, Redis, and
-  Valkey paths. It runs on pull requests but remains informational because sockets and
-  services add noise.
+- `runtime` contains deterministic in-memory benchmarks for workflow storage
+  operations.
+- `integration` measures the service-backed Postgres workflow runtime. It runs on pull
+  requests but remains informational because services add noise.
 
 Run the deterministic runtime benchmarks directly through Vitest with:
 
@@ -39,17 +38,14 @@ node scripts/benchmarks/run.js runtime --output benchmark-results/runtime.json
 Start the repository services, build, and opt into required service coverage:
 
 ```sh
-docker compose up -d redis valkey postgres
+docker compose up -d postgres
 pnpm build
 NMTJS_REQUIRE_SERVICE_TESTS=1 \
-REDIS_URL=redis://localhost:6379 \
-VALKEY_URL=redis://localhost:6380 \
 POSTGRES_URL=postgres://neemata:neemata@localhost:5432/neemata \
 pnpm bench:integration
 ```
 
-Without the service variables, service-backed cases skip cleanly; loopback cases still
-run. CI runs the complete integration suite for every pull request and retains the raw
+Without the service variables, service-backed cases skip cleanly. CI runs the complete integration suite for every pull request and retains the raw
 report for 90 days.
 
 ## Pull request comparisons

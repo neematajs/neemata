@@ -3,9 +3,7 @@ packages:
 
 allowBuilds:
   esbuild: true
-  msgpackr-extract: false
   prom-client: true
-  protobufjs: true
 
 catalog:
   vite: 8.0.11

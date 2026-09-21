@@ -32,15 +32,6 @@
   },
   "overrides": [
     {
-      "files": [
-        "packages/protocol/src/server/protocol.ts",
-        "packages/transports/src/host/deno.ts"
-      ],
-      "rules": {
-        "typescript/no-redundant-type-constituents": "off"
-      }
-    },
-    {
       "files": ["packages/neem/**"],
       "rules": {
         "no-restricted-imports": [
