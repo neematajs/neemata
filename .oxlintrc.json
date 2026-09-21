@@ -50,6 +50,7 @@
     {
       "files": [
         "packages/workflows/**",
+        "packages/pubsub/**",
         "packages/effect/src/**",
         "packages/effect/tests/unit/**",
         "packages/vite/src/**",
@@ -75,7 +76,7 @@
       }
     },
     {
-      "files": ["packages/workflows/src/**"],
+      "files": ["packages/workflows/src/**", "packages/pubsub/src/**"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -83,7 +84,7 @@
             "patterns": [
               {
                 "group": ["effect", "effect/**", "@effect/**"],
-                "message": "The workflows core is Effect-free; Effect support belongs in src/effect."
+                "message": "The workflows and pubsub cores are Effect-free; Effect support belongs in src/effect."
               }
             ]
           }
@@ -91,7 +92,10 @@
       }
     },
     {
-      "files": ["packages/workflows/src/effect/**"],
+      "files": [
+        "packages/workflows/src/effect/**",
+        "packages/pubsub/src/effect/**"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",

@@ -16,6 +16,9 @@
       "path": "./packages/nuxt/tsconfig.json"
     },
     {
+      "path": "./packages/pubsub/tsconfig.json"
+    },
+    {
       "path": "./packages/vite/tsconfig.json"
     },
     {

@@ -27,21 +27,22 @@ durable state, scheduling, leases, retries, and store adapters.
 
 ## Package boundaries
 
-| Package                                                                                                               | Destination                                                                                                                                             |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@nmtjs/neem`                                                                                                         | Keep the host, compiler, reload, lifecycle, proxy integration, and worker supervision. Own Pino logging; no Effect dependency.                          |
-| `@nmtjs/vite`, `@nmtjs/nuxt`                                                                                          | Keep the existing Neem presets.                                                                                                                         |
-| `@nmtjs/workflows`                                                                                                    | Keep the engine and adapters with an Effect-free core: Standard Schemas, Promise handlers, one `env`. Effect support is the optional `/effect` adapter. |
-| `@nmtjs/effect`                                                                                                       | Small Neem adapter for a Layer and a supervised main effect; applications own HTTP/RPC.                                                                 |
-| `@nmtjs/metrics`                                                                                                      | Retain Neem host/worker observation. Assess whether its forked Prometheus client is still needed.                                                       |
-| `@nmtjs/common`                                                                                                       | Keep utilities used by surviving packages; prune after consumers are removed.                                                                           |
-| `@nmtjs/unplugin-labels`                                                                                              | Remove in slice 2, including compiler transforms.                                                                                                       |
-| `application`, `gateway`, `core`, `contract`, `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs` | Delete in slice 6 after application and workflow migration.                                                                                             |
+| Package                                                                                                     | Destination                                                                                                                                             |
+| ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `@nmtjs/neem`                                                                                               | Keep the host, compiler, reload, lifecycle, proxy integration, and worker supervision. Own Pino logging; no Effect dependency.                          |
+| `@nmtjs/vite`, `@nmtjs/nuxt`                                                                                | Keep the existing Neem presets.                                                                                                                         |
+| `@nmtjs/workflows`                                                                                          | Keep the engine and adapters with an Effect-free core: Standard Schemas, Promise handlers, one `env`. Effect support is the optional `/effect` adapter. |
+| `@nmtjs/effect`                                                                                             | Small Neem adapter for a Layer and a supervised main effect; applications own HTTP/RPC.                                                                 |
+| `@nmtjs/metrics`                                                                                            | Retain Neem host/worker observation. Assess whether its forked Prometheus client is still needed.                                                       |
+| `@nmtjs/common`                                                                                             | Keep utilities used by surviving packages; prune after consumers are removed.                                                                           |
+| `@nmtjs/unplugin-labels`                                                                                    | Remove in slice 2, including compiler transforms.                                                                                                       |
+| `application`, `gateway`, `core`, `contract`, `type`, `protocol`, `transports`, `client`, `config`, `nmtjs` | Delete in slice 6 after application and workflow migration.                                                                                             |
 
 Applications own RPC, HTTP, MCP, upload protocols, and their Effect integrations.
 Structured metadata plus multipart/HTTP uploads or file references replace nested
 remote blob streams where needed. Rebuilding Neemata's wire protocol is out of
-scope. Redis pubsub is not a retained package without a concrete requirement.
+scope. Pubsub was first listed for deletion; it is retained as an Effect-free core
+with an `/effect` adapter, see "Pubsub retained" at the end.
 
 ## Slice 1 — Record the boundary
 
@@ -184,13 +185,14 @@ applications migrate against the result.
 
 - Done: retired packages deleted with their tests, scripts, CI jobs, fixtures, skills
   references and unused dependencies (`application`, `gateway`, `core`, `contract`,
-  `type`, `protocol`, `transports`, `client`, `config`, `pubsub`, `nmtjs`), and
-  `@nmtjs/common` pruned to what the retained packages import.
+  `type`, `protocol`, `transports`, `client`, `config`, `nmtjs`), and
+  `@nmtjs/common` pruned to what the retained packages import. `pubsub` was deleted
+  with them and then restored without its framework dependencies.
 - Narrow metrics to Neem observation. Applications can export metrics directly from
   workers through OTLP; assess whether the forked `@nmtjs/prom-client` can also go.
 - Document the new stack: Neem host and presets, the Effect preset, workflows (core,
-  `/effect`, pools, Neem workers). For Redis alternatives to pubsub, state
-  at-most-once delivery and reconnect gaps.
+  `/effect`, pools, Neem workers) and pubsub, stating its at-most-once delivery
+  and reconnect gaps.
 - Publish the new package map and supported exact Effect version. Recheck upstream
   release status and unstable APIs at release time.
 
@@ -806,3 +808,31 @@ handler })` and `implementWorkflow(workflow, { pool })` require a pool; nothing
 - The README and the `use-neemata` workflows skill reference state the
   task-versus-activity rule; the skill reference was also brought up to date with
   Standard Schemas, `env` and the Effect adapter.
+
+## Pubsub retained — 2026-09-21
+
+The boundary above dropped pubsub "without a concrete requirement". The requirement
+is distributed fanout for chat and live updates, and Effect `4.0.0-rc.116` does not
+cover it: `effect/PubSub` is process-local; `unstable/persistence/Redis` exchanges
+raw strings on a channel name, opens one Redis connection per `subscribe()` call, and
+buffers each subscription in an unbounded queue. What the old package added was the
+typed channel contract (params, named events, event selection), a broker-independent
+adapter interface, and a Redis adapter that shares one subscriber connection per
+process.
+
+- `@nmtjs/pubsub` is restored from history with the same behaviour and the same
+  shape as workflows: an Effect-free core and an optional-peer `/effect` adapter.
+- Channel contracts moved into the package as `defineChannel`, since `contract` and
+  `type` are gone. Params and payloads are Standard Schemas; a transformed payload
+  declares `{ decode, encode }`, and a lone transforming schema is a compile error.
+- The DI plugin and injectables are gone. `PubSubManager` takes an adapter and an
+  optional Pino-compatible logger; `createRedisAdapter(client, logger?)` returns an
+  initialized adapter that the caller disposes.
+- `@nmtjs/pubsub/effect` defines channels from `effect/Schema` and provides a
+  `PubSub` service: `publish` is an Effect, `subscribe` a Stream. It wraps the
+  package's own adapter rather than Effect's unstable Redis module, which keeps
+  connection sharing and the stable-modules-only rule. Effect awaits an iterator's
+  `return()` when a stream's scope closes, which queues behind a pending `next()`;
+  the adapter aborts the subscription first so an idle stream can be interrupted.
+- Nothing was added beyond the previous behaviour. Buffering between the broker and
+  a slow local subscriber is still unbounded; see [todo.md](todo.md).

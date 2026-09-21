@@ -3,15 +3,16 @@
 Neem hosting and durable workflows. Applications own their RPC, HTTP and clients;
 Neemata supervises their processes and coordinates their durable work.
 
-| Package            | Purpose                                                                                             |
-| ------------------ | --------------------------------------------------------------------------------------------------- |
-| `@nmtjs/neem`      | Runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md)) |
-| `@nmtjs/workflows` | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))  |
-| `@nmtjs/effect`    | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))        |
-| `@nmtjs/metrics`   | Metrics plugin for a Neem project                                                                   |
-| `@nmtjs/vite`      | Neem runtime for a Vite application                                                                 |
-| `@nmtjs/nuxt`      | Neem runtime for a Nuxt application                                                                 |
-| `@nmtjs/common`    | Utilities shared by the packages above                                                              |
+| Package            | Purpose                                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------ |
+| `@nmtjs/neem`      | Runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))    |
+| `@nmtjs/workflows` | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))     |
+| `@nmtjs/pubsub`    | Typed ephemeral publish/subscribe with Redis and Valkey adapters ([README](packages/pubsub/README.md)) |
+| `@nmtjs/effect`    | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))           |
+| `@nmtjs/metrics`   | Metrics plugin for a Neem project                                                                      |
+| `@nmtjs/vite`      | Neem runtime for a Vite application                                                                    |
+| `@nmtjs/nuxt`      | Neem runtime for a Nuxt application                                                                    |
+| `@nmtjs/common`    | Utilities shared by the packages above                                                                 |
 
 The workflows core has no Effect dependency: definitions take Standard Schemas and
 handlers return values or Promises. `@nmtjs/workflows/effect` and `@nmtjs/effect`
@@ -94,8 +95,10 @@ Service-backed integration tests live beside package owners under
 `packages/*/tests/integration`.
 
 ```sh
-docker compose up -d --wait postgres
+docker compose up -d --wait redis valkey postgres
 NMTJS_REQUIRE_SERVICE_TESTS=1 \
+REDIS_URL=redis://localhost:6379 \
+VALKEY_URL=redis://localhost:6380 \
 POSTGRES_URL=postgres://neemata:neemata@localhost:5432/neemata \
 pnpm run test:integration:services
 ```
