@@ -12,7 +12,7 @@ import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { SELF_CHILD_KEY } from '../child-key.ts'
 import { parseDurationMs } from '../duration.ts'
-import { failNodeAndRun } from './sinks.ts'
+import { completeRunAndWakeParent, failNodeAndRun } from './sinks.ts'
 
 const TASK_RUN_NODE_NAME = '$task'
 
@@ -43,11 +43,30 @@ export async function dispatchTaskRunAttempt(
     nodeName: TASK_RUN_NODE_NAME,
     input: input.taskInput,
   })
-  await input.store.ensureNodeChildren({
+  const ensured = await input.store.ensureNodeChildren({
     runId: input.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'task' }],
   })
+  const child = ensured.children[0]!
+  // A task run settles itself from its attempt command. A parent timeout or
+  // cancellation landing between the attempt's settlement and the run's
+  // completion cancels the run, and manual retry reopens it with that command
+  // gone: nothing is left to dispatch, so the run settles from the child.
+  if (child.status === 'completed') {
+    await input.store.completeNode({
+      runId: input.taskRunId,
+      nodeName: TASK_RUN_NODE_NAME,
+      output: child.output,
+    })
+    await completeRunAndWakeParent({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: input.taskRunId,
+      output: child.output,
+    })
+    return
+  }
 
   await dispatchTaskAttempt({
     store: input.store,

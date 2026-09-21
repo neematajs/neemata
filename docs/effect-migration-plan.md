@@ -1018,3 +1018,21 @@ No P1 findings; Redis came back clean. Fixed:
   descendants through both links, matching what deletion cascades over. The shared
   contract suite holds every adapter to both.
 - Both Redis script loaders are covered for `SCRIPT FLUSH` recovery.
+
+### Sixth review pass
+
+No P1 findings, PostgreSQL clean for the third pass running, and no defect found in the
+fifth-pass fixes. Fixed:
+
+- A step's input mapper was optional even when the workflow input did not fit the step
+  input, so a mismatch compiled and failed during coordination. The mapper is required
+  whenever the workflow input is not assignable to the step input, for nodes and for
+  branch and parallel cases (a bare case value is accepted only when the input fits), in
+  both chains; `any` stays permissive. Handler `env` and Effect requirement inference
+  is unchanged. Three test call sites were genuinely wrong and gained a mapper.
+- The task-run twin of the fifth-pass activity fix: after a timeout between a child
+  task's settlement and its node or run completion, a manual retry of the parent
+  reopened the task run but the dispatch guard returned on the preserved completed
+  attempt. Dispatch now completes the node and run from the stored output and wakes the
+  parent without rerunning the handler. Covered on in-memory, Redis and Valkey, along
+  with the lease-held cancellation scenario.
