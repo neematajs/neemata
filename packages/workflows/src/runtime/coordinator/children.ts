@@ -1,4 +1,4 @@
-import type { DurationString } from '../../types/index.ts'
+import type { DurationString, RetryPolicy } from '../../types/index.ts'
 import type { StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
@@ -32,6 +32,7 @@ export async function dispatchChildTaskRun(
     readonly childKey: string
     readonly taskName: string
     readonly timeout?: DurationString
+    readonly retry?: RetryPolicy
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -67,6 +68,7 @@ export async function dispatchChildTaskRun(
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: input.timeout,
+        retry: input.retry,
       })
       await input.store.waitNode({
         runId: input.run.id,
@@ -155,6 +157,7 @@ export async function dispatchChildTaskRun(
     taskInput: nodeInput,
     idempotencyKey,
     timeout: input.timeout,
+    retry: input.retry,
   })
   await input.store.waitNode({
     runId: input.run.id,

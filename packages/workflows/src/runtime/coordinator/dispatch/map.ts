@@ -78,6 +78,7 @@ export async function dispatchMapTaskNode(
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
+        retry: declaration.retry ?? declaration.task.retry,
       })
     },
     startChild: async ({ child, nodeInput, idempotencyKey, declaration }) => {
@@ -100,6 +101,7 @@ export async function dispatchMapTaskNode(
         taskInput: nodeInput,
         idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
+        retry: declaration.retry ?? declaration.task.retry,
       })
       return ensured.childRun
     },

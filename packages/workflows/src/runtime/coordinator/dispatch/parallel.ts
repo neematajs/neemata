@@ -215,6 +215,7 @@ export async function dispatchParallelNode(
             taskInput: nodeInput,
             idempotencyKey,
             timeout: taskDeclaration.timeout ?? taskTarget.timeout,
+            retry: taskDeclaration.retry ?? taskTarget.retry,
           })
         }
         continue
@@ -357,6 +358,7 @@ async function redispatchParallelChildRun(
     taskInput: childRun.input,
     idempotencyKey: childRun.idempotencyKey,
     timeout: taskDeclaration?.timeout ?? taskTarget.timeout,
+    retry: taskDeclaration?.retry ?? taskTarget.retry,
   })
 }
 

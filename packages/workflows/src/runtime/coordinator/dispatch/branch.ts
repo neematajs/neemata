@@ -179,6 +179,7 @@ export async function dispatchBranchNode(
       childKey,
       taskName: taskTarget.name,
       timeout: taskDeclaration.timeout ?? taskTarget.timeout,
+      retry: taskDeclaration.retry ?? taskTarget.retry,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,

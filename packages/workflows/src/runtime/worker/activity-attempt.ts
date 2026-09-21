@@ -40,7 +40,7 @@ import {
   shouldCompleteNodeFromAttempt,
   type WorkerCommandResult,
 } from './reconcile.ts'
-import { retryActivityAttempt } from './retry.ts'
+import { retryAttempt } from './retry.ts'
 
 type ActivityAttemptNode =
   | ActivityNodeImplementation
@@ -90,7 +90,21 @@ export async function runActivityAttempt(
 
   if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt),
+      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt, {
+        currentAttempt: snapshot?.attempts.find(
+          (attempt) => attempt.id === storedChild?.currentAttemptId,
+        ),
+        resolveRetry: () => {
+          const workflow = createWorkflowRuntimeRegistry({
+            workflows: input.workflows,
+          }).getWorkflow(command.workflowName) as
+            | WorkflowImplementation
+            | undefined
+          return (
+            workflow && resolveActivityAttemptNode(workflow, command)?.retry
+          )
+        },
+      }),
     )
   }
 
@@ -199,7 +213,7 @@ export async function runActivityAttempt(
             })
 
       if (attempt) {
-        const retried = await retryActivityAttempt(scoped, {
+        const retried = await retryAttempt(scoped, {
           command,
           failedAttempt: attempt,
           retry: node.retry,

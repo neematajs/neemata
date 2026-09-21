@@ -1,4 +1,4 @@
-import type { DurationString } from '../types/index.ts'
+import type { DurationString, RetryPolicy } from '../types/index.ts'
 
 export type ContinueRunCommand = {
   readonly kind: 'continueRun'
@@ -33,6 +33,8 @@ export type TaskAttemptCommand = {
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString
+  /** The dispatching node's policy; the task's own policy applies without it. */
+  readonly retry?: RetryPolicy
 }
 
 export type AttemptCommand = ActivityAttemptCommand | TaskAttemptCommand

@@ -1,4 +1,8 @@
-import type { DurationString, Timestamp } from '../../types/index.ts'
+import type {
+  DurationString,
+  RetryPolicy,
+  Timestamp,
+} from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
@@ -16,6 +20,7 @@ export type DispatchTaskRunAttemptInput = {
   readonly taskInput: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString
+  readonly retry?: RetryPolicy
   readonly startAt?: Timestamp
   readonly throwOnDispatchFailure?: boolean
 }
@@ -49,6 +54,7 @@ export async function dispatchTaskRunAttempt(
     nodeName: TASK_RUN_NODE_NAME,
     childKey: SELF_CHILD_KEY,
     timeout: input.timeout,
+    retry: input.retry,
     runAt: input.startAt,
     throwOnDispatchFailure: input.throwOnDispatchFailure,
     prepareAttempt: async () => {
@@ -112,6 +118,7 @@ export async function dispatchTaskAttempt(input: {
   readonly nodeName: string
   readonly childKey: string
   readonly timeout?: DurationString
+  readonly retry?: RetryPolicy
   readonly runAt?: Timestamp
   readonly throwOnDispatchFailure?: boolean
   readonly prepareAttempt: () => Promise<{
@@ -136,6 +143,7 @@ export async function dispatchTaskAttempt(input: {
           ? {}
           : { idempotencyKey: attempt.idempotencyKey }),
         ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
+        ...(input.retry === undefined ? {} : { retry: input.retry }),
       },
       input.runAt === undefined ? undefined : { runAt: input.runAt },
     )

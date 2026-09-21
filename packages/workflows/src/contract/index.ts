@@ -81,13 +81,12 @@ type OutputMismatch<Message extends string, Expected, Received> = {
   readonly received: Received
 }
 
-type OutputMatches<
-  Received,
-  Expected,
-  Message extends string,
-> = Received extends Expected
-  ? unknown
-  : OutputMismatch<Message, Expected, Received>
+type OutputMatches<Received, Expected, Message extends string> =
+  // Tuple-wrapped so a union is compared whole: distributing would let the
+  // members that do match absorb the mismatch of those that do not.
+  [Received] extends [Expected]
+    ? unknown
+    : OutputMismatch<Message, Expected, Received>
 
 export type BranchCaseHelpers<K extends SchemaKind = CodecKind> = {
   activity<
@@ -432,12 +431,19 @@ export type ScheduleOptions<
 
 const nodeNamePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
+// Node names key plain objects of node outputs, where these either never
+// become own properties (`__proto__`) or shadow what every object inherits.
+const reservedNodeNames = new Set(['__proto__', 'constructor', 'prototype'])
+
 function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   if (!nodeNamePattern.test(name)) {
     throw new Error(`Invalid workflow node name: ${name}`)
   }
   if (name === 'input') {
     throw new Error('Workflow node name cannot be "input"')
+  }
+  if (reservedNodeNames.has(name)) {
+    throw new Error(`Workflow node name cannot be "${name}"`)
   }
   if (nodes.some((node) => node.name === name)) {
     throw new Error(`Duplicate workflow node name: ${name}`)

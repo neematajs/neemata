@@ -30,7 +30,7 @@ import {
   shouldCompleteNodeFromAttempt,
   type WorkerCommandResult,
 } from './reconcile.ts'
-import { retryTaskAttempt } from './retry.ts'
+import { retryAttempt } from './retry.ts'
 
 type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
@@ -71,12 +71,24 @@ export async function runTaskAttempt(
     return await settleCancelledTaskRun(input)
   }
   if (snapshot && isTerminalRunStatus(snapshot.run.status)) {
-    return await ackTerminalAttempt(input)
+    return await ackTerminalAttempt(
+      input,
+      snapshot.run.kind === 'task' ? snapshot.run : undefined,
+    )
   }
 
   if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt),
+      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt, {
+        currentAttempt: snapshot?.attempts.find(
+          (attempt) => attempt.id === storedChild?.currentAttemptId,
+        ),
+        resolveRetry: () =>
+          command.retry ??
+          createWorkflowRuntimeRegistry({ tasks: input.tasks }).getTask(
+            command.taskName,
+          )?.task.retry,
+      }),
     )
   }
 
@@ -175,10 +187,10 @@ export async function runTaskAttempt(
             })
 
       if (attempt) {
-        const retried = await retryTaskAttempt(scoped, {
+        const retried = await retryAttempt(scoped, {
           command,
           failedAttempt: attempt,
-          retry: task.task.retry,
+          retry: command.retry ?? task.task.retry,
         })
         if (retried) {
           await scoped.attemptExecutor.ack(scoped.claimed)
