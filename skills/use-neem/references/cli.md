@@ -103,6 +103,10 @@ neem dev --env-files .env.local,../../.env
 - `build` and `start` do not support this option; provide their environment
   externally.
 
+Under Bun, automatic environment-file loading happens before Neem starts. Those
+values take precedence over `--env-files` just like other existing process values.
+Bun skips `.env.local` with `NODE_ENV=test` and loads it in development.
+
 `NeemConfig.env` remains an inline string map baked into the manifest. Do not
 put file paths there or add an `envFiles` config property; env-file loading is
 a dev CLI option.

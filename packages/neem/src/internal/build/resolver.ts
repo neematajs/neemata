@@ -3,10 +3,11 @@ import { dirname, resolve } from 'node:path'
 import { ResolverFactory } from 'oxc-resolver'
 
 import type { NeemArtifactEntry } from '../../shared/types.ts'
+import { assertEsmEntry } from '../utils.ts'
 
 const resolver = new ResolverFactory({
   conditionNames: ['import', 'module', 'node', 'default'],
-  extensions: ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json', '.node'],
+  extensions: ['.ts', '.mts', '.js', '.mjs', '.json', '.node'],
   tsconfig: 'auto',
 })
 
@@ -24,10 +25,19 @@ export function resolveBuildEntry(
   entry: NeemArtifactEntry | undefined,
 ): NeemArtifactEntry | undefined {
   if (!entry) return undefined
-  if (entry instanceof URL) return assertFileUrlEntry(entry)
-  if (entry.startsWith('/')) return entry
-  if (entry.startsWith('.')) return resolve(dirname(importer), entry)
-  return resolveImportFile(importer, entry)
+  let file: NeemArtifactEntry
+  if (entry instanceof URL) {
+    file = assertFileUrlEntry(entry)
+  } else if (entry.startsWith('/')) {
+    file = entry
+  } else if (entry.startsWith('.')) {
+    file = resolve(dirname(importer), entry)
+  } else {
+    file = resolveImportFile(importer, entry)
+  }
+  // Explicit paths and package exports must follow the same entry format policy.
+  assertEsmEntry(file)
+  return file
 }
 
 export function resolveRequiredBuildEntry(

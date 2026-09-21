@@ -1,5 +1,9 @@
 # Neem
 
+Neem configuration, runtime declarations, planners and runtime artifact entries
+must be ES modules. Use `.ts`, `.mts`, `.js` or `.mjs`; `.cjs` and `.cts` entries
+are not supported.
+
 ## Development environment files
 
 Load an environment file before evaluating `neem.config.ts` and starting workers:
@@ -23,5 +27,9 @@ expansion and encrypted values. Missing files or decryption errors fail startup.
 Files are loaded once; restart `neem dev` after changing them. Without
 `--env-files`, Neem does not load environment files automatically. This option is
 only available on `dev`; `build` and `start` use their existing environment.
+
+When launched with Bun, Bun loads environment files before Neem starts. Those
+values count as existing process variables and take precedence over `--env-files`.
+Bun also loads `.env.local` in development, but skips it with `NODE_ENV=test`.
 
 `NeemConfig.env` remains an inline environment map included in the manifest.

@@ -9,6 +9,7 @@ import type {
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
 import { isNeemRuntimeDeclaration } from '../../public/config.ts'
+import { assertEsmEntry } from '../utils.ts'
 import { resolveBuildEntry } from './resolver.ts'
 
 const runtimeDeclarationFiles = [
@@ -16,8 +17,6 @@ const runtimeDeclarationFiles = [
   'neem.runtime.mts',
   'neem.runtime.js',
   'neem.runtime.mjs',
-  'neem.runtime.cts',
-  'neem.runtime.cjs',
 ] as const
 
 const plannerFiles = [
@@ -25,8 +24,6 @@ const plannerFiles = [
   'neem.planner.mts',
   'neem.planner.js',
   'neem.planner.mjs',
-  'neem.planner.cts',
-  'neem.planner.cjs',
 ] as const
 
 type RuntimeProjectMatch = { entry: string; file: string; directory: string }
@@ -97,6 +94,7 @@ export function resolveRuntimeProjectFiles(
 async function loadRuntimeDeclaration(
   file: string,
 ): Promise<NeemMarkedRuntimeDeclaration> {
+  assertEsmEntry(file)
   const module = (await import(
     `${pathToFileURL(file).href}?t=${Date.now()}`
   )) as EntryModule
