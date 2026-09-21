@@ -160,6 +160,25 @@ for (const target of targets) {
           await runtime.store.listDeadCommands({ runId: 'dead-299' }),
         ).toHaveLength(1)
         expect(calls.mock.calls.length).toBeLessThanOrEqual(4)
+        // More than a full page of kept commands sorts before every reaped
+        // one, so cleanup only reaches those by paging past what it keeps.
+        const older = client.pipeline()
+        for (let index = 0; index < 200; index += 1) {
+          const id = `kept-${index}`
+          const item = {
+            id,
+            payload: { kind: 'continueRun', runId: id, workflowName: 'batch' },
+            deliveryCount: 3,
+            createdAt: 1000,
+            createdAtScore: 1000,
+            deadAt: 1000 + index,
+          }
+          older
+            .hset(queue.items, id, encode(item))
+            .zadd(queue.dead, 1000 + index, id)
+            .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+        }
+        await older.exec()
         calls.mockClear()
         await runtime.store.pruneTerminalRuns({
           olderThan: 2255,
@@ -169,7 +188,10 @@ for (const target of targets) {
         expect(reads).not.toHaveBeenCalled()
         // Past the cutoff, only reaped records go: an unreaped dead command is
         // all that can still settle its run.
-        expect(await client.zcard(queue.dead)).toBe(50)
+        expect(await client.zcard(queue.dead)).toBe(250)
+        expect(await client.hget(queue.items, 'kept-0')).not.toBeNull()
+        expect(await client.hget(queue.items, 'kept-199')).not.toBeNull()
+        expect(await client.hget(queue.items, 'dead-0')).toBeNull()
         expect(await client.hget(queue.items, 'dead-249')).toBeNull()
         expect(await client.hget(queue.items, 'dead-250')).not.toBeNull()
         expect(await client.hget(queue.items, 'dead-256')).not.toBeNull()

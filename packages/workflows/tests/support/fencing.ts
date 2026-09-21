@@ -155,6 +155,83 @@ export function defineClaimFencingTests(
     await expect(claim(runtime, 'C', 30_000)).resolves.toBeNull()
   })
 
+  // Settlement is the only fenced write, so once A has settled, both workers
+  // go on to write the node, the run and the acknowledgement. Whichever order
+  // they interleave in, those replays have to converge on A's one result.
+  for (const order of ['before', 'after'] as const) {
+    it(`completes once when the takeover runs ${order} the settled worker resumes`, async () => {
+      const runtime = createRuntime()
+      const { task, implementation } = createTask()
+      const client = createWorkflowRuntimeClient(runtime)
+      const run = await client.start(task, 'hi')
+
+      let claimB: Awaited<ReturnType<typeof claim>> = null
+      const runB = async (claimed: NonNullable<typeof claimB>) =>
+        await runTaskAttempt({
+          ...runtime,
+          tasks: [implementation],
+          workerId: 'B',
+          handlers: createHandlerRunner(),
+          claimed,
+        })
+      let resultB: Awaited<ReturnType<typeof runB>> | undefined
+      const workerA = runExecutionWorker({
+        ...runtime,
+        workflows: [],
+        tasks: [implementation],
+        workerId: 'A',
+        leaseMs: LEASE_MS,
+        reaping: false,
+        atomicCompletion: {
+          run: (handler, claimed, context) =>
+            runtime.atomicCompletion.run(
+              (scoped) =>
+                handler({
+                  ...scoped,
+                  store: {
+                    ...scoped.store,
+                    // A stalls with the attempt settled and every later
+                    // write (node, run, ack) still ahead of it.
+                    completeCurrentAttempt: async (params) => {
+                      const settled =
+                        await scoped.store.completeCurrentAttempt(params)
+                      expect(settled).toMatchObject({ status: 'completed' })
+                      await wait(LEASE_EXPIRED_MS)
+                      claimB = await claim(runtime, 'B', 30_000)
+                      if (order === 'before') resultB = await runB(claimB!)
+                      return settled
+                    },
+                  },
+                }),
+              claimed,
+              context,
+            ),
+        },
+      })
+      await expect(workerA).resolves.toBeDefined()
+      expect(claimB).not.toBeNull()
+      if (order === 'after') resultB = await runB(claimB!)
+      expect(resultB).toEqual({ status: 'processed' })
+
+      const snapshot = (await client.get(run.id))!
+      expect(snapshot.run.status).toBe('completed')
+      // B found the attempt settled and replayed its output without running
+      // the handler again.
+      expect(snapshot.run.output).toBe('hi:1')
+      expect(await loadAttempt(runtime, run.id)).toMatchObject({
+        status: 'completed',
+        output: 'hi:1',
+      })
+      const stored = (await runtime.store.loadRunSnapshot(run.id))!
+      expect(stored.nodes).toHaveLength(1)
+      expect(stored.nodes[0]).toMatchObject({
+        status: 'completed',
+        output: 'hi:1',
+      })
+      await expect(claim(runtime, 'C', 30_000)).resolves.toBeNull()
+    })
+  }
+
   it('still settles without a claim when the reaper fails a dead attempt', async () => {
     const runtime = createRuntime({ maxDeliveries: 1 })
     const { task } = createTask()

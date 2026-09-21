@@ -984,6 +984,7 @@ export class StoreRuntime {
           `attempts:${nodeField}`,
           ensure ? '1' : '0',
           String(Date.now()),
+          ('after' in input ? input.after : undefined) ?? '',
         ],
       ),
     )

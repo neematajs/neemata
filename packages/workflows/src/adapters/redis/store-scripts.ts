@@ -402,6 +402,14 @@ if ARGV[8] == '1' and child.currentAttemptId then
   if not current then return { 'missing-attempt' } end
   return { 'existing', current }
 end
+-- A retry whose predecessor was already superseded is a replay by a worker
+-- that lost the claim: hand back the successor instead of superseding the new
+-- claimant's attempt. Deciding here keeps concurrent retries to one successor.
+if ARGV[10] ~= '' and child.currentAttemptId and child.currentAttemptId ~= ARGV[10] then
+  local current = redis.call('HGET', KEYS[4], child.currentAttemptId)
+  if not current then return { 'missing-attempt' } end
+  return { 'existing', current }
+end
 if isTerminal(child.status) then return { 'terminal-child' } end
 
 local attempt = cjson.decode(ARGV[3])
