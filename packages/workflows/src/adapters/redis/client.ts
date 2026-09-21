@@ -1,3 +1,6 @@
+import type { Redis } from 'ioredis'
+import type { Redis as Valkey } from 'iovalkey'
+
 /**
  * Driver-neutral command surface shared by ioredis and iovalkey.
  *
@@ -21,3 +24,8 @@ export type WorkflowRedisClient = {
   hmget(...args: any[]): Promise<(string | null)[]>
   publish(...args: any[]): Promise<number>
 }
+
+// Fails to compile when either driver stops fitting the surface above. Both
+// are optional peers, and neither import reaches the emitted declarations.
+type Satisfies<Driver extends WorkflowRedisClient> = Driver
+type _Drivers = [Satisfies<Redis>, Satisfies<Valkey>]
