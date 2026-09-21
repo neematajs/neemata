@@ -1,5 +1,5 @@
 import type { TimerOptions } from 'node:timers'
-import { extname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { inspect } from 'node:util'
@@ -15,7 +15,6 @@ export async function importDefault<T>(
   file: string | URL,
   options: { cacheBust?: boolean } = {},
 ): Promise<T> {
-  assertEsmEntry(file)
   const href =
     file instanceof URL
       ? file.href
@@ -26,15 +25,6 @@ export async function importDefault<T>(
     options.cacheBust ? `${href}?t=${Date.now()}` : href
   )) as EntryModule<T>
   return module.default
-}
-
-export function assertEsmEntry(file: string | URL): void {
-  const extension = extname(toFilePath(file))
-  if (extension === '.cjs' || extension === '.cts') {
-    throw new Error(
-      `CommonJS entry [${String(file)}] is not supported; use an ES module`,
-    )
-  }
 }
 
 export function normalizeError(value: unknown): Error {

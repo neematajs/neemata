@@ -1,8 +1,7 @@
 # Neem
 
-Neem configuration, runtime declarations, planners and runtime artifact entries
-must be ES modules. Use `.ts`, `.mts`, `.js` or `.mjs`; `.cjs` and `.cts` entries
-are not supported.
+Conventional runtime and planner lookup recognizes `.ts`, `.mts`, `.js` and
+`.mjs` files.
 
 ## Development environment files
 
