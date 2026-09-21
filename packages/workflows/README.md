@@ -168,9 +168,9 @@ export default defineWorkflowsWorker({
 
 Startup fails when an implementation names a pool the planner did not declare,
 when a workflow references a child workflow or task with no registered
-implementation, or when workflows start each other unconditionally (children
-resolve by name, so a same-named definition can close a loop). Recursion through
-a branch case or a map is allowed: it may not recurse. `ctx.data` names the thread's role and pool, for a `setup` that
+implementation, or when workflows start each other in a cycle. Definitions cannot
+reference each other, but children resolve by name, so a same-named definition
+can close a loop; recursive workflows are not supported. `ctx.data` names the thread's role and pool, for a `setup` that
 needs different resources per pool.
 
 On stop the worker stops claiming, aborts attempts, joins the loops, waits for

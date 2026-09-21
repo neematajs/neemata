@@ -232,7 +232,7 @@ describe('workflows Neem integration', () => {
     )
   })
 
-  it('rejects workflows that start each other unconditionally', async () => {
+  it('rejects workflows that start each other in a cycle', async () => {
     // Definitions cannot reference each other as objects, but children resolve
     // by name: a same-named definition closes the loop.
     const aStub = defineWorkflow({
@@ -267,11 +267,11 @@ describe('workflows Neem integration', () => {
         { role: 'coordinator' },
       ),
     ).rejects.toThrow(
-      'Workflows [neem.integration.cycle.a -> neem.integration.cycle.b -> neem.integration.cycle.a] start each other unconditionally and would never finish',
+      'Workflows [neem.integration.cycle.a -> neem.integration.cycle.b -> neem.integration.cycle.a] start each other in a cycle',
     )
   })
 
-  it('allows recursion through a branch, which may not recurse', async () => {
+  it('rejects recursion through a branch case as well', async () => {
     const leaf = defineWorkflow({
       name: 'neem.integration.recursive',
       input: io,
@@ -307,7 +307,9 @@ describe('workflows Neem integration', () => {
         { workflows: () => [recursiveImpl] },
         { role: 'coordinator' },
       ),
-    ).resolves.toBeDefined()
+    ).rejects.toThrow(
+      'Workflows [neem.integration.recursive -> neem.integration.recursive] start each other in a cycle',
+    )
   })
 
   it('rejects workflow tasks without a registered implementation', async () => {

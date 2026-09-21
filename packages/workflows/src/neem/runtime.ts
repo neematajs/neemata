@@ -12,7 +12,7 @@ import {
   collectChildWorkflowNames,
   collectImplementationPools,
   collectWorkflowTaskNames,
-  findUnconditionalWorkflowCycle,
+  findWorkflowCycle,
 } from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = WorkflowImplementation<
@@ -156,10 +156,10 @@ export async function resolveWorkflowsRegistry(
     )
   }
 
-  const cycle = findUnconditionalWorkflowCycle(workflows)
+  const cycle = findWorkflowCycle(workflows)
   if (cycle) {
     throw new Error(
-      `Workflows [${cycle.join(' -> ')}] start each other unconditionally and would never finish`,
+      `Workflows [${cycle.join(' -> ')}] start each other in a cycle; recursive workflows are not supported`,
     )
   }
 

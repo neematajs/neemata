@@ -362,26 +362,20 @@ export function collectImplementationPools(
 }
 
 /**
- * A path of child workflows that every run follows back to its start, if one
- * exists. Definitions cannot reference each other as objects, but children are
- * resolved by name, so such a loop spawns runs without end. Branch cases and
- * maps are skipped: they may not recurse, which makes bounded recursion valid.
+ * A path of child workflows that leads back to its start, if one exists.
+ * Definitions cannot reference each other as objects, but children are resolved
+ * by name, so a same-named definition can close a loop. Recursion is not a
+ * supported feature: nothing bounds its depth, so every such loop is rejected.
  */
-export function findUnconditionalWorkflowCycle(
+export function findWorkflowCycle(
   workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
 ): readonly string[] | undefined {
-  const children = new Map<string, readonly string[]>()
-  for (const { workflow, nodes } of workflows) {
-    const names: string[] = []
-    for (const node of nodes) {
-      if (node.kind === 'workflow') names.push(node.target.name)
-      if (node.kind === 'parallel') {
-        for (const member of Object.values(node.cases))
-          if (member.kind === 'workflow') names.push(member.target.name)
-      }
-    }
-    children.set(workflow.name, names)
-  }
+  const children = new Map(
+    workflows.map((implementation) => [
+      implementation.workflow.name,
+      collectChildWorkflowNames([implementation]),
+    ]),
+  )
 
   const settled = new Set<string>()
   const path: string[] = []
