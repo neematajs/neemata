@@ -211,6 +211,8 @@ need a planner that declares the pools.
 
 ## Separate follow-ups
 
+Work that is independent of this migration is tracked in [todo.md](todo.md).
+
 - Cluster-wide limits for workflows: named limits on tasks and runs in flight per
   workflow. Pool concurrency is per-process capacity only.
 
