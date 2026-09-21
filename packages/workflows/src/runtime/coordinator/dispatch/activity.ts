@@ -4,6 +4,7 @@ import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchActivityAttempt } from '../attempt.ts'
 import {
+  decodeWorkflowNodeOutput,
   encodeWorkflowInput,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
@@ -54,9 +55,31 @@ export async function dispatchActivityNode(
     nodeName: input.node.name,
     children: [{ childKey: SELF_CHILD_KEY, kind: 'activity' }],
   })
+  const child = ensured.children[0]!
+  // A timeout or cancellation landing between the attempt's settlement and its
+  // node completion leaves a completed child under a node that manual retry
+  // reopens. Nothing is left to dispatch, so the node settles from the child.
+  if (child.status === 'completed') {
+    await input.store.completeNode({
+      runId: input.run.id,
+      nodeName: input.node.name,
+      output: child.output,
+    })
+    return await input.advance({
+      ...input,
+      outputs: {
+        ...input.outputs,
+        [input.node.name]: decodeWorkflowNodeOutput(
+          input.workflow,
+          input.node.name,
+          child.output,
+        ),
+      },
+    })
+  }
   // Once the child has an attempt, its stored state is authoritative — never
   // re-run the user's idempotency callback on re-entry.
-  const hasAttempt = ensured.children[0]!.attemptCount > 0
+  const hasAttempt = child.attemptCount > 0
   await dispatchActivityAttempt({
     store: input.store,
     attemptExecutor: input.attemptExecutor,

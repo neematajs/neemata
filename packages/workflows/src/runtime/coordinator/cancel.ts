@@ -3,6 +3,8 @@ import type { RunSnapshot, StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { isTerminalRunStatus } from '../status.ts'
 
+const CHILD_CANCELLATION_LEASE_MS = 30_000
+
 /**
  * A detached child run outlives its parent's cancellation. Only the parent's
  * edge to it is cancelled; the run itself stays cancellable by its own id.
@@ -26,22 +28,51 @@ export async function cancelRunTree(input: {
 
   for (const child of snapshot.children) {
     if (child.childRunId === undefined || isDetachedChild(child)) continue
-    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
-    if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
-      continue
-    await input.store.requestRunCancellation({ runId: child.childRunId })
-    if (childSnapshot.run.kind === 'workflow') {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childSnapshot.run.workflowName,
-      })
-    }
-    await cancelRunTree({ ...input, runId: child.childRunId })
+    await cancelChildRun({ ...input, runId: child.childRunId })
   }
 
   await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
   return await input.store.cancelRun({ runId: input.runId })
+}
+
+/**
+ * A child workflow has a coordinator of its own, and terminalizing the run
+ * under a pass in flight lets that pass start a grandchild nobody cancels:
+ * later sweeps skip the terminal child. So the child is settled only under its
+ * coordination lease. When a coordinator holds it, the requested cancellation
+ * and the continuation are the durable intent: that continuation settles the
+ * run under its own lease, together with whatever the pass started meanwhile.
+ * Task runs have no coordinator and are settled here.
+ */
+async function cancelChildRun(input: {
+  readonly store: WorkflowStore
+  readonly attemptExecutor: AttemptExecutor
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly runId: string
+}): Promise<void> {
+  const [run] = await input.store.loadRuns([input.runId])
+  if (!run || isTerminalRunStatus(run.status)) return
+  if (run.kind !== 'workflow') {
+    await cancelRunTree(input)
+    return
+  }
+
+  await input.store.requestRunCancellation({ runId: run.id })
+  await input.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: run.id,
+    workflowName: run.workflowName,
+  })
+  const lease = await input.store.acquireRunLease({
+    runId: run.id,
+    leaseMs: CHILD_CANCELLATION_LEASE_MS,
+  })
+  if (!lease) return
+  try {
+    await cancelRunTree(input)
+  } finally {
+    await input.store.releaseRunLease(lease)
+  }
 }
 
 /**
@@ -57,7 +88,7 @@ export async function cancelRunDescendants(input: {
   const runId = input.snapshot.run.id
   for (const child of input.snapshot.children) {
     if (child.childRunId === undefined || isDetachedChild(child)) continue
-    await cancelRunTree({
+    await cancelChildRun({
       store: input.store,
       attemptExecutor: input.attemptExecutor,
       runCoordinationExecutor: input.runCoordinationExecutor,
@@ -81,18 +112,12 @@ export async function cancelNodeChildRunsAndCommands(input: {
   })
   for (const child of children.children) {
     if (child.childRunId === undefined || isDetachedChild(child)) continue
-    const childSnapshot = await input.store.loadRunSnapshot(child.childRunId)
-    if (!childSnapshot || isTerminalRunStatus(childSnapshot.run.status))
-      continue
-    await input.store.requestRunCancellation({ runId: child.childRunId })
-    if (childSnapshot.run.kind === 'workflow') {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childSnapshot.run.workflowName,
-      })
-    }
-    await cancelRunTree({ ...input, runId: child.childRunId })
+    await cancelChildRun({
+      store: input.store,
+      attemptExecutor: input.attemptExecutor,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      runId: child.childRunId,
+    })
   }
   await input.attemptExecutor.deleteUnclaimed({ runId: input.runId })
 }

@@ -241,7 +241,19 @@ export function createRunLeaseFencedStore(
       fence(() => store.cancelNonTerminalRunNodes(params)),
     ensureNodeChildren: (params) =>
       fence(() => store.ensureNodeChildren(params)),
-    ensureChildRun: (params) => fence(() => store.ensureChildRun(params)),
+    ensureChildRun: (params) =>
+      fence(async () => {
+        // Renewal only observes a cancellation on its next tick; a child run
+        // started in between would execute until the cancelling pass finds it.
+        const [run] = await store.loadRuns([lease.runId])
+        if (
+          run &&
+          (run.status === 'cancelling' || isTerminalRunStatus(run.status))
+        ) {
+          throw new CancelledRunError()
+        }
+        return store.ensureChildRun(params)
+      }),
     ensureChildAttempt: (params) =>
       fence(() => store.ensureChildAttempt(params)),
     selectNodeCase: (params) => fence(() => store.selectNodeCase(params)),
