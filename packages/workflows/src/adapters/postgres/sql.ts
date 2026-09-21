@@ -398,8 +398,20 @@ export const jsonRecordArrayColumn = (value: unknown): JsonRecord[] => {
 
 // Columns stay timestamptz: leases and claims compare against the server
 // clock, and the tables stay readable. Records carry Unix milliseconds.
-export const timestampColumn = (value: unknown): Timestamp =>
-  value instanceof Date ? value.getTime() : new Date(value as string).getTime()
+export const timestampColumn = (value: unknown): Timestamp => {
+  // The client is the caller's, and so is its timestamptz parser. A Date, the
+  // column's text or milliseconds all convert; anything else must not reach a
+  // record as NaN.
+  const timestamp =
+    value instanceof Date
+      ? value.getTime()
+      : new Date(value as string).getTime()
+  if (Number.isFinite(timestamp)) return timestamp
+  throw new TypeError(
+    'The PostgreSQL client returned a timestamptz value that cannot be read as a time; its type parser must return a Date, the column text, or Unix milliseconds',
+    { cause: value },
+  )
+}
 
 export const optionalTimestampColumn = (value: unknown) =>
   value === null || value === undefined ? undefined : timestampColumn(value)

@@ -491,6 +491,13 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
 
+The client and its type parsers stay yours. The adapter reads `timestamptz` columns
+through whatever parser the client has, so that parser must return a `Date` (the
+`pg` and PGlite default), the column's text, or Unix milliseconds. Any other value,
+such as a `Temporal` object, fails the read with a `TypeError` instead of reaching a
+record. Timestamps are written as `Date` parameters, which drivers serialize the same
+way regardless of parsers.
+
 ## Wake Events (LISTEN/NOTIFY)
 
 Command dispatch and cancellation are poll-based by default: dispatch latency

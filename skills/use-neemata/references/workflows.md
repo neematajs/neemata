@@ -197,6 +197,8 @@ const connection = createPostgresWorkflowConnection(
   new Pool({ connectionString: databaseUrl }),
 )
 await verifyPostgresWorkflowSchema(connection) // fail fast on schema drift
+// The pool's timestamptz parser must return a Date (the default), the column
+// text, or Unix milliseconds; anything else fails the read with a TypeError.
 const runtime = createPostgresWorkflowRuntime({ connection })
 
 // Execution-side client: implementations registered for the workers.

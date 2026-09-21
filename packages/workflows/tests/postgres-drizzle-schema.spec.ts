@@ -928,6 +928,64 @@ test('status transitions are notify-only; watch yields run status changes', asyn
   }
 })
 
+// The client is the caller's, and so is its timestamptz parser.
+function withTimestampParser(
+  connection: WorkflowPostgresConnection,
+  parse: (value: Date) => unknown,
+): WorkflowPostgresConnection {
+  const wrap = (
+    target: WorkflowPostgresConnection,
+  ): WorkflowPostgresConnection => ({
+    async query(sql, params = []) {
+      const result = await target.query(sql, params)
+      const rows = result.rows.map((row) =>
+        Object.fromEntries(
+          Object.entries(row).map(([key, value]) => [
+            key,
+            value instanceof Date ? parse(value) : value,
+          ]),
+        ),
+      )
+      return { ...result, rows: rows as never }
+    },
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
+  })
+  return wrap(connection)
+}
+
+test('reads timestamps through a client that parses timestamptz its own way', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const before = Date.now()
+  for (const parse of [
+    (value: Date) => value.toISOString().replace('T', ' ').replace('Z', '+00'),
+    (value: Date) => value.getTime(),
+  ]) {
+    const runtime = createPostgresWorkflowRuntime({
+      connection: withTimestampParser(connection, parse),
+    })
+    const run = await runtime.store.createRun({
+      workflowName: 'custom-timestamp-parser',
+      input: {},
+    })
+    expect(run.createdAt).toBeGreaterThanOrEqual(before)
+    expect(run.createdAt).toBeLessThanOrEqual(Date.now() + 1_000)
+    expect((await runtime.store.loadRunSnapshot(run.id))?.run.createdAt).toBe(
+      run.createdAt,
+    )
+  }
+
+  const unreadable = createPostgresWorkflowRuntime({
+    connection: withTimestampParser(connection, () => ({ epoch: 'unknown' })),
+  })
+  await expect(
+    unreadable.store.createRun({
+      workflowName: 'custom-timestamp-parser',
+      input: {},
+    }),
+  ).rejects.toThrow('timestamptz value that cannot be read as a time')
+})
+
 test('uses one postgres command table for all command kinds', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)

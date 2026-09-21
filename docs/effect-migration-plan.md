@@ -884,3 +884,9 @@ payloads are a schema concern and unchanged.
   mapper parses, so the separate pass that re-dated those rows is gone too.
 - Schedule runs derive their idempotency key from the slot's milliseconds instead of
   its ISO string.
+- The PostgreSQL client and its type parsers are the caller's. The adapter accepts a
+  `timestamptz` parser that returns a `Date`, the column text or milliseconds, and
+  fails the read for anything else rather than storing `NaN`. Converting in SQL, with
+  per-query expressions or stored generated columns, was considered and rejected: it
+  guards only against parsers the check already reports, and costs either a column
+  list at every query or twenty duplicated columns and a schema version.
