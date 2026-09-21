@@ -194,4 +194,21 @@ describe('workflows core without Effect', () => {
     release.resolve()
     await drain
   })
+
+  it('bounds cleanup when a handler aborts its own attempt synchronously', async () => {
+    const fatal = Promise.withResolvers<unknown>()
+    const handlers = createHandlerRunner({
+      cleanupTimeoutMs: 5,
+      onFatal: fatal.resolve,
+    })
+    const abort = new AbortController()
+    const running = handlers.run(() => {
+      // Such as a service that stops the worker from inside the handler.
+      abort.abort(new Error('stopped'))
+      return new Promise<never>(() => {})
+    }, abort.signal)
+
+    await expect(running).rejects.toBeInstanceOf(WorkflowCleanupTimeoutError)
+    expect(await fatal.promise).toBeInstanceOf(WorkflowCleanupTimeoutError)
+  })
 })

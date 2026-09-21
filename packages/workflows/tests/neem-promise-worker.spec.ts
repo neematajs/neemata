@@ -162,6 +162,29 @@ describe('Neem workflows worker without Effect', () => {
     close()
   })
 
+  it('disposes the env even when the adapter fails to dispose', async () => {
+    const dispose = vi.fn()
+    const worker = defineWorkflowsWorker(config, {
+      setup: () => ({
+        runtime: {
+          ...createInMemoryWorkflowRuntime(),
+          dispose: () => {
+            throw new Error('adapter stuck')
+          },
+        },
+        env: { greeter: { greet: (name: string) => name } },
+        dispose,
+      }),
+    })
+    const { runtime, close } = create(worker)
+    const instance = await runtime
+
+    await instance.start()
+    await expect(instance.stop()).rejects.toThrow('adapter stuck')
+    expect(dispose).toHaveBeenCalledOnce()
+    close()
+  })
+
   it('reports a setup failure through start and finished', async () => {
     const worker = defineWorkflowsWorker(config, {
       setup: () => {
