@@ -949,3 +949,32 @@ Deferred to [todo.md](todo.md): run-lease fencing that is atomic with the mutati
 a startup deadline for workers (a Layer that fails part-way can hang inside its own
 build), the reaper's missing backoff for activity retries, and batched dead-command
 deletion in PostgreSQL retention.
+
+### Third review pass
+
+Findings fell from nineteen to twelve to seven. Fixed:
+
+- The run-timeout sweep failed a run and then woke its parent, so a failed enqueue lost
+  the wake for good. Before failing a run that has a parent, the sweep now enqueues a
+  continuation for that run itself: it cannot run early because the sweep holds the
+  run's lease, and a coordination pass over a terminal run already replays the parent
+  wake. Scheduling the parent's own continuation in advance was rejected: adapters
+  merge it into a pending one, which a worker can consume before the run is failed.
+- Coordinator re-dispatch of an existing retry ignored its backoff, for tasks and
+  activities. The backoff calculation lives in the coordinator's attempt module now and
+  the worker imports it.
+- Reserved keys are rejected as parallel member and branch case keys, in the contract
+  builders and in implementation normalization.
+- PostgreSQL: a transaction's connection rejects work once its handler has settled, and
+  the transaction ends only after queued work has finished, so a sibling scope still
+  running when the outer transaction rolls back can no longer commit on the bare client.
+  Run timestamps are the real time; `created_at` adds a per-process microsecond offset
+  in SQL so creation order survives a burst within one millisecond. A two-session test
+  on the live server covers the `createAttempt({ after })` lock wait.
+- Redis: expired run ids leave the chronological index with their expiry entries, in
+  bounded batches, and the terminal index no longer expires on its own while a run is
+  active.
+- In-memory retention computes family eligibility in one pass.
+
+Deferred to [todo.md](todo.md): fencing the writes after settlement by the originating
+attempt on Redis and in-memory, which only matters once a manual retry reopens the records.

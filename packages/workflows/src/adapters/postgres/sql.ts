@@ -52,11 +52,20 @@ export const id = () => randomUUID()
 export const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 export const isUuid = (value: string) => uuidPattern.test(value)
-let lastTimestamp = 0
-export const now = () => {
-  const current = Date.now()
-  lastTimestamp = Math.max(current, lastTimestamp + 1)
-  return lastTimestamp
+// Run timestamps are wall time: `active_since` starts timeout deadlines, so a
+// clock that advanced per insert would push them out during a burst. Runs made
+// within one millisecond are instead ordered by microseconds added to
+// `created_at`, below the precision records carry. The server clock cannot do
+// this: PGlite's has millisecond precision. Past 999 the offset stops growing,
+// leaving the run id as the tiebreak, rather than moving into the next
+// millisecond.
+let lastCreatedAt = 0
+let lastCreationOffset = 0
+export const creationOffsetMicros = (createdAt: Timestamp) => {
+  lastCreationOffset =
+    createdAt === lastCreatedAt ? Math.min(lastCreationOffset + 1, 999) : 0
+  lastCreatedAt = createdAt
+  return lastCreationOffset
 }
 export const json = (value: unknown) => JSON.stringify(value)
 export const fromOptional = (value: unknown) =>

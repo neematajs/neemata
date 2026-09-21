@@ -491,6 +491,12 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
 
+A transaction's connection, such as the `connection` passed to
+`atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work
+on it inside the handler. Once the handler settles, the connection rejects further
+queries instead of letting them run outside the transaction, and the transaction
+ends only after work already queued on it has finished.
+
 The client and its type parsers stay yours. The adapter reads `timestamptz` columns
 through whatever parser the client has, so that parser must return a `Date` (the
 `pg` and PGlite default), the column's text, or Unix milliseconds. Any other value,
@@ -558,7 +564,7 @@ verification:
 
 ```sql
 INSERT INTO workflow_schema_version (id, version)
-VALUES (1, 2)
+VALUES (1, 4)
 ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
 ```
 

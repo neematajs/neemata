@@ -60,7 +60,7 @@ const queryPostgresClient = <T extends JsonRecord>(
 
 const createSerializer = () => {
   let queue = Promise.resolve()
-  return async <T>(handler: () => Promise<T>): Promise<T> => {
+  const run = async <T>(handler: () => Promise<T>): Promise<T> => {
     const previous = queue
     let release = () => {}
     queue = new Promise<void>((resolve) => {
@@ -73,7 +73,13 @@ const createSerializer = () => {
       release()
     }
   }
+  return { run, settled: () => queue }
 }
+
+const scopeEndedError = () =>
+  new Error(
+    'The workflow PostgreSQL transaction that owns this connection has already ended. Await all work on a transaction connection before its handler settles',
+  )
 
 // Store methods open a transaction to undo partial work on a recoverable
 // failure and cannot know whether a caller already holds one, so a nested
@@ -85,12 +91,16 @@ const createSerializer = () => {
 // scopes and queries one at a time, while a scope's own connection has its own
 // queue, so work inside the scope never waits on the scope itself. The cost is
 // that a scope must not await its parent connection: that waits on itself.
-const createTransactionConnection = (
+const createTransactionScope = (
   client: WorkflowPostgresQueryClient,
   depth = 0,
-): WorkflowPostgresConnection => {
-  const serialize = createSerializer()
-  return {
+) => {
+  const serializer = createSerializer()
+  let ended = false
+  const serialize = <T>(handler: () => Promise<T>): Promise<T> =>
+    ended ? Promise.reject(scopeEndedError()) : serializer.run(handler)
+
+  const connection: WorkflowPostgresConnection = {
     query: (sql, params = []) =>
       serialize(() => queryPostgresClient(client, sql, params)),
     transaction: (handler) =>
@@ -99,7 +109,7 @@ const createTransactionConnection = (
         await client.query(`SAVEPOINT ${savepoint}`)
         let result: Awaited<ReturnType<typeof handler>>
         try {
-          result = await handler(createTransactionConnection(client, depth + 1))
+          result = await runTransactionScope(client, handler, depth + 1)
         } catch (error) {
           // Rolling back also clears the aborted state a failed statement leaves
           // behind, so the enclosing transaction stays usable for recovery reads.
@@ -112,6 +122,32 @@ const createTransactionConnection = (
         await client.query(`RELEASE SAVEPOINT ${savepoint}`)
         return result
       }),
+  }
+
+  return {
+    connection,
+    async end() {
+      ended = true
+      await serializer.settled()
+    },
+  }
+}
+
+// A handler can settle while work it started is still running: `Promise.all`
+// rejects on the first failure and leaves the sibling going. That sibling's
+// later statements would reach the session after the transaction ended and
+// commit on their own, so the scope refuses new work as soon as its handler
+// settles, and whatever is already queued finishes before the caller finalizes.
+const runTransactionScope = async <T>(
+  client: WorkflowPostgresQueryClient,
+  handler: (connection: WorkflowPostgresConnection) => Promise<T>,
+  depth = 0,
+): Promise<T> => {
+  const scope = createTransactionScope(client, depth)
+  try {
+    return await handler(scope.connection)
+  } finally {
+    await scope.end()
   }
 }
 
@@ -128,7 +164,7 @@ export function createPostgresWorkflowConnection(
   // open joins that transaction and is lost with its rollback. Top-level
   // queries therefore wait their turn with transactions; queries made through
   // the transaction-scoped connection go straight to the client.
-  const serializeClient = createSerializer()
+  const serializeClient = createSerializer().run
 
   const runTransaction = async <T>(
     connection: WorkflowPostgresQueryClient,
@@ -136,7 +172,7 @@ export function createPostgresWorkflowConnection(
   ): Promise<T> => {
     try {
       await connection.query('BEGIN')
-      const result = await handler(createTransactionConnection(connection))
+      const result = await runTransactionScope(connection, handler)
       await connection.query('COMMIT')
       return result
     } catch (error) {
@@ -154,9 +190,7 @@ export function createPostgresWorkflowConnection(
         : queryPostgresClient(client, sql, params),
     async transaction(handler) {
       if (hasTransactionApi(client)) {
-        return client.transaction((tx) =>
-          handler(createTransactionConnection(tx)),
-        )
+        return client.transaction((tx) => runTransactionScope(tx, handler))
       }
 
       if (hasConnectApi(client)) {

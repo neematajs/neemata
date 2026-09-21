@@ -20,6 +20,7 @@ import {
   many,
   payloadColumnsSql,
   payloadRowJsonSql,
+  creationOffsetMicros,
   mapAttempt,
   mapAttemptSummary,
   mapDeadCommand,
@@ -34,7 +35,6 @@ import {
   normalizePruneBatchSize,
   normalizePruneStatuses,
   notifyRunStatusEventColumnsSql,
-  now,
   one,
   runnableName,
   sameValue,
@@ -142,7 +142,7 @@ export const createStoredRunWithState = async (
   // including a caller-provided one. The retry covers a holder leaving its
   // uniqueness scope between the conflict and the recovery read.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const date = now()
+    const date = Date.now()
     const runId = id()
     const row = await one(
       connection,
@@ -157,7 +157,7 @@ export const createStoredRunWithState = async (
         VALUES (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
           $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14,
-          1, $15, $15, $15
+          1, $15, $15::timestamptz + ($16::int * interval '1 microsecond'), $15
         )
         ON CONFLICT DO NOTHING
         RETURNING *, ${payloadColumnsSql()}, NULL::text AS old_status
@@ -182,6 +182,7 @@ export const createStoredRunWithState = async (
         input.unique?.scope ?? null,
         input.unique?.behavior ?? null,
         timestampParam(date),
+        creationOffsetMicros(date),
       ],
     )
     if (row) return { run: mapRun(row), created: true }

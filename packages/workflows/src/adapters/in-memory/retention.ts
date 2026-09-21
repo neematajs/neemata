@@ -180,23 +180,27 @@ export function createRetentionStore(state: State): RetentionStore {
         return { deleted: 0 }
       }
 
+      // One pass instead of walking every candidate's family: a family is
+      // live while any run under its root is.
+      const liveRoots = new Set<string>()
+      for (const run of runs.values()) {
+        if (!isTerminalRunStatus(run.status)) liveRoots.add(run.rootRunId)
+      }
       const roots = [...runs.values()]
         .filter(
           (run) =>
             run.parentRunId === undefined &&
             statuses.some((status) => status === run.status) &&
-            run.updatedAt < params.olderThan,
+            run.updatedAt < params.olderThan &&
+            // A detached child outlives its terminal root, so the root alone
+            // does not make the family prunable.
+            !liveRoots.has(run.id),
         )
         .sort((left, right) => {
           const byUpdatedAt = left.updatedAt - right.updatedAt
           if (byUpdatedAt !== 0) return byUpdatedAt
           return left.id.localeCompare(right.id)
         })
-        // A detached child outlives its terminal root, so the root alone
-        // does not make the family prunable.
-        .filter((run) =>
-          isTerminalFamily(state, collectRunDescendantIds(state, run.id)),
-        )
         .slice(0, batchSize)
       const treeIds = collectRunTreeIds(
         state,
