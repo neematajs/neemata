@@ -38,15 +38,11 @@ export function createHandlerRunner(
     async run(handler, signal) {
       // Do not enter user code for an attempt that has already lost ownership.
       if (signal?.aborted) throw signal.reason
-      // Entered synchronously, so no abort can land between the check and the call.
-      const work = (async () => handler())()
-      pending.add(work)
-      void work.then(
-        () => pending.delete(work),
-        () => pending.delete(work),
-      )
       let timer: ReturnType<typeof setTimeout> | undefined
       let onAbort: (() => void) | undefined
+      // Listening before user code runs: a handler may abort its own attempt
+      // synchronously, such as by stopping the worker, and abort events are
+      // not replayed.
       const overrun = new Promise<never>((_resolve, reject) => {
         onAbort = () => {
           timer = setTimeout(() => {
@@ -57,6 +53,13 @@ export function createHandlerRunner(
         }
         signal?.addEventListener('abort', onAbort, { once: true })
       })
+      // Entered synchronously, so no abort can land between the check and the call.
+      const work = (async () => handler())()
+      pending.add(work)
+      void work.then(
+        () => pending.delete(work),
+        () => pending.delete(work),
+      )
       try {
         return await Promise.race([work, overrun])
       } finally {
