@@ -44,6 +44,14 @@ migration unless a section says otherwise; that migration's remaining steps live
   now rejects `NaN` and `Infinity`, which JSON would turn into `null`. No test
   covers it.
 
+- **Redis/Valkey runtime.** Port #340 ( `dev/redis-workflow-runtime`, based on `main`)
+  onto the new core after the migration lands. It is the low-latency, high-throughput
+  adapter for short one-off work whose history need not be kept (generation, TTS),
+  with state held in memory; PostgreSQL stays the adapter for durable, long-lived
+  runs. The port has to adopt Standard Schema codecs, the `env` handler signature and
+  pool routing in its claim filters. The Redis and Valkey service containers stay in
+  `compose.yml` and CI for it.
+
 ## Neem
 
 - **Configurable stop deadline.** A worker gets a hard 5,000 ms to stop, shared by
