@@ -1,5 +1,7 @@
 import { Readable } from 'node:stream'
 
+import { decodeWith, encodeWith } from '@nmtjs/common'
+
 import type { PubSubAdapter, PubSubMessage } from './adapter.ts'
 import type {
   Channel,
@@ -9,12 +11,7 @@ import type {
   SelectedEventUnion,
 } from './contract.ts'
 import type { PubSubLogger } from './utils.ts'
-import {
-  decodePayload,
-  encodePayload,
-  isAbortError,
-  resolvePubSubChannel,
-} from './utils.ts'
+import { isAbortError, resolvePubSubChannel } from './utils.ts'
 
 export type PubSubStream<Payload = unknown> = AsyncIterable<Payload>
 
@@ -85,7 +82,7 @@ export class PubSubManager {
     payload: EventPayload<Event>,
   ): Promise<boolean> {
     const channel = resolvePubSubChannel(event.channel, params)
-    const encodedPayload = encodePayload(event.payload, payload)
+    const encodedPayload = encodeWith(event.payload, payload)
     return await this._publish(channel, {
       event: event.event,
       payload: encodedPayload,
@@ -188,7 +185,7 @@ export class PubSubManager {
             try {
               decoded = {
                 event,
-                payload: decodePayload(contract.payload, payload),
+                payload: decodeWith(contract.payload, payload),
               }
             } catch (error) {
               logger?.error({ error }, 'Unable to decode event payload')

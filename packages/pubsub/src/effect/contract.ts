@@ -1,9 +1,9 @@
+import type { EffectSchema } from '@nmtjs/common/effect'
 import type * as Schema from 'effect/Schema'
+import { codec } from '@nmtjs/common/effect'
 
 import type { Channel, ChannelParams, PubSubCodec } from '../contract.ts'
-import type { EffectSchema } from './codec.ts'
 import { defineChannel as define } from '../contract.ts'
-import { codec } from './codec.ts'
 
 type PayloadTypes<Events extends Record<string, EffectSchema>> = {
   [K in keyof Events]: Schema.Schema.Type<Events[K]>

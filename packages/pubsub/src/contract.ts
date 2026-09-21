@@ -1,37 +1,24 @@
+import type {
+  CodecSchema,
+  CodecSchemaCheck,
+  CodecSchemaOutput,
+  NotReversible,
+  StandardCodec,
+} from '@nmtjs/common'
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 
-/**
- * A payload whose published form differs from its application form. Standard
- * Schema validates one way only, so each direction is its own schema.
- */
-export type PubSubCodec<Type = any, Encoded = any> = {
-  readonly decode: StandardSchemaV1<unknown, Type>
-  readonly encode: StandardSchemaV1<Type, Encoded>
-}
+/** A payload whose published form differs from its application form. */
+export type PubSubCodec<Type = any, Encoded = any> = StandardCodec<
+  Type,
+  Encoded
+>
 
 /** A single schema serves payloads that are published as they are. */
-export type PayloadSchema = StandardSchemaV1<any, any> | PubSubCodec
+export type PayloadSchema = CodecSchema
 
-export type PayloadType<T extends PayloadSchema> =
-  T extends StandardSchemaV1<any, infer Type>
-    ? Type
-    : T extends PubSubCodec<infer Type>
-      ? Type
-      : never
+export type PayloadType<T extends PayloadSchema> = CodecSchemaOutput<T>
 
-declare const notPublishable: unique symbol
-export type NotPublishable<Input, Output> = {
-  readonly [notPublishable]: 'This schema transforms its input, so its output cannot be published and validated again; pass { decode, encode } schemas instead'
-  readonly input: Input
-  readonly output: Output
-}
-
-type PayloadCheck<T> =
-  T extends StandardSchemaV1<infer Input, infer Output>
-    ? [Output] extends [Input]
-      ? unknown
-      : NotPublishable<Input, Output>
-    : unknown
+export type NotPublishable<Input, Output> = NotReversible<Input, Output>
 
 export type ChannelParams = Record<string, string | number | boolean | null>
 
@@ -96,7 +83,7 @@ type PayloadTypes<Events extends Record<string, PayloadSchema>> = {
 }
 
 type Checked<Events> = {
-  [K in keyof Events]: Events[K] & PayloadCheck<Events[K]>
+  [K in keyof Events]: Events[K] & CodecSchemaCheck<Events[K]>
 }
 
 export function defineChannel<

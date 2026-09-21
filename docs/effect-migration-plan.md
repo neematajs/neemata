@@ -834,5 +834,10 @@ process.
   connection sharing and the stable-modules-only rule. Effect awaits an iterator's
   `return()` when a stream's scope closes, which queues behind a pending `next()`;
   the adapter aborts the subscription first so an idle stream can be interrupted.
+- The schema rules that workflows and pubsub share live in `@nmtjs/common`: the
+  single-schema-or-`{ decode, encode }` types, the compile-time check, synchronous
+  validation and `SchemaError`. The Effect `codec()` and `schemaOf()` live in
+  `@nmtjs/common/effect`, the only file in `common` that imports `effect` (an
+  optional peer there too). Both packages keep their public names as aliases.
 - Nothing was added beyond the previous behaviour. Buffering between the broker and
   a slow local subscriber is still unbounded; see [todo.md](todo.md).

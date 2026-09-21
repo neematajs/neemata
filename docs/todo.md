@@ -58,10 +58,6 @@ migration unless a section says otherwise; that migration's remaining steps live
   local subscriber without bound (`events.on`), as it did before; only the manager's
   stream applies backpressure. Choose a bounded buffer and what happens when it
   fills (fail the subscription, or drop).
-- **Schema helpers are duplicated.** The single-schema-or-pair types, the synchronous
-  `validate`, and the Effect `codec()` exist in both workflows and pubsub. Sharing
-  them needs a home that may depend on `effect` optionally, which `@nmtjs/common`
-  is not today.
 
 ## Neem
 

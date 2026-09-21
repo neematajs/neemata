@@ -51,6 +51,7 @@
       "files": [
         "packages/workflows/**",
         "packages/pubsub/**",
+        "packages/common/**",
         "packages/effect/src/**",
         "packages/effect/tests/unit/**",
         "packages/vite/src/**",

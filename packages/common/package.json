@@ -1,12 +1,17 @@
 {
   "name": "@nmtjs/common",
-  "description": "Shared zero-dependency utilities for Neemata packages.",
+  "description": "Shared utilities for Neemata packages.",
   "type": "module",
   "exports": {
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
+    },
+    "./effect": {
+      "types": "./src/effect.ts",
+      "import": "./dist/effect.js",
+      "module-sync": "./dist/effect.js"
     }
   },
   "publishConfig": {
@@ -15,8 +20,27 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
+      },
+      "./effect": {
+        "types": "./dist/effect.d.ts",
+        "import": "./dist/effect.js",
+        "module-sync": "./dist/effect.js"
       }
     }
+  },
+  "dependencies": {
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.116"
+  },
+  "peerDependenciesMeta": {
+    "effect": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "effect": "4.0.0-rc.116"
   },
   "files": [
     "dist",
