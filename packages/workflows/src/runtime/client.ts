@@ -47,6 +47,7 @@ import {
   type WorkflowRuntimeRegistry,
 } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
+import { wakeParentRun } from './wake.ts'
 
 export type WorkflowRuntimeStartOptions<Connection = never> = {
   readonly tags?: Readonly<Record<string, string>>
@@ -267,7 +268,16 @@ export function createWorkflowRuntimeClient<Connection = never>(
     cancel: async (runId) => {
       const run = await input.store.requestRunCancellation({ runId })
       if (!run) return undefined
-      if (isTerminalRunStatus(run.status)) return run
+      if (isTerminalRunStatus(run.status)) {
+        // A cancelled queued task has no command left to replay its parent
+        // wake, so a cancel whose wake failed is repaired by cancelling again.
+        await wakeParentRun({
+          store: input.store,
+          runCoordinationExecutor: input.runCoordinationExecutor,
+          run,
+        })
+        return run
+      }
       if (run.kind === 'task') {
         // No coordinator owns task runs: a continuation carries the task
         // name, which no workflow worker claims, so the run would park in

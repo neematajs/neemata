@@ -27,18 +27,35 @@ export async function retryAttempt(
   const { command, failedAttempt: failed, retry } = params
   if (!shouldRetry(failed, retry)) return false
 
+  // A worker that lost its claim can get here after the new claimant already
+  // created the retry; `after` makes both share that one successor instead of
+  // superseding it with a third attempt.
   const attempt = await runtime.store.createAttempt({
     runId: command.runId,
     nodeName: command.nodeName,
     childKey: command.childKey,
     input: failed.input,
     idempotencyKey: failed.idempotencyKey,
+    after: failed.id,
   })
+  // Dispatch is deduplicated by attempt id, so replaying it for a live attempt
+  // is safe. A settled one means the child already moved past this failure:
+  // its own command drives what follows, and the failure must not be reported.
+  if (attempt.status !== 'started') return true
+
   await dispatchAttempt(
     runtime,
     command,
     attempt,
-    dispatchOptions(retry, failed.retryAttemptNumber, Date.now()),
+    // Counted from the returned attempt, which need not be the direct
+    // successor nor created by this call.
+    attempt.retryAttemptNumber > 1
+      ? dispatchOptions(
+          retry,
+          attempt.retryAttemptNumber - 1,
+          attempt.dispatchedAt,
+        )
+      : undefined,
   )
   return true
 }

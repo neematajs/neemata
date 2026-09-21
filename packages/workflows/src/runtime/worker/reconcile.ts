@@ -26,6 +26,18 @@ type RunAttemptInput = {
   readonly claimed: ClaimedAttempt
 }
 
+type ReplayAttemptInput = Pick<
+  RunAttemptInput,
+  'store' | 'runCoordinationExecutor' | 'attemptExecutor'
+>
+
+type AttemptRecovery = {
+  /** The attempt `child.currentAttemptId` points at. */
+  readonly currentAttempt: StoredAttempt | undefined
+  /** Lazy: resolving the policy needs the registry, which most redeliveries never touch. */
+  readonly resolveRetry: () => RetryPolicy | undefined
+}
+
 export function isFreshAttempt(
   command: Pick<
     ActivityAttemptCommand | TaskAttemptCommand,
@@ -69,54 +81,12 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
   command: EnqueueContinueRunCommand,
   child: StoredNodeChild | undefined,
   storedAttempt: StoredAttempt | undefined,
-  recovery: {
-    /** The attempt `child.currentAttemptId` points at. */
-    readonly currentAttempt: StoredAttempt | undefined
-    /** Lazy: resolving the policy needs the registry, which most redeliveries never touch. */
-    readonly resolveRetry: () => RetryPolicy | undefined
-  },
+  recovery: AttemptRecovery,
 ): Promise<WorkerCommandResult> {
   const isCurrentAttempt = child?.currentAttemptId === command.attemptId
 
-  // Downstream writes are idempotent, so the settled current attempt always
-  // replays its full completion path — a crash after any single write (child,
-  // node, run) is repaired on redelivery.
   if (child && isCurrentAttempt && storedAttempt?.status === 'completed') {
-    await input.store.completeNodeChild({
-      runId: command.runId,
-      nodeName: command.nodeName,
-      childKey: command.childKey,
-      output: storedAttempt.output,
-    })
-
-    const snapshot = await input.store.loadRunSnapshot(command.runId)
-    if (snapshot?.run.kind === 'task') {
-      await input.store.completeNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
-        output: storedAttempt.output,
-      })
-      const completed = await input.store.completeRun({
-        runId: command.runId,
-        output: storedAttempt.output,
-      })
-      await wakeParentRun({
-        store: input.store,
-        runCoordinationExecutor: input.runCoordinationExecutor,
-        run: completed,
-      })
-      await input.attemptExecutor.ack(input.claimed)
-      return { status: 'processed' }
-    }
-
-    if (shouldCompleteNodeFromAttempt(command.childKey)) {
-      await input.store.completeNode({
-        runId: command.runId,
-        nodeName: command.nodeName,
-        output: storedAttempt.output,
-      })
-    }
-    await enqueueContinueRun(input.runCoordinationExecutor, command)
+    await replayCompletedAttempt(input, command, storedAttempt)
     await input.attemptExecutor.ack(input.claimed)
     return { status: 'processed' }
   }
@@ -183,6 +153,69 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
     return { status: 'processed' }
   }
 
+  await replaySupersededAttempt(input, command, child, storedAttempt, recovery)
+  await input.attemptExecutor.ack(input.claimed)
+  return { status: 'processed' }
+}
+
+/**
+ * Downstream writes are idempotent, so a settled current attempt always
+ * replays its full completion path: a crash after any single write (child,
+ * node, run) is repaired by whoever sees the command next. Never acknowledges:
+ * the reaper replays this without a queue claim.
+ */
+export async function replayCompletedAttempt(
+  input: ReplayAttemptInput,
+  command: EnqueueContinueRunCommand,
+  storedAttempt: StoredAttempt,
+): Promise<void> {
+  await input.store.completeNodeChild({
+    runId: command.runId,
+    nodeName: command.nodeName,
+    childKey: command.childKey,
+    output: storedAttempt.output,
+  })
+
+  const snapshot = await input.store.loadRunSnapshot(command.runId)
+  if (snapshot?.run.kind === 'task') {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output: storedAttempt.output,
+    })
+    const completed = await input.store.completeRun({
+      runId: command.runId,
+      output: storedAttempt.output,
+    })
+    await wakeParentRun({
+      store: input.store,
+      runCoordinationExecutor: input.runCoordinationExecutor,
+      run: completed,
+    })
+    return
+  }
+
+  if (shouldCompleteNodeFromAttempt(command.childKey)) {
+    await input.store.completeNode({
+      runId: command.runId,
+      nodeName: command.nodeName,
+      output: storedAttempt.output,
+    })
+  }
+  await enqueueContinueRun(input.runCoordinationExecutor, command)
+}
+
+/**
+ * The command of an attempt that is no longer the child's current one. Like
+ * `replayCompletedAttempt`, shared with the reaper and never acknowledges.
+ */
+export async function replaySupersededAttempt(
+  input: ReplayAttemptInput,
+  command: EnqueueContinueRunCommand,
+  child: StoredNodeChild | undefined,
+  storedAttempt: StoredAttempt | undefined,
+  recovery: AttemptRecovery,
+): Promise<void> {
   // Without `atomicCompletion` a retry is two writes: the next attempt, then
   // its command. This superseded command outliving both means the second write
   // may be missing, which would leave the run `running` with nothing queued.
@@ -213,9 +246,6 @@ export async function reconcileStaleAttempt<Input extends RunAttemptInput>(
   ) {
     await enqueueContinueRun(input.runCoordinationExecutor, command)
   }
-
-  await input.attemptExecutor.ack(input.claimed)
-  return { status: 'processed' }
 }
 
 /**

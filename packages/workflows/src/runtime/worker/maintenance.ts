@@ -1,5 +1,6 @@
 import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
+import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunSnapshot } from '../state.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
@@ -8,7 +9,11 @@ import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
 import { wakeParentRun } from '../wake.ts'
-import { shouldCompleteNodeFromAttempt } from './reconcile.ts'
+import {
+  replayCompletedAttempt,
+  replaySupersededAttempt,
+  shouldCompleteNodeFromAttempt,
+} from './reconcile.ts'
 
 type AnyWorkflowImplementation = WorkflowImplementation<
   AnyWorkflowDefinition,
@@ -73,6 +78,13 @@ export async function reapDeadWorkflowCommands(
       const snapshot = await scopedInput.store.loadRunSnapshot(command.runId)
       const run = snapshot?.run
       if (!run || ['completed', 'cancelled'].includes(run.status)) {
+        // The dead command may have been the only durable trigger of the
+        // parent wake; no redelivery is left to replay it.
+        await wakeParentRun({
+          store: scopedInput.store,
+          runCoordinationExecutor: scopedInput.runCoordinationExecutor,
+          run,
+        })
         await scopedInput.store.markDeadCommandReaped(command.id)
         reaped += 1
         continue
@@ -97,11 +109,41 @@ export async function reapDeadWorkflowCommands(
           const attempt = snapshot?.attempts.find(
             (attempt) => attempt.id === command.attemptId,
           )
-          if (
-            !child ||
-            child.currentAttemptId !== command.attemptId ||
-            attempt?.status === 'completed'
-          ) {
+          const isCurrentAttempt = child?.currentAttemptId === command.attemptId
+          // A settled or superseded attempt is not this command's to fail, but
+          // the worker may have died between its writes. With the delivery
+          // budget spent, this is the last chance to replay what a redelivery
+          // would have repaired.
+          if (!child || !isCurrentAttempt || attempt?.status === 'completed') {
+            const attemptCommand = deadAttemptCommand(command)
+            if (child && attempt && attemptCommand) {
+              if (isCurrentAttempt) {
+                await replayCompletedAttempt(
+                  scopedInput,
+                  attemptCommand,
+                  attempt,
+                )
+              } else {
+                await replaySupersededAttempt(
+                  scopedInput,
+                  attemptCommand,
+                  child,
+                  attempt,
+                  {
+                    currentAttempt: snapshot?.attempts.find(
+                      (attempt) => attempt.id === child.currentAttemptId,
+                    ),
+                    // Only the dispatching node's policy travels with the
+                    // command. Without it a lost retry is dispatched at once,
+                    // which a dead-lettered recovery has long earned.
+                    resolveRetry: () =>
+                      attemptCommand.kind === 'taskAttempt'
+                        ? attemptCommand.retry
+                        : undefined,
+                  },
+                )
+              }
+            }
             await scopedInput.store.markDeadCommandReaped(command.id)
             reaped += 1
             continue
@@ -174,6 +216,18 @@ function attemptCommandChildKey(
     return typeof childKey === 'string' ? childKey : undefined
   }
   return undefined
+}
+
+/** Every adapter dead-letters the command it was given, unchanged. */
+function deadAttemptCommand(
+  command: DeadWorkflowCommand,
+): AttemptCommand | undefined {
+  const payload = command.payload as Partial<AttemptCommand> | null | undefined
+  return (payload?.kind === 'activityAttempt' ||
+    payload?.kind === 'taskAttempt') &&
+    attemptCommandChildKey(command) !== undefined
+    ? (payload as AttemptCommand)
+    : undefined
 }
 
 async function cancelDescendants(
