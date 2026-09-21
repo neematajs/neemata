@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import { z } from 'zod'
+import * as z from 'zod'
 
 import type { Env } from '../src/index.ts'
 import {

@@ -49,7 +49,7 @@ direction only, so a transformed value declares both directions, and a single
 transforming schema is rejected at compile time.
 
 ```ts
-import { z } from 'zod'
+import * as z from 'zod'
 
 const date = {
   decode: z.iso.datetime().transform((stored) => new Date(stored)),
