@@ -827,6 +827,8 @@ function createCaseImplementers(): CaseImplementers<any, any> {
   return Object.freeze(helpers)
 }
 
+const reservedCaseKeys = new Set(['__proto__', 'constructor', 'prototype'])
+
 function normalizeCases(
   adapter: HandlerAdapter,
   node: WorkflowBranchNode | WorkflowParallelNode,
@@ -836,6 +838,13 @@ function normalizeCases(
 
   for (const caseName in node.cases) {
     if (Object.hasOwn(node.cases, caseName) === false) continue
+    // The builders reject these, but a definition is plain data: assigning
+    // such a key below would set a prototype and silently drop the case.
+    if (reservedCaseKeys.has(caseName)) {
+      throw new Error(
+        `Workflow ${node.kind} case key cannot be "${caseName}": ${node.name}`,
+      )
+    }
     if (caseName in cases === false) {
       throw new Error(
         `Missing workflow ${node.kind} case implementation [${node.name}.${caseName}]`,

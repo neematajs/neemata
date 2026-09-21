@@ -270,6 +270,7 @@ export async function dispatchParallelNode(
         runId: input.run.id,
         nodeName: input.node.name,
         childKey,
+        retry: member.retry,
         prepareAttempt: async () => {
           const result = await input.store.ensureChildAttempt({
             runId: input.run.id,

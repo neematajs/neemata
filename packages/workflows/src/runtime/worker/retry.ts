@@ -3,7 +3,10 @@ import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
-import { parseDurationMs } from '../duration.ts'
+import {
+  retryBackoffOptions,
+  retryDispatchOptions,
+} from '../coordinator/attempt.ts'
 
 type RetryAttemptInput = {
   readonly store: WorkflowStore
@@ -49,13 +52,7 @@ export async function retryAttempt(
     attempt,
     // Counted from the returned attempt, which need not be the direct
     // successor nor created by this call.
-    attempt.retryAttemptNumber > 1
-      ? dispatchOptions(
-          retry,
-          attempt.retryAttemptNumber - 1,
-          attempt.dispatchedAt,
-        )
-      : undefined,
+    retryDispatchOptions(attempt, retry),
   )
   return true
 }
@@ -82,7 +79,11 @@ export async function redispatchRetry(
     attempt,
     retry === undefined
       ? undefined
-      : dispatchOptions(retry, failed.retryAttemptNumber, attempt.dispatchedAt),
+      : retryBackoffOptions(
+          retry,
+          failed.retryAttemptNumber,
+          attempt.dispatchedAt,
+        ),
   )
 }
 
@@ -139,21 +140,4 @@ function shouldRetry(
     (attempt.status === 'failed' || attempt.status === 'timedOut') &&
     attempt.retryAttemptNumber < retry.attempts
   )
-}
-
-function dispatchOptions(
-  retry: RetryPolicy,
-  attemptNumber: number,
-  from: Timestamp,
-): { readonly runAt?: Timestamp } | undefined {
-  const delayMs = retryDelayMs(retry, attemptNumber)
-  return delayMs > 0 ? { runAt: from + delayMs } : undefined
-}
-
-function retryDelayMs(retry: RetryPolicy, attemptNumber: number): number {
-  const base = parseDurationMs(retry.delay) ?? 0
-  if (base === 0) return 0
-  return retry.backoff === 'exponential'
-    ? base * 2 ** Math.max(0, attemptNumber - 1)
-    : base
 }

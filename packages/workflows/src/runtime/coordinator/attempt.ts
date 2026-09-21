@@ -3,10 +3,15 @@ import type {
   RetryPolicy,
   Timestamp,
 } from '../../types/index.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type {
+  AttemptDispatchOptions,
+  AttemptExecutor,
+  RunCoordinationExecutor,
+} from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { SELF_CHILD_KEY } from '../child-key.ts'
+import { parseDurationMs } from '../duration.ts'
 import { failNodeAndRun } from './sinks.ts'
 
 const TASK_RUN_NODE_NAME = '$task'
@@ -83,6 +88,7 @@ export async function dispatchActivityAttempt(input: {
   readonly runId: string
   readonly nodeName: string
   readonly childKey: string
+  readonly retry?: RetryPolicy
   readonly throwOnDispatchFailure?: boolean
   readonly prepareAttempt: () => Promise<{
     readonly attempt: StoredAttempt
@@ -91,20 +97,23 @@ export async function dispatchActivityAttempt(input: {
   }>
 }) {
   await dispatchPreparedAttempt(input, async (attempt, commandInput) => {
-    await input.attemptExecutor.dispatchActivity({
-      kind: 'activityAttempt',
-      workflowName: input.workflowName,
-      activityName: input.activityName,
-      runId: input.runId,
-      nodeName: input.nodeName,
-      childKey: input.childKey,
-      attemptId: attempt.id,
-      leaseToken: attempt.leaseToken!,
-      input: commandInput,
-      ...(attempt.idempotencyKey === undefined
-        ? {}
-        : { idempotencyKey: attempt.idempotencyKey }),
-    })
+    await input.attemptExecutor.dispatchActivity(
+      {
+        kind: 'activityAttempt',
+        workflowName: input.workflowName,
+        activityName: input.activityName,
+        runId: input.runId,
+        nodeName: input.nodeName,
+        childKey: input.childKey,
+        attemptId: attempt.id,
+        leaseToken: attempt.leaseToken!,
+        input: commandInput,
+        ...(attempt.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: attempt.idempotencyKey }),
+      },
+      retryDispatchOptions(attempt, input.retry),
+    )
   })
 }
 
@@ -145,9 +154,48 @@ export async function dispatchTaskAttempt(input: {
         ...(input.timeout === undefined ? {} : { timeout: input.timeout }),
         ...(input.retry === undefined ? {} : { retry: input.retry }),
       },
-      input.runAt === undefined ? undefined : { runAt: input.runAt },
+      attempt.retryAttemptNumber > 1
+        ? retryDispatchOptions(attempt, input.retry)
+        : input.runAt === undefined
+          ? undefined
+          : { runAt: input.runAt },
     )
   })
+}
+
+/**
+ * Coordination can reach a retry before the worker that created it has
+ * written its delayed command, and dispatch is deduplicated by attempt id: an
+ * immediate command here would discard the backoff. Every dispatch path
+ * therefore derives the same deadline, counted from the attempt's creation.
+ */
+export function retryDispatchOptions(
+  attempt: Pick<StoredAttempt, 'retryAttemptNumber' | 'dispatchedAt'>,
+  retry: RetryPolicy | undefined,
+): AttemptDispatchOptions | undefined {
+  if (retry === undefined || attempt.retryAttemptNumber <= 1) return undefined
+  return retryBackoffOptions(
+    retry,
+    attempt.retryAttemptNumber - 1,
+    attempt.dispatchedAt,
+  )
+}
+
+export function retryBackoffOptions(
+  retry: RetryPolicy,
+  failedAttemptNumber: number,
+  from: Timestamp,
+): AttemptDispatchOptions | undefined {
+  const delayMs = retryDelayMs(retry, failedAttemptNumber)
+  return delayMs > 0 ? { runAt: from + delayMs } : undefined
+}
+
+function retryDelayMs(retry: RetryPolicy, failedAttemptNumber: number): number {
+  const base = parseDurationMs(retry.delay) ?? 0
+  if (base === 0) return 0
+  return retry.backoff === 'exponential'
+    ? base * 2 ** Math.max(0, failedAttemptNumber - 1)
+    : base
 }
 
 async function dispatchPreparedAttempt(

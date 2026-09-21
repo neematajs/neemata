@@ -66,6 +66,7 @@ export async function dispatchActivityNode(
     runId: input.run.id,
     nodeName: input.node.name,
     childKey: SELF_CHILD_KEY,
+    retry: input.node.retry,
     prepareAttempt: async () => {
       const result = await input.store.ensureChildAttempt({
         runId: input.run.id,

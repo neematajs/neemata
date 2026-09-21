@@ -249,6 +249,7 @@ export async function dispatchBranchNode(
     runId: input.run.id,
     nodeName: input.node.name,
     childKey,
+    retry: selected.retry,
     prepareAttempt: async () => {
       const result = await input.store.ensureChildAttempt({
         runId: input.run.id,

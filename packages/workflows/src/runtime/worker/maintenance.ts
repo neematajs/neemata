@@ -310,6 +310,17 @@ export async function timeoutExpiredWorkflowRuns(
         )
           continue
         await cancelDescendants(scoped, snapshot!)
+        // Failing the run and waking its parent are separate writes, and a
+        // later sweep skips the terminal run. The run's own continuation is
+        // the durable intent: it cannot pass while this lease is held, and a
+        // pass over a terminal run replays the parent wake until it lands.
+        if (run.parentRunId !== undefined) {
+          await input.runCoordinationExecutor.enqueue({
+            kind: 'continueRun',
+            runId: run.id,
+            workflowName: run.workflowName,
+          })
+        }
         const failed = await scoped.store.failRun({
           runId: run.id,
           error: new Error(

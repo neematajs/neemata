@@ -450,6 +450,21 @@ function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   }
 }
 
+// Case and member keys index plain objects of implementations and outputs,
+// where a reserved key sets a prototype instead of declaring an entry.
+function assertCaseKeys<Cases extends object>(
+  kind: 'branch case' | 'parallel member',
+  nodeName: string,
+  cases: Cases,
+): Cases {
+  for (const key of Object.keys(cases)) {
+    if (reservedNodeNames.has(key)) {
+      throw new Error(`Workflow ${kind} key cannot be "${key}": ${nodeName}`)
+    }
+  }
+  return cases
+}
+
 function assertMapConcurrency(options: { readonly concurrency?: number }) {
   if (options.concurrency === undefined) return
   if (!Number.isInteger(options.concurrency) || options.concurrency < 1) {
@@ -544,7 +559,11 @@ class WorkflowDraftBuilder<Name extends string> {
             ? undefined
             : this.toCodec(options.output),
         cases: Object.freeze(
-          options.cases(createBranchCaseHelpers(this.toCodec)),
+          assertCaseKeys(
+            'branch case',
+            name,
+            options.cases(createBranchCaseHelpers(this.toCodec)),
+          ),
         ),
       }),
     )
@@ -561,7 +580,11 @@ class WorkflowDraftBuilder<Name extends string> {
           ? {}
           : { description: options.description }),
         cases: Object.freeze(
-          casesFactory(createBranchCaseHelpers(this.toCodec)),
+          assertCaseKeys(
+            'parallel member',
+            name,
+            casesFactory(createBranchCaseHelpers(this.toCodec)),
+          ),
         ),
       }),
     )
