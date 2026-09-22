@@ -1,5 +1,6 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from 'pino'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type {
   NeemResolvedArtifact,
@@ -14,7 +15,7 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RecoveryOptions } from './recovery.ts'
 import type { HostRunnerData } from './runner-protocol.ts'
-import type { ThreadPlan } from './thread.ts'
+import type { ThreadPlan, ThreadLifecycleEvent } from './thread.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
 import { normalizeError, wait } from '../utils.ts'
@@ -23,7 +24,15 @@ import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
 import { ThreadController } from './thread.ts'
 
+export type RuntimeHmrResult = {
+  accepted: boolean
+  deliveredFiles: readonly string[]
+  reason?: string
+  reset: boolean
+}
+
 export type RuntimeControllerOptions = {
+  onThreadEvent?: (event: ThreadLifecycleEvent) => void
   snapshot: RuntimeSnapshot
   runtimeName: string
   hooks: HostHooks
@@ -53,6 +62,65 @@ export class RuntimeController {
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
     return this.threads.flatMap((thread) => thread.getUpstreams())
+  }
+
+  async applyHmr(
+    updates: readonly BindingClientHmrUpdate[],
+  ): Promise<RuntimeHmrResult> {
+    const maxPatches =
+      this.options.snapshot.manifest.config.build?.hmr?.maxPatches ?? 50
+    // The budget permits exactly maxPatches successful patches; recycle before
+    // applying the following edit, so the fresh bundle includes that edit too.
+    if (this.threads.some((thread) => thread.patches >= maxPatches)) {
+      return {
+        accepted: false,
+        deliveredFiles: [],
+        reset: true,
+        reason: `Worker HMR patch budget reached (${maxPatches})`,
+      }
+    }
+    const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
+    const results = await Promise.all(
+      updates.map(async ({ clientId, update }) => {
+        const thread = threads.get(clientId)
+        if (!thread) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: `HMR client [${clientId}] is no longer running`,
+            },
+          }
+        }
+
+        try {
+          return { update, result: await thread.applyHmr(update) }
+        } catch (error) {
+          return {
+            update,
+            result: {
+              accepted: false,
+              delivered: false,
+              reason: normalizeError(error).message,
+            },
+          }
+        }
+      }),
+    )
+    let reason: string | undefined
+    let accepted = true
+    const delivered = new Set<string>()
+    for (const { update, result } of results) {
+      if (!result.accepted && accepted) {
+        accepted = false
+        reason = result.reason
+      }
+      if (result.delivered && update.type === 'Patch')
+        delivered.add(update.filename)
+    }
+    const deliveredFiles = Array.from(delivered)
+    return { accepted, deliveredFiles, reason, reset: false }
   }
 
   getHealth(): NeemRuntimeServerRuntimeHealth {
@@ -103,6 +171,7 @@ export class RuntimeController {
             plan,
             index,
             hooks: this.options.hooks,
+            onThreadEvent: this.options.onThreadEvent,
             onFailure: (error, thread) =>
               this.handleFailure(error, `worker ${thread.name}`),
           }),

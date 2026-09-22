@@ -39,6 +39,7 @@ export class WatcherService {
   private readonly changes = new OperationQueue()
   private graphWatcher: GraphWatcher | undefined
   private manifestRevision = 0
+  private readonly refreshing = new Set<string>()
   private logger: Logger | undefined
   private stopped = false
 
@@ -61,6 +62,39 @@ export class WatcherService {
     return {
       manifestFile: manifest.manifestFile,
       configSignalFiles: this.getConfigSignalFiles(graph),
+    }
+  }
+
+  async addHmrClient(runtimeName: string, clientId: string): Promise<void> {
+    await this.graphWatcher?.addHmrClient(runtimeName, clientId)
+  }
+
+  async removeHmrClient(runtimeName: string, clientId: string): Promise<void> {
+    await this.graphWatcher?.removeHmrClient(runtimeName, clientId)
+  }
+
+  async notifyHmrDelivered(
+    runtimeName: string,
+    filenames: readonly string[],
+  ): Promise<void> {
+    await this.graphWatcher?.notifyHmrDelivered(runtimeName, filenames)
+  }
+
+  async ensureWorkerOutput(
+    runtimeName: string,
+  ): Promise<WatcherManifestIdentity> {
+    const watcher = this.graphWatcher
+    if (!watcher) throw new Error('Neem watcher is not started')
+    // This output is already owned by a pending restart. Do not announce a
+    // second reload when DevEngine publishes the refreshed bundle.
+    this.refreshing.add(runtimeName)
+    try {
+      await watcher.ensureWorkerOutput(runtimeName)
+      return await this.changes.run(() =>
+        this.writeManifestSnapshot(watcher.snapshot()),
+      )
+    } finally {
+      this.refreshing.delete(runtimeName)
     }
   }
 
@@ -123,6 +157,20 @@ export class WatcherService {
     await cleanNeemOutDir(this.options.outDir)
     const graphWatcher = await watchGraph(graph, {
       onChange: (change) => this.handleChange(change),
+      onError: (error) => this.reportError(error),
+      onHmrUpdates: (runtimeName, updates) =>
+        this.emit({ type: 'worker-hmr-update', runtimeName, updates }),
+      onHmrError: async (runtimeName, error) => {
+        this.logger?.error(
+          { err: error, runtimeName },
+          'Neem worker HMR build failed',
+        )
+        await this.emit({
+          type: 'worker-hmr-failed',
+          runtimeName,
+          reason: error.message,
+        })
+      },
     })
 
     const compiled = await graphWatcher.ready
@@ -132,6 +180,11 @@ export class WatcherService {
 
   private async handleChange(change: TargetChange): Promise<void> {
     if (this.stopped || !this.graphWatcher) return
+    if (
+      change.target.kind === 'runtime-worker' &&
+      this.refreshing.has(getRuntimeName(change))
+    )
+      return
     await this.changes.run(() => this.applyChange(change))
   }
 
@@ -154,8 +207,13 @@ export class WatcherService {
       )
       await this.emit({ ...event, ...manifest })
     } catch (error) {
-      await this.emit({ type: 'error', error: serializeError(error) })
+      await this.reportError(error)
     }
+  }
+
+  private async reportError(error: unknown): Promise<void> {
+    this.logger?.error({ err: error }, 'Neem watcher build failed')
+    await this.emit({ type: 'error', error: serializeError(error) })
   }
 
   private async emit(event: WatcherEvent): Promise<void> {

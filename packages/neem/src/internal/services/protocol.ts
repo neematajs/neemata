@@ -1,4 +1,8 @@
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
+
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
+import type { RuntimeHmrResult } from '../host/runtime.ts'
+import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type ServiceResponse<TEvent, TResult = unknown> =
@@ -16,7 +20,22 @@ export type WatcherStartRequest = {
 
 export type WatcherStopRequest = { id: number; type: 'stop' }
 
-export type WatcherRequest = WatcherStartRequest | WatcherStopRequest
+export type WatcherRequest =
+  | WatcherStartRequest
+  | WatcherStopRequest
+  | {
+      id: number
+      type: 'hmr-client-started' | 'hmr-client-stopped'
+      runtimeName: string
+      clientId: string
+    }
+  | {
+      id: number
+      type: 'hmr-delivered'
+      runtimeName: string
+      filenames: readonly string[]
+    }
+  | { id: number; type: 'ensure-worker-output'; runtimeName: string }
 
 export type WatcherManifestIdentity = {
   manifestFile: string
@@ -34,6 +53,12 @@ export type WatcherManifestChangeEvent =
   | ({ type: 'logger-changed' } & WatcherManifestIdentity)
 
 export type WatcherEvent =
+  | {
+      type: 'worker-hmr-update'
+      runtimeName: string
+      updates: BindingClientHmrUpdate[]
+    }
+  | { type: 'worker-hmr-failed'; runtimeName: string; reason: string }
   | ({ type: 'ready' } & WatcherManifestIdentity)
   | { type: 'config-invalidated' }
   | WatcherManifestChangeEvent
@@ -41,6 +66,7 @@ export type WatcherEvent =
 
 export type WatcherResult = {
   manifestFile?: string
+  manifest?: WatcherManifestIdentity
   configSignalFiles?: readonly string[]
 }
 
@@ -76,12 +102,22 @@ export type RuntimeRequest =
   | RuntimeReloadRequest
   | RuntimeReloadRuntimeRequest
   | RuntimeStopRequest
+  | {
+      id: number
+      type: 'apply-hmr'
+      runtimeName: string
+      updates: readonly BindingClientHmrUpdate[]
+    }
 
 export type RuntimeEvent =
+  | ThreadLifecycleEvent
   | { type: 'ready'; health: NeemRuntimeServerHealth }
   | { type: 'stopped' }
   | { type: 'error'; error: SerializedError }
 
-export type RuntimeResult = { health?: NeemRuntimeServerHealth }
+export type RuntimeResult = {
+  health?: NeemRuntimeServerHealth
+  hmr?: RuntimeHmrResult
+}
 
 export type RuntimeResponse = ServiceResponse<RuntimeEvent, RuntimeResult>

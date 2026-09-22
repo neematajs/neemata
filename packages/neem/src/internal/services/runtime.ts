@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
 import type { Logger } from 'pino'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { RuntimeEvent } from './protocol.ts'
@@ -56,6 +57,7 @@ export class RuntimeService {
       snapshot,
       hooks: this.hooks,
       failOnWorkerError: true,
+      onThreadEvent: (event) => options.emit(event),
       recovery: { attempts: options.mode === 'production' ? 3 : 1 },
       onFailure: (error) => {
         options.emit({ type: 'error', error: serializeError(error) })
@@ -98,6 +100,10 @@ export class RuntimeService {
     )
     await controller.reloadRuntime(runtimeName, snapshot)
     return controller.getHealth()
+  }
+
+  applyHmr(runtimeName: string, updates: readonly BindingClientHmrUpdate[]) {
+    return this.requireController().applyHmr(runtimeName, updates)
   }
 
   async stop(): Promise<void> {

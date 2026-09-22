@@ -1,12 +1,21 @@
 import { createHash } from 'node:crypto'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { isBuiltin } from 'node:module'
-import { basename, dirname, resolve } from 'node:path'
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
 import type { OutputOptions, PreRenderedAsset, RolldownOutput } from 'rolldown'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { createFuture } from '@nmtjs/common'
 import * as rolldown from 'rolldown'
+import { dev } from 'rolldown/experimental'
 
 import type {
   NeemBuildWatchConfig,
@@ -22,7 +31,8 @@ import type {
   RuntimeBuildNode,
 } from './graph.ts'
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
-import { toFilePath } from '../utils.ts'
+import { normalizeError, toFilePath } from '../utils.ts'
+import { NEEM_HMR_IMPLEMENTATION } from './dev-runtime.ts'
 
 type ArtifactInput = { entry: string; input: string; targetKey?: string }
 
@@ -68,7 +78,26 @@ export type TargetWatcher = {
   close: () => Promise<void>
 }
 
+type HmrController = {
+  addClient: (clientId: string) => Promise<void>
+  removeClient: (clientId: string) => Promise<void>
+  delivered: (filenames: readonly string[]) => Promise<void>
+  ensureOutput: () => Promise<void>
+}
+
+type WatchHandlers = {
+  onRebuild?: (change: TargetChange) => MaybePromise<void>
+  onError?: (error: Error) => MaybePromise<void>
+}
+
 export type GraphWatcher = {
+  addHmrClient: (runtimeName: string, clientId: string) => Promise<void>
+  removeHmrClient: (runtimeName: string, clientId: string) => Promise<void>
+  notifyHmrDelivered: (
+    runtimeName: string,
+    filenames: readonly string[],
+  ) => Promise<void>
+  ensureWorkerOutput: (runtimeName: string) => Promise<void>
   ready: Promise<CompiledGraph>
   snapshot: () => CompiledGraph
   close: () => Promise<void>
@@ -114,25 +143,54 @@ async function compileTargetGroup(
 
 export async function watchGraph(
   graph: BuildGraph,
-  handlers: { onChange?: (change: TargetChange) => MaybePromise<void> } = {},
+  handlers: {
+    onChange?: (change: TargetChange) => MaybePromise<void>
+    onError?: (error: Error) => MaybePromise<void>
+    onHmrUpdates?: (
+      runtimeName: string,
+      updates: BindingClientHmrUpdate[],
+    ) => MaybePromise<void>
+    onHmrError?: (runtimeName: string, error: Error) => MaybePromise<void>
+  } = {},
 ): Promise<GraphWatcher> {
   const compiled = new Map<string, CompiledTarget>()
   const watchConfig = graph.config.build?.watch
+  const hmr = new Map<string, HmrController>()
   const watchers = await Promise.all(
-    graph.buildGroups.map((group) =>
-      watchBuildGroup(
-        group,
+    graph.buildGroups.map(async (group): Promise<BuildGroupWatcher> => {
+      async function onRebuild(change: TargetChange) {
+        for (const target of change.compiledTargets ?? [change.compiled]) {
+          compiled.set(target.target.key, target)
+        }
+        await handlers.onChange?.(change)
+      }
+      if (group.kind !== 'target' || group.target.kind !== 'runtime-worker') {
+        return watchBuildGroup(
+          group,
+          { onRebuild, onError: handlers.onError },
+          watchConfig,
+        )
+      }
+      const target = group.target
+      const runtimeName =
+        target.owner.type === 'runtime' ? target.owner.name : target.key
+      const watcher = await watchWorkerTarget(
+        target,
         {
-          onRebuild: async (change) => {
-            for (const target of change.compiledTargets ?? [change.compiled]) {
-              compiled.set(target.target.key, target)
-            }
-            await handlers.onChange?.(change)
-          },
+          onRebuild,
+          onError: handlers.onError,
+          onHmrUpdates: (updates) =>
+            handlers.onHmrUpdates?.(runtimeName, updates),
+          onHmrError: (error) => handlers.onHmrError?.(runtimeName, error),
         },
         watchConfig,
-      ),
-    ),
+      )
+      hmr.set(runtimeName, watcher.hmr)
+      return {
+        ready: watcher.ready.then((target) => [target]),
+        close: watcher.close,
+      }
+    }),
   )
   const ready = Promise.all(watchers.map((watcher) => watcher.ready)).then(
     (groups) => {
@@ -144,6 +202,18 @@ export async function watchGraph(
 
   return {
     ready,
+    async addHmrClient(runtimeName, clientId) {
+      await hmr.get(runtimeName)?.addClient(clientId)
+    },
+    async removeHmrClient(runtimeName, clientId) {
+      await hmr.get(runtimeName)?.removeClient(clientId)
+    },
+    async notifyHmrDelivered(runtimeName, filenames) {
+      await hmr.get(runtimeName)?.delivered(filenames)
+    },
+    async ensureWorkerOutput(runtimeName) {
+      await hmr.get(runtimeName)?.ensureOutput()
+    },
     snapshot() {
       return createCompiledGraph(graph, [...compiled.values()])
     },
@@ -160,7 +230,7 @@ type BuildGroupWatcher = {
 
 async function watchBuildGroup(
   group: BuildGroup,
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  handlers: WatchHandlers = {},
   watchConfig?: NeemBuildWatchConfig,
 ): Promise<BuildGroupWatcher> {
   if (group.kind === 'target') {
@@ -176,7 +246,7 @@ async function watchBuildGroup(
 
 export async function watchTarget(
   target: BuildTarget,
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  handlers: WatchHandlers = {},
   watchConfig?: NeemBuildWatchConfig,
 ): Promise<TargetWatcher> {
   const metadata: ArtifactBuildMetadata = { watch: true }
@@ -227,6 +297,7 @@ export async function watchTarget(
 
     if (code === 'ERROR') {
       ready.reject(event.error)
+      await handlers.onError?.(event.error)
       if ('result' in event) await event.result?.close?.()
     }
   })
@@ -242,7 +313,7 @@ export async function watchTarget(
 
 async function watchTargetGroup(
   targets: readonly BuildTarget[],
-  handlers: { onRebuild?: (change: TargetChange) => MaybePromise<void> } = {},
+  handlers: WatchHandlers = {},
   watchConfig?: NeemBuildWatchConfig,
 ): Promise<BuildGroupWatcher> {
   const metadata: ArtifactBuildMetadata = {
@@ -304,6 +375,7 @@ async function watchTargetGroup(
 
     if (code === 'ERROR') {
       ready.reject(event.error)
+      await handlers.onError?.(event.error)
       if ('result' in event) await event.result?.close?.()
     }
   })
@@ -326,6 +398,175 @@ function createWatchOptions(
     clearScreen: false,
     watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
   }
+}
+
+async function watchWorkerTarget(
+  target: BuildTarget,
+  handlers: WatchHandlers & {
+    onHmrUpdates: (updates: BindingClientHmrUpdate[]) => MaybePromise<void>
+    onHmrError: (error: Error) => MaybePromise<void>
+  },
+  watchConfig?: NeemBuildWatchConfig,
+): Promise<TargetWatcher & { hmr: HmrController }> {
+  const metadata: ArtifactBuildMetadata = { watch: true }
+  const ready = createFuture<CompiledTarget>()
+  void ready.promise.catch(() => {})
+  let initial = true
+  let chunks: string[] = []
+  let outputApplied = Promise.resolve()
+  let assetsWritten = Promise.resolve()
+  let updatesApplied = Promise.resolve()
+
+  await mkdir(target.outDir, { recursive: true })
+  const { output, ...input } = createRolldownOptions(target, metadata)
+  input.experimental = {
+    ...input.experimental,
+    devMode: { implement: NEEM_HMR_IMPLEMENTATION, lazy: false },
+  }
+  input.plugins = [
+    ...normalizePlugins(input.plugins),
+    {
+      name: 'neem:worker-hmr-boundary',
+      transform: {
+        filter: { id: toFilePath(target.artifact.entry) },
+        handler(code) {
+          // The worker definition owns replacement; edits to its dependencies
+          // bubble to this boundary before Neem starts a new generation.
+          return `${code}\nif (import.meta.hot) import.meta.hot.accept(m => globalThis.__neem_accept_worker__?.(m.default))\n`
+        },
+      },
+    },
+  ]
+
+  const engine = await dev(input, output, {
+    rebuildStrategy: 'never',
+    watch: {
+      skipWrite: false,
+      useDebounce: true,
+      debounceDuration: watchConfig?.debounceDelay ?? 50,
+    },
+    onOutput(result) {
+      // DevEngine does not await callbacks. Keep the application promise so a
+      // fresh-output request also waits for the compiled snapshot to catch up.
+      outputApplied = applyOutput(result)
+      void outputApplied.catch((error) =>
+        handlers.onError?.(normalizeError(error)),
+      )
+    },
+    onAdditionalAssets(result) {
+      assetsWritten = assetsWritten.then(() =>
+        writeOutput(target.outDir, result),
+      )
+      void assetsWritten.catch((error) =>
+        handlers.onError?.(normalizeError(error)),
+      )
+    },
+    onHmrUpdates(result) {
+      updatesApplied = updatesApplied
+        .then(async () => {
+          if (result instanceof Error) {
+            await handlers.onHmrError(result)
+            return
+          }
+          await assetsWritten
+          for (const { update } of result.updates) {
+            if (update.type !== 'Patch') continue
+            await writeOutputFile(target.outDir, update.filename, update.code)
+            if (update.sourcemap && update.sourcemapFilename) {
+              await writeOutputFile(
+                target.outDir,
+                update.sourcemapFilename,
+                update.sourcemap,
+              )
+            }
+          }
+          await handlers.onHmrUpdates(result.updates)
+        })
+        .catch((error) => handlers.onHmrError(normalizeError(error)))
+    },
+  })
+
+  try {
+    await engine.run()
+    await ready.promise
+  } catch (error) {
+    await engine.close()
+    throw error
+  }
+
+  return {
+    target,
+    ready: ready.promise,
+    hmr: {
+      async addClient(clientId) {
+        await engine.registerClient(clientId)
+        // A full bundle has already delivered every chunk to the new thread.
+        for (const filename of chunks)
+          await engine.notifyPayloadDelivered(filename)
+      },
+      removeClient: (clientId) => engine.removeClient(clientId),
+      async delivered(filenames) {
+        for (const filename of filenames)
+          await engine.notifyPayloadDelivered(filename)
+      },
+      async ensureOutput() {
+        await engine.ensureLatestBuildOutput()
+        await outputApplied
+      },
+    },
+    async close() {
+      await engine.close()
+      await Promise.allSettled([outputApplied, assetsWritten, updatesApplied])
+    },
+  }
+
+  async function applyOutput(result: Error | RolldownOutput): Promise<void> {
+    if (result instanceof Error) {
+      if (initial) ready.reject(result)
+      throw result
+    }
+    chunks = result.output
+      .filter((item) => item.type === 'chunk')
+      .map((item) => item.fileName)
+    const artifact = createResolvedArtifact(target, result, metadata)
+    const compiled = { target, artifact }
+    if (initial) {
+      initial = false
+      ready.resolve(compiled)
+      return
+    }
+    await handlers.onRebuild?.({ target, compiled, initial: false })
+  }
+}
+
+async function writeOutput(
+  outDir: string,
+  output: RolldownOutput,
+): Promise<void> {
+  await Promise.all(
+    output.output.map((item) => {
+      const content = item.type === 'asset' ? item.source : item.code
+      return writeOutputFile(outDir, item.fileName, content)
+    }),
+  )
+}
+
+async function writeOutputFile(
+  outDir: string,
+  filename: string,
+  content: string | Uint8Array,
+): Promise<void> {
+  const file = resolve(outDir, filename)
+  const pathFromOutput = relative(outDir, file)
+  if (
+    pathFromOutput === '..' ||
+    pathFromOutput.startsWith(`..${sep}`) ||
+    isAbsolute(pathFromOutput)
+  ) {
+    throw new Error(`Rolldown output escaped target directory: ${filename}`)
+  }
+  await mkdir(dirname(file), { recursive: true })
+  await writeFile(file, content)
 }
 
 export function createCompiledGraph(
