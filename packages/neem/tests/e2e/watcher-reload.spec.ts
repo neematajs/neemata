@@ -179,11 +179,16 @@ describe('Neem watcher dev reload', () => {
     ])
 
     const changeEvents = await waitForWatcherEventTypes(neem, [
-      'watcher:runtime-changed',
+      'watcher:worker-hmr-update',
       'watcher:logger-changed',
       'watcher:plugin-changed',
     ])
-    const manifestEvents = [ready, ...changeEvents]
+    const manifestEvents = [
+      ready,
+      ...changeEvents.filter(
+        (event) => event.event !== 'watcher:worker-hmr-update',
+      ),
+    ]
     for (const event of manifestEvents) expectManifestEventIdentity(event)
     expectStrictlyIncreasingManifestRevisions(manifestEvents)
 
@@ -198,7 +203,6 @@ describe('Neem watcher dev reload', () => {
         event.event === 'plugin-runtime-ready' && event.marker === 'plugin-v2',
     )
     await expectManifestArtifactsContainMarkers(manifestFile, {
-      worker: 'worker-v2',
       logger: 'logger-v2',
       plugin: 'plugin-v2',
     })
@@ -323,17 +327,15 @@ async function expectManifestRuntimes(
 
 async function expectManifestArtifactsContainMarkers(
   manifestFile: string,
-  markers: { worker: string; logger: string; plugin: string },
+  markers: { logger: string; plugin: string },
 ): Promise<void> {
   await waitFor(async () => {
     const manifest = JSON.parse(await readFile(manifestFile, 'utf8')) as {
       config?: { logger?: { file?: string } }
       plugins?: Array<{ entry?: { file?: string } }>
-      runtimes?: Record<string, { worker?: { file?: string } }>
     }
 
     const files = {
-      worker: manifest.runtimes?.api?.worker?.file,
       logger: manifest.config?.logger?.file,
       plugin: manifest.plugins?.[0]?.entry?.file,
     }

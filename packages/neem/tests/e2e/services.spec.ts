@@ -443,7 +443,7 @@ describe('Neem v2 services', () => {
     await neem.stop()
   }, 60_000)
 
-  it('reloads a runtime when its worker artifact changes', async () => {
+  it('replaces worker generations when their artifact changes', async () => {
     const fixture = await useFixture()
     const workerFile = resolve(
       fixture.fixtureDir,
@@ -463,7 +463,7 @@ describe('Neem v2 services', () => {
     )
 
     await neem.waitForEvent(
-      (event) => event.event === 'watcher:runtime-changed',
+      (event) => event.event === 'runtime:hmr-applied',
       30_000,
     )
     await waitForEventCount(fixture.eventsFile, 'stop', 2)

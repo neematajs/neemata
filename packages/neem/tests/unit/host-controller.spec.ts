@@ -10,6 +10,8 @@ import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 // Control runtime readiness; the controller's hooks and operation queue are real.
 const runtime = vi.hoisted(() => ({
   starts: [] as string[],
+  hmr: vi.fn(),
+  stopped: vi.fn(),
   ready: undefined as
     | undefined
     | { promise: Promise<void>; reject(e: Error): void },
@@ -23,7 +25,9 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
     }
     async stop() {
       runtime.ready!.reject(new Error('stopped before ready'))
+      runtime.stopped()
     }
+    applyHmr = runtime.hmr
     getUpstreams = () => []
     getHealth = () => ({ name: 'api', ready: false, workers: [] })
     setSnapshot() {}
@@ -33,6 +37,8 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
 afterEach(() => {
   runtime.starts.length = 0
   runtime.ready = undefined
+  runtime.hmr.mockReset()
+  runtime.stopped.mockReset()
 })
 
 const owner = { type: 'runtime' as const, name: 'api' }
@@ -62,6 +68,41 @@ const manifest: Manifest = {
 }
 
 describe('HostController stop during startup', () => {
+  it('interrupts HMR before joining the operation queue', async () => {
+    const ready = createFuture<void>()
+    runtime.ready = ready
+    ready.resolve()
+    const entered = createFuture<void>()
+    const interrupted = createFuture<void>()
+    runtime.hmr.mockImplementation(async () => {
+      entered.resolve()
+      await interrupted.promise
+      return { accepted: false, deliveredFiles: [] }
+    })
+    runtime.stopped.mockImplementation(() => interrupted.resolve())
+    const controller = new HostController({
+      hooks: createHostHooks(),
+      snapshot: createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '.',
+        manifest,
+        logger: pino({ enabled: false }),
+      }),
+    })
+    await controller.start()
+    const applying = controller.applyHmr('api', [])
+    await entered.promise
+    const stopping = controller.stop()
+    try {
+      await vi.waitFor(() => expect(runtime.stopped).toHaveBeenCalled(), {
+        timeout: 200,
+      })
+    } finally {
+      interrupted.resolve()
+      await Promise.all([applying, stopping])
+    }
+  })
+
   // A stop can land in any microtask between two startup steps, not only while
   // one of them is awaited. Sweep the gap instead of assuming its position.
   it.each(Array.from({ length: 12 }, (_, hops) => hops))(
