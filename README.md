@@ -112,11 +112,11 @@ the existing workspace tests.
 
 The **Publish Neem stack** workflow versions and publishes only the Neem stack.
 Proxy and prom-client keep independent package versions and are excluded from
-that release. The **Publish standalone package** workflow selects either `proxy`
-or `prom-client` and accepts its own version. Proxy releases build all seven
+that release. The **Publish proxy** and **Publish prom-client** workflows each
+accept their own version. All three workflows share one publishing queue, so
+releases run one at a time across packages and branches. Proxy releases build all seven
 native targets, generate the platform packages from `packages/proxy/package.json`,
-and publish them before the wrapper. The wrapper is published only after all
-platform package versions and tarballs are available from npm. Generated
+and publish them with `napi pre-publish` before publishing the wrapper. Generated
 `packages/proxy/npm/` directories are ignored and are not workspace members;
 local development loads the binding built in `packages/proxy/dist/`.
 
@@ -131,8 +131,8 @@ pre-migration dependency pins: proxy `1.0.0-beta.7` and prom-client `1.0.1`.
 
 Package-specific READMEs and licenses are retained; prom-client remains
 Apache-2.0 and includes its upstream notices. Configure npm publishing access
-for `publish-package.yml` on both standalone packages and the proxy platform
-packages; stack packages continue using `publish.yml`.
+for `publish-proxy.yml` on proxy and its platform packages, and for
+`publish-prom-client.yml` on prom-client. Stack packages use `publish.yml`.
 
 ## Service integration tests
 

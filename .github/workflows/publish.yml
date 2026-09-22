@@ -6,6 +6,12 @@ permissions:
   attestations: write
   id-token: write
 
+# Serialize releases across all publishing workflows and branches.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+  queue: max
+
 on:
   workflow_dispatch:
     inputs:
@@ -66,7 +72,10 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Set version
-        run: node scripts/prepare-release.js stack "$RELEASE_VERSION"
+        run: |
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec npm pkg set version="$RELEASE_VERSION" repository.type=git repository.url=https://github.com/neematajs/neemata
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/README.md" ./
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
       - name: Build TypeScript packages
         run: pnpm run build:ts

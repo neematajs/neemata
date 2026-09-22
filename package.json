@@ -8,7 +8,7 @@
     "build": "pnpm run build:proxy && pnpm run build:ts",
     "dev": "pnpm run clean-build && pnpm run build:proxy && pnpm tsc -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
-    "test": "pnpm build && pnpm run test:release && pnpm run test:prom-client && pnpm --filter @nmtjs/proxy run test:rust && vitest --run",
+    "test": "pnpm build && pnpm run test:prom-client && pnpm --filter @nmtjs/proxy run test:rust && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
     "test:integration:services": "pnpm --filter @nmtjs/pubsub --filter @nmtjs/workflows run test:integration",
     "test:unit": "vitest run",
@@ -26,8 +26,7 @@
     "build:ts": "pnpm tsc -b tsconfig.build.json --pretty false",
     "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
     "test:proxy": "pnpm --filter @nmtjs/proxy run test",
-    "check:rust": "pnpm --filter @nmtjs/proxy run check:rust",
-    "test:release": "node --test scripts/prepare-release.test.js scripts/wait-for-npm.test.js"
+    "check:rust": "pnpm --filter @nmtjs/proxy run check:rust"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
