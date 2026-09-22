@@ -3,6 +3,30 @@
 Conventional runtime and planner lookup recognizes `.ts`, `.mts`, `.js` and
 `.mjs` files.
 
+## Worker HMR
+
+`neem dev` builds runtime workers with Rolldown DevEngine. An edit to a worker
+or its bundled dependencies stops the current runtime generation and creates
+and starts the updated worker in the same thread. Neem awaits cleanup before
+starting the replacement; planners and hosts keep their existing rebuild and
+reload behavior.
+
+A changed upstream list, a rejected or failed patch, or a worker declaring
+`reload: 'thread'` falls back to a full thread restart. Neem refreshes the full
+bundle before restarting, including when a planner or host changes after an
+accepted patch. Syntax errors are logged and leave the last good generation
+running until the source is fixed. Fallback logs include the reason.
+
+Use `defineRuntimeWorker({ definition, createRuntime, reload: 'thread' })` when
+the worker requires a fresh thread on every edit. The default is
+`reload: 'generation'`; `stop()` must release the generation's resources before
+its replacement can start.
+
+`build.hmr.maxPatches` limits accepted patches per thread (default `50`). After
+that many patches, the next update restarts threads from fresh output. Set it
+to `0` to restart on every update. Production workers are created directly and
+their bundles contain no DevEngine instrumentation.
+
 ## Development environment files
 
 Load an environment file before evaluating `neem.config.ts` and starting workers:

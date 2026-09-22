@@ -78,6 +78,13 @@ export default defineRuntimeWorker<WorkerData, Definition>({
   Expose it for long-running work; detached task failures need supervision by
   the runtime. If this promise can reject before readiness, attach a rejection
   observer immediately while retaining the original promise for Neem.
+- During `neem dev`, an edit to the worker or its bundled dependencies
+  replaces the runtime generation in the same thread: Neem awaits `stop()`,
+  creates the updated runtime, then calls `start()`. Module state in unchanged
+  modules survives; runtime resources do not. Changed upstreams, rejected or
+  failed patches, and the `build.hmr.maxPatches` budget (default 50) restart
+  the thread instead. Declare `reload: 'thread'` on the worker when a fresh
+  thread is required on every edit.
 
 ## Planner entry
 

@@ -60,9 +60,10 @@ clients, sockets, and schedulers would be created in that process.
   by default except Node builtins and configured externals; per-target chunks
   are supported. Neem's own start/worker/host-runner infrastructure is built
   together and can share chunks, while retaining separate entry modules.
-- Artifact changes can trigger rebuilds, but a runtime reload stops and
-  recreates the runtime. It does not hot-swap an individual host or worker
-  entry while preserving the other running entries.
+- Planner and host changes reload the runtime: threads stop and restart.
+  Worker changes in `neem dev` replace the runtime generation inside the
+  running thread; see [entries](entries.md). Neither path hot-swaps an
+  individual entry while preserving the others' state.
 
 ## Declaration helpers and layering
 
