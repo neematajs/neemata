@@ -1,27 +1,32 @@
 ---
 name: use-neemata
-description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: task and workflow contracts, implementations, execution pools, the PostgreSQL runtime, the runtime client, Neem workflow workers, and typed publish/subscribe channels, with or without Effect.'
+description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: task and workflow contracts, implementations, execution pools, PostgreSQL and Redis/Valkey runtimes, the runtime client, Neem workflow workers, and typed publish/subscribe channels, with or without Effect.'
 ---
 
 # Use Neemata
 
-Neemata is Neem hosting, durable workflows and typed pubsub. It has no RPC
-framework, transports, client, or dependency container: applications own those (Effect applications
-use Effect's `HttpApi` and `Rpc` with their derived clients).
+Neemata provides shared utilities (`common`), Effect application hosting
+(`effect`), metrics, Neem worker hosting (`neem`), typed pubsub, durable
+workflows, and Vite/Nuxt integration (`vite`, `nuxt`). Applications own their
+RPC/HTTP APIs and dependency wiring.
 
 - Workflows without Effect import from `@nmtjs/workflows`; Effect applications
-  import the same functions from `@nmtjs/workflows/effect`.
+  import the contract and implementation builders from `@nmtjs/workflows/effect`.
 - Pubsub imports from `@nmtjs/pubsub`, `@nmtjs/pubsub/redis` and
   `@nmtjs/pubsub/effect`.
 - Neem workers import from `@nmtjs/workflows/neem` or
   `@nmtjs/workflows/effect/neem`.
+- Effect adapters require the optional `effect` peer exactly
+  `4.0.0-rc.116`. Core workflow and pubsub APIs are Effect-free.
 - Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
   running Neem itself is covered by the `use-neem` skill.
 
 ## References
 
-- [Workflows](references/workflows.md) - durable orchestration: task/workflow
-  contracts, implementations, pools, Postgres and Redis/Valkey runtimes, client (read models, watch,
-  retry/delete), inspector serialization, Neem integration.
-- [PubSub](references/pubsub.md) - typed channels, publish/subscribe, Redis and
-  Valkey adapter, Effect service.
+- [Workflows](references/workflows.md) - contracts, implementations, pools,
+  Effect handlers, runtime clients, retry/watch, Redis/Valkey, inspector and
+  Neem integration.
+- [PostgreSQL](references/postgres.md) - accepted clients, transaction scopes,
+  timestamp parsers, schema version 4, Drizzle migrations and LISTEN ownership.
+- [PubSub](references/pubsub.md) - typed channels, delivery semantics,
+  Redis/Valkey adapter ownership and the Effect service.

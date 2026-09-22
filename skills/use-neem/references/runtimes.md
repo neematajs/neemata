@@ -1,31 +1,20 @@
 # Runtimes
 
-`@nmtjs/neem` project config declares runtime projects and controller plugins.
-It is generic: applications, workflows, workers, bots, and custom
-services are named runtimes. Metrics is a controller plugin, not a runtime
-declaration.
+Neem config declares named runtimes and controller plugins. Keep config and
+runtime declarations free of live resources: they are evaluated for build/dev.
+Create clients, listeners, and log transports in their owning runtime modules.
 
 ## Project Config
 
 ```ts
-import metrics from '@nmtjs/metrics/neem'
 import { defineConfig } from '@nmtjs/neem'
 
 export default defineConfig({
   logger: { pinoOptions: { level: 'info' } },
   env: { NODE_ENV: 'production' },
-  plugins: [
-    metrics({
-      server: { host: '127.0.0.1', port: 9187, path: '/metrics' },
-    }),
-  ],
-  proxy: {
-    hostname: '127.0.0.1',
-    port: 3000,
-    runtimes: {
-      api: { routing: { default: true } },
-    },
-  },
+  outDir: 'dist',
+  proxy: { hostname: '127.0.0.1', port: 3000 },
+  health: { hostname: '127.0.0.1', port: 3001 },
   runtimes: [
     './src/runtimes/**/neem.runtime.ts',
     '!./src/runtimes/experimental/**',
@@ -33,57 +22,152 @@ export default defineConfig({
 })
 ```
 
-Rules:
+`NeemConfig` requires `runtimes`. Its optional fields are `env`, `logger`,
+`build`, `proxy`, `health`, `plugins`, and `outDir`:
 
-- `runtimes` is an array of file paths, folder paths, globs, or negated globs.
-  Relative entries resolve from the `neem.config.ts` directory.
-- Folder entries resolve conventional runtime declaration files:
-  `neem.runtime.ts`, `.mts`, `.js`, or `.mjs`.
-- Positive entries that match nothing fail. Negated entries only remove matches.
-- Runtime declaration files default-export a branded declaration from a package
-  helper or raw `defineRuntime(...)` for custom runtimes.
-- Runtime names come from explicit `name` or nearest `package.json#name`.
-  Duplicate names fail.
-- Config is declarative. Do not open Redis clients, sockets, log transports, or
-  runtime resources in `neem.config.ts`.
-- Plugins such as `@nmtjs/metrics/neem` extend the Neem controller and are
-  built into plugin artifacts; they do not appear in `runtimes`.
-- Production `start` reads built manifest/artifacts, not source config.
-- `env` is an inline string map included in the manifest, not an env-file list.
-  For development env files loaded before config evaluation, use
-  [`neem dev --env-files`](cli.md#environment-files).
+- `env`: `Record<string, string>` baked into the manifest, not env-file paths.
+- `logger`: `NeemLoggerOptions` or a string/file URL module entry; see below.
+- `build`: `sourcemap`, `sourcemapSources: 'include' | 'exclude'`,
+  `minify: boolean | 'dce-only'`, `define: Record<string, string>`, and
+  `watch: { buildDelay?, debounceDelay? }` (delays in milliseconds).
+- `plugins`: readonly array of `NeemPluginInput` declarations.
+- `outDir`: build default; dev/start have their own CLI defaults.
 
-## Runtime Declaration Files
+Production start reads the manifest/artifacts, without evaluating source
+config. See [CLI](cli.md) for output paths and deployment overrides below.
 
-End-user projects should default-export declarations produced by package
-helpers when a package contributes runtime defaults:
+## Discovery and Declarations
+
+- `runtimes` accepts file paths, folders, globs, and negated globs, relative to
+  the config file's directory. Entries are processed in array order; each glob's
+  matches are sorted. Exclusions apply regardless of their position; repeated
+  files are deduplicated. Positive entries matching nothing fail.
+- A folder must contain `neem.runtime.ts`, `.mts`, `.js`, or `.mjs`, checked in
+  that order. CommonJS `.cts`/`.cjs` conventions are not supported.
+- Each file must default-export a branded declaration from `defineRuntime` or
+  a package helper. A plain object is not sufficient.
+- Names use a nonempty trimmed `name`, otherwise the nearest ancestor
+  `package.json` with a nonempty string `name`. No scope or prefix is stripped.
+  Missing names and duplicate names fail, even before build selection.
+- Every declaration needs a planner: explicit `planner`, a package default,
+  or sibling `neem.planner.ts`, `.mts`, `.js`, `.mjs`, in that order.
+- Supply `worker: { entry }` or `host: { entry }` (both are allowed). Without a
+  custom host, Neem uses its default host. Worker entries are explicit; there
+  is no conventional worker-file lookup.
+- Entry values are strings or `file:` URL objects. Relative entries resolve
+  from the declaration file; package specifiers use package resolution. Other
+  URL protocols fail. Pass entries, not imported worker/planner/host objects.
+- Planners and hosts execute in a runtime's host-runner thread; application
+  workers execute in separate worker threads. Planner data must be structured
+  cloneable. Do not share live clients through planner data.
+
+Runtime declarations additionally accept `env`, `proxy`, and
+`worker.build`/`host.build`. Build options have `rolldown` and `chunks` fields:
+`chunks` is `false` or `{ groups?: readonly NeemChunkGroup[] }`;
+`rolldown` exposes a restricted set of plugin, external, resolve, transform,
+module type, check, and tsconfig options, not arbitrary output options.
+`host.build` also applies to the planner artifact.
+
+Use package helpers for their defaults; their call shapes differ. See
+[package integration](package-integration.md) and [Effect](effect.md). For a
+fully app-owned declaration:
 
 ```ts
-import { createWorkflowsRuntime } from '@nmtjs/workflows/neem'
-
-const defineRuntime = createWorkflowsRuntime()
+import { defineRuntime } from '@nmtjs/neem'
 
 export default defineRuntime({
-  name: 'workflows',
+  name: 'api',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
+  proxy: { routing: { type: 'default' } },
 })
 ```
 
-Rules:
+Package helpers built on `createRuntime` merge env keys and worker/host build
+options; caller values win and package Rolldown plugins precede caller plugins.
+Caller `proxy.routing` replaces the whole routing mode. Detailed worker/host/
+planner authoring belongs in `build-neem-runtime`, including `defineRuntimeHost`,
+`defineRuntimeWorker`, `defineRuntimePlanner`, and their brand guards.
 
-- A runtime declaration file is the boundary between project config and package
-  runtime implementation.
-- App-owned entries such as `name`, `planner`, and `worker.entry` stay in the
-  runtime declaration.
-- Package-owned defaults such as `host.entry` or worker build plugins belong in
-  package `create*Runtime()` helpers.
-- Host-free runtimes with no common defaults should use raw `defineRuntime(...)`.
-- `planner`, `host.entry`, and `worker.entry` are import specifiers. Do not
-  direct-import planner, host, or worker modules into the declaration file.
-  Neem builds them as separate artifacts and runs them in separate
-  host-runner/worker-thread contexts.
-- Keep runtime resource creation in runtime entry files, not declaration files.
-- Raw `defineRuntime(...)`, `createRuntime(...)`, `defineRuntimeHost(...)`,
-  `defineRuntimeWorker(...)`, and `defineRuntimePlanner(...)` are runtime-author
-  APIs; use `build-neem-runtime` skill for those.
+## Environment
+
+For planner, host, and worker threads, precedence is config `env`, then runtime
+`env`, then live process environment (highest). Inline env is a deployment
+fallback, not a way to override externally supplied values. It does not set the
+controller plugin's process environment.
+
+Use [`neem dev --env-files`](cli.md#environment-files) for files loaded before
+config evaluation. `envFiles` is not a config property.
+
+## Proxy and Health
+
+Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.7` when enabling `proxy`.
+The controller config takes required `hostname` and `port`, plus optional
+`healthChecks: { interval? }`, `stickySessions: { enabled?, cookieName?,
+headerName?, ttlMs?, maxEntries? }`, and `tls: { keyPath, certPath }`.
+
+Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
+
+- Omit runtime `proxy` to exclude that runtime from proxy routing.
+- `proxy: {}` defaults to path routing with the runtime name.
+- `routing` is `{ type: 'path', name? }`, `{ type: 'subdomain', name? }`, or
+  `{ type: 'default' }`. At most one selected runtime may have the default route.
+  Missing path/subdomain `name` uses the full runtime name.
+- Runtime `proxy.sni` is optional. Workers report `{ type, url }` upstreams,
+  where `type` is `'http'`, `'http2'`, or `'ws'`.
+
+`health` enables a separate HTTP probe server. It requires `port`, defaults
+`hostname` to `127.0.0.1`, and accepts `paths: { health?, ready? }` (defaults
+`/health`, `/ready`). GET and HEAD are supported:
+
+- `/health` returns 503 for server state `failed` or `stopped`, otherwise 200.
+- `/ready` returns 200 only when the server is running, every runtime pool is
+  ready, and an enabled proxy is ready; otherwise 503. Use readiness during
+  startup, reload, and recovery. Responses include the health snapshot.
+
+Deploy-time process variables override built networking values:
+
+| Setting              | Environment variable                                  |
+| -------------------- | ----------------------------------------------------- |
+| Proxy port           | `NEEM_PROXY_PORT`, then `PORT`                        |
+| Proxy hostname       | `NEEM_PROXY_HOSTNAME`                                 |
+| TLS paths            | `NEEM_PROXY_TLS_KEY_PATH`, `NEEM_PROXY_TLS_CERT_PATH` |
+| Health port/hostname | `NEEM_HEALTH_PORT`, `NEEM_HEALTH_HOSTNAME`            |
+
+Empty values are ignored. Port overrides must be integers from 0 to 65535.
+These variables do not enable absent proxy/health servers. Enabling TLS on an
+existing proxy with no built TLS config requires both paths. With built TLS,
+either path can be overridden separately.
+
+## Logger and Plugins
+
+Inline logger options use `NeemLoggerOptions` (`pinoOptions`, `destinations`),
+but only JSON-serializable settings survive the manifest. For streams,
+transports, functions, or env-sensitive setup, set `logger` to a module entry
+that default-exports a Pino `Logger`; open resources there. Logger modules load
+in the contexts that use them, not as a shared cross-thread instance. Default
+levels are `debug` in development and `info` in production.
+
+A plugin declaration has `{ name, entry?, options?, build? }`; use
+`definePlugin` or a package helper. `name` must be nonempty; keep `options`
+JSON-serializable. `build.rolldown` contributes runtime worker build options;
+`entry` is optional for build-only plugins. Config-relative module entries are
+built as artifacts, and their default export is a factory normally wrapped in
+`definePluginHooks`.
+
+The factory receives `{ name, mode, options, logger, getHealth }` and returns
+hooks (possibly asynchronously). Hooks include `initialize`, `dispose`,
+`server:start/ready/reload/stop/fail`, `runtime:start/ready/reload/stop/fail`, and
+`worker:start/ready/stop/fail`. Events include `mode` and optional `error`;
+runtime events add `name`/optional `upstreams`, worker events add
+`id`, `name`, `artifactId`, and `owner`.
+
+Plugins run in the controller context: the runtime service worker for CLI
+`dev`/`start`, or the main thread for generated standalone entries. Allocate
+plugin resources in lifecycle hooks and release them in `dispose`.
+`getHealth()` exposes server, runtime pool/thread, and proxy state.
+`NeemWorkerError` identifies worker-reported failures via `worker` and `origin`
+(`'bootstrap' | 'start' | 'runtime'`). Its `cause` is the rendered error sent
+across the thread boundary, not the original application value.
+
+For metrics, use [the metrics plugin](metrics.md) in `plugins`, never `runtimes`.

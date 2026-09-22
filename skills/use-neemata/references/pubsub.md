@@ -1,61 +1,151 @@
 # PubSub
 
-Use `@nmtjs/pubsub` for ephemeral typed fanout and live state notifications across
-workers, processes and servers. It delivers at most once: no consumer groups,
-replay, offsets, or recovery. Subscribers that cannot tolerate a gap refetch state
-when they resubscribe.
+Use `@nmtjs/pubsub` for typed, ephemeral fanout across workers, processes and
+servers. Delivery is at most once: no replay, offsets, consumer groups or
+disconnected-subscriber recovery. Refetch authoritative state on resubscription
+when gaps matter.
+
+## Channels and manager
 
 ```ts
 import { defineChannel, PubSubManager } from '@nmtjs/pubsub'
 import { createRedisAdapter } from '@nmtjs/pubsub/redis'
+import { Redis } from 'ioredis'
 import * as z from 'zod'
 
 export const rooms = defineChannel({
   name: 'rooms',
   params: z.object({ room: z.string() }),
   key: ({ room }) => room,
-  events: { message: z.object({ text: z.string() }) },
+  events: {
+    message: z.object({ text: z.string() }),
+    seen: {
+      decode: z.iso.datetime().transform((stored) => new Date(stored)),
+      encode: z.date().transform((value) => value.toISOString()),
+    },
+  },
 })
 
-const adapter = await createRedisAdapter(redisClient) // ioredis or iovalkey
-const pubsub = new PubSubManager({ adapter, logger })
+const redis = new Redis('redis://localhost:6379', { lazyConnect: true })
+await redis.connect()
+const adapter = await createRedisAdapter(redis)
+const pubsub = new PubSubManager({ adapter })
 
-await pubsub.publish(rooms.events.message, { room }, { text })
-
-const stream = await pubsub.subscribe(
+await pubsub.publish(rooms.events.message, { room: 'r1' }, { text: 'hello' })
+const signal = AbortSignal.timeout(10_000)
+const messages = await pubsub.subscribe(
   rooms,
-  { room },
+  { room: 'r1' },
   { message: true },
   signal,
 )
-for await (const { event, payload } of stream) {
-  // payload: { text: string }
+for await (const { payload } of messages) {
+  console.log(payload.text)
 }
+
+// Dispose the adapter's subscriber before its caller-owned command client.
+await adapter.dispose()
+await redis.quit()
 ```
 
-## Rules
+- `defineChannel({ name, events })` without params takes `undefined` at
+  publish/subscribe call sites. A parameterized channel requires both `params`
+  and `key`; params are a record of string/number/boolean/null values.
+  Validated params determine the broker name:
+  `name + ':' + encodeURIComponent(key(params))`.
+- Params are synchronous Standard Schemas preserving their input/output type.
+  Event payloads are Standard Schemas or `{ decode, encode }` pairs. The
+  single-schema check rejects output not assignable to input; use the pair
+  when published and application forms differ.
+- Shared validation is from `@nmtjs/common`; asynchronous validation throws
+  `TypeError`. `PubSubSchemaError` is an alias of its `SchemaError`, with
+  `issues` and a message composed from issue paths; its name remains
+  `'SchemaError'`.
+- `new PubSubManager({ adapter, logger? })` owns neither resource.
+  `PubSubLogger` requires `trace`, `debug`, `warn` and `error`, each
+  `(obj: unknown, msg?: string) => void`; a Pino logger fits.
+- `publish(event, params, payload): Promise<boolean>` validates params and
+  encodes payload before calling the adapter. Invalid params/payloads reject.
+  Adapter exceptions propagate; a false adapter result remains false.
+- `subscribe(channel, params, events?, signal?)` resolves to an
+  `AsyncIterable` of `{ event, payload }` with decoded, discriminated payloads.
+  Omit event selection to receive all events; `{ message: true }` narrows it.
+  An explicit empty selection `{}` selects no events at runtime.
+- Unknown/unselected events and payload decode failures are logged and skipped.
+  Broker/iterator failures end the stream with an error; abort ends it normally.
+  Abort or leaving the consumer loop releases the subscription. Resolving
+  `subscribe()` itself is not an acknowledgement of broker readiness.
 
-- Schemas are Standard Schemas and must validate synchronously. A payload with a
-  different published form declares `{ decode, encode }`; a lone transforming schema
-  is a compile error.
-- `publish(event, params, payload)` validates and encodes, then returns
-  `Promise<boolean>`. A channel without params takes `undefined`.
-- `subscribe(channel, params, events?, signal?)` returns an async iterable of
-  decoded events. Pass a selection such as `{ message: true }` to narrow it.
-- Unknown events and undecodable payloads are logged and skipped.
-- The Redis adapter shares one subscriber connection per process. It does not own
-  the client: `await adapter.dispose()` before closing it.
-- Other brokers implement `PubSubAdapter` (`publish`, `subscribe`).
+## Redis / Valkey adapter
+
+`@nmtjs/pubsub/redis` exports `RedisPubSubAdapter`, `createRedisAdapter`
+and `RedisPubSubClient` (`ioredis.Redis | iovalkey.Redis`).
+
+- Pass an already connected command client. The factory awaits
+  `initialize()`; direct construction with `new RedisPubSubAdapter(client,
+logger?)` requires calling `initialize()` yourself before subscriptions.
+- Each adapter instance duplicates the command client with
+  `{ lazyConnect: true }`, connects that one subscriber, and shares it across
+  channels/local listeners. Channel subscriptions are reference-counted; this
+  is not a process-global singleton. Reuse an adapter to share connections.
+- `dispose()` aborts subscriptions, removes local listeners and quits the
+  duplicate only. The caller must close its original client afterward.
+  Neither `PubSubManager` nor the Effect layer calls adapter disposal.
+- Messages are JSON-serialized; encoded payloads must be JSON-safe. Malformed
+  incoming JSON is logged and skipped.
+- Redis publish returns true when the broker command succeeds, even with zero
+  subscribers; serialization/broker failures return false. `true` is not a
+  delivery receipt.
+- The Redis adapter buffers events for a slow subscriber without bound; there
+  is no overflow policy.
+
+Other brokers implement `PubSubAdapter`:
+`publish(channel: string, payload: unknown): Promise<boolean>` and
+`subscribe(channel: string, signal?: AbortSignal): AsyncIterable<PubSubMessage>`.
+A `PubSubMessage` is `{ channel, data: { event, payload } }`. Honor abort so
+idle subscriptions can be released.
 
 ## Effect
 
+`@nmtjs/pubsub/effect` requires the optional peer `effect` exactly
+`4.0.0-rc.116`. It exports `defineChannel`, `PubSub`, `PubSubError`,
+`make`, `layer`, and `codec` / `schemaOf` from `@nmtjs/common/effect`.
+
 ```ts
-import { defineChannel, layer, PubSub } from '@nmtjs/pubsub/effect'
+import {
+  defineChannel as defineEffectChannel,
+  layer,
+  PubSub,
+} from '@nmtjs/pubsub/effect'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
+
+const updates = defineEffectChannel({
+  name: 'updates',
+  events: { changed: Schema.Struct({ id: Schema.String }) },
+})
+const publishUpdate = Effect.gen(function* () {
+  const service = yield* PubSub
+  return yield* service.publish(updates.events.changed, undefined, { id: 'd1' })
+})
+// Supply an adapter whose application-owned lifetime covers this Effect.
+function providePubSub(adapter: Parameters<typeof layer>[0]['adapter']) {
+  return publishUpdate.pipe(Effect.provide(layer({ adapter })))
+}
 ```
 
-`defineChannel` takes `effect/Schema` schemas and returns an ordinary channel.
-`PubSub` is a service: `publish` returns an Effect, `subscribe` returns a Stream
-that unsubscribes when it ends or is interrupted; both fail with `PubSubError`.
-`layer({ adapter, logger })` provides it and does not own the adapter. Serving a
-subscription to a client is application code: return the Stream from an Effect RPC
-streaming procedure.
+Effect channels use synchronous, service-free Effect schemas and their JSON
+encoding, returning ordinary channels usable by either manager. Parameter
+schemas must preserve the parameter type. `schemaOf` returns the original
+Effect schema only for a codec made through `codec`.
+
+`make({ adapter, logger? })` returns `PubSub['Service']` directly.
+`layer({ adapter, logger? })` provides that service without acquiring or
+disposing the adapter. Own its lifetime in the application.
+
+The service's `publish` returns `Effect<boolean, PubSubError>`;
+`subscribe(channel, params, events?)` returns a
+`Stream<SelectedEventUnion, PubSubError>` with scope/interruption cleanup
+(no explicit signal parameter). Raised failures carry `PubSubError` with
+`_tag: 'PubSubError'` and `cause`; a Redis adapter's false publish result
+stays a successful false Effect. Decode failures remain logged/skipped.
