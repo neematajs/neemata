@@ -136,7 +136,7 @@ export async function continueWorkflowRun(
           return { status: 'processed' }
         }
 
-        const outputs: Record<string, unknown> = {}
+        const outputs: Record<string, unknown> = Object.create(null)
         let workflowInput: unknown
         try {
           workflowInput = decodeStoredValue(

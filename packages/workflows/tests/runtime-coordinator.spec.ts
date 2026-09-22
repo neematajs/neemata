@@ -2453,10 +2453,12 @@ describe('workflow runtime coordinator', () => {
 
     const final = await runtime.store.loadRunSnapshot(run.id)
     expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      summary: { text: 'summary:alpha' },
-      review: { status: 'review:alpha' },
-    })
+    expect(final?.nodes[0]?.output).toStrictEqual(
+      Object.assign(Object.create(null), {
+        summary: { text: 'summary:alpha' },
+        review: { status: 'review:alpha' },
+      }),
+    )
     expect(final?.run.status).toBe('completed')
     expect(final?.run.output).toStrictEqual({
       summary: 'summary:alpha',
@@ -2722,11 +2724,13 @@ describe('workflow runtime coordinator', () => {
 
     const final = await runtime.store.loadRunSnapshot(run.id)
     expect(final?.nodes[0]?.status).toBe('completed')
-    expect(final?.nodes[0]?.output).toStrictEqual({
-      summary: { text: 'summary:alpha' },
-      embedding: { id: 'embedding:alpha' },
-      child: { text: 'child:alpha' },
-    })
+    expect(final?.nodes[0]?.output).toStrictEqual(
+      Object.assign(Object.create(null), {
+        summary: { text: 'summary:alpha' },
+        embedding: { id: 'embedding:alpha' },
+        child: { text: 'child:alpha' },
+      }),
+    )
     expect(
       (await runtime.store.loadRunSnapshot(embeddingRunId))?.run.status,
     ).toBe('completed')

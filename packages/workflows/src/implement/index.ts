@@ -876,18 +876,20 @@ function normalizeCases(
   node: WorkflowBranchNode | WorkflowParallelNode,
   cases: Record<string, unknown>,
 ): Record<string, WorkflowCaseImplementation> {
-  const implementations: Record<string, WorkflowCaseImplementation> = {}
+  const implementations: Record<string, WorkflowCaseImplementation> =
+    Object.create(null)
 
   for (const caseName in node.cases) {
     if (Object.hasOwn(node.cases, caseName) === false) continue
-    // The builders reject these, but a definition is plain data: assigning
-    // such a key below would set a prototype and silently drop the case.
+    // Plain definitions can bypass the builders. Keep rejecting keys that
+    // cross JSON, jsonb, Lua/cjson, schema libraries and user code, where
+    // handling of `__proto__` is outside our control.
     if (reservedCaseKeys.has(caseName)) {
       throw new Error(
         `Workflow ${node.kind} case key cannot be "${caseName}": ${node.name}`,
       )
     }
-    if (caseName in cases === false) {
+    if (Object.hasOwn(cases, caseName) === false) {
       throw new Error(
         `Missing workflow ${node.kind} case implementation [${node.name}.${caseName}]`,
       )

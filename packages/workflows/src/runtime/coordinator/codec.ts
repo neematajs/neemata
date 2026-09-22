@@ -14,7 +14,7 @@ import { runWorkflowUserCallback } from './context.ts'
 export function hasStoredNodeInput(node: {
   readonly input?: unknown
 }): boolean {
-  return Object.prototype.hasOwnProperty.call(node, 'input')
+  return Object.hasOwn(node, 'input')
 }
 
 /** Both explicit mappers and the default binding supply decoded values. */

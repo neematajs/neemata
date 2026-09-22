@@ -69,7 +69,7 @@ export async function dispatchParallelNode(
   )
   const childRuns = await loadChildRuns(input.store, ensured.children)
 
-  const outputs: Record<string, unknown> = {}
+  const outputs: Record<string, unknown> = Object.create(null)
   let hasLocalWork = false
 
   let failedChildren = 0

@@ -1519,25 +1519,26 @@ const decodeScriptValue = <T>(value: string | undefined): T => {
   return decode<T>(value)
 }
 
-const decodeRecord = <T>(values: Record<string, string>) => {
-  const decoded: Record<string, T> = {}
-  for (const key in values) {
+export function decodeRecord<T>(values: Record<string, string>) {
+  const decoded: Record<string, T> = Object.create(null)
+  for (const key of Object.keys(values)) {
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
   return decoded
 }
 
-const decodeOrderedRecord = <T>(
+export function decodeOrderedRecord<T>(
   values: Record<string, string>,
   orderedKeys: readonly string[],
-) => {
-  const decoded: Record<string, T> = {}
+) {
+  const decoded: Record<string, T> = Object.create(null)
   for (const key of orderedKeys) {
+    if (!Object.hasOwn(values, key)) continue
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
-  for (const key in values) {
+  for (const key of Object.keys(values)) {
     if (Object.hasOwn(decoded, key)) continue
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)

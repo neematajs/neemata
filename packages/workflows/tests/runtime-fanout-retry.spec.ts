@@ -136,12 +136,14 @@ describe('workflow fan-out retry state model', () => {
 
     const snapshot = await drive(runtime, implementation, run.id, 20)
     expect(snapshot?.run.status).toBe('completed')
-    expect(snapshot?.run.output).toStrictEqual({
-      a: { text: 'a:alpha' },
-      b: { text: 'b:alpha' },
-      c: { text: 'c:alpha' },
-      d: { text: 'd:alpha' },
-    })
+    expect(snapshot?.run.output).toStrictEqual(
+      Object.assign(Object.create(null), {
+        a: { text: 'a:alpha' },
+        b: { text: 'b:alpha' },
+        c: { text: 'c:alpha' },
+        d: { text: 'd:alpha' },
+      }),
+    )
 
     const dAttempts = snapshot!.attempts
       .filter((attempt) => attempt.childKey === memberChildKey('d'))

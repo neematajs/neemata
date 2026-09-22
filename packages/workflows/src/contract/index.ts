@@ -431,8 +431,8 @@ export type ScheduleOptions<
 
 const nodeNamePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
-// Node names key plain objects of node outputs, where these either never
-// become own properties (`__proto__`) or shadow what every object inherits.
+// Names cross JSON, jsonb, Lua/cjson, schema libraries and user code, where
+// handling of reserved keys such as `__proto__` is outside our control.
 const reservedNodeNames = new Set(['__proto__', 'constructor', 'prototype'])
 
 function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
@@ -450,8 +450,8 @@ function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   }
 }
 
-// Case and member keys index plain objects of implementations and outputs,
-// where a reserved key sets a prototype instead of declaring an entry.
+// Case and member keys cross the same external boundaries as node names,
+// so null-prototype engine dictionaries do not make reserved keys safe there.
 function assertCaseKeys<Cases extends object>(
   kind: 'branch case' | 'parallel member',
   nodeName: string,
