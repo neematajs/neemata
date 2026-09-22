@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
@@ -17,6 +18,21 @@ const script = fileURLToPath(new URL('./prepare-release.js', import.meta.url))
 const { packageManager } = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 )
+const { napi } = JSON.parse(
+  readFileSync(
+    new URL('../packages/proxy/package.json', import.meta.url),
+    'utf8',
+  ),
+)
+const platforms = [
+  'darwin-arm64',
+  'darwin-x64',
+  'linux-arm-gnueabihf',
+  'linux-arm64-gnu',
+  'linux-arm64-musl',
+  'linux-x64-gnu',
+  'linux-x64-musl',
+]
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'neem-release-'))
@@ -27,8 +43,7 @@ function fixture(t) {
       private: true,
       packageManager,
     }),
-    'pnpm-workspace.yaml':
-      'packages:\n  - packages/*\n  - packages/proxy/npm/*\n',
+    'pnpm-workspace.yaml': 'packages:\n  - packages/*\n',
     'README.md': 'Workspace documentation',
     'LICENSE.md': 'MIT',
     'packages/prom-client/README.md': 'Prometheus documentation',
@@ -36,20 +51,20 @@ function fixture(t) {
     'packages/prom-client/NOTICE': 'Upstream attribution',
     'packages/proxy/dist/index.js': 'module.exports = {}',
     'packages/proxy/dist/index.d.ts': 'export class Proxy {}',
-    'packages/proxy/npm/darwin-arm64/neemata-proxy.darwin-arm64.node':
-      'test artifact',
+    'packages/proxy/LICENSE.md': 'Proxy MIT license',
+  }
+  for (const platform of platforms) {
+    files[
+      `packages/proxy/artifacts/${platform}/neemata-proxy.${platform}.node`
+    ] = `test artifact for ${platform}`
   }
   const manifests = {
     'prom-client': { name: '@nmtjs/prom-client', version: '1.0.1' },
     proxy: {
       name: '@nmtjs/proxy',
       version: '1.0.0-beta.7',
-      napi: { binaryName: 'neemata-proxy' },
-      optionalDependencies: { '@nmtjs/proxy-darwin-arm64': 'workspace:*' },
-    },
-    'proxy/npm/darwin-arm64': {
-      name: '@nmtjs/proxy-darwin-arm64',
-      version: '1.0.0-beta.7',
+      napi,
+      files: ['dist/index.js', 'dist/index.d.ts', 'LICENSE.md', 'README.md'],
     },
     neem: {
       name: '@nmtjs/neem',
@@ -96,7 +111,7 @@ function prepare(root, scope, version) {
 }
 
 function pack(root, name) {
-  const path = join(root, `${name}.tgz`)
+  const path = join(root, 'package.tgz')
   const result = spawnSync(
     'pnpm',
     ['--dir', `packages/${name}`, 'pack', '--out', path],
@@ -110,32 +125,31 @@ function pack(root, name) {
     encoding: 'utf8',
   })
   assert.equal(archive.status, 0, archive.stderr)
-  return JSON.parse(archive.stdout)
+  const contents = spawnSync('tar', ['-tf', path], { encoding: 'utf8' })
+  assert.equal(contents.status, 0, contents.stderr)
+  return {
+    manifest: JSON.parse(archive.stdout),
+    files: contents.stdout.split('\n'),
+  }
 }
 
 void test('stack releases pack independent dependency versions without native artifacts', (t) => {
   const root = fixture(t)
   rmSync(join(root, 'packages/proxy/dist'), { recursive: true })
-  rmSync(
-    join(
-      root,
-      'packages/proxy/npm/darwin-arm64/neemata-proxy.darwin-arm64.node',
-    ),
-  )
+  rmSync(join(root, 'packages/proxy/artifacts'), { recursive: true })
   const proxy = manifest(root, 'proxy')
   const prom = manifest(root, 'prom-client')
-  const binding = manifest(root, 'proxy/npm/darwin-arm64')
 
   const result = prepare(root, 'stack', '2.0.0-beta.1')
   assert.equal(result.status, 0, result.stderr)
   assert.deepEqual(manifest(root, 'proxy'), proxy)
   assert.deepEqual(manifest(root, 'prom-client'), prom)
-  assert.deepEqual(manifest(root, 'proxy/npm/darwin-arm64'), binding)
+  assert.equal(existsSync(join(root, 'packages/proxy/npm')), false)
 
-  const metrics = pack(root, 'metrics')
+  const { manifest: metrics } = pack(root, 'metrics')
   assert.equal(metrics.version, '2.0.0-beta.1')
   assert.equal(metrics.dependencies['@nmtjs/prom-client'], '1.0.1')
-  const neem = pack(root, 'neem')
+  const { manifest: neem } = pack(root, 'neem')
   assert.equal(neem.version, '2.0.0-beta.1')
   assert.equal(neem.peerDependencies['@nmtjs/proxy'], '1.0.0-beta.7')
   assert.equal(neem.peerDependenciesMeta['@nmtjs/proxy'].optional, true)
@@ -174,11 +188,71 @@ void test('proxy releases version the wrapper and bindings together without chan
   assert.equal(manifest(root, 'proxy/npm/darwin-arm64').version, '1.0.0-beta.8')
   assert.deepEqual(manifest(root, 'metrics'), metrics)
   assert.deepEqual(manifest(root, 'prom-client'), prom)
+  assert.deepEqual(
+    readdirSync(join(root, 'packages/proxy/npm')).sort(),
+    platforms,
+  )
   const proxy = pack(root, 'proxy')
   assert.equal(
-    proxy.optionalDependencies['@nmtjs/proxy-darwin-arm64'],
-    '1.0.0-beta.8',
+    Object.keys(proxy.manifest.optionalDependencies).length,
+    platforms.length,
   )
+  assert.equal(
+    proxy.files.some((file) => file.endsWith('.node')),
+    false,
+  )
+  for (const platform of platforms) {
+    const binding = pack(root, `proxy/npm/${platform}`)
+    const { name, version } = binding.manifest
+    assert.equal(name, `@nmtjs/proxy-${platform}`)
+    assert.equal(version, '1.0.0-beta.8')
+    assert.equal(proxy.manifest.optionalDependencies[name], version)
+    assert.ok(binding.files.includes(`package/neemata-proxy.${platform}.node`))
+    assert.ok(binding.files.includes('package/LICENSE.md'))
+  }
+  assert.deepEqual(manifest(root, 'proxy/npm/darwin-arm64').cpu, ['arm64'])
+  assert.deepEqual(manifest(root, 'proxy/npm/darwin-arm64').os, ['darwin'])
+  assert.deepEqual(manifest(root, 'proxy/npm/linux-x64-gnu').libc, ['glibc'])
+  assert.deepEqual(manifest(root, 'proxy/npm/linux-x64-musl').libc, ['musl'])
+
+  // Generated directories must also publish directly outside workspace membership.
+  const preview = spawnSync(
+    'pnpm',
+    [
+      '--dir',
+      'packages/proxy/npm/linux-x64-musl',
+      'publish',
+      '--dry-run',
+      '--access',
+      'public',
+      '--provenance',
+      '--no-git-checks',
+      '--tag',
+      'beta',
+    ],
+    { cwd: root, encoding: 'utf8' },
+  )
+  assert.equal(preview.status, 0, preview.stdout + preview.stderr)
+
+  // A repeated preparation must drop distribution packages for removed targets.
+  const path = join(root, 'packages/proxy/package.json')
+  const updated = manifest(root, 'proxy')
+  updated.napi.targets = ['aarch64-apple-darwin']
+  writeFileSync(path, JSON.stringify(updated))
+  for (const platform of platforms) {
+    if (platform === 'darwin-arm64') continue
+    rmSync(join(root, 'packages/proxy/artifacts', platform), {
+      recursive: true,
+    })
+  }
+  const repeat = prepare(root, 'proxy', '1.0.0-beta.9')
+  assert.equal(repeat.status, 0, repeat.stderr)
+  assert.deepEqual(readdirSync(join(root, 'packages/proxy/npm')), [
+    'darwin-arm64',
+  ])
+  assert.deepEqual(manifest(root, 'proxy').optionalDependencies, {
+    '@nmtjs/proxy-darwin-arm64': '1.0.0-beta.9',
+  })
 })
 
 void test('proxy releases reject incomplete artifacts before changing versions', (t) => {
@@ -187,11 +261,12 @@ void test('proxy releases reject incomplete artifacts before changing versions',
   rmSync(
     join(
       root,
-      'packages/proxy/npm/darwin-arm64/neemata-proxy.darwin-arm64.node',
+      'packages/proxy/artifacts/darwin-arm64/neemata-proxy.darwin-arm64.node',
     ),
   )
   const result = prepare(root, 'proxy', '1.0.0-beta.8')
   assert.notEqual(result.status, 0)
-  assert.match(result.stderr, /Missing proxy binding/)
+  assert.match(result.stderr, /Expected one non-empty proxy binding/)
   assert.deepEqual(manifest(root, 'proxy'), proxy)
+  assert.equal(existsSync(join(root, 'packages/proxy/npm')), false)
 })

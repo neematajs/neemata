@@ -11,7 +11,8 @@
     "directory": "packages/proxy"
   },
   "publishConfig": {
-    "provenance": true
+    "provenance": true,
+    "access": "public"
   },
   "scripts": {
     "clean-build": "rm -rf dist",
@@ -46,14 +47,5 @@
     "LICENSE.md",
     "README.md"
   ],
-  "optionalDependencies": {
-    "@nmtjs/proxy-darwin-x64": "workspace:*",
-    "@nmtjs/proxy-darwin-arm64": "workspace:*",
-    "@nmtjs/proxy-linux-x64-gnu": "workspace:*",
-    "@nmtjs/proxy-linux-x64-musl": "workspace:*",
-    "@nmtjs/proxy-linux-arm64-gnu": "workspace:*",
-    "@nmtjs/proxy-linux-arm64-musl": "workspace:*",
-    "@nmtjs/proxy-linux-arm-gnueabihf": "workspace:*"
-  },
   "license": "MIT"
 }

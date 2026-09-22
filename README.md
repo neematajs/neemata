@@ -114,14 +114,19 @@ The **Publish Neem stack** workflow versions and publishes only the Neem stack.
 Proxy and prom-client keep independent package versions and are excluded from
 that release. The **Publish standalone package** workflow selects either `proxy`
 or `prom-client` and accepts its own version. Proxy releases build all seven
-native targets and publish the platform packages before the wrapper.
+native targets, generate the platform packages from `packages/proxy/package.json`,
+and publish them before the wrapper. The wrapper is published only after all
+platform package versions and tarballs are available from npm. Generated
+`packages/proxy/npm/` directories are ignored and are not workspace members;
+local development loads the binding built in `packages/proxy/dist/`.
 
 Git tags are `v<version>` for the stack, `proxy-v<version>` for proxy, and
 `prom-client-v<version>` for prom-client. Local dependencies remain `workspace:*`;
 packing the stack resolves them to the standalone versions recorded in their
 package manifests, independently of the stack version. After a standalone
-release, update those checked-in versions (including proxy's platform manifests)
-when the stack should adopt it. The initial versions preserve the stack's
+release, update the standalone package's checked-in version when the stack
+should adopt it. Proxy's platform versions and exact optional dependencies are
+generated from its wrapper version during release. The initial versions preserve the stack's
 pre-migration dependency pins: proxy `1.0.0-beta.7` and prom-client `1.0.1`.
 
 Package-specific READMEs and licenses are retained; prom-client remains

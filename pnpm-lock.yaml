@@ -193,42 +193,6 @@ importers:
       ws:
         specifier: ^8.18.3
         version: 8.21.3
-    optionalDependencies:
-      '@nmtjs/proxy-darwin-arm64':
-        specifier: workspace:*
-        version: link:npm/darwin-arm64
-      '@nmtjs/proxy-darwin-x64':
-        specifier: workspace:*
-        version: link:npm/darwin-x64
-      '@nmtjs/proxy-linux-arm-gnueabihf':
-        specifier: workspace:*
-        version: link:npm/linux-arm-gnueabihf
-      '@nmtjs/proxy-linux-arm64-gnu':
-        specifier: workspace:*
-        version: link:npm/linux-arm64-gnu
-      '@nmtjs/proxy-linux-arm64-musl':
-        specifier: workspace:*
-        version: link:npm/linux-arm64-musl
-      '@nmtjs/proxy-linux-x64-gnu':
-        specifier: workspace:*
-        version: link:npm/linux-x64-gnu
-      '@nmtjs/proxy-linux-x64-musl':
-        specifier: workspace:*
-        version: link:npm/linux-x64-musl
-
-  packages/proxy/npm/darwin-arm64: {}
-
-  packages/proxy/npm/darwin-x64: {}
-
-  packages/proxy/npm/linux-arm-gnueabihf: {}
-
-  packages/proxy/npm/linux-arm64-gnu: {}
-
-  packages/proxy/npm/linux-arm64-musl: {}
-
-  packages/proxy/npm/linux-x64-gnu: {}
-
-  packages/proxy/npm/linux-x64-musl: {}
 
   packages/pubsub:
     dependencies:

@@ -70,6 +70,7 @@ jobs:
       (!inputs.run_tests || needs.test.result == 'success') &&
       (inputs.package != 'proxy' || needs.proxy.result == 'success')
     runs-on: ubuntu-24.04
+    timeout-minutes: 150
     env:
       RELEASE_PACKAGE: ${{ inputs.package }}
       RELEASE_VERSION: ${{ inputs.version }}
@@ -95,21 +96,32 @@ jobs:
         with:
           name: proxy-loader
           path: packages/proxy/dist
-      - name: Assemble native packages
-        if: inputs.package == 'proxy'
-        run: pnpm --dir packages/proxy exec napi artifacts --output-dir artifacts
       - name: Prepare package release
         run: node scripts/prepare-release.js "$RELEASE_PACKAGE" "$RELEASE_VERSION"
+      - name: Preview platform packages
+        if: inputs.package == 'proxy'
+        run: |
+          TAG=$(node scripts/tag.js "$RELEASE_VERSION")
+          for directory in packages/proxy/npm/*; do
+            pnpm --dir "$directory" publish --dry-run --access public --provenance --no-git-checks --tag="$TAG"
+          done
+      - name: Preview package
+        run: |
+          TAG=$(node scripts/tag.js "$RELEASE_VERSION")
+          pnpm publish --dry-run --filter "@nmtjs/$RELEASE_PACKAGE" --access public --no-git-checks --tag="$TAG"
       - name: Publish proxy platform packages
         if: inputs.package == 'proxy'
         run: |
           TAG=$(node scripts/tag.js "$RELEASE_VERSION")
-          pnpm publish --dry-run --filter "@nmtjs/proxy*" --access public --no-git-checks --tag="$TAG"
-          pnpm publish --filter "./packages/proxy/npm/*" --access public --no-git-checks --tag="$TAG"
+          for directory in packages/proxy/npm/*; do
+            pnpm --dir "$directory" publish --access public --provenance --no-git-checks --tag="$TAG"
+          done
+      - name: Wait for proxy platform packages
+        if: inputs.package == 'proxy'
+        run: node scripts/wait-for-npm.js packages/proxy/package.json
       - name: Publish package
         run: |
           TAG=$(node scripts/tag.js "$RELEASE_VERSION")
-          pnpm publish --dry-run --filter "@nmtjs/$RELEASE_PACKAGE" --access public --no-git-checks --tag="$TAG"
           pnpm publish --filter "@nmtjs/$RELEASE_PACKAGE" --access public --no-git-checks --tag="$TAG"
       - name: Create Git tag
         if: inputs.autotag

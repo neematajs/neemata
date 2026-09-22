@@ -27,7 +27,7 @@
     "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
     "test:proxy": "pnpm --filter @nmtjs/proxy run test",
     "check:rust": "pnpm --filter @nmtjs/proxy run check:rust",
-    "test:release": "node --test scripts/prepare-release.test.js"
+    "test:release": "node --test scripts/prepare-release.test.js scripts/wait-for-npm.test.js"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",

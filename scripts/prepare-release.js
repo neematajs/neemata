@@ -1,12 +1,15 @@
 import {
   copyFileSync,
   existsSync,
+  globSync,
   readFileSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
-import { join, relative } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, join, relative } from 'node:path'
 import { parseArgs } from 'node:util'
 
 const { positionals } = parseArgs({ allowPositionals: true })
@@ -30,23 +33,7 @@ if (scope === 'stack') {
 }
 
 if (scope === 'proxy') {
-  const manifest = JSON.parse(readFileSync(join(proxy, 'package.json'), 'utf8'))
-  // Fail before changing release metadata if any native build is missing.
-  for (const name of Object.keys(manifest.optionalDependencies)) {
-    const target = name.slice('@nmtjs/proxy-'.length)
-    const directory = join(proxy, 'npm', target)
-    const binary = join(directory, `${manifest.napi.binaryName}.${target}.node`)
-    if (!existsSync(binary) || statSync(binary).size === 0) {
-      throw new Error(`Missing proxy binding: ${binary}`)
-    }
-    packages.push(directory)
-  }
-  for (const file of ['index.js', 'index.d.ts']) {
-    const path = join(proxy, 'dist', file)
-    if (!existsSync(path) || statSync(path).size === 0) {
-      throw new Error(`Missing proxy loader: ${path}`)
-    }
-  }
+  await prepareProxy()
 }
 
 for (const directory of packages) {
@@ -71,5 +58,52 @@ for (const directory of packages) {
     !existsSync(join(directory, 'LICENSE.md'))
   ) {
     copyFileSync(join(root, 'LICENSE.md'), join(directory, 'LICENSE.md'))
+  }
+}
+
+async function prepareProxy() {
+  // Resolve the CLI owned by proxy, including when tests use a temporary workspace.
+  const require = createRequire(
+    new URL('../packages/proxy/package.json', import.meta.url),
+  )
+  const { NapiCli, readNapiConfig } = require('@napi-rs/cli')
+  const path = join(proxy, 'package.json')
+  const { packageJson, targets, binaryName } = await readNapiConfig(path)
+  const artifacts = globSync('artifacts/**/*.node', { cwd: proxy })
+
+  // N-API skips missing artifacts, so verify the full target set before mutation.
+  for (const { platformArchABI } of targets) {
+    const binary = `${binaryName}.${platformArchABI}.node`
+    const matches = artifacts.filter((file) => basename(file) === binary)
+    if (matches.length !== 1 || statSync(join(proxy, matches[0])).size === 0) {
+      throw new Error(`Expected one non-empty proxy binding: ${binary}`)
+    }
+  }
+  for (const file of ['index.js', 'index.d.ts']) {
+    const loader = join(proxy, 'dist', file)
+    if (!existsSync(loader) || statSync(loader).size === 0) {
+      throw new Error(`Missing proxy loader: ${loader}`)
+    }
+  }
+
+  packageJson.version = version
+  delete packageJson.optionalDependencies
+  writeFileSync(path, `${JSON.stringify(packageJson, null, 2)}\n`)
+  // Regenerate from the target list so removed targets cannot be published again.
+  rmSync(join(proxy, 'npm'), { recursive: true, force: true })
+  const cli = new NapiCli()
+  await cli.createNpmDirs({ cwd: proxy })
+  await cli.artifacts({ cwd: proxy, outputDir: 'artifacts' })
+  // Only prepare exact optional dependencies here; CI owns all external writes.
+  await cli.prePublish({
+    cwd: proxy,
+    ghRelease: false,
+    skipOptionalPublish: true,
+  })
+  for (const { platformArchABI } of targets) {
+    copyFileSync(
+      join(proxy, 'LICENSE.md'),
+      join(proxy, 'npm', platformArchABI, 'LICENSE.md'),
+    )
   }
 }

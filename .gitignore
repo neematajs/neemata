@@ -191,4 +191,5 @@ dist
 # Rust build products and generated N-API bindings
 packages/proxy/target/
 packages/proxy/artifacts/
+packages/proxy/npm/
 *.node
