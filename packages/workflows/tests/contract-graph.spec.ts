@@ -1,8 +1,14 @@
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import * as z from 'zod'
 
 import { defineTask, defineWorkflow } from '../src/effect/index.ts'
-import { defineSchedule } from '../src/index.ts'
+import {
+  defineSchedule,
+  defineTask as defineStandardTask,
+  defineWorkflow as defineStandardWorkflow,
+  implementWorkflow as implementStandardWorkflow,
+} from '../src/index.ts'
 
 describe('workflow contract graph', () => {
   const embedding = defineTask({
@@ -315,5 +321,101 @@ describe('workflow contract graph', () => {
         cron: 'not a cron',
       }),
     ).toThrow('Invalid schedule [bad-cron] cron [not a cron]')
+  })
+})
+
+describe('branch case output comparison', () => {
+  const text = z.string()
+
+  it('compares a branch case output with the branch output as a whole', () => {
+    const mixedTask = defineStandardTask({
+      name: 'branch-output.mixed',
+      input: text,
+      output: z.union([z.string(), z.number()]),
+    })
+    const textTask = defineStandardTask({
+      name: 'branch-output.text',
+      input: text,
+      output: text,
+    })
+
+    defineStandardWorkflow({ name: 'branch-output.workflow', input: text })
+      .branch('choice', {
+        output: text,
+        cases: (h) => ({
+          text: h.task(textTask),
+          // @ts-expect-error string | number does not satisfy a string branch
+          mixed: h.task(mixedTask),
+        }),
+      })
+      .build()
+  })
+})
+
+describe('reserved node names', () => {
+  const text = z.string()
+
+  it.each(['__proto__', 'constructor', 'prototype'])(
+    'rejects the reserved node name %s',
+    (name) => {
+      expect(() =>
+        defineStandardWorkflow({
+          name: 'reserved-node.workflow',
+          input: text,
+        }).activity(name, { input: text, output: text }),
+      ).toThrow(`Workflow node name cannot be "${name}"`)
+    },
+  )
+})
+
+describe('reserved case keys', () => {
+  const text = z.string()
+  const task = defineStandardTask({
+    name: 'reserved-key.member',
+    input: text,
+    output: text,
+  })
+  const reserved = ['__proto__', 'constructor', 'prototype']
+
+  it.each(reserved)('rejects the parallel member key %s', (key) => {
+    expect(() =>
+      defineStandardWorkflow({ name: 'reserved-key.parallel', input: text })
+        // A computed key is an own property even when it spells `__proto__`.
+        .parallel('pair', (h) => ({ [key]: h.task(task), ok: h.task(task) })),
+    ).toThrow(`Workflow parallel member key cannot be "${key}": pair`)
+  })
+
+  it.each(reserved)('rejects the branch case key %s', (key) => {
+    expect(() =>
+      defineStandardWorkflow({
+        name: 'reserved-key.branch',
+        input: text,
+      }).branch('choice', {
+        output: text,
+        cases: (h) => ({ [key]: h.task(task), ok: h.task(task) }),
+      }),
+    ).toThrow(`Workflow branch case key cannot be "${key}": choice`)
+  })
+
+  it('refuses to implement a hand-built definition with a reserved member key', () => {
+    const built = defineStandardWorkflow({
+      name: 'reserved-key.implement',
+      input: text,
+    })
+      .parallel('pair', (h) => ({ ok: h.task(task) }))
+      .build()
+    const [node] = built.nodes
+    const member = node.cases.ok
+    const workflow = {
+      ...built,
+      nodes: [{ ...node, cases: { ['__proto__']: member, ok: member } }],
+    } as unknown as typeof built
+
+    expect(() =>
+      implementStandardWorkflow(workflow, { pool: 'test' }).pair(
+        ({ task: run }) =>
+          ({ ['__proto__']: run(task), ok: run(task) }) as never,
+      ),
+    ).toThrow('Workflow parallel case key cannot be "__proto__": pair')
   })
 })

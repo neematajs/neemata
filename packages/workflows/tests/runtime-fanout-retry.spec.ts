@@ -1,6 +1,7 @@
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
+import * as z from 'zod'
 
 import {
   defineWorkflow,
@@ -9,8 +10,17 @@ import {
   runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
+  defineTask as defineStandardTask,
+  defineWorkflow as defineStandardWorkflow,
+  implementTask as implementStandardTask,
+  implementWorkflow as implementStandardWorkflow,
+} from '../src/index.ts'
+import {
   createInMemoryWorkflowRuntime,
+  createWorkflowRuntimeClient,
   memberChildKey,
+  runExecutionWorker as runStoredExecutionWorker,
+  runWorkflowWorker as runStoredWorkflowWorker,
   startWorkflowRun,
 } from '../src/runtime/index.ts'
 import {
@@ -444,5 +454,107 @@ describe('workflow fan-out retry state model', () => {
     expect(snapshot?.run.status).toBe('failed')
     expect(snapshot?.run.error?.message).toContain('timed out after [30ms]')
     expect(snapshot?.nodes[0]?.status).toBe('cancelled')
+  })
+})
+
+describe('task node retry overrides', () => {
+  const text = z.string()
+
+  // The task itself declares no policy, so only the node's can retry it.
+  function failsFirstCallPerInput() {
+    const seen = new Set<string>()
+    const task = defineStandardTask({
+      name: 'retry-override.once',
+      input: text,
+      output: text,
+    })
+    const implementation = implementStandardTask(task, {
+      pool: 'test',
+      handler: async (input) => {
+        if (!seen.has(input)) {
+          seen.add(input)
+          throw new Error(`first try fails [${input}]`)
+        }
+        return input.toUpperCase()
+      },
+    })
+    return { task, implementation }
+  }
+
+  async function drain(
+    workers: Parameters<typeof runStoredExecutionWorker>[0],
+  ) {
+    for (let round = 0; round < 6; round++) {
+      await runStoredWorkflowWorker(workers)
+      await runStoredExecutionWorker(workers)
+    }
+  }
+
+  it('retries a task node with the policy the node declares', async () => {
+    const { task, implementation: taskImplementation } =
+      failsFirstCallPerInput()
+    const workflow = defineStandardWorkflow({
+      name: 'retry-override.node',
+      input: text,
+      output: text,
+    })
+      .task('step', task, { retry: { attempts: 2 } })
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .step(task)
+      .finish(({ step }) => step)
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, 'a')
+    await drain({
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'fanout-retry',
+    })
+
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('completed')
+    expect(snapshot.run.output).toBe('A')
+  })
+
+  it('retries parallel task members and map items with their declared policy', async () => {
+    const { task, implementation: taskImplementation } =
+      failsFirstCallPerInput()
+    const workflow = defineStandardWorkflow({
+      name: 'retry-override.fanout',
+      input: text,
+      output: z.array(text),
+    })
+      .parallel('pair', (h) => ({
+        left: h.task(task, { retry: { attempts: 2 } }),
+      }))
+      .mapTask('each', task, { item: text, retry: { attempts: 2 } })
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .pair(({ task: member }) => ({ left: member(task) }))
+      .each(task, {
+        items: () => ['m1', 'm2'],
+        input: (_outputs, item) => item,
+      })
+      .finish(({ pair, each }) => [
+        pair.left,
+        ...each.items.map(({ output }) => output),
+      ])
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, 'p')
+    await drain({
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'fanout-retry',
+    })
+
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('completed')
+    expect(snapshot.run.output).toEqual(['P', 'M1', 'M2'])
   })
 })

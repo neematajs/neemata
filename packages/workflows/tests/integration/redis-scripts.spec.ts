@@ -1,60 +1,29 @@
 import { randomUUID } from 'node:crypto'
 
-import { Redis } from 'ioredis'
-import { Redis as Valkey } from 'iovalkey'
+import type { Redis } from 'ioredis'
+import type { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
-import { matchingKeys } from './helpers.ts'
+import { disposeRedisRuntimes, redisTargets } from './helpers.ts'
 
-type Target = {
-  readonly name: string
-  readonly url: string | undefined
-  createClient(): Redis | Valkey
-}
-
-const targets: readonly Target[] = [
-  {
-    name: 'Redis',
-    url: process.env.REDIS_URL,
-    createClient: () => new Redis(process.env.REDIS_URL!),
-  },
-  {
-    name: 'Valkey',
-    url: process.env.VALKEY_URL,
-    createClient: () => new Valkey(process.env.VALKEY_URL!),
-  },
-]
-
-for (const target of targets) {
+for (const target of redisTargets) {
   describe.skipIf(!target.url)(
-    `Redis fifth review regressions against ${target.name}`,
+    `Redis script cache flush recovery against ${target.name}`,
     () => {
       const clients: (Redis | Valkey)[] = []
       const runtimes: ReturnType<typeof createRedisWorkflowRuntime>[] = []
 
       afterEach(async () => {
         vi.restoreAllMocks()
-        await Promise.allSettled(
-          runtimes.splice(0).map(async (runtime, index) => {
-            await runtime.dispose?.()
-            const client = clients[index]!
-            const keys = await matchingKeys(client, `${runtime.keyPrefix}*`)
-            for (let offset = 0; offset < keys.length; offset += 100) {
-              await client.del(...keys.slice(offset, offset + 100))
-            }
-          }),
-        )
-        await Promise.allSettled(
-          clients.splice(0).map(async (client) => await client.quit()),
-        )
+        await disposeRedisRuntimes(runtimes, clients)
       })
 
       function createHarness() {
         const client = target.createClient()
         const runtime = createRedisWorkflowRuntime({
           client,
-          keyPrefix: `nmtjs:test:review5-redis:${randomUUID()}:`,
+          keyPrefix: `nmtjs:test:script-cache:${randomUUID()}:`,
         })
         clients.push(client)
         runtimes.push(runtime)

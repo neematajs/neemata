@@ -2,6 +2,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
+import * as z from 'zod'
 
 import {
   createHandlerRuntime,
@@ -11,6 +12,10 @@ import {
   implementWorkflow,
   runWorkflowWorker,
 } from '../src/effect/index.ts'
+import {
+  defineWorkflow as defineStandardWorkflow,
+  implementWorkflow as implementStandardWorkflow,
+} from '../src/index.ts'
 import { createRunLeaseFencedStore } from '../src/runtime/coordinator.ts'
 import {
   createHandlerRunner,
@@ -18,7 +23,9 @@ import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
   runActivityAttempt,
+  runExecutionWorker as runStoredExecutionWorker,
   runTaskAttempt,
+  runWorkflowWorker as runStoredWorkflowWorker,
   startTaskRun,
   startWorkflowRun,
   type WorkflowStore,
@@ -7001,5 +7008,84 @@ describe('workflow runtime coordinator', () => {
     const parent = await runtime.store.loadRunSnapshot(parentRun.id)
     expect(parent?.nodes[0]?.status).toBe('failed')
     expect(parent?.run.status).toBe('failed')
+  })
+})
+
+describe('coordinator output dictionaries', () => {
+  const text = z.string()
+
+  it('reconstructs completed node outputs without a prototype', async () => {
+    const workflow = defineStandardWorkflow({
+      name: 'continuation.null-proto',
+      input: text,
+      output: text,
+    })
+      .activity('step', { input: text, output: text })
+      .build()
+    let outputs: unknown
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .step((input) => input)
+      .finish((result) => {
+        outputs = result
+        return result.step
+      })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implementation],
+      tasks: [],
+      workerId: 'coordinator',
+    }
+
+    const run = await client.start(workflow, 'hi')
+    await runStoredWorkflowWorker(workers)
+    await runStoredExecutionWorker(workers)
+    await runStoredWorkflowWorker(workers)
+
+    expect((await client.get(run.id))?.run.status).toBe('completed')
+    expect(outputs).toEqual({ step: 'hi' })
+    expect(Object.getPrototypeOf(outputs)).toBeNull()
+  })
+
+  it('persists parallel member outputs without a prototype', async () => {
+    const workflow = defineStandardWorkflow({
+      name: 'parallel.null-proto',
+      input: text,
+    })
+      .parallel('pair', (h) => ({
+        left: h.activity({ input: text, output: text }),
+        right: h.activity({ input: text, output: text }),
+      }))
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .pair({ left: (input) => input, right: (input) => input })
+      .finish(({ pair }) => pair)
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    let outputs: unknown
+    const workers = {
+      ...runtime,
+      store: {
+        ...runtime.store,
+        completeNode: async (params) => {
+          // Observe the dispatch dictionary before a store can serialize it.
+          outputs = params.output
+          return runtime.store.completeNode(params)
+        },
+      },
+      workflows: [implementation],
+      tasks: [],
+      workerId: 'coordinator',
+    }
+
+    const run = await client.start(workflow, 'hi')
+    await runStoredWorkflowWorker(workers)
+    await runStoredExecutionWorker(workers)
+    await runStoredWorkflowWorker(workers)
+
+    expect((await client.get(run.id))?.run.status).toBe('completed')
+    expect(outputs).toEqual({ left: 'hi', right: 'hi' })
+    expect(Object.getPrototypeOf(outputs)).toBeNull()
   })
 })

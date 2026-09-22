@@ -2,6 +2,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import * as z from 'zod'
 
 import {
   defineTask,
@@ -9,6 +10,10 @@ import {
   implementWorkflow,
   schemaOf,
 } from '../src/effect/index.ts'
+import {
+  defineWorkflow as defineStandardWorkflow,
+  implementWorkflow as implementStandardWorkflow,
+} from '../src/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow implementation chain', () => {
@@ -351,5 +356,50 @@ describe('workflow implementation chain', () => {
       )
 
     expect(implementation.workflow).toBe(branchingWorkflow)
+  })
+})
+
+describe('case normalization', () => {
+  const text = z.string()
+
+  it('uses null prototypes for branch and parallel implementations', () => {
+    const workflow = defineStandardWorkflow({
+      name: 'null-proto.cases',
+      input: text,
+    })
+      .branch('choice', {
+        output: text,
+        cases: (h) => ({ ok: h.activity({ input: text, output: text }) }),
+      })
+      .parallel('pair', (h) => ({
+        ok: h.activity({ input: text, output: text }),
+      }))
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .choice({ select: () => 'ok', cases: () => ({ ok: (input) => input }) })
+      .pair({ ok: (input) => input })
+      .finish(({ pair }) => pair)
+
+    for (const node of implementation.nodes) {
+      if (node.kind !== 'branch' && node.kind !== 'parallel')
+        throw new Error(`Unexpected node kind: ${node.kind}`)
+      expect(Object.getPrototypeOf(node.cases)).toBeNull()
+      expect(Object.keys(node.cases)).toEqual(['ok'])
+    }
+  })
+
+  it('requires an own case implementation even for an inherited function name', () => {
+    const workflow = defineStandardWorkflow({
+      name: 'null-proto.inherited',
+      input: text,
+    })
+      .parallel('pair', (h) => ({
+        toString: h.activity({ input: text, output: text }),
+      }))
+      .build()
+
+    expect(() =>
+      implementStandardWorkflow(workflow, { pool: 'test' }).pair({}),
+    ).toThrow('Missing workflow parallel case implementation [pair.toString]')
   })
 })

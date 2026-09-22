@@ -142,3 +142,84 @@ describe('postgres retry scheduling', () => {
     expect(secondRunAt! - secondStartedAt).toBeGreaterThanOrEqual(15)
   }, 60_000)
 })
+
+describe('createAttempt `after`', () => {
+  async function failedFirstAttempt() {
+    const connection = createPostgresWorkflowConnection(new PGlite())
+    await installPostgresWorkflowSchemaForTesting(connection)
+    const { store } = createPostgresWorkflowRuntime({ connection })
+    const run = await store.createRun({
+      workflowName: 'retry-after-attempt',
+      input: {},
+    })
+    const ref = { runId: run.id, nodeName: 'content', childKey: '$self' }
+    await store.createNode({
+      runId: run.id,
+      name: ref.nodeName,
+      kind: 'activity',
+    })
+    await store.ensureNodeChildren({
+      ...ref,
+      children: [{ childKey: ref.childKey, kind: 'activity' }],
+    })
+    const { attempt: first } = await store.ensureChildAttempt({
+      ...ref,
+      input: { value: 1 },
+    })
+    await store.failCurrentAttempt({
+      attemptId: first.id,
+      leaseToken: first.leaseToken!,
+      error: new Error('boom'),
+    })
+    const attemptCount = async () =>
+      (
+        await connection.query<{ count: number }>(
+          'SELECT count(*)::int AS count FROM workflow_attempts',
+        )
+      ).rows[0]!.count
+    return { store, ref, first, attemptCount }
+  }
+
+  it('creates the retry while `after` is still current, then hands back the successor', async () => {
+    const { store, ref, first, attemptCount } = await failedFirstAttempt()
+    const retry = { ...ref, input: { value: 1 }, after: first.id }
+
+    const second = await store.createAttempt(retry)
+    expect(second.id).not.toBe(first.id)
+    expect(second.attemptNumber).toBe(2)
+    expect(second.retryAttemptNumber).toBe(2)
+
+    const replayed = await store.createAttempt(retry)
+    expect(replayed).toStrictEqual(second)
+    expect(await attemptCount()).toBe(2)
+    const snapshot = await store.loadNodeSnapshot(ref)
+    expect(snapshot!.children[0]!.currentAttemptId).toBe(second.id)
+    expect(snapshot!.children[0]!.attemptCount).toBe(2)
+
+    // Without `after` the call still supersedes, as before.
+    const third = await store.createAttempt({ ...ref, input: { value: 1 } })
+    expect(third.attemptNumber).toBe(3)
+  })
+
+  it('two concurrent retries of one failure share one successor', async () => {
+    const { store, ref, first, attemptCount } = await failedFirstAttempt()
+    const retry = { ...ref, input: { value: 1 }, after: first.id }
+
+    const [left, right] = await Promise.all([
+      store.createAttempt(retry),
+      store.createAttempt(retry),
+    ])
+    expect(left.id).not.toBe(first.id)
+    expect(right).toStrictEqual(left)
+    expect(await attemptCount()).toBe(2)
+  })
+
+  it('a terminal child still rejects a retry', async () => {
+    const { store, ref, first } = await failedFirstAttempt()
+    await store.failNodeChild({ ...ref, error: new Error('exhausted') })
+
+    await expect(
+      store.createAttempt({ ...ref, input: { value: 1 }, after: first.id }),
+    ).rejects.toThrow('Terminal node child')
+  })
+})

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
-import { Redis } from 'ioredis'
-import { Redis as Valkey } from 'iovalkey'
+import type { Redis } from 'ioredis'
+import type { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
@@ -19,26 +19,7 @@ import {
   type WorkflowStore,
 } from '../../src/runtime/index.ts'
 import { timeoutExpiredWorkflowRuns } from '../../src/runtime/worker.ts'
-import { matchingKeys, wait } from './helpers.ts'
-
-type Target = {
-  readonly name: string
-  readonly url: string | undefined
-  createClient(): Redis | Valkey
-}
-
-const targets: readonly Target[] = [
-  {
-    name: 'Redis',
-    url: process.env.REDIS_URL,
-    createClient: () => new Redis(process.env.REDIS_URL!),
-  },
-  {
-    name: 'Valkey',
-    url: process.env.VALKEY_URL,
-    createClient: () => new Valkey(process.env.VALKEY_URL!),
-  },
-]
+import { disposeRedisRuntimes, redisTargets, wait } from './helpers.ts'
 
 const text = z.string()
 
@@ -59,34 +40,22 @@ function gate() {
   }
 }
 
-for (const target of targets) {
+for (const target of redisTargets) {
   describe.skipIf(!target.url)(
-    `Redis sixth review regressions against ${target.name}`,
+    `child run settlement across parent timeout and cancellation against ${target.name}`,
     () => {
       const clients: (Redis | Valkey)[] = []
       const runtimes: ReturnType<typeof createRedisWorkflowRuntime>[] = []
 
       afterEach(async () => {
-        await Promise.allSettled(
-          runtimes.splice(0).map(async (runtime, index) => {
-            await runtime.dispose?.()
-            const client = clients[index]!
-            const keys = await matchingKeys(client, `${runtime.keyPrefix}*`)
-            for (let offset = 0; offset < keys.length; offset += 100) {
-              await client.del(...keys.slice(offset, offset + 100))
-            }
-          }),
-        )
-        await Promise.allSettled(
-          clients.splice(0).map(async (client) => await client.quit()),
-        )
+        await disposeRedisRuntimes(runtimes, clients)
       })
 
       function createRuntime() {
         const client = target.createClient()
         const runtime = createRedisWorkflowRuntime({
           client,
-          keyPrefix: `nmtjs:test:review6-redis:${randomUUID()}:`,
+          keyPrefix: `nmtjs:test:child-runs:${randomUUID()}:`,
         })
         clients.push(client)
         runtimes.push(runtime)
@@ -96,7 +65,7 @@ for (const target of targets) {
       it('completes a reopened child task run from its completed attempt', async () => {
         let taskRan = 0
         const task = defineTask({
-          name: `review6-task-${randomUUID()}`,
+          name: `child-runs.task-${randomUUID()}`,
           input: text,
           output: text,
         })
@@ -108,7 +77,7 @@ for (const target of targets) {
           },
         })
         const workflow = defineWorkflow({
-          name: `review6-retry-${randomUUID()}`,
+          name: `child-runs.retry-${randomUUID()}`,
           input: text,
           output: text,
           timeout: '100ms',
@@ -129,7 +98,7 @@ for (const target of targets) {
           ...runtime,
           workflows: [implementation],
           tasks: [taskImplementation],
-          workerId: 'review6',
+          workerId: 'child-runs',
           reaping: false,
           runTimeouts: false,
         } as const
@@ -188,7 +157,7 @@ for (const target of targets) {
       it('leaves a lease-held child workflow to its own continuation, which cancels what the pass started', async () => {
         let leafRan = 0
         const leaf = defineWorkflow({
-          name: `review6-leaf-${randomUUID()}`,
+          name: `child-runs.leaf-${randomUUID()}`,
           input: text,
           output: text,
         })
@@ -201,7 +170,7 @@ for (const target of targets) {
           })
           .finish(({ step }) => step)
         const middle = defineWorkflow({
-          name: `review6-middle-${randomUUID()}`,
+          name: `child-runs.middle-${randomUUID()}`,
           input: text,
           output: text,
         })
@@ -211,7 +180,7 @@ for (const target of targets) {
           .sub(leaf)
           .finish(({ sub }) => sub)
         const parent = defineWorkflow({
-          name: `review6-parent-${randomUUID()}`,
+          name: `child-runs.parent-${randomUUID()}`,
           input: text,
           output: text,
         })
@@ -225,7 +194,7 @@ for (const target of targets) {
         const client = createWorkflowRuntimeClient(runtime)
         const base = {
           ...runtime,
-          workerId: 'review6',
+          workerId: 'child-runs',
           reaping: false,
           runTimeouts: false,
         } as const

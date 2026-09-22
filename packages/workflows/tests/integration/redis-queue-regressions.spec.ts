@@ -11,7 +11,7 @@ import { Queue } from '../../src/adapters/redis/queue.ts'
 import { encode } from '../../src/adapters/redis/state.ts'
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import { runWorkflowWorker } from '../../src/runtime/index.ts'
-import { matchingKeys, wait } from './helpers.ts'
+import { activityCommand, matchingKeys, wait } from './helpers.ts'
 
 type Target = {
   readonly name: string
@@ -952,24 +952,6 @@ for (const target of targets) {
 }
 
 type HgetCommand = (...arguments_: readonly unknown[]) => Promise<string | null>
-
-function activityCommand(
-  runId: string,
-  workflowName: string,
-  activityName: string,
-) {
-  return {
-    kind: 'activityAttempt' as const,
-    workflowName,
-    activityName,
-    runId,
-    nodeName: activityName,
-    childKey: '$self',
-    attemptId: randomUUID(),
-    leaseToken: randomUUID(),
-    input: null,
-  }
-}
 
 async function waitUntil(condition: () => Promise<boolean>) {
   const deadline = Date.now() + 2_000

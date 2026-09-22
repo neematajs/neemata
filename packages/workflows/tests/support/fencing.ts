@@ -33,7 +33,7 @@ export function defineClaimFencingTests(
 ) {
   function createTask() {
     const task = defineTask({
-      name: 'review.fencing',
+      name: 'fencing.claim',
       input: text,
       output: text,
     })
@@ -49,7 +49,7 @@ export function defineClaimFencingTests(
     runtime.attemptExecutor.claim({
       workerId,
       workflowNames: [],
-      taskNames: ['review.fencing'],
+      taskNames: ['fencing.claim'],
       leaseMs,
     })
 

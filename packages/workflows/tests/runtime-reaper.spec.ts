@@ -20,6 +20,7 @@ import { reapDeadWorkflowCommands } from '../src/runtime/worker.ts'
 
 const LEASE_MS = 50
 const LEASE_EXPIRED_MS = 120
+const HOUR_MS = 3_600_000
 
 const text = z.string()
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -39,13 +40,24 @@ function failingOnce<Args extends unknown[], T>(
   }
 }
 
+async function claimTask(runtime: Runtime, taskName: string) {
+  const claimed = await runtime.attemptExecutor.claim({
+    workerId: 'reaper',
+    workflowNames: [],
+    taskNames: [taskName],
+    leaseMs: 30_000,
+  })
+  expect(claimed).not.toBeNull()
+  return claimed!
+}
+
 const claimAttempt = (
   runtime: Runtime,
   names: { readonly workflowNames?: string[]; readonly taskNames?: string[] },
   leaseMs = LEASE_MS,
 ) =>
   runtime.attemptExecutor.claim({
-    workerId: 'review',
+    workerId: 'reaper',
     workflowNames: names.workflowNames ?? [],
     taskNames: names.taskNames ?? [],
     leaseMs,
@@ -66,7 +78,7 @@ async function deadLetter(
 function flakyTask() {
   let calls = 0
   const task = defineTask({
-    name: 'review2.flaky',
+    name: 'reaper.flaky',
     input: text,
     output: text,
     retry: { attempts: 2 },
@@ -83,10 +95,10 @@ function flakyTask() {
 }
 
 function parentOfTask(handler: (input: string) => Promise<string>) {
-  const task = defineTask({ name: 'review2.child', input: text, output: text })
+  const task = defineTask({ name: 'reaper.child', input: text, output: text })
   const taskImplementation = implementTask(task, { pool: 'test', handler })
   const workflow = defineWorkflow({
-    name: 'review2.parent',
+    name: 'reaper.parent',
     input: text,
     output: text,
   })
@@ -98,6 +110,153 @@ function parentOfTask(handler: (input: string) => Promise<string>) {
   return { task, taskImplementation, workflow, implementation }
 }
 
+describe('task attempt redelivery', () => {
+  it('replays the parent wake lost after a child task run completed', async () => {
+    const task = defineTask({
+      name: 'redelivery.child',
+      input: text,
+      output: text,
+    })
+    const taskImplementation = implementTask(task, {
+      pool: 'test',
+      handler: async (input) => `${input}!`,
+    })
+    const workflow = defineWorkflow({
+      name: 'redelivery.parent',
+      input: text,
+      output: text,
+    })
+      .task('child', task)
+      .build()
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .child(task)
+      .finish(({ child }) => child)
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'reaper',
+    }
+    const run = await client.start(workflow, 'hi')
+    await runWorkflowWorker(workers)
+
+    const claimed = await claimTask(runtime, task.name)
+    const attempt = {
+      ...workers,
+      handlers: createHandlerRunner(),
+      claimed,
+    }
+    // The worker dies between completeRun and the parent's continue command.
+    await expect(
+      runTaskAttempt({
+        ...attempt,
+        runCoordinationExecutor: {
+          ...runtime.runCoordinationExecutor,
+          enqueue: failingOnce((command) =>
+            runtime.runCoordinationExecutor.enqueue(command),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
+
+    // Redelivery of the still-unacknowledged command finds the run terminal.
+    await runTaskAttempt(attempt)
+    expect(
+      runtime.inspect().continueRunCommands.map(({ payload }) => payload.runId),
+    ).toEqual([run.id])
+    expect(runtime.inspect().taskCommands).toHaveLength(0)
+
+    await runWorkflowWorker(workers)
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('completed')
+    expect(snapshot.run.output).toBe('hi!')
+  })
+
+  it('dispatches a retry whose command was lost after its attempt was created', async () => {
+    const { task, implementation } = flakyTask()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [],
+      tasks: [implementation],
+      workerId: 'reaper',
+    }
+    const run = await client.start(task, 'x')
+    const claimed = await claimTask(runtime, task.name)
+    const attempt = { ...workers, handlers: createHandlerRunner(), claimed }
+
+    await expect(
+      runTaskAttempt({
+        ...attempt,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchTask: failingOnce((command, options) =>
+            runtime.attemptExecutor.dispatchTask(command, options),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    expect(
+      runtime.inspect().attempts.map(({ status }) => status),
+    ).toStrictEqual(['failed', 'started'])
+    // Only the old, claimed command is left: nothing would run attempt 2.
+    expect(runtime.inspect().taskCommands).toHaveLength(0)
+
+    await runTaskAttempt(attempt)
+    const [replacement] = runtime.inspect().taskCommands
+    expect(replacement?.payload.attemptId).toBe(
+      runtime.inspect().attempts[1]?.id,
+    )
+    expect(runtime.inspect().taskCommands).toHaveLength(1)
+
+    await runExecutionWorker(workers)
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('completed')
+    expect(snapshot.run.output).toBe('x:2')
+  })
+
+  it('spends the retry budget when the worker died before creating the retry', async () => {
+    const { task, implementation } = flakyTask()
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [],
+      tasks: [implementation],
+      workerId: 'reaper',
+    }
+    const run = await client.start(task, 'x')
+    const claimed = await claimTask(runtime, task.name)
+    const attempt = { ...workers, handlers: createHandlerRunner(), claimed }
+
+    await expect(
+      runTaskAttempt({
+        ...attempt,
+        store: {
+          ...runtime.store,
+          createAttempt: failingOnce((params) =>
+            runtime.store.createAttempt(params),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    expect(
+      runtime.inspect().attempts.map(({ status }) => status),
+    ).toStrictEqual(['failed'])
+
+    await runTaskAttempt(attempt)
+    await runExecutionWorker(workers)
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('completed')
+    expect(snapshot.run.output).toBe('x:2')
+  })
+})
+
 describe('retry after a claim takeover', () => {
   it('shares the retry the new claimant created instead of superseding it', async () => {
     const { task, implementation, calls } = flakyTask()
@@ -107,7 +266,7 @@ describe('retry after a claim takeover', () => {
       ...runtime,
       workflows: [],
       tasks: [implementation],
-      workerId: 'review',
+      workerId: 'reaper',
     }
     const run = await client.start(task, 'x')
     const names = { taskNames: [task.name] }
@@ -161,7 +320,7 @@ describe('retry after a claim takeover', () => {
 
 describe('reaping a dead command whose outcome was already recorded', () => {
   it('completes a task run whose worker died after settling the attempt', async () => {
-    const task = defineTask({ name: 'review2.solo', input: text, output: text })
+    const task = defineTask({ name: 'reaper.solo', input: text, output: text })
     const implementation = implementTask(task, {
       pool: 'test',
       handler: async (input) => `${input}!`,
@@ -175,7 +334,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       runTaskAttempt({
         ...runtime,
         tasks: [implementation],
-        workerId: 'review',
+        workerId: 'reaper',
         leaseMs: LEASE_MS,
         handlers: createHandlerRunner(),
         claimed: (await claimAttempt(runtime, names))!,
@@ -214,7 +373,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       ...runtime,
       workflows: [implementation],
       tasks: [taskImplementation],
-      workerId: 'review',
+      workerId: 'reaper',
     }
     const run = await client.start(workflow, 'hi')
     await runWorkflowWorker(workers)
@@ -253,7 +412,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
 
   it('continues a workflow whose activity worker died after settling the attempt', async () => {
     const workflow = defineWorkflow({
-      name: 'review2.activity',
+      name: 'reaper.activity',
       input: text,
       output: text,
     })
@@ -268,7 +427,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       ...runtime,
       workflows: [implementation],
       tasks: [],
-      workerId: 'review',
+      workerId: 'reaper',
     }
     const run = await client.start(workflow, 'hi')
     await runWorkflowWorker(workers)
@@ -308,7 +467,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       ...runtime,
       workflows: [],
       tasks: [implementation],
-      workerId: 'review',
+      workerId: 'reaper',
     }
     const run = await client.start(task, 'x')
     const names = { taskNames: [task.name] }
@@ -347,50 +506,174 @@ describe('reaping a dead command whose outcome was already recorded', () => {
   })
 })
 
-describe('cancelling a child task run', () => {
-  it('replays the parent wake when the first cancel failed to enqueue it', async () => {
-    const { workflow, implementation, taskImplementation } = parentOfTask(
-      async (input) => input,
-    )
+describe('coordinator redispatch of a retry', () => {
+  it('keeps the backoff of a parallel task member when a sibling completes before its dispatch', async () => {
+    const slow = defineTask({
+      name: 'redispatch.slow',
+      input: text,
+      output: text,
+    })
+    const slowImplementation = implementTask(slow, {
+      pool: 'test',
+      handler: async () => {
+        throw new Error('always fails')
+      },
+    })
+    const fast = defineTask({
+      name: 'redispatch.fast',
+      input: text,
+      output: text,
+    })
+    const fastImplementation = implementTask(fast, {
+      pool: 'test',
+      handler: async (input) => input,
+    })
+    const workflow = defineWorkflow({
+      name: 'redispatch.backoff.task',
+      input: text,
+      output: text,
+    })
+      .parallel('pair', (h) => ({
+        slow: h.task(slow, { retry: { attempts: 2, delay: '1h' } }),
+        fast: h.task(fast),
+      }))
+      .build()
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .pair(({ task }) => ({ slow: task(slow), fast: task(fast) }))
+      .finish(({ pair }) => pair.fast)
+
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
     const workers = {
       ...runtime,
       workflows: [implementation],
-      tasks: [taskImplementation],
-      workerId: 'review',
+      workerId: 'reaper',
     }
-    const run = await client.start(workflow, 'hi')
+    await client.start(workflow, 'x')
     await runWorkflowWorker(workers)
-    const childRunId = (await client.get(run.id))!.children[0]!.childRunId!
-    expect(runtime.inspect().taskCommands).toHaveLength(1)
 
-    const flaky = createWorkflowRuntimeClient({
+    const claimed = (await runtime.attemptExecutor.claim({
+      workerId: 'reaper',
+      workflowNames: [],
+      taskNames: [slow.name],
+      leaseMs: 30_000,
+    }))!
+    // The worker dies between creating the retry and dispatching it.
+    await expect(
+      runTaskAttempt({
+        ...workers,
+        tasks: [slowImplementation],
+        handlers: createHandlerRunner(),
+        claimed,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchTask: failingOnce((command, options) =>
+            runtime.attemptExecutor.dispatchTask(command, options),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    const retry = runtime
+      .inspect()
+      .attempts.find(
+        ({ retryAttemptNumber, status }) =>
+          retryAttemptNumber === 2 && status === 'started',
+      )!
+    expect(retry).toBeDefined()
+
+    // The sibling's completion wakes the parent, whose pass finds the retry.
+    await runExecutionWorker({ ...workers, tasks: [fastImplementation] })
+    await runWorkflowWorker(workers)
+
+    const [command] = runtime
+      .inspect()
+      .taskCommands.filter(({ payload }) => payload.attemptId === retry.id)
+    expect(command).toBeDefined()
+    expect(command!.runAt).toBe(retry.dispatchedAt + HOUR_MS)
+  })
+
+  it('keeps the backoff of a parallel activity member', async () => {
+    const workflow = defineWorkflow({
+      name: 'redispatch.backoff.activity',
+      input: text,
+      output: text,
+    })
+      .parallel('pair', (h) => ({
+        slow: h.activity({
+          input: text,
+          output: text,
+          retry: { attempts: 2, delay: '1h' },
+        }),
+        fast: h.activity({ input: text, output: text }),
+      }))
+      .build()
+    let failSlow = true
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .pair(({ activity }) => ({
+        slow: activity(async (input) => {
+          if (failSlow) throw new Error('always fails')
+          return input
+        }),
+        fast: activity(async (input) => input),
+      }))
+      .finish(({ pair }) => pair.fast)
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
       ...runtime,
-      runCoordinationExecutor: {
-        ...runtime.runCoordinationExecutor,
-        enqueue: failingOnce((command) =>
-          runtime.runCoordinationExecutor.enqueue(command),
-        ),
-      },
-    })
-    await expect(flaky.cancel(childRunId)).rejects.toThrow(
-      'injected write failure',
-    )
-    // The child is terminal and its command is gone: only a repeated cancel
-    // can still tell the parent.
-    expect((await client.get(childRunId))!.run.status).toBe('cancelled')
-    expect(runtime.inspect().taskCommands).toHaveLength(0)
-    expect(runtime.inspect().continueRunCommands).toHaveLength(0)
-
-    await expect(flaky.cancel(childRunId)).resolves.toMatchObject({
-      status: 'cancelled',
-    })
-    expect(
-      runtime.inspect().continueRunCommands.map(({ payload }) => payload.runId),
-    ).toEqual([run.id])
-
+      workflows: [implementation],
+      tasks: [],
+      workerId: 'reaper',
+    }
+    await client.start(workflow, 'x')
     await runWorkflowWorker(workers)
-    expect((await client.get(run.id))!.run.status).not.toBe('waiting')
+
+    // Claims come in dispatch order, so take both and run `slow` by hand.
+    const claims = [
+      (await runtime.attemptExecutor.claim({
+        workerId: 'reaper',
+        workflowNames: [workflow.name],
+        taskNames: [],
+        leaseMs: 30_000,
+      }))!,
+      (await runtime.attemptExecutor.claim({
+        workerId: 'reaper',
+        workflowNames: [workflow.name],
+        taskNames: [],
+        leaseMs: 30_000,
+      }))!,
+    ]
+    const slowClaim = claims.find(({ command }) =>
+      command.childKey.includes('slow'),
+    )!
+    const fastClaim = claims.find((claim) => claim !== slowClaim)!
+    const attempt = { ...workers, handlers: createHandlerRunner() }
+    await expect(
+      runActivityAttempt({
+        ...attempt,
+        claimed: slowClaim,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchActivity: failingOnce((command, options) =>
+            runtime.attemptExecutor.dispatchActivity(command, options),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    failSlow = false
+    const retry = runtime
+      .inspect()
+      .attempts.find(({ retryAttemptNumber }) => retryAttemptNumber === 2)!
+    expect(retry.status).toBe('started')
+
+    await runActivityAttempt({ ...attempt, claimed: fastClaim })
+    await runWorkflowWorker(workers)
+
+    const [command] = runtime
+      .inspect()
+      .activityCommands.filter(({ payload }) => payload.attemptId === retry.id)
+    expect(command).toBeDefined()
+    expect(command!.runAt).toBe(retry.dispatchedAt + HOUR_MS)
   })
 })

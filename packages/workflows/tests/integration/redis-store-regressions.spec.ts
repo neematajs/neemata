@@ -961,6 +961,115 @@ for (const target of targets) {
           runtime.store.acquireRunLease({ runId: run.id, leaseMs: 1_000 }),
         ).resolves.toBeUndefined()
       })
+
+      describe('createAttempt after a predecessor', () => {
+        async function createFailedAttempt() {
+          const { runtime } = createHarness()
+          const { store } = runtime
+          const run = await store.createRun({
+            workflowName: 'retry',
+            input: {},
+          })
+          const child = {
+            runId: run.id,
+            nodeName: 'content',
+            childKey: '$self',
+          }
+          await store.createNode({
+            runId: run.id,
+            name: child.nodeName,
+            kind: 'activity',
+          })
+          await store.ensureNodeChildren({
+            runId: run.id,
+            nodeName: child.nodeName,
+            children: [{ childKey: child.childKey, kind: 'activity' }],
+          })
+          const first = await store.createAttempt({ ...child, input: 1 })
+          await expect(
+            store.failCurrentAttempt({
+              attemptId: first.id,
+              leaseToken: first.leaseToken!,
+              error: new Error('boom'),
+            }),
+          ).resolves.toMatchObject({ status: 'failed' })
+          const load = async () =>
+            (await store.loadNodeSnapshot({
+              runId: run.id,
+              nodeName: child.nodeName,
+            }))!
+          return { store, child, first, load }
+        }
+
+        it('returns the existing successor when a superseded retry is replayed', async () => {
+          const { store, child, first, load } = await createFailedAttempt()
+
+          const second = await store.createAttempt({
+            ...child,
+            input: 1,
+            after: first.id,
+          })
+          expect(second).toMatchObject({ attemptNumber: 2, status: 'started' })
+          const before = await load()
+
+          // The worker that lost the claim resumes and spends the same retry.
+          const replayed = await store.createAttempt({
+            ...child,
+            input: 1,
+            after: first.id,
+          })
+          expect(replayed).toEqual(second)
+          const snapshot = await load()
+          expect(snapshot.attempts.map((attempt) => attempt.id)).toEqual([
+            first.id,
+            second.id,
+          ])
+          // Nothing was written: not even a version bump.
+          expect(snapshot.children).toEqual(before.children)
+          expect(snapshot.children[0]).toMatchObject({
+            currentAttemptId: second.id,
+            attemptCount: 2,
+          })
+
+          // The successor is a live predecessor for its own retry.
+          const third = await store.createAttempt({
+            ...child,
+            input: 1,
+            after: second.id,
+          })
+          expect(third).toMatchObject({ attemptNumber: 3 })
+          expect((await load()).attempts).toHaveLength(3)
+        })
+
+        it('gives concurrent retries of one failure a single successor', async () => {
+          const { store, child, first, load } = await createFailedAttempt()
+
+          const created = await Promise.all(
+            Array.from({ length: 8 }, () =>
+              store.createAttempt({ ...child, input: 1, after: first.id }),
+            ),
+          )
+          expect(new Set(created.map((attempt) => attempt.id)).size).toBe(1)
+          const snapshot = await load()
+          expect(snapshot.attempts).toHaveLength(2)
+          expect(snapshot.children[0]).toMatchObject({
+            currentAttemptId: created[0]!.id,
+            attemptCount: 2,
+          })
+        })
+
+        it('still supersedes the current attempt when no predecessor is named', async () => {
+          const { store, child, load } = await createFailedAttempt()
+
+          const second = await store.createAttempt({ ...child, input: 1 })
+          const third = await store.createAttempt({ ...child, input: 1 })
+          expect(third.id).not.toBe(second.id)
+          expect((await load()).children[0]).toMatchObject({
+            currentAttemptId: third.id,
+            attemptCount: 3,
+          })
+        })
+      })
     },
   )
 }

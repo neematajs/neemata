@@ -2,7 +2,8 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import { expect, expectTypeOf, it } from 'vitest'
+import { describe, expect, expectTypeOf, it } from 'vitest'
+import * as z from 'zod'
 
 import {
   createHandlerRuntime,
@@ -11,9 +12,17 @@ import {
   implementTask,
   implementWorkflow,
   runExecutionWorker,
+  runWorkflowWorker,
+  type HandlerRuntime,
   type Requirements,
 } from '../src/effect/index.ts'
 import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import {
+  defineTask as defineCoreTask,
+  defineWorkflow as defineCoreWorkflow,
+  implementTask as implementCoreTask,
+  implementWorkflow as implementCoreWorkflow,
+} from '../src/index.ts'
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,
@@ -203,5 +212,359 @@ it('accepts decoded values and Effect handlers without an async compatibility AP
     pool: 'test',
     // @ts-expect-error Only native Effects cross the execution boundary.
     handler: async () => 1,
+  })
+})
+
+describe('core handlers in Effect workers', () => {
+  class Service extends Context.Service<Service, { value: number }>()(
+    'test/core-handlers/Service',
+  ) {}
+  type Db = { readonly db: { read(): number } }
+  const io = { input: z.number(), output: z.number() }
+  const task = defineCoreTask({ name: 'core-handlers.task', ...io })
+  const coreWorkflow = defineCoreWorkflow({
+    name: 'core-handlers.workflow',
+    ...io,
+  }).build()
+  const runtime = Effect.sync(createInMemoryWorkflowRuntime)
+  const layer = Layer.succeed(Service, { value: 1 })
+
+  const needsDb = implementCoreTask(task, {
+    pool: 'test',
+    handler: (_input, _lifecycle, env: Db) => env.db.read(),
+  })
+  const finishNeedsDb = implementCoreWorkflow(coreWorkflow, {
+    pool: 'test',
+  }).finish((_outputs, _input, _lifecycle, env: Db) => env.db.read())
+  const envless = implementCoreTask(task, {
+    pool: 'test',
+    handler: (input) => input,
+  })
+  const usesRuntime = implementCoreTask(task, {
+    pool: 'test',
+    handler: (_input, lifecycle, env: HandlerRuntime<Service>) =>
+      env.run(
+        () => Service.pipe(Effect.map(({ value }) => value)),
+        lifecycle.signal,
+      ),
+  })
+  const effectTask = implementTask(task, {
+    pool: 'test',
+    handler: () => Service.pipe(Effect.map(({ value }) => value)),
+  })
+
+  it('rejects a core env that is not a handler runtime in the Neem worker', () => {
+    expectTypeOf<Requirements<typeof envless>>().toEqualTypeOf<never>()
+    expectTypeOf<Requirements<typeof usesRuntime>>().toEqualTypeOf<Service>()
+    expectTypeOf<Requirements<typeof effectTask>>().toEqualTypeOf<Service>()
+    expectTypeOf<Requirements<typeof needsDb>>().not.toEqualTypeOf<never>()
+
+    const workflows = () => []
+    // @ts-expect-error An Effect worker cannot pass the task its db.
+    defineWorkflowsWorker({ workflows, tasks: () => [needsDb], runtime })
+    defineWorkflowsWorker({
+      workflows,
+      tasks: () => [needsDb],
+      runtime,
+      // @ts-expect-error No Layer stands in for the env either.
+      layer,
+    })
+    // @ts-expect-error Finish handlers are checked the same way.
+    defineWorkflowsWorker({ workflows: () => [finishNeedsDb], runtime })
+    defineWorkflowsWorker({
+      workflows,
+      tasks: () => [envless, effectTask, needsDb],
+      runtime,
+      // @ts-expect-error One incompatible handler fails a mixed list.
+      layer,
+    })
+
+    expect(
+      defineWorkflowsWorker({
+        workflows,
+        tasks: () => [envless],
+        runtime,
+      }),
+    ).toBeDefined()
+    expect(
+      defineWorkflowsWorker({
+        workflows,
+        tasks: () => [envless, usesRuntime, effectTask],
+        runtime,
+        layer,
+      }),
+    ).toBeDefined()
+    const erased: { workflows: () => any[]; tasks: () => any[] } = {
+      workflows,
+      tasks: () => [needsDb],
+    }
+    expect(defineWorkflowsWorker({ ...erased, runtime })).toBeDefined()
+  })
+
+  it('rejects a core env that is not a handler runtime in standalone workers', () => {
+    const worker = {
+      ...createInMemoryWorkflowRuntime(),
+      workflows: [],
+      workerId: 'core-handlers',
+    }
+    const context = Context.make(Service, { value: 1 })
+    // Thunks: only the call's types matter, the workers must not run.
+    void (() =>
+      // @ts-expect-error The context cannot carry the task's db.
+      runExecutionWorker({ ...worker, tasks: [needsDb], context }))
+    void (() =>
+      runWorkflowWorker({
+        ...worker,
+        workflows: [finishNeedsDb],
+        // @ts-expect-error Nor the finish handler's.
+        context: Context.empty(),
+      }))
+    void (() =>
+      runExecutionWorker({
+        ...worker,
+        tasks: [envless],
+        context: Context.empty(),
+      }))
+    void (() =>
+      runExecutionWorker({
+        ...worker,
+        tasks: [envless, usesRuntime, effectTask],
+        context,
+      }))
+    const erased: any[] = [needsDb]
+    void (() =>
+      runExecutionWorker({
+        ...worker,
+        tasks: erased,
+        context: Context.empty(),
+      }))
+  })
+})
+
+describe('core handler env subtypes in Effect workers', () => {
+  class Service extends Context.Service<Service, { value: number }>()(
+    'test/core-env-subtypes/Service',
+  ) {}
+  type Db = { readonly db: { read(): number } }
+  const io = { input: z.number(), output: z.number() }
+  const task = defineCoreTask({ name: 'core-env-subtypes.task', ...io })
+  const coreWorkflow = defineCoreWorkflow({
+    name: 'core-env-subtypes.workflow',
+    ...io,
+  }).build()
+  const runtime = Effect.sync(createInMemoryWorkflowRuntime)
+  const layer = Layer.succeed(Service, { value: 1 })
+
+  const needsDbToo = implementCoreTask(task, {
+    pool: 'test',
+    handler: (_input, _lifecycle, env: HandlerRuntime<Service> & Db) =>
+      env.db.read(),
+  })
+  const finishNeedsDbToo = implementCoreWorkflow(coreWorkflow, {
+    pool: 'test',
+  }).finish((_outputs, _input, _lifecycle, env: HandlerRuntime & Db) =>
+    env.db.read(),
+  )
+  const usesRuntime = implementCoreTask(task, {
+    pool: 'test',
+    handler: (_input, lifecycle, env: HandlerRuntime<Service>) =>
+      env.run(
+        () => Service.pipe(Effect.map(({ value }) => value)),
+        lifecycle.signal,
+      ),
+  })
+
+  it('rejects an env that asks for more than the handler runtime', () => {
+    expectTypeOf<Requirements<typeof usesRuntime>>().toEqualTypeOf<Service>()
+    expectTypeOf<Requirements<typeof needsDbToo>>().not.toEqualTypeOf<Service>()
+    expectTypeOf<
+      Requirements<typeof finishNeedsDbToo>
+    >().not.toEqualTypeOf<never>()
+
+    const workflows = () => []
+    defineWorkflowsWorker({
+      workflows,
+      tasks: () => [needsDbToo],
+      runtime,
+      // @ts-expect-error The Layer covers the services, nothing covers db.
+      layer,
+    })
+    // @ts-expect-error Finish handlers are checked the same way.
+    defineWorkflowsWorker({
+      workflows: () => [finishNeedsDbToo],
+      runtime,
+    })
+    const worker = {
+      ...createInMemoryWorkflowRuntime(),
+      workflows: [],
+      workerId: 'core-env-subtypes',
+    }
+    // Thunk: only the call's types matter, the worker must not run.
+    void (() =>
+      runExecutionWorker({
+        ...worker,
+        tasks: [needsDbToo],
+        // @ts-expect-error The context cannot carry the task's db.
+        context: Context.make(Service, { value: 1 }),
+      }))
+
+    expect(
+      defineWorkflowsWorker({
+        workflows,
+        tasks: () => [usesRuntime],
+        runtime,
+        layer,
+      }),
+    ).toBeDefined()
+  })
+})
+
+// A step bound without a mapper receives the workflow input as is. These
+// workflows take a string while their steps take a number, so every binding
+// below needs a mapper; the `same` ones take the workflow input itself.
+describe('Effect chain: mapper required for incompatible step inputs', () => {
+  class Service extends Context.Service<Service, { value: number }>()(
+    'test/mapper/Service',
+  ) {}
+  const text = Schema.String
+  const count = Schema.Number
+  const countTask = defineTask({
+    name: 'mapper.count',
+    input: count,
+    output: count,
+  })
+  const textTask = defineTask({
+    name: 'mapper.text',
+    input: text,
+    output: text,
+  })
+  const step = { input: count, output: count }
+  const same = { input: text, output: text }
+  const add = (input: number) =>
+    Service.pipe(Effect.map(({ value }) => input + value))
+
+  it('rejects a task or activity node without a mapper', () => {
+    const taskNode = defineWorkflow({
+      name: 'mapper.task',
+      input: text,
+      output: count,
+    })
+      .task('step', countTask)
+      .build()
+    const activityNode = defineWorkflow({
+      name: 'mapper.activity',
+      input: text,
+      output: count,
+    })
+      .activity('step', step)
+      .build()
+
+    // @ts-expect-error The task takes a number, the workflow a string.
+    implementWorkflow(taskNode, { pool: 'test' }).step(countTask)
+    implementWorkflow(activityNode, { pool: 'test' })
+      // @ts-expect-error The activity takes a number, the workflow a string.
+      .step((input) => Effect.succeed(input + 1))
+
+    implementWorkflow(taskNode, { pool: 'test' })
+      .step(countTask, { input: (_outputs, input) => Number(input) })
+      .finish(({ step }) => Effect.succeed(step))
+    const mapped = implementWorkflow(activityNode, { pool: 'test' })
+      .step((input) => add(input), {
+        input: (_outputs, input) => Number(input),
+      })
+      .finish(({ step }) => Effect.succeed(step))
+    expectTypeOf<Requirements<typeof mapped>>().toEqualTypeOf<Service>()
+  })
+
+  it('keeps the mapper optional when the step takes the workflow input', () => {
+    const compatible = defineWorkflow({
+      name: 'mapper.compatible',
+      input: text,
+      output: text,
+    })
+      .task('task', textTask)
+      .activity('activity', same)
+      .parallel('pair', (h) => ({
+        task: h.task(textTask),
+        bare: h.activity(same),
+      }))
+      .build()
+
+    const implementation = implementWorkflow(compatible, { pool: 'test' })
+      .task(textTask)
+      .activity((input) =>
+        Service.pipe(Effect.map(({ value }) => `${input}${value}`)),
+      )
+      .pair({ task: textTask, bare: (input) => Effect.succeed(input) })
+      .finish(({ pair }) => Effect.succeed(pair.bare))
+    expectTypeOf<Requirements<typeof implementation>>().toEqualTypeOf<Service>()
+    expect(implementation.nodes).toHaveLength(3)
+  })
+
+  it('rejects parallel members and branch cases without a mapper', () => {
+    const cases = defineWorkflow({
+      name: 'mapper.cases',
+      input: text,
+      output: count,
+    })
+      .parallel('pair', (h) => ({
+        task: h.task(countTask),
+        activity: h.activity(step),
+      }))
+      .branch('pick', {
+        cases: (h) => ({ task: h.task(countTask), activity: h.activity(step) }),
+        output: count,
+      })
+      .build()
+    const chain = implementWorkflow(cases, { pool: 'test' })
+
+    chain.pair(({ task, activity }) => ({
+      // @ts-expect-error The task member takes a number.
+      task: task(countTask),
+      // @ts-expect-error The activity member takes a number.
+      activity: activity((input) => Effect.succeed(input + 1)),
+    }))
+    chain.pair({
+      // @ts-expect-error A bare task has no mapper.
+      task: countTask,
+      // @ts-expect-error Nor has a bare handler.
+      activity: (input: number) => Effect.succeed(input + 1),
+    })
+
+    const mapped = chain
+      .pair(({ task, activity }) => ({
+        task: task(countTask, { input: (_outputs, input) => Number(input) }),
+        activity: activity((input) => add(input), {
+          input: (_outputs, input) => Number(input),
+        }),
+      }))
+      .pick({
+        select: () => 'task',
+        cases: ({ task, activity }) => ({
+          task: task(countTask, { input: ({ pair }) => pair.task }),
+          activity: activity((input) => Effect.succeed(input + 1), {
+            input: ({ pair }) => pair.activity,
+          }),
+        }),
+      })
+      .finish(({ pick }) => Effect.succeed(pick))
+    expectTypeOf<Requirements<typeof mapped>>().toEqualTypeOf<Service>()
+
+    chain
+      .pair(({ task, activity }) => ({
+        task: task(countTask, { input: (_outputs, input) => Number(input) }),
+        activity: activity((input) => Effect.succeed(input + 1), {
+          input: (_outputs, input) => Number(input),
+        }),
+      }))
+      .pick({
+        select: () => 'task',
+        cases: ({ task, activity }) => ({
+          // @ts-expect-error The task case takes a number.
+          task: task(countTask),
+          // @ts-expect-error The activity case takes a number.
+          activity: activity((input) => Effect.succeed(input + 1)),
+        }),
+      })
   })
 })
