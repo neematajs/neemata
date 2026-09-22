@@ -1,0 +1,74 @@
+name: Build proxy bindings
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Proxy (${{ matrix.target }})
+    runs-on: ${{ matrix.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: macos-26
+            target: x86_64-apple-darwin
+          - host: macos-26
+            target: aarch64-apple-darwin
+          - host: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - host: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            flags: -x
+          - host: ubuntu-24.04
+            target: aarch64-unknown-linux-gnu
+            flags: --use-napi-cross
+          - host: ubuntu-24.04
+            target: aarch64-unknown-linux-musl
+            flags: -x
+          - host: ubuntu-24.04
+            target: armv7-unknown-linux-gnueabihf
+            flags: --use-napi-cross
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '10.13'
+      RELEASE_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          cache-workspaces: packages/proxy
+      - uses: mlugg/setup-zig@v2
+        if: contains(matrix.target, 'musl')
+        with:
+          version: 0.15.2
+      - uses: taiki-e/install-action@v2
+        if: contains(matrix.target, 'musl')
+        with:
+          tool: cargo-zigbuild
+      - run: pnpm install --frozen-lockfile
+      # N-API embeds the package version in the generated loader.
+      - run: pnpm --dir packages/proxy pkg set version="$RELEASE_VERSION"
+      - run: pnpm --dir packages/proxy run build:artifact --target ${{ matrix.target }} ${{ matrix.flags }} -- --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: proxy-${{ matrix.target }}
+          path: packages/proxy/dist/*.node
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        with:
+          name: proxy-loader
+          path: |
+            packages/proxy/dist/index.js
+            packages/proxy/dist/index.d.ts
+          if-no-files-found: error

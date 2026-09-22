@@ -1,0 +1,26 @@
+{
+  "name": "@nmtjs/proxy-darwin-arm64",
+  "version": "1.0.0-beta.7",
+  "description": "Native binding for @nmtjs/proxy on darwin-arm64.",
+  "license": "MIT",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "main": "neemata-proxy.darwin-arm64.node",
+  "files": [
+    "neemata-proxy.darwin-arm64.node",
+    "LICENSE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neematajs/neemata",
+    "directory": "packages/proxy/npm/darwin-arm64"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

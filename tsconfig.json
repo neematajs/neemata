@@ -23,6 +23,12 @@
     },
     {
       "path": "./packages/workflows/tsconfig.json"
+    },
+    {
+      "path": "./packages/prom-client/tsconfig.json"
+    },
+    {
+      "path": "./packages/proxy/tsconfig.json"
     }
   ],
   "include": []

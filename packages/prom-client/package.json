@@ -1,0 +1,54 @@
+{
+  "name": "@nmtjs/prom-client",
+  "description": "Client for prometheus",
+  "main": "index.js",
+  "files": [
+    "lib/",
+    "index.js",
+    "index.d.ts",
+    "LICENSE",
+    "NOTICE",
+    "README.md"
+  ],
+  "engines": {
+    "node": "^22 || ^24 || >=26"
+  },
+  "scripts": {
+    "test": "node --test test/*Test.js test/*/*Test.js",
+    "check:type": "tsc -p tsconfig.json --noEmit --pretty false",
+    "benchmarks": "node --max-heap-size=5000 ./benchmarks/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neematajs/neemata",
+    "directory": "packages/prom-client"
+  },
+  "keywords": [
+    "Prometheus",
+    "Metrics",
+    "Client"
+  ],
+  "author": "Simon Nyberg",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/neematajs/neemata/tree/main/packages/prom-client",
+  "devDependencies": {
+    "@clevernature/benchmark-regression": "^1.0.0",
+    "@matteo.collina/snap": "^0.3.0",
+    "@sinonjs/fake-timers": "^15.0.0",
+    "benchmark": "^2.1",
+    "debug": "^4.4.1",
+    "express": "^5.1.0",
+    "mitata": "^1.0.34",
+    "nock": "^13.0.5"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.4.0"
+  },
+  "types": "./index.d.ts",
+  "version": "1.0.1",
+  "type": "commonjs",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

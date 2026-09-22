@@ -1,0 +1,59 @@
+{
+  "name": "@nmtjs/proxy",
+  "version": "1.0.0-beta.7",
+  "description": "Rust-based reverse proxy for Neemata, exposed via NAPI.",
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neematajs/neemata",
+    "directory": "packages/proxy"
+  },
+  "publishConfig": {
+    "provenance": true
+  },
+  "scripts": {
+    "clean-build": "rm -rf dist",
+    "build": "napi build --release --platform --js index.js --output-dir dist -- --locked",
+    "build:debug": "napi build --platform --js index.js --output-dir dist -- --locked",
+    "build:artifact": "napi build --release --platform --js index.js --output-dir dist",
+    "check:rust": "cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
+    "check:type": "tsc -p tsconfig.json --noEmit --pretty false",
+    "test:rust": "cargo test --locked",
+    "test": "pnpm run test:rust && pnpm run build:debug && pnpm run check:type && vitest run --reporter=agent"
+  },
+  "napi": {
+    "binaryName": "neemata-proxy",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-unknown-linux-musl",
+      "armv7-unknown-linux-gnueabihf"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.5.1",
+    "@types/ws": "^8.18.1",
+    "ws": "^8.18.3"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/index.d.ts",
+    "LICENSE.md",
+    "README.md"
+  ],
+  "optionalDependencies": {
+    "@nmtjs/proxy-darwin-x64": "workspace:*",
+    "@nmtjs/proxy-darwin-arm64": "workspace:*",
+    "@nmtjs/proxy-linux-x64-gnu": "workspace:*",
+    "@nmtjs/proxy-linux-x64-musl": "workspace:*",
+    "@nmtjs/proxy-linux-arm64-gnu": "workspace:*",
+    "@nmtjs/proxy-linux-arm64-musl": "workspace:*",
+    "@nmtjs/proxy-linux-arm-gnueabihf": "workspace:*"
+  },
+  "license": "MIT"
+}

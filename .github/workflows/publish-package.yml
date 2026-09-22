@@ -1,0 +1,137 @@
+name: Publish standalone package
+
+permissions:
+  contents: write
+  id-token: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Package to publish independently of the Neem stack
+        type: choice
+        options: [proxy, prom-client]
+        required: true
+      version:
+        description: Version to publish
+        type: string
+        required: true
+      run_tests:
+        description: Run package tests before publishing
+        type: boolean
+        default: true
+      release:
+        description: Create a GitHub release
+        type: boolean
+        default: true
+      pre_release:
+        description: Mark the GitHub release as a prerelease
+        type: boolean
+        default: false
+      autotag:
+        description: Create a Git tag
+        type: boolean
+        default: true
+
+jobs:
+  test:
+    if: inputs.run_tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: inputs.package == 'proxy'
+        with:
+          cache-workspaces: packages/proxy
+          components: rustfmt, clippy
+      - run: pnpm install --frozen-lockfile
+      - name: Check and test proxy
+        if: inputs.package == 'proxy'
+        run: pnpm --dir packages/proxy run check:rust && pnpm --dir packages/proxy run test
+      - name: Check and test prom-client
+        if: inputs.package == 'prom-client'
+        run: pnpm --dir packages/prom-client run check:type && pnpm --dir packages/prom-client run test
+
+  proxy:
+    if: inputs.package == 'proxy'
+    uses: ./.github/workflows/proxy-build.yml
+    with:
+      version: ${{ inputs.version }}
+
+  publish:
+    needs: [test, proxy]
+    if: >-
+      always() && !cancelled() &&
+      (!inputs.run_tests || needs.test.result == 'success') &&
+      (inputs.package != 'proxy' || needs.proxy.result == 'success')
+    runs-on: ubuntu-24.04
+    env:
+      RELEASE_PACKAGE: ${{ inputs.package }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      VERSION_TAG: ${{ inputs.package }}-v${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download proxy binaries
+        if: inputs.package == 'proxy'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: proxy-*
+          path: packages/proxy/artifacts
+      - name: Download proxy loader
+        if: inputs.package == 'proxy'
+        uses: actions/download-artifact@v4
+        with:
+          name: proxy-loader
+          path: packages/proxy/dist
+      - name: Assemble native packages
+        if: inputs.package == 'proxy'
+        run: pnpm --dir packages/proxy exec napi artifacts --output-dir artifacts
+      - name: Prepare package release
+        run: node scripts/prepare-release.js "$RELEASE_PACKAGE" "$RELEASE_VERSION"
+      - name: Publish proxy platform packages
+        if: inputs.package == 'proxy'
+        run: |
+          TAG=$(node scripts/tag.js "$RELEASE_VERSION")
+          pnpm publish --dry-run --filter "@nmtjs/proxy*" --access public --no-git-checks --tag="$TAG"
+          pnpm publish --filter "./packages/proxy/npm/*" --access public --no-git-checks --tag="$TAG"
+      - name: Publish package
+        run: |
+          TAG=$(node scripts/tag.js "$RELEASE_VERSION")
+          pnpm publish --dry-run --filter "@nmtjs/$RELEASE_PACKAGE" --access public --no-git-checks --tag="$TAG"
+          pnpm publish --filter "@nmtjs/$RELEASE_PACKAGE" --access public --no-git-checks --tag="$TAG"
+      - name: Create Git tag
+        if: inputs.autotag
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.git.createRef({
+              ...context.repo,
+              ref: `refs/tags/${process.env.VERSION_TAG}`,
+              sha: context.sha,
+            })
+      - name: Create GitHub release
+        if: inputs.release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              ...context.repo,
+              tag_name: process.env.VERSION_TAG,
+              target_commitish: context.sha,
+              name: process.env.VERSION_TAG,
+              draft: false,
+              prerelease: ${{ inputs.pre_release }},
+              generate_release_notes: true,
+            })

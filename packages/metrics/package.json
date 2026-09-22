@@ -45,7 +45,7 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/neem": "workspace:*",
-    "@nmtjs/prom-client": "1.0.1",
+    "@nmtjs/prom-client": "workspace:*",
     "pino": "^10.3.1"
   },
   "files": [
