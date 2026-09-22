@@ -1,19 +1,10 @@
-'use strict'
+import { describe, it, beforeEach, afterEach } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const Registry = require('../../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('heapSpacesSizeAndUsed with %s registry', (tag, regType) => {

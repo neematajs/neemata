@@ -1,6 +1,5 @@
-'use strict'
+import { describe, it } from 'vitest'
 
-const { describe, it } = require('node:test')
 const assert = require('node:assert')
 
 describe('validation', () => {

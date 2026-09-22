@@ -1,3 +1,5 @@
+import { describe, it } from 'vitest'
+
 /*
  * TDigest tests - adapted from tdigest package
  *
@@ -5,9 +7,6 @@
  * Copyright (c) 2015 Will Welch
  */
 
-'use strict'
-
-const { describe, it } = require('node:test')
 const assert = require('node:assert')
 const { TDigest } = require('../../lib/tdigest/tdigest')
 

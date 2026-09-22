@@ -1,26 +1,18 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
+const { setTimeout: wait } = require('node:timers/promises')
 const assert = require('node:assert')
-const { describeEach, wait } = require('../helpers')
 
 const Registry = require('../../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('eventLoopLag with %s registry', (tag, regType) => {
   const register = require('../../index').register
   const eventLoopLag = require('../../lib/metrics/eventLoopLag')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 

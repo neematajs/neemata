@@ -1,15 +1,13 @@
-'use strict'
+import { describe, it, beforeEach, afterEach } from 'vitest'
 
-const { describe, it, beforeEach, afterEach, after } = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 
 const nock = require('nock')
 const { gzipSync } = require('node:zlib')
 
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('pushgateway with %s registry', (tag, regType) => {
@@ -22,7 +20,7 @@ describeEach([
     register.setContentType(regType)
   })
 
-  const tests = function () {
+  function tests() {
     let body
     if (regType === Registry.OPENMETRICS_CONTENT_TYPE) {
       body = '# HELP test test\n# TYPE test counter\ntest_total 100\n# EOF\n'
@@ -88,7 +86,7 @@ describeEach([
       })
 
       it('should timeout when taking too long', async () => {
-        const mockHttp = nock('http://192.168.99.100:9091')
+        nock('http://192.168.99.100:9091')
           .post('/metrics/job/testJob/key/va%26lue', body)
           .delay(100)
           .reply(200)
@@ -162,7 +160,7 @@ describeEach([
       })
 
       it('should timeout when taking too long', async () => {
-        const mockHttp = nock('http://192.168.99.100:9091')
+        nock('http://192.168.99.100:9091')
           .put('/metrics/job/test%26Job', body)
           .delay(100)
           .reply(200)
@@ -201,7 +199,7 @@ describeEach([
       })
 
       it('should timeout when taking too long', async () => {
-        const mockHttp = nock('http://192.168.99.100:9091')
+        nock('http://192.168.99.100:9091')
           .delete('/metrics/job/testJob')
           .delay(100)
           .reply(200)

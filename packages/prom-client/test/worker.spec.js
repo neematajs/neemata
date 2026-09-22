@@ -1,6 +1,5 @@
-'use strict'
+import { describe, it } from 'vitest'
 
-const { describe, it } = require('node:test')
 const assert = require('node:assert')
 const Path = require('node:path')
 const { once } = require('node:events')
@@ -89,8 +88,8 @@ describe('WorkerRegistry', () => {
 
   it('does not retain announcement-discovered workers after reloads', async () => {
     const workerRegistry = new WorkerRegistry()
-    const createWorker = (worker) =>
-      new Worker(
+    function createWorker(worker) {
+      return new Worker(
         `
 				'use strict';
 
@@ -118,6 +117,7 @@ describe('WorkerRegistry', () => {
           },
         },
       )
+    }
 
     const firstWorker = createWorker('first')
     await once(firstWorker, 'message')

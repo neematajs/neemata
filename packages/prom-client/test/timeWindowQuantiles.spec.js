@@ -1,21 +1,19 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { timers } = require('./helpers')
 
 describe('timeWindowQuantiles', () => {
   const TimeWindowQuantiles = require('../lib/timeWindowQuantiles')
   let instance
 
   beforeEach(() => {
-    timers.useFakeTimers()
-    timers.setSystemTime(0)
+    vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+    vi.setSystemTime(0)
     instance = new TimeWindowQuantiles(5, 5)
   })
 
   afterEach(() => {
-    timers.useRealTimers()
+    vi.useRealTimers()
   })
 
   describe('methods', () => {
@@ -61,19 +59,19 @@ describe('timeWindowQuantiles', () => {
     it('should rotate', () => {
       instance.push(1)
       assert.strictEqual(instance.currentBuffer, 0)
-      timers.advanceTimersByTime(1001)
+      vi.advanceTimersByTime(1001)
       instance.percentile(0.5)
       assert.strictEqual(instance.currentBuffer, 1)
-      timers.advanceTimersByTime(1001)
+      vi.advanceTimersByTime(1001)
       instance.percentile(0.5)
       assert.strictEqual(instance.currentBuffer, 2)
-      timers.advanceTimersByTime(1001)
+      vi.advanceTimersByTime(1001)
       instance.percentile(0.5)
       assert.strictEqual(instance.currentBuffer, 3)
-      timers.advanceTimersByTime(1001)
+      vi.advanceTimersByTime(1001)
       instance.percentile(0.5)
       assert.strictEqual(instance.currentBuffer, 4)
-      timers.advanceTimersByTime(1001)
+      vi.advanceTimersByTime(1001)
       instance.percentile(0.5)
       assert.strictEqual(instance.currentBuffer, 0)
 

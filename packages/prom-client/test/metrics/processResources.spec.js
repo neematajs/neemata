@@ -1,21 +1,12 @@
-'use strict'
+import { describe, it, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 describe('processRequests', () => {
   const register = require('../../index').register
   const processResources = require('../../lib/metrics/processResources')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 

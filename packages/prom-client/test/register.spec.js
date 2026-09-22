@@ -1,8 +1,6 @@
-'use strict'
+import { describe, it, beforeEach } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 
 const Registry = require('../index').Registry
 const register = require('../index').register
@@ -23,7 +21,7 @@ describe('Register', () => {
     }, new TypeError(expectedContentTypeErrStr))
   })
 
-  describeEach([
+  describe.each([
     ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
     ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
   ])('with %s type', (tag, regType) => {

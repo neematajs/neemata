@@ -1,55 +1,21 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll, vi } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('collectDefaultMetrics with %s registry', (tag, regType) => {
   const register = require('../index').register
   const collectDefaultMetrics = require('../index').collectDefaultMetrics
-  let cpuUsage
-
-  before(() => {
-    cpuUsage = process.cpuUsage
-
-    if (cpuUsage) {
-      Object.defineProperty(process, 'cpuUsage', {
-        value() {
-          return { user: 1000, system: 10 }
-        },
-      })
-    } else {
-      process.cpuUsage = function () {
-        return { user: 1000, system: 10 }
-      }
-    }
-
+  beforeAll(() => {
     register.clear()
-  })
-
-  after(() => {
-    if (cpuUsage) {
-      Object.defineProperty(process, 'cpuUsage', {
-        value: cpuUsage,
-      })
-    } else {
-      delete process.cpuUsage
-    }
   })
 
   beforeEach(() => {
     register.setContentType(regType)
+    vi.spyOn(process, 'cpuUsage').mockReturnValue({ user: 1000, system: 10 })
   })
 
   afterEach(() => {
@@ -106,7 +72,7 @@ describeEach([
 
   describe('disabling', () => {
     it('should not throw error', () => {
-      const fn = function () {
+      function fn() {
         register.clear()
       }
 

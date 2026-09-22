@@ -1,12 +1,10 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach, timers } = require('./helpers')
 const errorMessages = require('./error-messages')
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('histogram with %s registry', (tag, regType) => {
@@ -19,6 +17,7 @@ describeEach([
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     instance = null
     globalRegistry.clear()
   })
@@ -110,28 +109,26 @@ describeEach([
       })
 
       it('should time requests', async () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
         const doneFn = instance.startTimer()
-        timers.advanceTimersByTime(500)
+        vi.advanceTimersByTime(500)
         doneFn()
         const valuePair = getValueByLabel(0.5, (await instance.get()).values)
         assert.strictEqual(valuePair.value, 1)
-        timers.useRealTimers()
       })
 
       it('should time requests, end function should return time spent value', () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
         const doneFn = instance.startTimer()
-        timers.advanceTimersByTime(500)
+        vi.advanceTimersByTime(500)
         const value = doneFn()
         assert.strictEqual(value, 0.5)
-        timers.useRealTimers()
       })
 
       it('should not allow non numbers', () => {
-        const fn = function () {
+        function fn() {
           instance.observe('asd')
         }
         assert.throws(fn, (error) => {
@@ -157,7 +154,7 @@ describeEach([
       })
 
       it('should not allow le as a custom label', () => {
-        const fn = function () {
+        function fn() {
           new Histogram({ name: 'name', help: 'help', labelNames: ['le'] })
         }
         assert.throws(fn, (error) => {
@@ -215,7 +212,7 @@ describeEach([
         })
 
         it('should not allow different number of labels', () => {
-          const fn = function () {
+          function fn() {
             instance.labels('get', '500').observe(4)
           }
           assert.throws(fn, (error) => {
@@ -228,10 +225,10 @@ describeEach([
         })
 
         it('should start a timer', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.labels('get').startTimer()
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           end()
           const res = getValueByLeAndLabel(
             0.5,
@@ -240,14 +237,13 @@ describeEach([
             (await instance.get()).values,
           )
           assert.strictEqual(res.value, 1)
-          timers.useRealTimers()
         })
 
         it('should start a timer and set labels afterwards', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer()
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           end({ method: 'get' })
           const res = getValueByLeAndLabel(
             0.5,
@@ -256,7 +252,6 @@ describeEach([
             (await instance.get()).values,
           )
           assert.strictEqual(res.value, 1)
-          timers.useRealTimers()
         })
 
         it('should allow labels before and after timers', async () => {
@@ -265,10 +260,10 @@ describeEach([
             help: 'Histogram with labels fn',
             labelNames: ['method', 'success'],
           })
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer({ method: 'get' })
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           end({ success: 'SUCCESS' })
           const res1 = getValueByLeAndLabel(
             0.5,
@@ -284,7 +279,6 @@ describeEach([
           )
           assert.strictEqual(res1.value, 1)
           assert.strictEqual(res2.value, 1)
-          timers.useRealTimers()
         })
 
         it('should not mutate passed startLabels', () => {
@@ -378,7 +372,7 @@ describeEach([
         })
 
         it('should throw error if label lengths does not match', () => {
-          const fn = function () {
+          function fn() {
             instance.remove('GET', '/foo')
           }
           assert.throws(fn, (error) => {
@@ -396,11 +390,11 @@ describeEach([
         })
 
         it('should remove timer labels', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const getEnd = instance.labels('GET').startTimer()
           const postEnd = instance.labels('POST').startTimer()
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           postEnd()
           getEnd()
           instance.remove('POST')
@@ -411,18 +405,16 @@ describeEach([
             (await instance.get()).values,
           )
           assert.strictEqual(res.value, 1)
-          timers.useRealTimers()
         })
 
         it('should remove timer labels when labels are set afterwards', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer()
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           end({ method: 'GET' })
           instance.remove('GET')
           assert.strictEqual((await instance.get()).values.length, 0)
-          timers.useRealTimers()
         })
 
         it('should remove labels before and after timers', async () => {
@@ -431,14 +423,13 @@ describeEach([
             help: 'Histogram with labels fn',
             labelNames: ['method', 'success'],
           })
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer({ method: 'GET' })
-          timers.advanceTimersByTime(500)
+          vi.advanceTimersByTime(500)
           end({ success: 'SUCCESS' })
           instance.remove('GET', 'SUCCESS')
           assert.strictEqual((await instance.get()).values.length, 0)
-          timers.useRealTimers()
         })
 
         it('should remove by labels object', async () => {

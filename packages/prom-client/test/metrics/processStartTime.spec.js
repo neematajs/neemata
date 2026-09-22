@@ -1,26 +1,17 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const Registry = require('../../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('processStartTime with %s registry', (tag, regType) => {
   const register = require('../../index').register
   const op = require('../../lib/metrics/processStartTime')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 

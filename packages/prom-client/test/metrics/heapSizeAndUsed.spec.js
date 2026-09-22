@@ -1,39 +1,30 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const Registry = require('../../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('heapSizeAndUsed with %s registry', (tag, regType) => {
   const heapSizeAndUsed = require('../../lib/metrics/heapSizeAndUsed')
   const globalRegistry = require('../../lib/registry').globalRegistry
-  const memoryUsedFn = process.memoryUsage
 
   beforeEach(() => {
     globalRegistry.setContentType(regType)
   })
 
   afterEach(() => {
-    process.memoryUsage = memoryUsedFn
     globalRegistry.clear()
   })
 
   it('should set gauge values from memoryUsage', async () => {
-    process.memoryUsage = function () {
-      return { heapTotal: 1000, heapUsed: 500, external: 100 }
-    }
+    vi.spyOn(process, 'memoryUsage').mockReturnValue({
+      heapTotal: 1000,
+      heapUsed: 500,
+      external: 100,
+    })
 
     heapSizeAndUsed()
     // Note: these three gauges' values are set by the _total gauge's

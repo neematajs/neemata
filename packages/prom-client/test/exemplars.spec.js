@@ -1,20 +1,24 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const { describe, it, beforeEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach, timers } = require('./helpers')
 const Registry = require('../index').Registry
 const globalRegistry = require('../index').register
 const Histogram = require('../index').Histogram
 const Counter = require('../index').Counter
 
-Date.now = () => 1678654679000
+beforeEach(() => {
+  vi.spyOn(Date, 'now').mockReturnValue(1678654679000)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 describe('Exemplars', () => {
   it('should throw when using with Prometheus registry', async () => {
     globalRegistry.setContentType(Registry.PROMETHEUS_CONTENT_TYPE)
     assert.throws(() => {
-      const counterInstance = new Counter({
+      new Counter({
         name: 'counter_exemplar_test',
         help: 'help',
         labelNames: ['method', 'code'],
@@ -22,7 +26,7 @@ describe('Exemplars', () => {
       })
     }, /Exemplars are supported only on OpenMetrics registries/)
   })
-  describeEach([['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE]])(
+  describe.each([['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE]])(
     'with %s registry',
     (tag, regType) => {
       beforeEach(() => {
@@ -104,8 +108,6 @@ describe('Exemplars', () => {
           'trace_id_test_3',
         )
         assert.strictEqual(getValuesByLabel('+Inf', vals)[0].exemplar.value, 11)
-
-        // Note: Snapshot testing not available in node:test, verify metrics output manually
         const metrics = await globalRegistry.metrics()
         assert.strictEqual(typeof metrics, 'string')
         assert.strictEqual(metrics.length > 0, true)
@@ -132,8 +134,8 @@ describe('Exemplars', () => {
       })
 
       it('should time request, with exemplar', async () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
         const histogramInstance = new Histogram({
           name: 'histogram_start_timer_exemplar_test',
           help: 'test',
@@ -145,7 +147,7 @@ describe('Exemplars', () => {
           code: '200',
         })
 
-        timers.advanceTimersByTime(500)
+        vi.advanceTimersByTime(500)
         end()
 
         const valuePair = getValueByLabel(
@@ -153,12 +155,11 @@ describe('Exemplars', () => {
           (await histogramInstance.get()).values,
         )
         assert.strictEqual(valuePair.value, 1)
-        timers.useRealTimers()
       })
 
       it('should allow exemplar labels before and after timers', async () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
         const histogramInstance = new Histogram({
           name: 'histogram_start_timer_exemplar_label_test',
           help: 'test',
@@ -170,7 +171,7 @@ describe('Exemplars', () => {
           { traceId: 'trace_id_test_1' },
         )
 
-        timers.advanceTimersByTime(500)
+        vi.advanceTimersByTime(500)
         end({ code: '200' }, { spanId: 'span_id_test_1' })
 
         const vals = (await histogramInstance.get()).values
@@ -179,7 +180,6 @@ describe('Exemplars', () => {
           getValuesByLabel(0.5, vals)[0].exemplar.labelSet.traceId,
           'trace_id_test_1',
         )
-        timers.useRealTimers()
       })
 
       describe('when the exemplar labels are not provided during subsequent metric updates', () => {

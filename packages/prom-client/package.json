@@ -14,7 +14,7 @@
     "node": "^22 || ^24 || >=26"
   },
   "scripts": {
-    "test": "node --test test/*Test.js test/*/*Test.js",
+    "test": "vitest run --reporter=agent",
     "check:type": "tsc -p tsconfig.json --noEmit --pretty false",
     "benchmarks": "node --max-heap-size=5000 ./benchmarks/index.js"
   },
@@ -33,8 +33,6 @@
   "homepage": "https://github.com/neematajs/neemata/tree/main/packages/prom-client",
   "devDependencies": {
     "@clevernature/benchmark-regression": "^1.0.0",
-    "@matteo.collina/snap": "^0.3.0",
-    "@sinonjs/fake-timers": "^15.0.0",
     "benchmark": "^2.1",
     "debug": "^4.4.1",
     "express": "^5.1.0",

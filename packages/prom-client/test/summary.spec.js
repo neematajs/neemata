@@ -1,12 +1,10 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach, timers } = require('./helpers')
 const errorMessages = require('./error-messages')
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('summary with %s registry', (tag, regType) => {
@@ -19,6 +17,7 @@ describeEach([
   })
 
   afterEach(() => {
+    vi.useRealTimers()
     globalRegistry.clear()
   })
 
@@ -221,7 +220,7 @@ describeEach([
         })
 
         it('should throw error if label lengths does not match', () => {
-          const fn = function () {
+          function fn() {
             instance.labels('GET').observe()
           }
           assert.throws(fn, (error) => {
@@ -239,10 +238,10 @@ describeEach([
         })
 
         it('should start a timer', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.labels('GET', '/test').startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           const duration = end()
           assert.strictEqual(duration, 1)
           const { values } = await instance.get()
@@ -261,15 +260,13 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'GET')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should start a timer and set labels afterwards', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ method: 'GET', endpoint: '/test' })
           const { values } = await instance.get()
           assert.strictEqual(values.length, 3)
@@ -287,15 +284,13 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'GET')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should allow labels before and after timers', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer({ method: 'GET' })
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ endpoint: '/test' })
           const { values } = await instance.get()
           assert.strictEqual(values.length, 3)
@@ -313,8 +308,6 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'GET')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should not mutate passed startLabels', () => {
@@ -376,7 +369,7 @@ describeEach([
         })
 
         it('should throw error if label lengths does not match', () => {
-          const fn = function () {
+          function fn() {
             instance.remove('GET')
           }
           assert.throws(fn, (error) => {
@@ -394,10 +387,10 @@ describeEach([
         })
 
         it('should remove timer values', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.labels('GET', '/test').startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end()
           instance.remove('GET', '/test')
 
@@ -417,15 +410,13 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'POST')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should remove timer values when labels are set afterwards', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ method: 'GET', endpoint: '/test' })
           instance.remove('GET', '/test')
 
@@ -445,15 +436,13 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'POST')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should remove timer values with before and after labels', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
           const end = instance.startTimer({ method: 'GET' })
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ endpoint: '/test' })
           instance.remove('GET', '/test')
 
@@ -473,8 +462,6 @@ describeEach([
           assert.strictEqual(values[2].labels.method, 'POST')
           assert.strictEqual(values[2].labels.endpoint, '/test')
           assert.strictEqual(values[2].value, 1)
-
-          timers.useRealTimers()
         })
 
         it('should remove by labels object', async () => {
@@ -532,11 +519,10 @@ describeEach([
     })
   })
   describe('sliding window', () => {
-    let clock
     beforeEach(() => {
       globalRegistry.clear()
-      timers.useFakeTimers()
-      timers.setSystemTime(0)
+      vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+      vi.setSystemTime(0)
     })
 
     it('should present percentiles as zero when maxAgeSeconds and ageBuckets are set but not pruneAgedBuckets', async () => {
@@ -557,7 +543,7 @@ describeEach([
         assert.strictEqual(values[7].value, 100)
         assert.strictEqual(values[8].metricName, 'summary_test_count')
         assert.strictEqual(values[8].value, 1)
-        timers.advanceTimersByTime(1001)
+        vi.advanceTimersByTime(1001)
       }
 
       const { values } = await localInstance.get()
@@ -586,7 +572,7 @@ describeEach([
         assert.strictEqual(values[7].value, 100)
         assert.strictEqual(values[8].metricName, 'summary_test_count')
         assert.strictEqual(values[8].value, 1)
-        timers.advanceTimersByTime(1001)
+        vi.advanceTimersByTime(1001)
       }
 
       const { values } = await localInstance.get()
@@ -608,7 +594,7 @@ describeEach([
         assert.strictEqual(values[7].value, 100)
         assert.strictEqual(values[8].metricName, 'summary_test_count')
         assert.strictEqual(values[8].value, 1)
-        timers.advanceTimersByTime(1001)
+        vi.advanceTimersByTime(1001)
       }
 
       const { values } = await localInstance.get()

@@ -1,14 +1,12 @@
-'use strict'
+import { describe, it, beforeEach } from 'vitest'
 
-const { describe, it, beforeEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 const cluster = require('node:cluster')
 const process = require('node:process')
 const Registry = require('../lib/registry')
 const ClusterRegistry = require('../lib/cluster')
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('%s ClusterRegistry', (tag, regType) => {
@@ -19,12 +17,13 @@ describeEach([
   it('requiring the cluster should not add any listeners on the cluster module', () => {
     const originalListenerCount = cluster.listenerCount('message')
 
+    // Reload the CommonJS module so the test exercises its initialization.
+    delete require.cache[require.resolve('../lib/cluster')]
     require('../lib/cluster')
 
     assert.strictEqual(cluster.listenerCount('message'), originalListenerCount)
 
-    // Note: jest.resetModules() not directly available in node:test
-
+    delete require.cache[require.resolve('../lib/cluster')]
     require('../lib/cluster')
 
     assert.strictEqual(cluster.listenerCount('message'), originalListenerCount)
@@ -33,12 +32,13 @@ describeEach([
   it('requiring the cluster should not add any listeners on the process module', () => {
     const originalListenerCount = process.listenerCount('message')
 
+    // Reload the CommonJS module so the test exercises its initialization.
+    delete require.cache[require.resolve('../lib/cluster')]
     require('../lib/cluster')
 
     assert.strictEqual(process.listenerCount('message'), originalListenerCount)
 
-    // Note: jest.resetModules() not directly available in node:test
-
+    delete require.cache[require.resolve('../lib/cluster')]
     require('../lib/cluster')
 
     assert.strictEqual(process.listenerCount('message'), originalListenerCount)
@@ -260,8 +260,6 @@ describeEach([
 
   describe('message handling', () => {
     it('does not error out on unexpected (or late) responses', () => {
-      // Note: jest.resetModules() not directly available in node:test
-
       require('../lib/cluster')
 
       //Emulate a response that has been deleted from requests

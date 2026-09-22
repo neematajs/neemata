@@ -1,13 +1,11 @@
-'use strict'
+import { describe, it, beforeEach, afterEach } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 const errorMessages = require('./error-messages')
 
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('counter with %s registry', (tag, regType) => {
@@ -40,7 +38,7 @@ describeEach([
       assert.strictEqual((await instance.get()).values[0].value, 100)
     })
     it('should not be possible to decrease a counter', () => {
-      const fn = function () {
+      function fn() {
         instance.inc(-100)
       }
       try {
@@ -51,7 +49,7 @@ describeEach([
       }
     })
     it('should throw an error when the value is not a number', () => {
-      const fn = () => {
+      function fn() {
         instance.inc('3ms')
       }
       try {
@@ -107,7 +105,7 @@ describeEach([
       })
 
       it('should throw error if label lengths does not match', () => {
-        const fn = function () {
+        function fn() {
           instance.labels('GET').inc()
         }
         try {
@@ -179,7 +177,7 @@ describeEach([
     })
 
     it('should throw error if label lengths does not match', () => {
-      const fn = function () {
+      function fn() {
         instance.remove('GET')
       }
       try {

@@ -107,8 +107,8 @@ vp env exec pnpm check
 `pnpm build` builds a local debug proxy binding before the TypeScript packages.
 `pnpm build:ts` builds only TypeScript when the native binding is already available.
 `pnpm test:proxy` runs the Rust and proxy integration suites; `pnpm test:prom-client`
-runs the imported Node.js test suite. The root test command runs both alongside
-the existing workspace tests.
+runs the prom-client Vitest project. The root Vitest run includes both packages
+alongside the existing workspace tests.
 
 The **Publish Neem stack** workflow versions and publishes only the Neem stack.
 Proxy and prom-client keep independent package versions and are excluded from

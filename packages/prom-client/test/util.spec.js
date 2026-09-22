@@ -1,6 +1,5 @@
-'use strict'
+import { describe, it, expect, vi } from 'vitest'
 
-const { describe, it } = require('node:test')
 const assert = require('node:assert')
 
 describe('utils', () => {
@@ -204,30 +203,30 @@ describe('utils', () => {
     describe('getOrAdd()', () => {
       it('returns existing values', () => {
         const map = new LabelMap(['b', 'c', 'a'])
-        const callback = () => 'should not be called'
+        const callback = vi.fn()
 
         map.set({ c: 200 }, [2, 3])
 
         const actual = map.getOrAdd({ c: 200 }, callback)
 
         assert.deepStrictEqual(actual, [2, 3])
-        // Note: Mock function call tracking not available in node:test
+        expect(callback).not.toHaveBeenCalled()
       })
 
       it('adds on missing record', () => {
         const map = new LabelMap(['b', 'c', 'a'])
-        const callback = () => 4
+        const callback = vi.fn().mockReturnValue(4)
 
         map.set({ c: 200 }, [2, 3])
 
         const actual = map.getOrAdd({ c: 401 }, callback)
 
         assert.strictEqual(actual, 4)
+        expect(callback).toHaveBeenCalledOnce()
         assert.deepStrictEqual(Array.from(map.values()), [
           { value: [2, 3], labels: { c: 200 } },
           { value: 4, labels: { c: 401 } },
         ])
-        // Note: Mock function call tracking not available in node:test
       })
     })
 
@@ -323,23 +322,23 @@ describe('utils', () => {
     describe('getOrAdd()', () => {
       it('returns existing values', () => {
         const grouper = new Grouper([['name', [2, 3]]])
-        const callback = () => 'should not be called'
+        const callback = vi.fn()
 
         const actual = grouper.getOrAdd('name', callback)
 
         assert.deepStrictEqual(actual, [2, 3])
-        // Note: Mock function call tracking not available in node:test
+        expect(callback).not.toHaveBeenCalled()
       })
 
       it('adds on missing record', () => {
         const grouper = new Grouper([['name', [2, 3]]])
-        const callback = () => 4
+        const callback = vi.fn().mockReturnValue(4)
 
         const actual = grouper.getOrAdd('blah', callback)
 
         assert.strictEqual(actual, 4)
+        expect(callback).toHaveBeenCalledOnce()
         assert.strictEqual(grouper.get('blah'), 4)
-        // Note: Mock function call tracking not available in node:test
       })
 
       it('defaults to inserting an empty array', () => {

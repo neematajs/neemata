@@ -1,7 +1,7 @@
 'use strict'
 
 /**
- * Error messages extracted from Jest snapshots for use in node:test assertions
+ * Expected validation messages shared by the metric tests.
  */
 module.exports = {
   // Counter errors

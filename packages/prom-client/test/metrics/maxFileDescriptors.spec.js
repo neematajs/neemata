@@ -1,27 +1,18 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const exec = require('node:child_process').execSync
 const Registry = require('../../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('processMaxFileDescriptors with %s registry', (tag, regType) => {
   const register = require('../../index').register
   const processMaxFileDescriptors = require('../../lib/metrics/processMaxFileDescriptors')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 

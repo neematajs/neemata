@@ -1,15 +1,6 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const Registry = require('../../index').Registry
 const nodeVersion = process.version
@@ -27,14 +18,14 @@ function expectVersionMetrics(metrics) {
   assert.strictEqual(metrics[0].values[0].labels.patch, versionSegments[2])
 }
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('version with %s registry', (tag, regType) => {
   const register = require('../../index').register
   const version = require('../../lib/metrics/version')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 
@@ -59,7 +50,7 @@ describeEach([
   })
 
   it(`should still be present after resetting the ${tag} registry #238`, async () => {
-    const collector = version()
+    version()
     expectVersionMetrics(await register.getMetricsAsJSON())
     register.resetMetrics()
     expectVersionMetrics(await register.getMetricsAsJSON())

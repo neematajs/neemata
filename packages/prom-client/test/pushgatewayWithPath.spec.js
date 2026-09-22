@@ -1,75 +1,63 @@
-'use strict'
+import http from 'node:http'
+import { PassThrough } from 'node:stream'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
+
 const assert = require('node:assert')
-const { describeEach } = require('./helpers')
 
 const pushGatewayPath = '/path'
 const pushGatewayURL = 'http://192.168.99.100:9091'
 const pushGatewayFullURL = pushGatewayURL + pushGatewayPath
 
-const mockHttp = {
-  calls: [],
-  mockReturnValue: {
-    on: () => {},
-    end: () => {},
-    write: () => {},
-  },
-  mockClear() {
-    this.calls = []
-  },
-  request(options) {
-    this.calls.push({ options })
-    return this.mockReturnValue
-  },
-}
-
-// Intercept the same module specifier used by Pushgateway before loading it.
-const Module = require('node:module')
-const originalRequire = Module.prototype.require
-Module.prototype.require = function (...args) {
-  if (args[0] === 'node:http') {
-    return {
-      request: (...requestArgs) => {
-        mockHttp.calls.push(requestArgs)
-        return mockHttp.mockReturnValue
-      },
-    }
-  }
-  return originalRequire.apply(this, args)
-}
-
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('pushgateway with path and %s registry', (tag, regType) => {
   const Pushgateway = require('../index').Pushgateway
   const register = require('../index').register
   let instance
+  let request
   let registry = undefined
 
   beforeEach(() => {
     register.setContentType(regType)
+    request = vi
+      .spyOn(http, 'request')
+      .mockImplementation((_options, onResponse) => {
+        const response = new PassThrough()
+        response.statusCode = 200
+        return {
+          on() {},
+          write() {},
+          end() {
+            onResponse(response)
+            response.end()
+          },
+        }
+      })
   })
 
-  const tests = function () {
+  function tests() {
     describe('pushAdd', () => {
-      it('should push metrics', () => {
-        instance.pushAdd({ jobName: 'testJob' })
+      it('should push metrics', async () => {
+        await instance.pushAdd({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'POST')
         assert.strictEqual(invocation.path, '/path/metrics/job/testJob')
       })
 
-      it('should use groupings', () => {
-        instance.pushAdd({ jobName: 'testJob', groupings: { key: 'value' } })
+      it('should use groupings', async () => {
+        await instance.pushAdd({
+          jobName: 'testJob',
+          groupings: { key: 'value' },
+        })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'POST')
         assert.strictEqual(
           invocation.path,
@@ -77,11 +65,14 @@ describeEach([
         )
       })
 
-      it('should escape groupings', () => {
-        instance.pushAdd({ jobName: 'testJob', groupings: { key: 'va&lue' } })
+      it('should escape groupings', async () => {
+        await instance.pushAdd({
+          jobName: 'testJob',
+          groupings: { key: 'va&lue' },
+        })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'POST')
         assert.strictEqual(
           invocation.path,
@@ -91,31 +82,31 @@ describeEach([
     })
 
     describe('push', () => {
-      it('should push with PUT', () => {
-        instance.push({ jobName: 'testJob' })
+      it('should push with PUT', async () => {
+        await instance.push({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'PUT')
         assert.strictEqual(invocation.path, '/path/metrics/job/testJob')
       })
 
-      it('should uri encode url', () => {
-        instance.push({ jobName: 'test&Job' })
+      it('should uri encode url', async () => {
+        await instance.push({ jobName: 'test&Job' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'PUT')
         assert.strictEqual(invocation.path, '/path/metrics/job/test%26Job')
       })
     })
 
     describe('delete', () => {
-      it('should push delete with no body', () => {
-        instance.delete({ jobName: 'testJob' })
+      it('should push delete with no body', async () => {
+        await instance.delete({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'DELETE')
         assert.strictEqual(invocation.path, '/path/metrics/job/testJob')
       })
@@ -134,35 +125,35 @@ describeEach([
         )
       })
 
-      it('pushAdd should send POST request with basic auth data', () => {
-        instance.pushAdd({ jobName: 'testJob' })
+      it('pushAdd should send POST request with basic auth data', async () => {
+        await instance.pushAdd({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'POST')
         assert.strictEqual(invocation.auth, auth)
       })
 
-      it('push should send PUT request with basic auth data', () => {
-        instance.push({ jobName: 'testJob' })
+      it('push should send PUT request with basic auth data', async () => {
+        await instance.push({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'PUT')
         assert.strictEqual(invocation.auth, auth)
       })
 
-      it('delete should send DELETE request with basic auth data', () => {
-        instance.delete({ jobName: 'testJob' })
+      it('delete should send DELETE request with basic auth data', async () => {
+        await instance.delete({ jobName: 'testJob' })
 
-        assert.strictEqual(mockHttp.calls.length, 1)
-        const invocation = mockHttp.calls[0][0]
+        assert.strictEqual(request.mock.calls.length, 1)
+        const invocation = request.mock.calls[0][0]
         assert.strictEqual(invocation.method, 'DELETE')
         assert.strictEqual(invocation.auth, auth)
       })
     })
 
-    it('should be possible to extend http/s requests with options', () => {
+    it('should be possible to extend http/s requests with options', async () => {
       instance = new Pushgateway(
         pushGatewayFullURL,
         {
@@ -173,16 +164,15 @@ describeEach([
         registry,
       )
 
-      instance.push({ jobName: 'testJob' })
+      await instance.push({ jobName: 'testJob' })
 
-      assert.strictEqual(mockHttp.calls.length, 1)
-      const invocation = mockHttp.calls[0][0]
+      assert.strictEqual(request.mock.calls.length, 1)
+      const invocation = request.mock.calls[0][0]
       assert.deepStrictEqual(invocation.headers, { 'unit-test': '1' })
     })
   }
   describe('global registry', () => {
     afterEach(() => {
-      mockHttp.mockClear()
       register.clear()
     })
     beforeEach(() => {
@@ -195,9 +185,6 @@ describeEach([
     tests()
   })
   describe('registry instance', () => {
-    afterEach(() => {
-      mockHttp.mockClear()
-    })
     beforeEach(() => {
       registry = new Registry(regType)
       instance = new Pushgateway(pushGatewayFullURL, null, registry)

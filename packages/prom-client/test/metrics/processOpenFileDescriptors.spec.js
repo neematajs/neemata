@@ -1,29 +1,20 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, beforeAll } from 'vitest'
 
-const {
-  describe,
-  it,
-  beforeEach,
-  afterEach,
-  before,
-  after,
-} = require('node:test')
 const assert = require('node:assert')
-const { describeEach } = require('../helpers')
 
 const Registry = require('../../index').Registry
 
 // Note: This metric only works on Linux - skip tests on other platforms
 const isLinux = process.platform === 'linux'
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('processOpenFileDescriptors with %s registry', (tag, regType) => {
   const register = require('../../index').register
   const processOpenFileDescriptors = require('../../lib/metrics/processOpenFileDescriptors')
 
-  before(() => {
+  beforeAll(() => {
     register.clear()
   })
 

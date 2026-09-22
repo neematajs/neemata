@@ -1,6 +1,5 @@
-'use strict'
+import { describe, it, beforeEach } from 'vitest'
 
-const { describe, it, beforeEach } = require('node:test')
 const assert = require('node:assert')
 
 describe('bucketGenerators', () => {
@@ -25,7 +24,7 @@ describe('bucketGenerators', () => {
       assert.strictEqual(result[4] - result[3], 50)
     })
     it('should not allow negative count', () => {
-      const fn = function () {
+      function fn() {
         linearBuckets(2, 1, 0)
       }
       assert.throws(fn, Error)
@@ -54,19 +53,19 @@ describe('bucketGenerators', () => {
     })
 
     it('should not allow factor of equal or less than 1', () => {
-      const fn = function () {
+      function fn() {
         exponentialBuckets(1, 1, 5)
       }
       assert.throws(fn, Error)
     })
     it('should not allow negative start', () => {
-      const fn = function () {
+      function fn() {
         exponentialBuckets(0, 1, 5)
       }
       assert.throws(fn, Error)
     })
     it('should not allow negative count', () => {
-      const fn = function () {
+      function fn() {
         exponentialBuckets(2, 10, 0)
       }
       assert.throws(fn, Error)

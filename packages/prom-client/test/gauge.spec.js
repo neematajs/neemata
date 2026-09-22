@@ -1,14 +1,12 @@
-'use strict'
+import { describe, it, beforeEach, afterEach, vi } from 'vitest'
 
-const { describe, it, beforeEach, afterEach } = require('node:test')
 const assert = require('node:assert')
-const { describeEach, timers } = require('./helpers')
 const errorMessages = require('./error-messages')
 
 const { Metric } = require('../lib/metric')
 const Registry = require('../index').Registry
 
-describeEach([
+describe.each([
   ['Prometheus', Registry.PROMETHEUS_CONTENT_TYPE],
   ['OpenMetrics', Registry.OPENMETRICS_CONTENT_TYPE],
 ])('gauge with %s registry', (tag, regType) => {
@@ -18,6 +16,10 @@ describeEach([
 
   beforeEach(() => {
     globalRegistry.setContentType(regType)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   describe('global registry', () => {
@@ -113,30 +115,26 @@ describeEach([
       })
 
       it('should start a timer and set a gauge to elapsed in seconds', async () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
 
         const doneFn = instance.startTimer()
-        timers.advanceTimersByTime(500)
+        vi.advanceTimersByTime(500)
         const dur = doneFn()
         await expectValue(0.5)
         assert.strictEqual(dur, 0.5)
-
-        timers.useRealTimers()
       })
 
       it('should set to current time', async () => {
-        timers.useFakeTimers()
-        timers.setSystemTime(0)
+        vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+        vi.setSystemTime(0)
 
         instance.setToCurrentTime()
         await expectValue(Date.now() / 1000)
-
-        timers.useRealTimers()
       })
 
       it('should not allow non numbers', () => {
-        const fn = function () {
+        function fn() {
           instance.set('asd')
         }
         try {
@@ -177,35 +175,29 @@ describeEach([
           await expectValue(500)
         })
         it('should be able to set value to current time', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
 
           instance.labels('200').setToCurrentTime()
           await expectValue(Date.now() / 1000)
-
-          timers.useRealTimers()
         })
         it('should be able to start a timer', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
 
           const end = instance.labels('200').startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end()
           await expectValue(1)
-
-          timers.useRealTimers()
         })
         it('should be able to start a timer and set labels afterwards', async () => {
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
 
           const end = instance.startTimer()
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ code: 200 })
           await expectValue(1)
-
-          timers.useRealTimers()
         })
         it('should allow labels before and after timers', async () => {
           instance = new Gauge({
@@ -213,15 +205,13 @@ describeEach([
             help: 'help',
             labelNames: ['code', 'success'],
           })
-          timers.useFakeTimers()
-          timers.setSystemTime(0)
+          vi.useFakeTimers({ toFake: ['Date', 'hrtime'] })
+          vi.setSystemTime(0)
 
           const end = instance.startTimer({ code: 200 })
-          timers.advanceTimersByTime(1000)
+          vi.advanceTimersByTime(1000)
           end({ success: 'SUCCESS' })
           await expectValue(1)
-
-          timers.useRealTimers()
         })
         it('should not mutate passed startLabels', () => {
           const startLabels = { code: '200' }
