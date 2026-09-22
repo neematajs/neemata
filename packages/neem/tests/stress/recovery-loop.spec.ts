@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { RuntimeEvent, SpawnedNeem } from '../e2e/support/e2e.ts'
 import {
@@ -12,22 +12,14 @@ import {
   waitFor,
 } from '../e2e/support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem recovery stress', () => {
   it('recovers repeated worker crashes and returns health to ready', async () => {
-    const fixture = await useFixture({ config: 'recovery-proxy' })
+    const fixture = await createNeemFixture({ config: 'recovery-proxy' })
     const [proxyPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-stress-marker')
     await rm(markerFile, { force: true })
 
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -64,8 +56,8 @@ describe('Neem recovery stress', () => {
   }, 120_000)
 
   it('bounds slow host stop with harness kill-after diagnostics', async () => {
-    const fixture = await useFixture({ config: 'host-stop-hang' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'host-stop-hang' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -88,21 +80,6 @@ describe('Neem recovery stress', () => {
     )
   }, 120_000)
 })
-
-async function useFixture(options: { config: string }) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
 
 async function expectProxyAttempt(
   proxyPort: number,

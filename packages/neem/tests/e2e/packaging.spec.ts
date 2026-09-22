@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process'
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
+import { createTempDir } from '../support/temp.ts'
 import {
   expectFile,
   readRuntimeEvents,
@@ -22,9 +22,6 @@ type CommandResult = {
   stderr: string
 }
 
-const tempDirs: string[] = []
-const spawned: SpawnedNeem[] = []
-
 const e2eDir = import.meta.dirname
 const neemPackageDir = resolve(e2eDir, '../..')
 const workspaceRoot = resolve(neemPackageDir, '../..')
@@ -35,13 +32,6 @@ const stagedPackages: readonly WorkspacePackage[] = ['common', 'neem']
 const internalPackageDirs = new Map<string, WorkspacePackage>([
   ['@nmtjs/common', 'common'],
 ])
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((node) => node.stop()))
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-})
 
 describe('Neem package consumer smoke', () => {
   it('typechecks NodeNext imports, builds, and starts through the package boundary', async () => {
@@ -79,13 +69,10 @@ describe('Neem package consumer smoke', () => {
     await runPnpm(['run', 'build'], fixture.consumerDir, 90_000)
     await expectFile(resolve(fixture.consumerDir, 'dist/start.js'))
 
-    const node = spawnTrackedNode(
-      [resolve(fixture.consumerDir, 'dist/start.js')],
-      {
-        cwd: fixture.consumerDir,
-        env: { NEEM_PACKAGING_EVENTS_FILE: fixture.eventsFile },
-      },
-    )
+    const node = spawnNode([resolve(fixture.consumerDir, 'dist/start.js')], {
+      cwd: fixture.consumerDir,
+      env: { NEEM_PACKAGING_EVENTS_FILE: fixture.eventsFile },
+    })
 
     const events = await waitFor(
       async () => {
@@ -115,8 +102,7 @@ async function createConsumerFixture(): Promise<{
   consumerDir: string
   eventsFile: string
 }> {
-  const rootDir = await mkdtemp(resolve(tmpdir(), 'neem-packaging-'))
-  tempDirs.push(rootDir)
+  const rootDir = await createTempDir('neem-packaging-')
 
   const consumerDir = resolve(rootDir, 'consumer')
   const packagesDir = resolve(rootDir, 'packages')
@@ -259,6 +245,9 @@ function spawnCommand(
       env: process.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    const closed = new Promise<void>((resolveClosed) => {
+      child.once('close', () => resolveClosed())
+    })
 
     const timeout = setTimeout(() => {
       if (settled) return
@@ -274,6 +263,16 @@ function spawnCommand(
         ),
       )
     }, options.timeoutMs)
+
+    // A command timeout rejects before the child has necessarily exited.
+    // Wait for its handles to close before the fixture directory is removed.
+    onTestFinished(async () => {
+      clearTimeout(timeout)
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL')
+      }
+      await closed
+    })
 
     child.stdout?.on('data', (chunk) => {
       stdout += String(chunk)
@@ -294,15 +293,6 @@ function spawnCommand(
       resolveCommand({ code, signal, stdout, stderr })
     })
   })
-}
-
-function spawnTrackedNode(
-  args: readonly string[],
-  options: Parameters<typeof spawnNode>[1],
-): SpawnedNeem {
-  const node = spawnNode(args, options)
-  spawned.push(node)
-  return node
 }
 
 function formatSpawnedOutput(neem: SpawnedNeem): string {

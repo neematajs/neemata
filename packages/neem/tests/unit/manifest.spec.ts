@@ -1,8 +1,7 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readdir, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type {
   CompiledGraph,
@@ -20,14 +19,7 @@ import {
   validateManifest,
   writeStartEntries,
 } from '../../src/internal/manifest/manifest.ts'
-
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true })),
-  )
-})
+import { createTempDir } from '../support/temp.ts'
 
 describe('Neem manifest', () => {
   it('rejects manifest paths outside the output directory', () => {
@@ -79,7 +71,7 @@ describe('Neem manifest', () => {
   })
 
   it('writes root and per-runtime production start entries', async () => {
-    const outDir = await useTempDir()
+    const outDir = await createTempDir('neem-manifest-')
 
     await writeStartEntries(outDir, ['api', 'jobs'])
 
@@ -95,7 +87,7 @@ describe('Neem manifest', () => {
   })
 
   it('writes scoped runtime start entries in a single safe directory', async () => {
-    const outDir = await useTempDir()
+    const outDir = await createTempDir('neem-manifest-')
 
     await writeStartEntries(outDir, ['@scope/api'])
 
@@ -110,7 +102,7 @@ describe('Neem manifest', () => {
   })
 
   it('encodes traversal runtime names without escaping the output directory', async () => {
-    const outDir = await useTempDir()
+    const outDir = await createTempDir('neem-manifest-')
 
     await writeStartEntries(outDir, ['..'])
 
@@ -199,12 +191,6 @@ describe('Neem manifest', () => {
     )
   })
 })
-
-async function useTempDir(): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), 'neem-manifest-'))
-  tempDirs.push(dir)
-  return dir
-}
 
 function rootStartEntry(): string {
   return [

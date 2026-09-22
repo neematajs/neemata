@@ -1,9 +1,9 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { RuntimeEvent, SpawnedNeem } from '../e2e/support/e2e.ts'
+import type { RuntimeEvent } from '../e2e/support/e2e.ts'
 import {
   createNeemFixture,
   readRuntimeEvents,
@@ -12,17 +12,9 @@ import {
   waitFor,
 } from '../e2e/support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem reload storm stress', () => {
   it('converges rapid worker, logger, and plugin edits to the final state', async () => {
-    const fixture = await useFixture({ config: 'plugin' })
+    const fixture = await createNeemFixture({ config: 'plugin' })
     const workerFile = resolve(
       fixture.fixtureDir,
       'shared/workers/generic-runtime.ts',
@@ -32,7 +24,7 @@ describe('Neem reload storm stress', () => {
       fixture.fixtureDir,
       'shared/support/plugin-hooks.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -79,21 +71,6 @@ describe('Neem reload storm stress', () => {
     await neem.stop()
   }, 120_000)
 })
-
-async function useFixture(options: { config: string }) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
 
 function setRuntimeStartMarker(content: string, marker: string): string {
   const pattern =

@@ -2,7 +2,7 @@ import { appendFile, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
@@ -15,17 +15,9 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem v2 services', () => {
   it('writes manifest and standalone start entries', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
 
     await runNeem([
       'build',
@@ -55,7 +47,7 @@ describe('Neem v2 services', () => {
   })
 
   it('starts built output without importing source config', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
 
     await runNeem([
       'build',
@@ -69,7 +61,7 @@ describe('Neem v2 services', () => {
       "throw new Error('source config must not be imported by start')\n",
     )
 
-    const neem = spawnTrackedNeem(['start', '--outDir', fixture.outDir], {
+    const neem = spawnNeem(['start', '--outDir', fixture.outDir], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
@@ -79,7 +71,7 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('runs generated production runtime wrappers', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
 
     await runNeem([
       'build',
@@ -89,18 +81,17 @@ describe('Neem v2 services', () => {
       fixture.outDir,
     ])
 
-    const node = spawnTrackedNode(
-      [resolve(fixture.outDir, 'runtimes/api/start.js')],
-      { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
-    )
+    const node = spawnNode([resolve(fixture.outDir, 'runtimes/api/start.js')], {
+      env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
+    })
     await waitForEventCount(fixture.eventsFile, 'start', 2)
 
     await node.stop()
   }, 60_000)
 
   it('starts watcher/runtime services and shuts them down gracefully', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -124,8 +115,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('passes merged env defaults to planner, host, and worker threads', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -161,8 +152,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('imports dev config in the watcher worker, not the CLI main thread', async () => {
-    const fixture = await useFixture({ config: 'config-import' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'config-import' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -178,8 +169,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('restarts watcher and runtime after config invalidation', async () => {
-    const fixture = await useFixture({ config: 'config-import' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'config-import' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -201,9 +192,9 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('emits lifecycle logs and manifest config trace', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
     const logsFile = resolve(fixture.dir, 'logs.jsonl')
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -255,9 +246,9 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('reports readiness as unavailable while runtimes are still starting', async () => {
-    const fixture = await useFixture({ config: 'health-slow' })
+    const fixture = await createNeemFixture({ config: 'health-slow' })
     const port = await getFreePort()
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -289,9 +280,9 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('serves health and readiness probes from the runtime service', async () => {
-    const fixture = await useFixture({ config: 'health' })
+    const fixture = await createNeemFixture({ config: 'health' })
     const port = await getFreePort()
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -325,10 +316,10 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('serves metrics from the metrics plugin and restarts without leaking the port', async () => {
-    const fixture = await useFixture({ config: 'metrics' })
+    const fixture = await createNeemFixture({ config: 'metrics' })
     const port = await getFreePort()
     const logsFile = resolve(fixture.dir, 'metrics-logs.jsonl')
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -384,10 +375,10 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('routes traffic through the native proxy to runtime upstreams', async () => {
-    const fixture = await useFixture({ config: 'proxy' })
+    const fixture = await createNeemFixture({ config: 'proxy' })
     const proxyPort = await getFreePort()
     const upstreamPort = await getFreePort()
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -418,12 +409,12 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('reloads a runtime when its host artifact changes', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
     const hostFile = resolve(
       fixture.fixtureDir,
       'cases/generic-runtime/jobs.host.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -444,12 +435,12 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('replaces worker generations when their artifact changes', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
     const workerFile = resolve(
       fixture.fixtureDir,
       'shared/workers/runtime-app.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -473,9 +464,9 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('reloads all runtimes when the logger artifact changes', async () => {
-    const fixture = await useFixture({ config: 'logger-reload' })
+    const fixture = await createNeemFixture({ config: 'logger-reload' })
     const loggerFile = resolve(fixture.fixtureDir, 'shared/support/logger.ts')
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -499,12 +490,12 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('restarts runtime service when plugin artifacts change', async () => {
-    const fixture = await useFixture({ config: 'plugin' })
+    const fixture = await createNeemFixture({ config: 'plugin' })
     const pluginFile = resolve(
       fixture.fixtureDir,
       'shared/support/plugin-hooks.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -531,8 +522,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('fails startup when a plugin hook throws and disposes plugin hooks once', async () => {
-    const fixture = await useFixture({ config: 'throwing-plugin' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'throwing-plugin' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -548,8 +539,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('runs host-only zero-thread runtimes', async () => {
-    const fixture = await useFixture({ config: 'host-only' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'host-only' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -565,10 +556,10 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('restarts the whole runtime after a host failure', async () => {
-    const fixture = await useFixture({ config: 'host-fail-once' })
+    const fixture = await createNeemFixture({ config: 'host-fail-once' })
     const markerFile = resolve(fixture.dir, 'host-fail-once-marker')
     await rm(markerFile, { force: true })
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -587,10 +578,10 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('restarts the whole runtime after a worker failure', async () => {
-    const fixture = await useFixture({ config: 'fail-once' })
+    const fixture = await createNeemFixture({ config: 'fail-once' })
     const markerFile = resolve(fixture.dir, 'fail-once-marker')
     await rm(markerFile, { force: true })
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -609,7 +600,7 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('fails fast for unknown selected runtimes', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
     const neem = spawnNeem([
       'build',
       'missing',
@@ -625,8 +616,8 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('starts only selected dev runtimes', async () => {
-    const fixture = await useFixture({ config: 'selection' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'selection' })
+    const neem = spawnNeem(
       [
         'dev',
         'jobs',
@@ -656,7 +647,7 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('starts only the selected generated runtime wrapper', async () => {
-    const fixture = await useFixture({ config: 'selection' })
+    const fixture = await createNeemFixture({ config: 'selection' })
 
     await runNeem([
       'build',
@@ -666,7 +657,7 @@ describe('Neem v2 services', () => {
       fixture.outDir,
     ])
 
-    const node = spawnTrackedNode(
+    const node = spawnNode(
       [resolve(fixture.outDir, 'runtimes/jobs/start.js')],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -687,7 +678,7 @@ describe('Neem v2 services', () => {
   }, 60_000)
 
   it('fails fast when a production manifest contains invalid paths', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
 
     await runNeem([
       'build',
@@ -710,30 +701,6 @@ describe('Neem v2 services', () => {
     )
   }, 60_000)
 })
-
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
-
-function spawnTrackedNode(
-  args: readonly string[],
-  options: Parameters<typeof spawnNode>[1],
-): SpawnedNeem {
-  const node = spawnNode(args, options)
-  spawned.push(node)
-  return node
-}
 
 async function waitForEventCount(
   file: string,

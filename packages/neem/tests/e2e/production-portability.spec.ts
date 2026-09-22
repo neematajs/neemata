@@ -1,9 +1,10 @@
-import { cp, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
+import { createTempDir } from '../support/temp.ts'
 import {
   createNeemFixture,
   readRuntimeEvents,
@@ -12,25 +13,13 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const tempDirs: string[] = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((node) => node.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-})
-
 describe('Neem production portability', () => {
   it('starts a copied production build after original source fixtures are removed', async () => {
     const { copiedOutDir, fixture } = await buildCopiedFixture({
       config: 'plugin',
     })
 
-    const node = spawnTrackedNode([resolve(copiedOutDir, 'start.js')], {
+    const node = spawnNode([resolve(copiedOutDir, 'start.js')], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
 
@@ -74,10 +63,9 @@ describe('Neem production portability', () => {
       config: 'plugin',
     })
 
-    const node = spawnTrackedNode(
-      [resolve(copiedOutDir, 'runtimes/api/start.js')],
-      { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
-    )
+    const node = spawnNode([resolve(copiedOutDir, 'runtimes/api/start.js')], {
+      env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
+    })
 
     const events = await waitFor(
       async () => {
@@ -109,7 +97,7 @@ describe('Neem production portability', () => {
       config: 'host-only',
     })
 
-    const node = spawnTrackedNode([resolve(copiedOutDir, 'start.js')], {
+    const node = spawnNode([resolve(copiedOutDir, 'start.js')], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
 
@@ -142,10 +130,13 @@ describe('Neem production portability', () => {
 
 async function buildCopiedFixture(options: { config: string }): Promise<{
   copiedOutDir: string
-  fixture: Awaited<ReturnType<typeof useFixture>>
+  fixture: Awaited<ReturnType<typeof createNeemFixture>>
 }> {
-  const fixture = await useFixture({ config: options.config })
-  const portableRoot = await useTempDir()
+  const fixture = await createNeemFixture({ config: options.config })
+  const portableRoot = await createTempDir(
+    'portable-',
+    resolve(import.meta.dirname, '.tmp'),
+  )
   const copiedOutDir = resolve(portableRoot, 'dist')
 
   await runNeem([
@@ -163,29 +154,6 @@ async function buildCopiedFixture(options: { config: string }): Promise<{
   await rm(fixture.fixtureDir, { recursive: true, force: true })
 
   return { copiedOutDir, fixture }
-}
-
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-async function useTempDir(): Promise<string> {
-  const tempRoot = resolve(import.meta.dirname, '.tmp')
-  await mkdir(tempRoot, { recursive: true })
-  const dir = await mkdtemp(resolve(tempRoot, 'portable-'))
-  tempDirs.push(dir)
-  return dir
-}
-
-function spawnTrackedNode(
-  args: readonly string[],
-  options: Parameters<typeof spawnNode>[1],
-): SpawnedNeem {
-  const node = spawnNode(args, options)
-  spawned.push(node)
-  return node
 }
 
 function formatSpawnedOutput(neem: SpawnedNeem): string {

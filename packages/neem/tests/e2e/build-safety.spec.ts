@@ -1,22 +1,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from './support/e2e.ts'
 import { createNeemFixture, spawnNeem } from './support/e2e.ts'
-
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
 
 describe('Neem build output safety', () => {
   it('preserves existing output when runtime declaration resolution fails', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
     await mkdir(fixture.outDir, { recursive: true })
     const previousStart = resolve(fixture.outDir, 'start.js')
     await writeFile(previousStart, 'previous deploy output\n')
@@ -32,7 +23,7 @@ describe('Neem build output safety', () => {
       ].join('\n'),
     )
 
-    const neem = spawnTrackedNeem([
+    const neem = spawnNeem([
       'build',
       '--config',
       fixture.configFile,
@@ -49,9 +40,9 @@ describe('Neem build output safety', () => {
   }, 60_000)
 
   it('writes selected runtime names into both manifest runtime maps', async () => {
-    const fixture = await useFixture({ config: 'selection' })
+    const fixture = await createNeemFixture({ config: 'selection' })
 
-    const neem = spawnTrackedNeem([
+    const neem = spawnNeem([
       'build',
       'jobs',
       '--config',
@@ -73,12 +64,12 @@ describe('Neem build output safety', () => {
   }, 60_000)
 
   it('rejects writing build output into the config directory', async () => {
-    const fixture = await useFixture()
+    const fixture = await createNeemFixture()
     const cwd = resolve(fixture.fixtureDir, 'cases/runtime')
     const sentinel = resolve(cwd, 'sentinel.txt')
     await writeFile(sentinel, 'source tree data\n')
 
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['build', '--config', 'neem.config.ts', '--outDir', '.'],
       { cwd },
     )
@@ -91,18 +82,3 @@ describe('Neem build output safety', () => {
     await expect(readFile(sentinel, 'utf8')).resolves.toBe('source tree data\n')
   }, 60_000)
 })
-
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1] = {},
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}

@@ -75,6 +75,5 @@ export async function expectEnvironment(options: {
     expect(neem.stdout()).not.toContain('injecting env')
   } finally {
     await neem?.stop()
-    await fixture.cleanup()
   }
 }

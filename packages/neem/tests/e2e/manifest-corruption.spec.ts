@@ -1,13 +1,9 @@
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from './support/e2e.ts'
 import { createNeemFixture, runNeem, spawnNeem } from './support/e2e.ts'
-
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
 
 type CorruptibleManifest = Record<string, unknown> & {
   config?: Record<string, unknown> & {
@@ -20,11 +16,6 @@ type CorruptibleManifest = Record<string, unknown> & {
     { host?: { file?: unknown }; planner?: { file?: unknown } }
   >
 }
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
 
 describe('Neem production manifest corruption diagnostics', () => {
   it('fails production start with a parse diagnostic when manifest JSON is invalid', async () => {
@@ -157,7 +148,6 @@ describe('Neem production manifest corruption diagnostics', () => {
 
 async function buildFixture(options: { config?: string } = {}) {
   const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
   await runNeem([
     'build',
     '--config',
@@ -173,7 +163,6 @@ async function startExpectingFailure(outDir: string): Promise<{
   output: string
 }> {
   const neem = spawnNeem(['start', '--outDir', outDir])
-  spawned.push(neem)
   const exit = await neem.waitForExit()
   return { exit, output: [neem.stdout(), neem.stderr()].join('\n') }
 }

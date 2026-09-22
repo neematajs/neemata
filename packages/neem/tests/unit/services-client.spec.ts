@@ -1,28 +1,31 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from 'vitest'
 
 import { WorkerServiceClient } from '../../src/internal/services/client.ts'
+import { createTempDir } from '../support/temp.ts'
 
-const tempDirs: string[] = []
 let previousRequestTimeout: string | undefined
 
 beforeEach(() => {
   previousRequestTimeout = process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS
 })
 
-afterEach(async () => {
+afterEach(() => {
   if (previousRequestTimeout === undefined) {
     delete process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS
   } else {
     process.env.NEEM_WORKER_SERVICE_REQUEST_TIMEOUT_MS = previousRequestTimeout
   }
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
 })
 
 describe('WorkerServiceClient', () => {
@@ -42,6 +45,7 @@ describe('WorkerServiceClient', () => {
       entry,
       serviceName: 'test-service',
     })
+    onTestFinished(() => client.stop())
 
     await expect(client.request({ type: 'hang' })).rejects.toThrow(
       'Neem worker service request [test-service:hang] timed out after 50ms',
@@ -62,6 +66,7 @@ describe('WorkerServiceClient', () => {
       serviceName: 'test-service',
       onFailure: () => {},
     })
+    onTestFinished(() => client.stop())
 
     const hanging = client.request({ type: 'hang' })
     hanging.catch(() => {})
@@ -79,8 +84,7 @@ describe('WorkerServiceClient', () => {
 })
 
 async function createWorkerEntry(source: string): Promise<URL> {
-  const dir = await mkdtemp(resolve(tmpdir(), 'neem-service-client-'))
-  tempDirs.push(dir)
+  const dir = await createTempDir('neem-service-client-')
   const file = resolve(dir, 'worker.mjs')
   await writeFile(file, source)
   return pathToFileURL(file)
