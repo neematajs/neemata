@@ -75,9 +75,17 @@ async function runSuite(name, collectReport) {
 
   await mkdir(dirname(output), { recursive: true })
   const rawOutput = `${output}.vitest.json`
-  await runCommand('pnpm', [...vitestArguments, '--outputJson', rawOutput], {
-    cwd: root,
-  })
+  await runCommand(
+    'pnpm',
+    [
+      ...vitestArguments,
+      '--reporter=default',
+      '--reporter=json',
+      '--outputFile',
+      rawOutput,
+    ],
+    { cwd: root },
+  )
 
   const rawReport = await readJson(rawOutput)
   await rm(rawOutput, { force: true })
@@ -108,33 +116,34 @@ function printLocalResults(name, cases) {
 
 function normalizeVitestReport(report, integration) {
   const cases = []
-  for (const file of report.files ?? []) {
-    const filePath = toPosixPath(relative(root, file.filepath))
-    for (const group of file.groups ?? []) {
-      const groupName = group.fullName.startsWith(`${filePath} > `)
-        ? group.fullName.slice(filePath.length + 3)
-        : group.fullName
-      for (const benchmark of group.benchmarks ?? []) {
-        if (!Number.isFinite(benchmark.median)) {
-          throw new Error(
-            `Benchmark ${filePath} > ${groupName} > ${benchmark.name} has no median`,
-          )
+  for (const file of report.testResults ?? []) {
+    const filePath = toPosixPath(relative(root, file.name))
+    for (const test of file.assertionResults ?? []) {
+      const groupName = [...test.ancestorTitles, test.title].join(' > ')
+      for (const benchmark of test.benchmarks ?? []) {
+        for (const task of benchmark.tasks ?? []) {
+          const latency = task.latency
+          if (!Number.isFinite(latency?.p50)) {
+            throw new Error(
+              `Benchmark ${filePath} > ${groupName} > ${task.name} has no median`,
+            )
+          }
+          cases.push({
+            category: integration ? 'integration' : 'runtime',
+            id: `${filePath} > ${groupName} > ${task.name}`,
+            metric: 'median',
+            name: `${groupName} > ${task.name}`,
+            statistics: {
+              mean: latency.mean,
+              p75: latency.p75,
+              p99: latency.p99,
+              relativeMarginOfError: latency.rme,
+              sampleCount: latency.samplesCount,
+            },
+            unit: 'ms/op',
+            value: latency.p50,
+          })
         }
-        cases.push({
-          category: integration ? 'integration' : 'runtime',
-          id: `${filePath} > ${groupName} > ${benchmark.name}`,
-          metric: 'median',
-          name: `${groupName} > ${benchmark.name}`,
-          statistics: {
-            mean: benchmark.mean,
-            p75: benchmark.p75,
-            p99: benchmark.p99,
-            relativeMarginOfError: benchmark.rme,
-            sampleCount: benchmark.sampleCount,
-          },
-          unit: 'ms/op',
-          value: benchmark.median,
-        })
       }
     }
   }

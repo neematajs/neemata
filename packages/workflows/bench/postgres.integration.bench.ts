@@ -1,5 +1,5 @@
 import * as Schema from 'effect/Schema'
-import { bench, describe } from 'vitest'
+import { test } from 'vitest'
 
 import type { WorkflowPostgresConnection } from '../src/adapters/postgres.ts'
 import type { WorkflowRuntimeClient } from '../src/runtime/index.ts'
@@ -32,34 +32,38 @@ const workflow = defineWorkflow({
 
 requireServiceEnv(postgresTarget)
 
-describe.skipIf(!postgresTarget.url)('Postgres workflow persistence', () => {
-  let harness: PostgresWorkflowHarness | undefined
-  let client: WorkflowRuntimeClient<WorkflowPostgresConnection> | undefined
+test.skipIf(!postgresTarget.url)(
+  'Postgres workflow persistence',
+  async ({ bench }) => {
+    let harness: PostgresWorkflowHarness | undefined
+    let client: WorkflowRuntimeClient<WorkflowPostgresConnection> | undefined
 
-  async function setup() {
-    if (harness) return
-    harness = await createPostgresWorkflowHarness(postgresTarget)
-    client = createWorkflowRuntimeClient(harness.runtime)
-  }
+    async function setup() {
+      if (harness) return
+      harness = await createPostgresWorkflowHarness(postgresTarget)
+      client = createWorkflowRuntimeClient(harness.runtime)
+    }
 
-  async function teardown() {
-    const runningHarness = harness
-    harness = undefined
-    client = undefined
-    await runningHarness?.cleanup()
-  }
+    async function teardown() {
+      const runningHarness = harness
+      harness = undefined
+      client = undefined
+      await runningHarness?.cleanup()
+    }
 
-  bench(
-    `persists ${startsPerSample} workflow starts`,
-    async () => {
-      await Promise.all(inputs.map((input) => client!.start(workflow, input)))
-    },
-    {
-      ...benchmarkOptions,
-      setup,
-      teardown: (_task, mode) => {
-        if (mode === 'run') return teardown()
-      },
-    },
-  )
-})
+    // Tinybench skips afterAll hooks when an iteration throws.
+    try {
+      await bench(
+        `persists ${startsPerSample} workflow starts`,
+        { beforeAll: setup },
+        async () => {
+          await Promise.all(
+            inputs.map((input) => client!.start(workflow, input)),
+          )
+        },
+      ).run(benchmarkOptions)
+    } finally {
+      await teardown()
+    }
+  },
+)

@@ -13,8 +13,7 @@ export default defineConfig({
       enabled: true,
       exclude: ['**/*.integration.bench.ts'],
       include: ['packages/*/bench/**/*.bench.ts'],
-      includeSamples: true,
-      reporters: ['default'],
+      retainSamples: true,
     },
   },
 })
