@@ -122,6 +122,7 @@ describe('retention with unreaped dead commands', () => {
         store: runtime.store,
         attemptExecutor: runtime.attemptExecutor,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
+        workflows: [],
       }),
     ).resolves.toStrictEqual({ reaped: 1 })
     expect((await runtime.store.loadRunSnapshot(run.id))?.run.status).toBe(

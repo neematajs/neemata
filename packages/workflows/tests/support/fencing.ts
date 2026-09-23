@@ -243,7 +243,9 @@ export function defineClaimFencingTests(
     // The expired claim exhausts the delivery budget and dead-letters.
     await expect(claim(runtime, 'B', 30_000)).resolves.toBeNull()
 
-    await expect(reapDeadWorkflowCommands(runtime)).resolves.toEqual({
+    await expect(
+      reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).resolves.toEqual({
       reaped: 1,
     })
     expect(await loadAttempt(runtime, run.id)).toMatchObject({

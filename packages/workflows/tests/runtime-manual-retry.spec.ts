@@ -863,7 +863,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
       expect(staleBatch).toHaveLength(1)
       const loadSnapshot = vi.spyOn(runtime.store, 'loadRunSnapshot')
       const loadRuns = vi.spyOn(runtime.store, 'loadRuns')
-      await reapDeadWorkflowCommands(runtime)
+      await reapDeadWorkflowCommands({ ...runtime, workflows: [] })
       expect(loadSnapshot).toHaveBeenCalledTimes(1)
       expect(loadRuns).not.toHaveBeenCalled()
       loadSnapshot.mockRestore()
@@ -872,6 +872,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
       const retried = await client.get(run.id)
       await reapDeadWorkflowCommands({
         ...runtime,
+        workflows: [],
         store: {
           ...runtime.store,
           listUnreapedDeadCommands: (params) =>

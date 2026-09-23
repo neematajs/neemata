@@ -349,7 +349,9 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     await deadLetter(runtime, names)
     expect((await client.get(run.id))!.run.status).toBe('running')
 
-    await expect(reapDeadWorkflowCommands(runtime)).resolves.toEqual({
+    await expect(
+      reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).resolves.toEqual({
       reaped: 1,
     })
     const snapshot = (await client.get(run.id))!
@@ -396,7 +398,9 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     await deadLetter(runtime, names)
     expect(runtime.inspect().continueRunCommands).toHaveLength(0)
 
-    await expect(reapDeadWorkflowCommands(runtime)).resolves.toEqual({
+    await expect(
+      reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).resolves.toEqual({
       reaped: 1,
     })
     expect(
@@ -449,7 +453,9 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     ).rejects.toThrow('injected write failure')
     await deadLetter(runtime, names)
 
-    await expect(reapDeadWorkflowCommands(runtime)).resolves.toEqual({
+    await expect(
+      reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).resolves.toEqual({
       reaped: 1,
     })
     await runWorkflowWorker(workers)
@@ -493,7 +499,9 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       runtime.inspect().taskCommands.map(({ payload }) => payload.attemptId)
     expect(commandAttemptIds()).toStrictEqual([failed!.id])
 
-    await expect(reapDeadWorkflowCommands(runtime)).resolves.toEqual({
+    await expect(
+      reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).resolves.toEqual({
       reaped: 1,
     })
     expect(commandAttemptIds()).toStrictEqual([failed!.id, retry!.id])
@@ -503,6 +511,58 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       status: 'completed',
       output: 'x:2',
     })
+  })
+
+  it('keeps the backoff of an activity retry whose command was lost', async () => {
+    const workflow = defineWorkflow({
+      name: 'reaper.backoff.activity',
+      input: text,
+      output: text,
+    })
+      .activity('step', {
+        input: text,
+        output: text,
+        retry: { attempts: 2, delay: '1h' },
+      })
+      .build()
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .step(async () => {
+        throw new Error('first try fails')
+      })
+      .finish(({ step }) => step)
+    const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
+    const workers = { ...runtime, workflows: [implementation], tasks: [] }
+    await createWorkflowRuntimeClient(runtime).start(workflow, 'x')
+    await runWorkflowWorker({ ...workers, workerId: 'reaper' })
+    const names = { workflowNames: [workflow.name] }
+
+    await expect(
+      runActivityAttempt({
+        ...workers,
+        workerId: 'reaper',
+        leaseMs: LEASE_MS,
+        handlers: createHandlerRunner(),
+        claimed: (await claimAttempt(runtime, names))!,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          dispatchActivity: failingOnce((command, options) =>
+            runtime.attemptExecutor.dispatchActivity(command, options),
+          ),
+        },
+      }),
+    ).rejects.toThrow('injected write failure')
+    await deadLetter(runtime, names)
+    const retry = runtime
+      .inspect()
+      .attempts.find(({ retryAttemptNumber }) => retryAttemptNumber === 2)!
+
+    await expect(reapDeadWorkflowCommands(workers)).resolves.toEqual({
+      reaped: 1,
+    })
+    const [command] = runtime
+      .inspect()
+      .activityCommands.filter(({ payload }) => payload.attemptId === retry.id)
+    expect(command!.runAt).toBe(retry.dispatchedAt + HOUR_MS)
   })
 })
 

@@ -8,6 +8,7 @@ import type {
 import type {
   AnyWorkflowDefinition,
   BranchCaseDefinition,
+  RetryPolicy,
   Schema,
 } from '../../types/index.ts'
 import type { ActivityAttemptCommand, ClaimedAttempt } from '../commands.ts'
@@ -18,7 +19,10 @@ import { parseChildKey } from '../child-key.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { parseDurationMs } from '../duration.ts'
 import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
-import { createWorkflowRuntimeRegistry } from '../registry.ts'
+import {
+  createWorkflowRuntimeRegistry,
+  type WorkflowRuntimeRegistry,
+} from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import {
@@ -100,16 +104,11 @@ export async function runActivityAttempt(
         currentAttempt: snapshot?.attempts.find(
           (attempt) => attempt.id === storedChild?.currentAttemptId,
         ),
-        resolveRetry: () => {
-          const workflow = createWorkflowRuntimeRegistry({
-            workflows: input.workflows,
-          }).getWorkflow(command.workflowName) as
-            | WorkflowImplementation
-            | undefined
-          return (
-            workflow && resolveActivityAttemptNode(workflow, command)?.retry
-          )
-        },
+        resolveRetry: () =>
+          resolveActivityAttemptRetry(
+            createWorkflowRuntimeRegistry({ workflows: input.workflows }),
+            command,
+          ),
       }),
     )
   }
@@ -285,6 +284,17 @@ export async function runActivityAttempt(
     await scoped.attemptExecutor.ack(scoped.claimed)
     return { status: 'processed' }
   })
+}
+
+/** Only a task command carries its retry policy; an activity's is its node's. */
+export function resolveActivityAttemptRetry(
+  registry: WorkflowRuntimeRegistry,
+  command: ActivityAttemptCommand,
+): RetryPolicy | undefined {
+  const workflow = registry.getWorkflow(command.workflowName) as
+    | WorkflowImplementation
+    | undefined
+  return workflow && resolveActivityAttemptNode(workflow, command)?.retry
 }
 
 /**

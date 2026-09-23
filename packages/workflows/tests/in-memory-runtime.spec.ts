@@ -220,7 +220,7 @@ describe('in-memory adapter', () => {
     })
     const staleBatch = await runtime.store.listUnreapedDeadCommands()
     expect(staleBatch).toHaveLength(1)
-    await reapDeadWorkflowCommands(runtime)
+    await reapDeadWorkflowCommands({ ...runtime, workflows: [] })
     await client.retry(run.id)
     const retried = await client.get(run.id)
     expect(retried?.run.status).not.toBe('failed')
@@ -245,6 +245,7 @@ describe('in-memory adapter', () => {
     // The reaper listed the continuation before the retry retired it.
     await reapDeadWorkflowCommands({
       ...runtime,
+      workflows: [],
       store: {
         ...runtime.store,
         listUnreapedDeadCommands: (params) =>
