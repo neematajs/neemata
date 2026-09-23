@@ -18,6 +18,10 @@ import type {
 import type { NeemTestProbe } from './internal/test-probe.ts'
 import { buildNeem } from './internal/commands/build.ts'
 import {
+  resolveDevOutDir,
+  resolveStartOutDir,
+} from './internal/commands/out-dir.ts'
+import {
   childLogger,
   createDefaultLogger,
   resolveManifestLogger,
@@ -56,7 +60,8 @@ export const buildCommand = defineCommand({
     },
     outDir: {
       type: 'string',
-      description: 'Output directory. Overrides config outDir.',
+      description:
+        'Output directory relative to cwd. Overrides config outDir, which resolves from the config file (default: dist).',
     },
   },
   async run({ args }) {
@@ -74,10 +79,15 @@ export const buildCommand = defineCommand({
 export const startCommand = defineCommand({
   meta: { name: 'start', description: 'Start a built Neem runtime server.' },
   args: {
+    config: {
+      type: 'string',
+      description:
+        'Path to neem.config file. Starts its outDir; evaluates the config.',
+    },
     outDir: {
       type: 'string',
-      description: 'Built output directory.',
-      default: 'dist',
+      description:
+        'Built output directory relative to cwd. Overrides --config (default: dist).',
     },
     runtime: {
       type: 'positional',
@@ -86,8 +96,11 @@ export const startCommand = defineCommand({
     },
   },
   async run({ args }) {
-    const cwd = process.cwd()
-    const outDir = resolve(cwd, args.outDir)
+    const outDir = await resolveStartOutDir({
+      cwd: process.cwd(),
+      config: args.config,
+      outDir: args.outDir,
+    })
     const manifestFile = resolve(outDir, MANIFEST_FILE)
     const probe = createNeemTestProbe()
     const controller = createCliAbortController()
@@ -148,8 +161,8 @@ export const devCommand = defineCommand({
     },
     outDir: {
       type: 'string',
-      description: 'Development output directory.',
-      default: '.neem',
+      description:
+        'Development output directory relative to cwd (default: .neem/<config name> next to the config).',
     },
     runtime: {
       type: 'positional',
@@ -190,10 +203,12 @@ export const devCommand = defineCommand({
         }
       }
     }
+    const cwd = process.cwd()
+    const configFile = resolve(cwd, args.config)
     const controller = createCliAbortController()
     const supervisor = new DevSupervisor({
-      configFile: resolve(process.cwd(), args.config),
-      outDir: resolve(process.cwd(), args.outDir),
+      configFile,
+      outDir: resolveDevOutDir({ cwd, configFile, outDir: args.outDir }),
       runtimes: parseRuntimes(args.runtime),
       signal: controller.signal,
       probe: createNeemTestProbe(),

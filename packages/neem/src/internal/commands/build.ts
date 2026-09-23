@@ -11,6 +11,7 @@ import { resolveNeemRuntimeDeclarations } from '../build/declarations.ts'
 import { createBuildGraph } from '../build/graph.ts'
 import { createManifest, writeManifest } from '../manifest/manifest.ts'
 import { importDefault } from '../utils.ts'
+import { resolveBuildOutDir } from './out-dir.ts'
 
 export type NeemBuildOptions = {
   config?: string
@@ -38,7 +39,12 @@ export async function buildNeem(
   const config = await importDefault<NeemConfig>(configFile, {
     cacheBust: true,
   })
-  const outDir = resolve(cwd, options.outDir ?? config.outDir ?? 'dist')
+  const outDir = resolveBuildOutDir({
+    cwd,
+    configFile,
+    config,
+    outDir: options.outDir,
+  })
 
   logger.start('Building Neem bundle')
   logger.debug(`  config: ${colorize('green', configFile)}`)
