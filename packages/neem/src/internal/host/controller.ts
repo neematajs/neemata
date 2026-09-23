@@ -438,9 +438,8 @@ export class HostController {
       recovery: this.options.recovery,
       onThreadEvent: this.options.onThreadEvent,
       prepareRecovery: prepareRecovery && (() => prepareRecovery(runtimeName)),
-      onRecovered: async () => {
-        await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-      },
+      onRecovered: () => this.refreshProxyUpstreams(),
+      onUpstreamsChange: () => this.refreshProxyUpstreams(),
       onFailure: (error) => {
         const failOnWorkerError =
           this.options.failOnWorkerError ?? this.snapshot.mode === 'production'
@@ -449,6 +448,12 @@ export class HostController {
         this.options.onFailure?.(error)
       },
     })
+  }
+
+  // Unlike syncProxyUpstreams, proxy mutation errors stay in proxy health instead of
+  // failing worker recovery.
+  private async refreshProxyUpstreams(): Promise<void> {
+    await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
   }
 
   private replaceSnapshot(snapshot: RuntimeSnapshot): void {

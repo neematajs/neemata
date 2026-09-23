@@ -57,6 +57,20 @@ describe('Neem recovery health and proxy behavior', () => {
 
     await waitForMatchingEventCount(
       fixture.eventsFile,
+      (event) => event.event === 'recovery-proxy-delay' && event.attempt === 2,
+      1,
+    )
+
+    // The crashed worker is detached while its replacement starts.
+    const restarting = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+    )
+    expect(restarting.status).toBe(503)
+    expect(restarting.headers.get('retry-after')).toBe('1')
+    expect(await restarting.text()).toBe('No upstream available\n')
+
+    await waitForMatchingEventCount(
+      fixture.eventsFile,
       (event) => event.event === 'recovery-proxy-start' && event.attempt === 2,
       1,
     )
@@ -268,6 +282,13 @@ describe('Neem recovery health and proxy behavior', () => {
       ready: false,
       lastError: { message: expect.stringContaining('bad-partial') },
     })
+
+    const failedProxy = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+    )
+    expect(failedProxy.status).toBe(503)
+    expect(failedProxy.headers.get('retry-after')).toBe('1')
+    expect(await failedProxy.text()).toBe('No upstream available\n')
 
     await writeFileAtomically(workerFile, fixedWorker)
     await waitForProbeEventCount(neem, 'runtime:patch-fallback', 2)

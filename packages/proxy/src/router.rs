@@ -9,14 +9,16 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwap;
+use bytes::Bytes;
 use http::header;
 use http::{StatusCode, Uri};
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
 use pingora::lb::{LoadBalancer, selection::RoundRobin};
+use pingora::protocols::http::ServerSession;
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
-use pingora::{Error, ErrorType, Result};
+use pingora::{Error, ErrorSource, ErrorType, Result};
 
 #[derive(Clone, Default)]
 pub struct RouterConfig {
@@ -238,16 +240,6 @@ impl ProxyHttp for SharedRouter {
         let limits = &self.0.limits;
         let timeouts = &self.0.timeouts;
 
-        // TODO(vNext): Deterministic downstream error mapping.
-        // Today, a number of routing/upstream-selection failures bubble up as Pingora internal errors,
-        // which typically become HTTP 500 responses but without a fully controlled body/headers.
-        // Decide and implement a single, explicit downstream error policy for at least:
-        // - no application matched (no subdomain/path/default)
-        // - matched app has no pools configured
-        // - no pools available for request type (e.g. upgrade requires http1)
-        // - no healthy upstreams available
-        // Acceptance: response status/body/headers are stable across versions and covered by tests.
-
         if let Some(status) = request_limit_rejection_status(session, limits) {
             return reject_request(session, status).await;
         }
@@ -454,19 +446,19 @@ impl ProxyHttp for SharedRouter {
         e: &Error,
         ctx: &mut Self::CTX,
     ) -> FailToProxy {
-        let code = match ctx.failure_hint {
-            Some(FailureHint::MissingApplication) => 404,
-            Some(FailureHint::MissingWsPool)
-            | Some(FailureHint::MissingUpstreamPool)
-            | Some(FailureHint::UnhealthyUpstream) => 503,
-            None => match e.etype() {
-                ErrorType::HTTPStatus(status) => *status,
-                _ => 500,
-            },
-        };
+        let code = failure_status(ctx.failure_hint, e);
 
         if code > 0 {
-            session.respond_error(code).await.unwrap_or_else(|err| {
+            let written = match upstream_failure_response(code) {
+                Some((resp, body)) => {
+                    session
+                        .as_downstream_mut()
+                        .write_error_response(resp, Bytes::from_static(body.as_bytes()))
+                        .await
+                }
+                None => session.respond_error(code).await,
+            };
+            written.unwrap_or_else(|err| {
                 log::error!("failed to send error response to downstream: {err}");
             });
         }
@@ -752,6 +744,57 @@ fn extract_first_path_segment(session: &Session) -> Option<&str> {
     let path = session.req_header().uri.path();
     let mut parts = path.split('/').filter(|p| !p.is_empty());
     parts.next()
+}
+
+// Missing upstreams are expected to be a short restart gap, so clients should come back soon.
+const NO_UPSTREAM_RETRY_AFTER_SECONDS: &str = "1";
+
+fn failure_status(hint: Option<FailureHint>, e: &Error) -> u16 {
+    match hint {
+        Some(FailureHint::MissingApplication) => StatusCode::NOT_FOUND.as_u16(),
+        Some(
+            FailureHint::MissingWsPool
+            | FailureHint::MissingUpstreamPool
+            | FailureHint::UnhealthyUpstream,
+        ) => StatusCode::SERVICE_UNAVAILABLE.as_u16(),
+        // Overriding `fail_to_proxy` replaces Pingora's source-based mapping, so it is kept
+        // here; otherwise refused or reset upstream connections surface as a bare 500.
+        None => match (e.etype(), e.esource()) {
+            (ErrorType::HTTPStatus(status), _) => *status,
+            (_, ErrorSource::Upstream) => StatusCode::BAD_GATEWAY.as_u16(),
+            (
+                ErrorType::WriteError | ErrorType::ReadError | ErrorType::ConnectionClosed,
+                ErrorSource::Downstream,
+            ) => 0,
+            (_, ErrorSource::Downstream) => StatusCode::BAD_REQUEST.as_u16(),
+            (_, ErrorSource::Internal | ErrorSource::Unset) => {
+                StatusCode::INTERNAL_SERVER_ERROR.as_u16()
+            }
+        },
+    }
+}
+
+/// Proxy-generated 502/503 responses carry a body so clients can tell them apart from
+/// application errors; 503 also tells them when to retry.
+fn upstream_failure_response(code: u16) -> Option<(ResponseHeader, &'static str)> {
+    let (body, retry_after) = match StatusCode::from_u16(code).ok()? {
+        StatusCode::SERVICE_UNAVAILABLE => (
+            "No upstream available\n",
+            Some(NO_UPSTREAM_RETRY_AFTER_SECONDS),
+        ),
+        StatusCode::BAD_GATEWAY => ("Upstream request failed\n", None),
+        _ => return None,
+    };
+
+    let mut resp = ServerSession::generate_error(code);
+    resp.insert_header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+        .ok()?;
+    resp.set_content_length(body.len()).ok()?;
+    if let Some(seconds) = retry_after {
+        resp.insert_header(header::RETRY_AFTER, seconds).ok()?;
+    }
+
+    Some((resp, body))
 }
 
 async fn reject_request(session: &mut Session, status: StatusCode) -> Result<bool> {
@@ -1061,13 +1104,14 @@ pub mod bench {
 #[cfg(test)]
 mod tests {
     use super::{
-        AffinityEntry, AffinityMapKey, StickySessionConfig, StickySessionState, StickyShard,
-        apply_upstream_timeouts, is_cookie_safe_affinity_key, resolve_route,
-        strip_first_path_segment,
+        AffinityEntry, AffinityMapKey, FailureHint, StickySessionConfig, StickySessionState,
+        StickyShard, apply_upstream_timeouts, failure_status, is_cookie_safe_affinity_key,
+        resolve_route, strip_first_path_segment, upstream_failure_response,
     };
     use crate::lb::TransportKind;
     use crate::options::ProxyTimeoutOptionsParsed;
     use pingora::upstreams::peer::HttpPeer;
+    use pingora::{Error, ErrorType};
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicU64;
@@ -1134,6 +1178,79 @@ mod tests {
             peer.options.write_timeout,
             Some(Duration::from_millis(3_456))
         );
+    }
+
+    #[test]
+    fn missing_or_unhealthy_upstreams_map_to_503() {
+        let err = Error::new(ErrorType::HTTPStatus(503));
+        for hint in [
+            FailureHint::MissingWsPool,
+            FailureHint::MissingUpstreamPool,
+            FailureHint::UnhealthyUpstream,
+        ] {
+            assert_eq!(failure_status(Some(hint), &err), 503);
+        }
+        assert_eq!(
+            failure_status(
+                Some(FailureHint::MissingApplication),
+                &Error::new(ErrorType::HTTPStatus(404))
+            ),
+            404
+        );
+    }
+
+    #[test]
+    fn upstream_connection_failures_map_to_502() {
+        for etype in [
+            ErrorType::ConnectRefused,
+            ErrorType::ConnectTimedout,
+            ErrorType::ConnectionClosed,
+            ErrorType::ReadError,
+        ] {
+            assert_eq!(failure_status(None, &Error::new(etype).into_up()), 502);
+        }
+    }
+
+    #[test]
+    fn non_upstream_failures_keep_pingora_mapping() {
+        assert_eq!(
+            failure_status(None, &Error::new(ErrorType::InternalError)),
+            500
+        );
+        assert_eq!(
+            failure_status(None, &Error::new(ErrorType::InvalidHTTPHeader).into_down()),
+            400
+        );
+        assert_eq!(
+            failure_status(None, &Error::new(ErrorType::ConnectionClosed).into_down()),
+            0
+        );
+    }
+
+    #[test]
+    fn upstream_failure_responses_carry_body_and_retry_hint() {
+        let (resp, body) = upstream_failure_response(503).expect("503 has a response");
+        assert_eq!(resp.status.as_u16(), 503);
+        assert_eq!(resp.headers.get("retry-after").unwrap(), "1");
+        assert_eq!(
+            resp.headers.get("content-type").unwrap(),
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(
+            resp.headers.get("content-length").unwrap(),
+            body.len().to_string().as_str()
+        );
+
+        let (resp, body) = upstream_failure_response(502).expect("502 has a response");
+        assert_eq!(resp.status.as_u16(), 502);
+        assert!(resp.headers.get("retry-after").is_none());
+        assert_eq!(
+            resp.headers.get("content-length").unwrap(),
+            body.len().to_string().as_str()
+        );
+
+        assert!(upstream_failure_response(404).is_none());
+        assert!(upstream_failure_response(500).is_none());
     }
 
     fn insert_entry(

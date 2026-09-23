@@ -41,6 +41,8 @@ export type RuntimeControllerOptions = {
   recovery?: RecoveryOptions
   onFailure?: (error: Error, runtime: RuntimeController) => MaybePromise<void>
   onRecovered?: (runtime: RuntimeController) => MaybePromise<void>
+  // Runs when failed or cleaned-up workers stop advertising upstreams.
+  onUpstreamsChange?: (runtime: RuntimeController) => MaybePromise<void>
 }
 
 export class RuntimeController {
@@ -279,6 +281,8 @@ export class RuntimeController {
   private async handleFailure(error: Error, source: string): Promise<void> {
     if (this.stopped) return
     this.logger?.warn({ err: error }, `Neem runtime ${source} failed`)
+    // Detach before hooks and the recovery delay so routing stops reaching the dead worker.
+    await this.options.onUpstreamsChange?.(this)
     await this.callRuntimeFailHook(error)
 
     if (this.stopped || this.recoveryPromise) return
@@ -321,6 +325,8 @@ export class RuntimeController {
 
       try {
         await this.cleanup()
+        if (this.stopped) return
+        await this.options.onUpstreamsChange?.(this)
         if (this.stopped) return
         await this.options.prepareRecovery?.()
         if (this.stopped) return

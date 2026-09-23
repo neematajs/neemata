@@ -12,5 +12,5 @@ export default defineRuntimePlanner(() => {
     10,
   )
 
-  return { workers: [{ attempt, marker, port }] }
+  return { workers: [{ attempt, marker, port, recoveryDelayMs: 1_000 }] }
 })

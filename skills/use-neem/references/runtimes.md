@@ -117,6 +117,10 @@ Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
   Missing path/subdomain `name` uses the full runtime name.
 - Runtime `proxy.sni` is optional. Workers report `{ type, url }` upstreams,
   where `type` is `'http'`, `'http2'`, or `'ws'`.
+- Proxy errors: no matching route is 404; a matched runtime without a live
+  upstream (restarting, failed, or unhealthy) is 503 with `Retry-After: 1`;
+  a failed connection to a chosen upstream is 502. Application responses pass
+  through unchanged.
 
 `health` enables a separate HTTP probe server. It requires `port`, defaults
 `hostname` to `127.0.0.1`, and accepts `paths: { health?, ready? }` (defaults

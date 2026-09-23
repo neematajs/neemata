@@ -148,7 +148,10 @@ Manifest settings/artifacts remain the source of truth, with the documented
 - After readiness, a host/worker failure restarts the whole affected runtime,
   including its sibling workers. CLI dev allows one recovery attempt;
   production allows three with a one-second delay. Exhaustion is fatal.
-  Successful recovery updates proxy upstreams and restores readiness.
+  A failed worker's upstreams leave the proxy immediately, and the rest when
+  the runtime is cleaned up for restart; until recovery re-attaches them the
+  proxy answers that route with 503 and `Retry-After: 1`. Successful recovery
+  updates proxy upstreams and restores readiness.
 - `SIGINT`/`SIGTERM` request shutdown in dev, start, and standalone wrappers.
   Stop reaches workers while startup is pending, including an asynchronous
   factory. Once a factory resolves, Neem calls the runtime's stop once even

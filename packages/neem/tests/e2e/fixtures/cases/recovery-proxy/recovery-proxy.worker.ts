@@ -4,9 +4,14 @@ import { createServer } from 'node:http'
 
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
-import { record } from '../../shared/support/_events.ts'
+import { record, wait } from '../../shared/support/_events.ts'
 
-type RecoveryProxyData = { attempt: number; marker: string; port: number }
+type RecoveryProxyData = {
+  attempt: number
+  marker: string
+  port: number
+  recoveryDelayMs: number
+}
 
 export default defineRuntimeWorker<RecoveryProxyData>({
   definition: { fixture: 'recovery-proxy' },
@@ -16,6 +21,16 @@ export default defineRuntimeWorker<RecoveryProxyData>({
     return {
       async start() {
         writeFileSync(ctx.data.marker, String(ctx.data.attempt))
+        if (ctx.data.attempt === 2) {
+          record({
+            event: 'recovery-proxy-delay',
+            attempt: ctx.data.attempt,
+            name: ctx.name,
+            port: ctx.data.port,
+          })
+          await wait(ctx.data.recoveryDelayMs)
+        }
+
         server = createServer((request, response) => {
           const crashing = request.url?.includes('/crash') ?? false
           response.writeHead(200, {

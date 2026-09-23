@@ -68,3 +68,7 @@ with:
 - After `start()`, `proxy.address()` returns the bound listener address as `{ hostname, port }`. This includes the OS-assigned port when `listen` uses port `0`; it returns `null` when the proxy is not running.
 - Dynamic upstream changes are eventually consistent with health checks. After `addUpstream()` or `start()`, a backend does not become routable until its health-check loop marks it healthy, so callers should expect a short convergence window where requests may still receive `503`.
 - The convergence window is controlled by `healthCheckIntervalMs`. Tests in this repository use polling helpers for that reason, and production callers should follow the same pattern when they need to wait for a backend to become ready.
+- Proxy-generated errors are stable:
+  - no application matches the request: `404` with an empty body;
+  - the matched application has no upstream for the request (none registered, or all unhealthy): `503` with `Retry-After: 1` and a `text/plain` body;
+  - connecting to or proxying through the selected upstream fails (for example connection refused or reset): `502` with a `text/plain` body.
