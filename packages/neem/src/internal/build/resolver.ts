@@ -6,7 +6,7 @@ import type { NeemArtifactEntry } from '../../shared/types.ts'
 
 const resolver = new ResolverFactory({
   conditionNames: ['import', 'module', 'node', 'default'],
-  extensions: ['.ts', '.mts', '.cts', '.js', '.mjs', '.cjs', '.json', '.node'],
+  extensions: ['.ts', '.mts', '.js', '.mjs', '.json', '.node'],
   tsconfig: 'auto',
 })
 

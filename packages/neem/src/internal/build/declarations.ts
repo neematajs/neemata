@@ -16,8 +16,6 @@ const runtimeDeclarationFiles = [
   'neem.runtime.mts',
   'neem.runtime.js',
   'neem.runtime.mjs',
-  'neem.runtime.cts',
-  'neem.runtime.cjs',
 ] as const
 
 const plannerFiles = [
@@ -25,8 +23,6 @@ const plannerFiles = [
   'neem.planner.mts',
   'neem.planner.js',
   'neem.planner.mjs',
-  'neem.planner.cts',
-  'neem.planner.cjs',
 ] as const
 
 type RuntimeProjectMatch = { entry: string; file: string; directory: string }

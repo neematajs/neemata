@@ -124,46 +124,6 @@ describe('Neem runtime declaration discovery', () => {
     await neem.stop()
   }, 60_000)
 
-  it('discovers conventional .cts runtime declarations and .cjs planners from runtime folders', async () => {
-    const fixture = await useFixture({ config: 'cjs-cts-convention' })
-
-    await runNeem([
-      'build',
-      '--config',
-      fixture.configFile,
-      '--outDir',
-      fixture.outDir,
-    ])
-
-    const manifest = await readManifest(fixture.outDir)
-    expect(Object.keys(manifest.runtimes)).toEqual(['cjs-cts-convention'])
-
-    const neem = spawnTrackedNeem(['start', '--outDir', fixture.outDir], {
-      env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
-    })
-    await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
-
-    const events = await waitForRuntimeEvents(fixture.eventsFile, (current) =>
-      current.some(
-        (event) =>
-          event.event === 'start' && event.name === 'cjs-cts-convention:0',
-      )
-        ? current
-        : false,
-    )
-
-    expect(events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          event: 'start',
-          name: 'cjs-cts-convention:0',
-        }),
-      ]),
-    )
-
-    await neem.stop()
-  }, 60_000)
-
   it('builds and starts runtime entries declared as file URLs', async () => {
     const fixture = await useFixture({ config: 'file-url-entry' })
 
