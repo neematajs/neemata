@@ -75,14 +75,18 @@ retrying failed work while retaining successful nodes.
 ## Neem CLI
 
 `neem build` compiles config, app entries, plugin entries, and plugin-declared
-artifacts into `dist` by default. It writes an internal `neem.manifest.json`
-with relative artifact paths.
+artifacts into the config's `outDir`, resolved from the config file (default
+`dist`). It writes an internal `neem.manifest.json` with relative artifact paths.
 
-`neem start` consumes an existing built output directory. It reads the manifest
-for executable artifacts and serialized runtime config, registers built plugin
+`neem start` consumes an existing built output directory: `dist` by default, or
+the `outDir` of the config passed with `--config`. It reads the manifest for
+executable artifacts and serialized runtime config, registers built plugin
 hooks, and starts app workers in production mode.
 
-`neem dev` uses `.neem` by default as a build-like watched output directory. It
+`neem dev` uses `.neem/<config name>` next to the config (e.g.
+`.neem/neem.config`) as a build-like watched output directory, so several
+configs in one package keep separate dev output. `--outDir`, resolved from the
+working directory, overrides the output directory of every command. It
 uses the same manifest shape as `start`, restarts app workers after successful
 config/app rebuilds, reloads plugin hooks after plugin entry rebuilds, and keeps
 existing workers alive on rebuild errors.

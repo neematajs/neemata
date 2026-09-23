@@ -12,17 +12,22 @@ bun node_modules/@nmtjs/neem/bin/neem.js dev
 ## Commands and Defaults
 
 ```bash
-neem build [runtime[,runtime...]] --config neem.config.ts --outDir dist
-neem dev [runtime[,runtime...]] --config neem.config.ts --outDir .neem
-neem start [runtime[,runtime...]] --outDir dist
+neem build [runtime[,runtime...]] [--config neem.config.ts] [--outDir <dir>]
+neem dev [runtime[,runtime...]] [--config neem.config.ts] [--outDir <dir>]
+neem start [runtime[,runtime...]] [--config <file>] [--outDir <dir>]
 ```
 
 - Build/dev default `--config` to `neem.config.ts`.
-- Build output precedence: `--outDir`, config `outDir`, then `dist`.
-- Dev defaults to `.neem`; start defaults to `dist`. Neither uses config
-  `outDir` as a fallback. Start has no config option.
-- Config and output CLI paths resolve from the working directory; config
-  `outDir` also resolves from cwd. Runtime paths resolve from the config file.
+- `--config` and `--outDir` resolve from the working directory. Config
+  `outDir` and runtime paths resolve from the config file's directory.
+- Build output precedence: `--outDir`, config `outDir`, then `dist` next to
+  the config.
+- Dev defaults to `.neem/<config file name without extension>` next to the
+  config, e.g. `.neem/neem.config`, so configs sharing a directory get separate
+  dev output and `neem build` never touches a running dev session.
+- Start defaults to `dist` in the working directory. With `--config`, it
+  evaluates that config (not its runtime declarations) and starts the config's
+  build output; `--outDir` overrides it without evaluating the config.
 - Dev enables Node's compile cache when the API is available. Use `--no-cache`
   to disable it or `--cacheDir` to choose its directory.
 
@@ -35,7 +40,8 @@ unknown names fail. Names are declaration names, not paths/globs.
 
 Build/dev resolve and validate declarations before filtering the build graph.
 Build selection determines manifest contents. Start filters the built manifest;
-it cannot start runtimes omitted from that build and does not read source config.
+it cannot start runtimes omitted from that build and reads source config only
+to locate the output with `--config`.
 
 ## Build and Output
 

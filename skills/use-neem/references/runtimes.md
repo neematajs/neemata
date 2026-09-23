@@ -33,10 +33,13 @@ export default defineConfig({
   `updates: { maxPatches? }` (dev patches a thread accepts before the next
   update restarts the runtime; default `50`, `0` restarts on every update).
 - `plugins`: readonly array of `NeemPluginInput` declarations.
-- `outDir`: build default; dev/start have their own CLI defaults.
+- `outDir`: build output relative to the config file (default `dist`), also
+  used by `neem start --config`. Dev uses its own directory; see
+  [CLI](cli.md#commands-and-defaults).
 
-Production start reads the manifest/artifacts, without evaluating source
-config. See [CLI](cli.md) for output paths and deployment overrides below.
+Production start reads the manifest/artifacts; it evaluates source config only
+with `neem start --config`. See [CLI](cli.md) for output paths and deployment
+overrides below.
 
 ## Discovery and Declarations
 
