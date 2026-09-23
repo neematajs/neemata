@@ -45,8 +45,10 @@ export async function advanceWorkflowRun(
         `workflow output [${input.workflow.workflow.name}]`,
       )
     } catch (error) {
-      if (input.signal.aborted || error instanceof WorkflowCleanupTimeoutError)
-        throw error
+      if (error instanceof WorkflowCleanupTimeoutError) throw error
+      // Once aborted, the run is only being released: a finish that rejects
+      // in reaction must not surface as a failure of its own.
+      if (input.signal.aborted) throw input.signal.reason
       await failRunAndWakeParent({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,
