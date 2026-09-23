@@ -12,8 +12,7 @@ export default defineConfig({
     benchmark: {
       enabled: true,
       include: ['packages/*/bench/**/*.integration.bench.ts'],
-      includeSamples: true,
-      reporters: ['default'],
+      retainSamples: true,
     },
   },
 })

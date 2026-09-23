@@ -1,4 +1,4 @@
-import { bench, describe } from 'vitest'
+import { test } from 'vitest'
 
 import type { InMemoryWorkflowRuntime } from '../src/runtime/index.ts'
 import {
@@ -57,52 +57,42 @@ async function prepareRuns(
   return runIds
 }
 
-describe('deterministic in-memory workflow runtime', () => {
-  bench(
+const runOptions = {
+  time: 0,
+  warmupTime: 0,
+  iterations: CREATE_ITERATIONS,
+  warmupIterations: WARMUP_ITERATIONS,
+}
+
+test('deterministic in-memory workflow runtime', async ({ bench }) => {
+  await bench(
     'create run',
-    async () => {
-      await createRuntime.store.createRun(runInput)
-    },
     {
-      time: 0,
-      warmupTime: 0,
-      iterations: CREATE_ITERATIONS,
-      warmupIterations: WARMUP_ITERATIONS,
-      setup: () => {
+      beforeAll: () => {
         createRuntime = createInMemoryWorkflowRuntime()
       },
     },
-  )
-
-  bench(
-    'atomic workflow start',
     async () => {
-      await startRuntime.atomicStart.startWorkflowRun({ run: runInput })
+      await createRuntime.store.createRun(runInput)
     },
+  ).run(runOptions)
+
+  await bench(
+    'atomic workflow start',
     {
-      time: 0,
-      warmupTime: 0,
-      iterations: CREATE_ITERATIONS,
-      warmupIterations: WARMUP_ITERATIONS,
-      setup: () => {
+      beforeAll: () => {
         startRuntime = createInMemoryWorkflowRuntime()
       },
     },
-  )
-
-  bench(
-    'queued to running transition',
     async () => {
-      await transitionRuntime.store.markRunRunning({
-        runId: transitionRunIds[transitionIndex++]!,
-      })
+      await startRuntime.atomicStart.startWorkflowRun({ run: runInput })
     },
+  ).run(runOptions)
+
+  await bench(
+    'queued to running transition',
     {
-      time: 0,
-      warmupTime: 0,
-      iterations: CREATE_ITERATIONS,
-      warmupIterations: WARMUP_ITERATIONS,
-      setup: async (_task, mode) => {
+      beforeAll: async (mode) => {
         const iterations =
           mode === 'warmup' ? WARMUP_ITERATIONS : CREATE_ITERATIONS
         transitionRuntime = createInMemoryWorkflowRuntime()
@@ -110,27 +100,17 @@ describe('deterministic in-memory workflow runtime', () => {
         transitionIndex = 0
       },
     },
-  )
-
-  bench(
-    `create ${FANOUTS_PER_SAMPLE} 16-way map fanouts`,
     async () => {
-      const index = fanoutIndex++
-      const runtime = fanoutRuntimes[index]!
-      for (const runId of fanoutRunIds[index]!) {
-        await runtime.store.ensureNodeChildren({
-          runId,
-          nodeName: 'fanout',
-          children: fanoutChildren,
-        })
-      }
+      await transitionRuntime.store.markRunRunning({
+        runId: transitionRunIds[transitionIndex++]!,
+      })
     },
+  ).run(runOptions)
+
+  await bench(
+    `create ${FANOUTS_PER_SAMPLE} 16-way map fanouts`,
     {
-      time: 0,
-      warmupTime: 0,
-      iterations: FANOUT_ITERATIONS,
-      warmupIterations: FANOUT_WARMUP_ITERATIONS,
-      setup: async (_task, mode) => {
+      beforeAll: async (mode) => {
         const count =
           mode === 'warmup' ? FANOUT_WARMUP_ITERATIONS : FANOUT_ITERATIONS
         fanoutRuntimes = Array.from({ length: count }, () =>
@@ -145,5 +125,21 @@ describe('deterministic in-memory workflow runtime', () => {
         fanoutIndex = 0
       },
     },
-  )
+    async () => {
+      const index = fanoutIndex++
+      const runtime = fanoutRuntimes[index]!
+      for (const runId of fanoutRunIds[index]!) {
+        await runtime.store.ensureNodeChildren({
+          runId,
+          nodeName: 'fanout',
+          children: fanoutChildren,
+        })
+      }
+    },
+  ).run({
+    time: 0,
+    warmupTime: 0,
+    iterations: FANOUT_ITERATIONS,
+    warmupIterations: FANOUT_WARMUP_ITERATIONS,
+  })
 })
