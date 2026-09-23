@@ -219,7 +219,7 @@ for (const target of targets) {
         await runtime.runCoordinationExecutor.enqueue(immediate)
         await runtime.runCoordinationExecutor.enqueueDelayed(
           delayed,
-          new Date(Date.now() + 80),
+          Date.now() + 80,
         )
 
         expect(

@@ -81,10 +81,9 @@ export function createCommandStore(state: State): CommandStore {
             params?.runId === undefined || command.runId === params.runId,
         )
         .sort((left, right) => {
-          const byDeadAt = right.deadAt.getTime() - left.deadAt.getTime()
+          const byDeadAt = right.deadAt - left.deadAt
           if (byDeadAt !== 0) return byDeadAt
-          const byCreatedAt =
-            right.createdAt.getTime() - left.createdAt.getTime()
+          const byCreatedAt = right.createdAt - left.createdAt
           if (byCreatedAt !== 0) return byCreatedAt
           return left.id.localeCompare(right.id)
         })
@@ -113,7 +112,7 @@ export function createCommandStore(state: State): CommandStore {
         if (command !== undefined) dead.push(command)
       }
       return dead
-        .sort((left, right) => left.deadAt.getTime() - right.deadAt.getTime())
+        .sort((left, right) => left.deadAt - right.deadAt)
         .slice(0, limit === Number.POSITIVE_INFINITY ? undefined : limit)
     },
 

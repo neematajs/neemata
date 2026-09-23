@@ -120,7 +120,9 @@ describe('in-memory runtime isolation', () => {
     await expect(left.store.listDeadCommands()).resolves.toHaveLength(1)
     await expect(right.store.listDeadCommands()).resolves.toEqual([])
     await left.store.requeueDeadCommand(leftClaim!.id)
-    expect(right.inspect().continueRunCommands[0]?.runAt).toBeInstanceOf(Date)
+    expect(right.inspect().continueRunCommands[0]?.runAt).toEqual(
+      expect.any(Number),
+    )
   })
 
   it('isolates schedules and wake listeners, including disposal', async () => {

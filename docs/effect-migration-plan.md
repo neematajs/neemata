@@ -864,3 +864,29 @@ PostgreSQL remains the adapter for durable, scheduled and long-retained work.
   wherever the broker URLs are set and no extra service exists. CI and `compose.yml`
   keep restart policies for the service-restart test.
 - Recurring schedules stay unsupported on Redis by design.
+
+## Workflow timestamps — 2026-09-21
+
+The runtime no longer uses `Date`. Every time it stores, accepts or returns is a
+`Timestamp`: Unix milliseconds. This covers record fields, `startAt`/`runAt` options,
+list filters, schedule slots and maintenance clocks. `Date`s inside application
+payloads are a schema concern and unchanged.
+
+- Redis rebuilt `Date`s in a JSON reviver keyed by thirteen field names, which also
+  had to be kept away from payload fields with the same names. It is gone; records
+  are encoded and decoded as they are.
+- The inspector's DTO layer (`WireSafe`, the `*Dto` types and the `to*Dto` mappers)
+  existed to turn `Date`s into ISO strings for transport. Records are plain JSON now,
+  so the layer is deleted rather than converted.
+- PostgreSQL keeps `timestamptz` columns: leases and claims compare against the server
+  clock, and the tables stay readable. The adapter converts in its row mappers and at
+  each parameter site. Rows nested in `json_agg` arrive as strings, which the same
+  mapper parses, so the separate pass that re-dated those rows is gone too.
+- Schedule runs derive their idempotency key from the slot's milliseconds instead of
+  its ISO string.
+- The PostgreSQL client and its type parsers are the caller's. The adapter accepts a
+  `timestamptz` parser that returns a `Date`, the column text or milliseconds, and
+  fails the read for anything else rather than storing `NaN`. Converting in SQL, with
+  per-query expressions or stored generated columns, was considered and rejected: it
+  guards only against parsers the check already reports, and costs either a column
+  list at every query or twenty duplicated columns and a schema version.

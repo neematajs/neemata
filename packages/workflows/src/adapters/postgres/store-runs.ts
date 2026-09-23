@@ -38,7 +38,7 @@ import {
   one,
   runnableName,
   sameValue,
-  withDateColumns,
+  timestampParam,
 } from './sql.ts'
 
 type PostgresWorkflowRunStoreContext = {
@@ -181,7 +181,7 @@ export const createStoredRunWithState = async (
         input.unique ? json(input.unique.key) : null,
         input.unique?.scope ?? null,
         input.unique?.behavior ?? null,
-        date,
+        timestampParam(date),
       ],
     )
     if (row) return { run: mapRun(row), created: true }
@@ -229,7 +229,7 @@ export const pruneTerminalRunsInTransaction = async (
 
   if (batchSize > 0 && statuses.length > 0) {
     const queryParams: unknown[] = [
-      params.olderThan,
+      timestampParam(params.olderThan),
       ...statuses,
       ...DEFAULT_PRUNE_STATUSES,
       batchSize,
@@ -274,7 +274,7 @@ export const pruneTerminalRunsInTransaction = async (
       WHERE dead_at IS NOT NULL
         AND dead_at < $1
     `,
-    [params.olderThan],
+    [timestampParam(params.olderThan)],
   )
 
   return { deleted }
@@ -426,10 +426,10 @@ const buildListRunsQueryParts = (
   if (filter.kind !== undefined) where.push(`r.kind = ${push(filter.kind)}`)
   if (filter.name !== undefined) where.push(`r.name = ${push(filter.name)}`)
   if (filter.activeBefore !== undefined) {
-    where.push(`r.active_since < ${push(filter.activeBefore)}`)
+    where.push(`r.active_since < ${push(timestampParam(filter.activeBefore))}`)
   }
   if (filter.createdBefore !== undefined) {
-    where.push(`r.created_at < ${push(filter.createdBefore)}`)
+    where.push(`r.created_at < ${push(timestampParam(filter.createdBefore))}`)
   }
   if (filter.status !== undefined) {
     const statuses = Array.isArray(filter.status)
@@ -556,9 +556,7 @@ export const createPostgresWorkflowRunStore = (
       `,
         params?.runId === undefined ? [] : [params.runId],
       )
-      return rows
-        .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
-        .map(mapDeadCommand)
+      return rows.map((row) => row).map(mapDeadCommand)
     },
     async listUnreapedDeadCommands(params) {
       await ready
@@ -580,9 +578,7 @@ export const createPostgresWorkflowRunStore = (
           ...(commandId === undefined ? [] : [commandId]),
         ],
       )
-      return rows
-        .map((row) => withDateColumns(row, ['dead_at', 'created_at', 'run_at']))
-        .map(mapDeadCommand)
+      return rows.map((row) => row).map(mapDeadCommand)
     },
     async markDeadCommandReaped(commandId) {
       await ready
@@ -817,24 +813,16 @@ export const createPostgresWorkflowRunStore = (
       const run = jsonRecordColumn(snapshot?.run)
       if (!run) return undefined
 
-      const nodes = jsonRecordArrayColumn(snapshot.nodes).map((node) =>
-        withDateColumns(node, ['created_at', 'updated_at']),
+      const nodes = jsonRecordArrayColumn(snapshot.nodes).map((node) => node)
+      const children = jsonRecordArrayColumn(snapshot.children).map(
+        (child) => child,
       )
-      const children = jsonRecordArrayColumn(snapshot.children).map((child) =>
-        withDateColumns(child, ['created_at', 'updated_at']),
-      )
-      const attempts = jsonRecordArrayColumn(snapshot.attempts).map((attempt) =>
-        withDateColumns(attempt, [
-          'dispatched_at',
-          'heartbeat_at',
-          'completed_at',
-        ]),
+      const attempts = jsonRecordArrayColumn(snapshot.attempts).map(
+        (attempt) => attempt,
       )
 
       return {
-        run: mapRun(
-          withDateColumns(run, ['active_since', 'created_at', 'updated_at']),
-        ),
+        run: mapRun(run),
         nodes: nodes.map(mapNode),
         children: children.map(mapNodeChild),
         attempts: attempts.map(mapAttempt),
@@ -913,32 +901,19 @@ export const createPostgresWorkflowRunStore = (
       const run = jsonRecordColumn(detail?.run)
       if (!run) return undefined
 
-      const nodes = jsonRecordArrayColumn(detail.nodes).map((node) =>
-        withDateColumns(node, ['created_at', 'updated_at']),
+      const nodes = jsonRecordArrayColumn(detail.nodes).map((node) => node)
+      const children = jsonRecordArrayColumn(detail.children).map(
+        (child) => child,
       )
-      const children = jsonRecordArrayColumn(detail.children).map((child) =>
-        withDateColumns(child, ['created_at', 'updated_at']),
-      )
-      const attempts = jsonRecordArrayColumn(detail.attempts).map((attempt) =>
-        withDateColumns(attempt, [
-          'dispatched_at',
-          'heartbeat_at',
-          'completed_at',
-        ]),
+      const attempts = jsonRecordArrayColumn(detail.attempts).map(
+        (attempt) => attempt,
       )
       const childRuns = jsonRecordArrayColumn(detail.child_runs).map(
-        (childRun) =>
-          withDateColumns(childRun, [
-            'active_since',
-            'created_at',
-            'updated_at',
-          ]),
+        (childRun) => childRun,
       )
 
       return {
-        run: mapRunSummary(
-          withDateColumns(run, ['active_since', 'created_at', 'updated_at']),
-        ),
+        run: mapRunSummary(run),
         nodes: nodes.map(mapNodeSummary),
         children: children.map(mapNodeChildSummary),
         attempts: attempts.map(mapAttemptSummary),

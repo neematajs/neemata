@@ -6,6 +6,7 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  Timestamp,
 } from '../../types/index.ts'
 import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
@@ -158,7 +159,7 @@ function withRunTimeoutsHook(
     ...hooks,
     {
       everyMs: options?.everyMs ?? DEFAULT_RUN_TIMEOUTS_EVERY_MS,
-      run: async (now: Date) => {
+      run: async (now: Timestamp) => {
         await timeoutExpiredWorkflowRuns({
           store: input.store,
           attemptExecutor: input.attemptExecutor,

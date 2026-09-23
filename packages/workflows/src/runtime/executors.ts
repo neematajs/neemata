@@ -1,3 +1,4 @@
+import type { Timestamp } from '../types/index.ts'
 import type {
   ActivityAttemptCommand,
   ClaimedAttempt,
@@ -36,12 +37,12 @@ export type AttemptHeartbeatResult = {
 }
 
 export type AttemptDispatchOptions = {
-  readonly runAt?: Date
+  readonly runAt?: Timestamp
 }
 
 export type RunCoordinationExecutor = {
   enqueue(command: ContinueRunCommand): Promise<void>
-  enqueueDelayed(command: ContinueRunCommand, runAt: Date): Promise<void>
+  enqueueDelayed(command: ContinueRunCommand, runAt: Timestamp): Promise<void>
   /**
    * Continue commands have no heartbeat, so a continuation that outlives
    * `leaseMs` loses its lease and the takeover counts a delivery even though

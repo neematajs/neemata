@@ -928,6 +928,64 @@ test('status transitions are notify-only; watch yields run status changes', asyn
   }
 })
 
+// The client is the caller's, and so is its timestamptz parser.
+function withTimestampParser(
+  connection: WorkflowPostgresConnection,
+  parse: (value: Date) => unknown,
+): WorkflowPostgresConnection {
+  const wrap = (
+    target: WorkflowPostgresConnection,
+  ): WorkflowPostgresConnection => ({
+    async query(sql, params = []) {
+      const result = await target.query(sql, params)
+      const rows = result.rows.map((row) =>
+        Object.fromEntries(
+          Object.entries(row).map(([key, value]) => [
+            key,
+            value instanceof Date ? parse(value) : value,
+          ]),
+        ),
+      )
+      return { ...result, rows: rows as never }
+    },
+    transaction: (handler) => target.transaction((tx) => handler(wrap(tx))),
+  })
+  return wrap(connection)
+}
+
+test('reads timestamps through a client that parses timestamptz its own way', async () => {
+  const connection = createPgliteConnection()
+  await installPostgresWorkflowSchemaForTesting(connection)
+  const before = Date.now()
+  for (const parse of [
+    (value: Date) => value.toISOString().replace('T', ' ').replace('Z', '+00'),
+    (value: Date) => value.getTime(),
+  ]) {
+    const runtime = createPostgresWorkflowRuntime({
+      connection: withTimestampParser(connection, parse),
+    })
+    const run = await runtime.store.createRun({
+      workflowName: 'custom-timestamp-parser',
+      input: {},
+    })
+    expect(run.createdAt).toBeGreaterThanOrEqual(before)
+    expect(run.createdAt).toBeLessThanOrEqual(Date.now() + 1_000)
+    expect((await runtime.store.loadRunSnapshot(run.id))?.run.createdAt).toBe(
+      run.createdAt,
+    )
+  }
+
+  const unreadable = createPostgresWorkflowRuntime({
+    connection: withTimestampParser(connection, () => ({ epoch: 'unknown' })),
+  })
+  await expect(
+    unreadable.store.createRun({
+      workflowName: 'custom-timestamp-parser',
+      input: {},
+    }),
+  ).rejects.toThrow('timestamptz value that cannot be read as a time')
+})
+
 test('uses one postgres command table for all command kinds', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
@@ -969,7 +1027,7 @@ test('postgres continue enqueue coalesces via partial-index upsert', async () =>
 
   await runtime.runCoordinationExecutor.enqueueDelayed(
     delayed,
-    new Date(Date.now() + 60_000),
+    Date.now() + 60_000,
   )
   await runtime.runCoordinationExecutor.enqueue(immediate)
 
@@ -1089,7 +1147,7 @@ test.each([
       workflowName: 'postgres-release-continue-workflow',
       generation: 2,
     }
-    const delayedUntil = new Date(Date.now() + 60_000)
+    const delayedUntil = Date.now() + 60_000
 
     await runtime.runCoordinationExecutor.enqueue(first)
     const leased = await runtime.runCoordinationExecutor.claim({
@@ -1132,9 +1190,7 @@ test.each([
         run_at: expect.any(Date),
       },
     ])
-    expect(commands.rows[0]!.run_at.getTime()).toBeLessThan(
-      delayedUntil.getTime(),
-    )
+    expect(commands.rows[0]!.run_at.getTime()).toBeLessThan(delayedUntil)
   },
 )
 
@@ -1852,8 +1908,8 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     attemptCount: 1,
     version: 2,
   })
-  expect(snapshot?.children[1]?.createdAt).toBeInstanceOf(Date)
-  expect(snapshot?.children[1]?.updatedAt).toBeInstanceOf(Date)
+  expect(snapshot?.children[1]?.createdAt).toEqual(expect.any(Number))
+  expect(snapshot?.children[1]?.updatedAt).toEqual(expect.any(Number))
   expect(snapshot?.children[2]).toStrictEqual(mapChildren.children[0])
   expect(snapshot?.nodes).toHaveLength(3)
   expect(snapshot?.nodes[0]).toMatchObject({
@@ -1863,8 +1919,8 @@ test('loads a populated run snapshot with the same mapped shape as stored rows',
     status: 'running',
     version: 2,
   })
-  expect(snapshot?.nodes[0]?.createdAt).toBeInstanceOf(Date)
-  expect(snapshot?.nodes[0]?.updatedAt).toBeInstanceOf(Date)
+  expect(snapshot?.nodes[0]?.createdAt).toEqual(expect.any(Number))
+  expect(snapshot?.nodes[0]?.updatedAt).toEqual(expect.any(Number))
   expect(snapshot?.nodes.slice(1)).toStrictEqual([childNode, mapNode])
 })
 

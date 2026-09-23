@@ -11,6 +11,7 @@ import type {
   CreateRunInput,
   DeadWorkflowCommand,
 } from '../../runtime/store.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
@@ -172,7 +173,7 @@ export function createRedisWorkflowRuntime(
     },
   }
 
-  async function startRun(run: CreateRunInput, startAt?: Date) {
+  async function startRun(run: CreateRunInput, startAt?: Timestamp) {
     const started = await storeRuntime.createRun(run, startAt)
     const stored = started.run
     if (isTerminalRunStatus(stored.status)) return stored
@@ -242,16 +243,12 @@ export function createRedisWorkflowRuntime(
 const compareDeadNewest = (
   left: DeadWorkflowCommand,
   right: DeadWorkflowCommand,
-) =>
-  right.deadAt.getTime() - left.deadAt.getTime() ||
-  right.id.localeCompare(left.id)
+) => right.deadAt - left.deadAt || right.id.localeCompare(left.id)
 
 const compareDeadOldest = (
   left: DeadWorkflowCommand,
   right: DeadWorkflowCommand,
-) =>
-  left.deadAt.getTime() - right.deadAt.getTime() ||
-  left.id.localeCompare(right.id)
+) => left.deadAt - right.deadAt || left.id.localeCompare(right.id)
 
 const assertPositiveInteger = (name: string, value: number) => {
   if (!Number.isSafeInteger(value) || value < 1) {

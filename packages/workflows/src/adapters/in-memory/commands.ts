@@ -5,6 +5,7 @@ import type {
 } from '../../runtime/commands.ts'
 import type { CommandReleaseOptions } from '../../runtime/executors.ts'
 import type { StoredError } from '../../runtime/state.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { State } from './state.ts'
 import {
   COMMAND_LEASE_EXPIRED_ERROR,
@@ -14,23 +15,23 @@ import {
 export type QueueItem<T> = {
   readonly id: string
   readonly payload: T
-  readonly runAt?: Date
+  readonly runAt?: Timestamp
   readonly deliveryCount: number
   readonly lastError?: StoredError
-  readonly deadAt?: Date
-  readonly reapedAt?: Date
-  readonly createdAt: Date
+  readonly deadAt?: Timestamp
+  readonly reapedAt?: Timestamp
+  readonly createdAt: Timestamp
 }
 
 export type InspectQueueItem<T> = {
   readonly id: string
   readonly payload: T
-  readonly runAt?: Date
+  readonly runAt?: Timestamp
 }
 
 export type ClaimedQueueItem<T> = QueueItem<T> & {
   readonly leaseToken: string
-  readonly leaseExpiresAt: Date
+  readonly leaseExpiresAt: Timestamp
 }
 
 const RELEASE_BACKOFF_MS = 50
@@ -70,10 +71,9 @@ export function compareAttemptCommands(
   right: QueueItem<AttemptCommand>,
 ) {
   const byRunAt =
-    (left.runAt ?? left.createdAt).getTime() -
-    (right.runAt ?? right.createdAt).getTime()
+    (left.runAt ?? left.createdAt) - (right.runAt ?? right.createdAt)
   if (byRunAt !== 0) return byRunAt
-  const byCreatedAt = left.createdAt.getTime() - right.createdAt.getTime()
+  const byCreatedAt = left.createdAt - right.createdAt
   if (byCreatedAt !== 0) return byCreatedAt
   return left.id.localeCompare(right.id)
 }
@@ -91,7 +91,7 @@ export function queueItem<T>(
   state: State,
   itemId: string,
   payload: T,
-  runAt?: Date,
+  runAt?: Timestamp,
 ): QueueItem<T> {
   const { now } = state
 
@@ -129,7 +129,7 @@ export function releaseQueueItem<T>(
   if (options?.error === undefined && options?.reason === undefined) {
     return {
       ...item,
-      runAt: new Date(Date.now() + RELEASE_BACKOFF_MS),
+      runAt: Date.now() + RELEASE_BACKOFF_MS,
     }
   }
 
@@ -145,13 +145,12 @@ export function releaseQueueItem<T>(
   return {
     ...item,
     ...counted,
-    runAt: new Date(
+    runAt:
       Date.now() +
-        Math.min(
-          2 ** counted.deliveryCount * backoffBaseMs,
-          MAX_ERROR_BACKOFF_MS,
-        ),
-    ),
+      Math.min(
+        2 ** counted.deliveryCount * backoffBaseMs,
+        MAX_ERROR_BACKOFF_MS,
+      ),
   }
 }
 

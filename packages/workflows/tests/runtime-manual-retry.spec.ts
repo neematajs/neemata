@@ -163,9 +163,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
         tags: { source: 'test' },
         idempotencyKey: ['root-key'],
       })
-      expect(retry.activeSince.getTime()).toBeGreaterThanOrEqual(
-        before.run.activeSince.getTime(),
-      )
+      expect(retry.activeSince).toBeGreaterThanOrEqual(before.run.activeSince)
       expect(retry.createdAt).toEqual(before.run.createdAt)
       await expect(
         client.retry(run.id, { expectedVersion: before.run.version }),
@@ -358,9 +356,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
           vi.spyOn(executor, dispatch).mockImplementation(
             async (command, options) => {
               if (options?.runAt)
-                delays.push(
-                  Math.round((options.runAt.getTime() - Date.now()) / 1000),
-                )
+                delays.push(Math.round((options.runAt - Date.now()) / 1000))
               return original(command as never)
             },
           )
@@ -636,9 +632,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
       const before = (await client.get(run.id))!
       expect(before.attempts[0]?.status).toBe('cancelled')
       const retry = await client.retry(run.id)
-      expect(
-        retry.activeSince.getTime() - retry.createdAt.getTime(),
-      ).toBeGreaterThan(3_600_000)
+      expect(retry.activeSince - retry.createdAt).toBeGreaterThan(3_600_000)
       expect(
         await timeoutExpiredWorkflowRuns({ ...runtime, workflows: [impl] }),
       ).toEqual({ timedOut: 0 })
@@ -914,10 +908,10 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
           await measuredClient.retry(run.id)
           counts.push(queries)
           const detail = (await client.getDetail(run.id))!
-          expect(detail.run.activeSince).toBeInstanceOf(Date)
+          expect(detail.run.activeSince).toEqual(expect.any(Number))
           expect(detail.childRuns).toHaveLength(size)
           for (const nested of detail.childRuns)
-            expect(nested.activeSince).toBeInstanceOf(Date)
+            expect(nested.activeSince).toEqual(expect.any(Number))
         }
         expect(counts[1]).toBe(counts[0])
       },

@@ -70,6 +70,9 @@ export type WorkflowStatus =
   | 'failed'
   | 'completed'
 
+/** Unix time in milliseconds, as `Date.now()` returns it. */
+export type Timestamp = number
+
 export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
@@ -406,8 +409,8 @@ export type WorkflowRun<
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
   readonly version: number
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
@@ -425,8 +428,8 @@ export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
   readonly version: number
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 export type RunnableRun<

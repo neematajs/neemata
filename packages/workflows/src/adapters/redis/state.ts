@@ -5,8 +5,9 @@ import type {
   StoredRun,
 } from '../../runtime/state.ts'
 import type { CreateRunInput, RunLease } from '../../runtime/store.ts'
+import type { Timestamp } from '../../types/index.ts'
 
-export type StoredLease = RunLease & { readonly expiresAt: Date }
+export type StoredLease = RunLease & { readonly expiresAt: Timestamp }
 
 export type Family = {
   readonly rootRunId: string
@@ -15,22 +16,6 @@ export type Family = {
   readonly children: Record<string, StoredNodeChild>
   readonly attempts: Record<string, StoredAttempt>
 }
-
-const dateKeys = new Set([
-  'activeSince',
-  'createdAt',
-  'updatedAt',
-  'dispatchedAt',
-  'heartbeatAt',
-  'completedAt',
-  'expiresAt',
-  'runAt',
-  'deadAt',
-  'reapedAt',
-  'leaseExpiresAt',
-  'nextRunAt',
-  'lastSlotAt',
-])
 
 // Lua may inspect routing/state fields, but cjson cannot round-trip arbitrary
 // JSON arrays and numbers. Payload fields cross Lua unchanged as JSON strings.
@@ -46,15 +31,8 @@ const payloadKeys = new Set([
 ])
 
 export const encode = (value: unknown): string =>
-  JSON.stringify(
-    value,
-    function (this: Record<string, unknown>, key, item: unknown) {
-      if (payloadKeys.has(key)) return JSON.stringify(item)
-      const original = this[key]
-      if (dateKeys.has(key) && original instanceof Date)
-        return original.getTime()
-      return item
-    },
+  JSON.stringify(value, (key, item: unknown) =>
+    payloadKeys.has(key) ? JSON.stringify(item) : item,
   )
 
 export const decode = <T>(value: string): T =>
@@ -63,7 +41,6 @@ export const decode = <T>(value: string): T =>
     // reviver, without allocating a second copy of the record envelope.
     if (payloadKeys.has(key) && typeof item === 'string')
       return JSON.parse(item)
-    if (dateKeys.has(key) && typeof item === 'number') return new Date(item)
     return item
   }) as T
 

@@ -392,8 +392,8 @@ updates only the affected hash fields in one atomic Lua operation; the runtime
 does not hold distributed locks or perform client-side compare-and-swap retry
 loops.
 
-Redis stores runtime timestamps as Unix milliseconds; the shared client and
-worker APIs still return `Date` objects. Application payloads are stored as
+Runtime timestamps are Unix milliseconds in Redis, as in every record the
+runtime returns. Application payloads are stored as
 opaque JSON so Lua transitions preserve empty arrays, numeric precision, and
 payload fields that happen to have timestamp names. Lease deadlines and
 retention use Redis server time to avoid disagreement between worker clocks.
@@ -457,6 +457,16 @@ explicitly instead of silently evicting one part of a workflow family. Terminal
 retention bounds historical state, but capacity must still cover the maximum
 concurrent active state and ready/claimed queue backlog.
 
+## Timestamps
+
+Every time the runtime reads or returns is a `Timestamp`: Unix milliseconds, as
+`Date.now()` returns them. That covers record fields such as `createdAt`,
+`activeSince` and `dispatchedAt`, options such as `startAt`, and list filters such as
+`createdBefore`. Runs, snapshots and read models are therefore plain JSON and cross
+a transport as they are. PostgreSQL still stores `timestamptz` columns; the adapter
+converts at its boundary. `Date`s in your own inputs and outputs are a schema
+concern and unaffected.
+
 ## Runtime Connection
 
 Runtime code consumes a small `WorkflowPostgresConnection` interface. For
@@ -480,6 +490,13 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 ```
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
+
+The client and its type parsers stay yours. The adapter reads `timestamptz` columns
+through whatever parser the client has, so that parser must return a `Date` (the
+`pg` and PGlite default), the column's text, or Unix milliseconds. Any other value,
+such as a `Temporal` object, fails the read with a `TypeError` instead of reaching a
+record. Timestamps are written as `Date` parameters, which drivers serialize the same
+way regardless of parsers.
 
 ## Wake Events (LISTEN/NOTIFY)
 

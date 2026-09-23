@@ -1,4 +1,4 @@
-import type { RetryPolicy } from '../../types/index.ts'
+import type { RetryPolicy, Timestamp } from '../../types/index.ts'
 import type { ActivityAttemptCommand, TaskAttemptCommand } from '../commands.ts'
 import type { AttemptExecutor } from '../executors.ts'
 import type { StoredAttempt } from '../state.ts'
@@ -81,7 +81,7 @@ async function retryAttempt(
   },
   dispatch: (
     attempt: StoredAttempt,
-    options: { readonly runAt?: Date } | undefined,
+    options: { readonly runAt?: Timestamp } | undefined,
   ) => Promise<void>,
 ): Promise<boolean> {
   const { command, failedAttempt: failed, retry } = params
@@ -113,9 +113,9 @@ function shouldRetry(
 function dispatchOptions(
   retry: RetryPolicy,
   attemptNumber: number,
-): { readonly runAt?: Date } | undefined {
+): { readonly runAt?: Timestamp } | undefined {
   const delayMs = retryDelayMs(retry, attemptNumber)
-  return delayMs > 0 ? { runAt: new Date(Date.now() + delayMs) } : undefined
+  return delayMs > 0 ? { runAt: Date.now() + delayMs } : undefined
 }
 
 function retryDelayMs(retry: RetryPolicy, attemptNumber: number): number {

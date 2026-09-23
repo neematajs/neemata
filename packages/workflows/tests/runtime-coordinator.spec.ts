@@ -6760,8 +6760,8 @@ describe('workflow runtime coordinator', () => {
       childRunId: 'missing-child-run',
       attemptCount: 0,
       version: 1,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     }
     const store = {
       ...runtime.store,
@@ -6828,8 +6828,8 @@ describe('workflow runtime coordinator', () => {
       childRunId: 'missing-child-run',
       attemptCount: 0,
       version: 1,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     }
     const store = {
       ...runtime.store,

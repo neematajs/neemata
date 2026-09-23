@@ -7,7 +7,15 @@ import {
   startStoredScheduleRun,
   type StoredWorkflowSchedule,
 } from '../../runtime/scheduler.ts'
-import { id, json, many, one, parseJsonColumn } from './sql.ts'
+import {
+  id,
+  json,
+  many,
+  one,
+  parseJsonColumn,
+  timestampColumn,
+  timestampParam,
+} from './sql.ts'
 
 type PostgresWorkflowSchedulerContext = {
   readonly db: WorkflowPostgresConnection
@@ -41,13 +49,13 @@ export function createPostgresWorkflowScheduler(
   const triggerSlot = () => {
     const current = Date.now()
     lastTriggerTimestamp = Math.max(current, lastTriggerTimestamp + 1)
-    return new Date(lastTriggerTimestamp)
+    return lastTriggerTimestamp
   }
 
   return {
     async reconcile(entries) {
       await ready
-      const date = new Date()
+      const date = Date.now()
       const normalized = normalizeScheduleDefinitions(entries, date)
       await db.transaction(async (tx) => {
         await tx.query(
@@ -128,8 +136,8 @@ export function createPostgresWorkflowScheduler(
               entry.cron ?? null,
               entry.everyMs ?? null,
               entry.enabled,
-              entry.nextRunAt,
-              date,
+              timestampParam(entry.nextRunAt),
+              timestampParam(date),
             ],
           )
         }
@@ -137,7 +145,7 @@ export function createPostgresWorkflowScheduler(
     },
     async fireDue(options = {}) {
       await ready
-      const now = options.now ?? new Date()
+      const now = options.now ?? Date.now()
       const limit = normalizeScheduleLimit(options.limit)
       if (limit < 1) return { fired: 0 }
 
@@ -153,7 +161,7 @@ export function createPostgresWorkflowScheduler(
             LIMIT $2
             FOR UPDATE SKIP LOCKED
           `,
-          [now, limit],
+          [timestampParam(now), limit],
         )
 
         for (const row of rows) {
@@ -169,7 +177,11 @@ export function createPostgresWorkflowScheduler(
                   updated_at = now()
               WHERE id = $1
             `,
-            [schedule.id, slot, nextStoredScheduleRunAt(schedule, now)],
+            [
+              schedule.id,
+              timestampParam(slot),
+              timestampParam(nextStoredScheduleRunAt(schedule, now)),
+            ],
           )
         }
 
@@ -216,7 +228,7 @@ export function createPostgresWorkflowScheduler(
                 updated_at = now()
             WHERE id = $1
           `,
-          [schedule.id, slot],
+          [schedule.id, timestampParam(slot)],
         )
         return run
       })
@@ -235,7 +247,7 @@ export function createPostgresWorkflowScheduler(
           [name],
         )
         if (!row) throw new Error(`Unknown workflow schedule [${name}]`)
-        const date = new Date()
+        const date = Date.now()
         const schedule = mapSchedule(row)
         const nextRunAt =
           enabled && !schedule.enabled && schedule.nextRunAt <= date
@@ -251,7 +263,7 @@ export function createPostgresWorkflowScheduler(
             WHERE name = $1
             RETURNING *
           `,
-          [name, enabled, nextRunAt],
+          [name, enabled, timestampParam(nextRunAt)],
         )
         return mapSchedule(updated!)
       })
@@ -270,17 +282,13 @@ function mapSchedule(row: ScheduleRow): StoredWorkflowSchedule {
     ...(row.cron === null ? {} : { cron: row.cron }),
     ...(row.every_ms === null ? {} : { everyMs: Number(row.every_ms) }),
     enabled: row.enabled,
-    nextRunAt: dateColumn(row.next_run_at),
+    nextRunAt: timestampColumn(row.next_run_at),
     ...(row.last_slot_at === null
       ? {}
-      : { lastSlotAt: dateColumn(row.last_slot_at) }),
-    createdAt: dateColumn(row.created_at),
-    updatedAt: dateColumn(row.updated_at),
+      : { lastSlotAt: timestampColumn(row.last_slot_at) }),
+    createdAt: timestampColumn(row.created_at),
+    updatedAt: timestampColumn(row.updated_at),
   }
-}
-
-function dateColumn(value: Date | string): Date {
-  return value instanceof Date ? value : new Date(value)
 }
 
 function normalizeScheduleLimit(limit: number | undefined) {

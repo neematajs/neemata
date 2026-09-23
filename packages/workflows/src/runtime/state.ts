@@ -2,6 +2,7 @@ import type {
   ResolvedRunUnique,
   RunKind,
   WorkflowNodeKind,
+  Timestamp,
 } from '../types/index.ts'
 import type {
   RuntimeAttemptStatus,
@@ -34,9 +35,9 @@ export type StoredRun = {
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
   readonly version: number
-  readonly activeSince: Date
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly activeSince: Timestamp
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 /**
@@ -54,8 +55,8 @@ export type StoredNode = {
   readonly error?: StoredError
   readonly selectedCase?: string
   readonly version: number
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 export type NodeChildKind = 'activity' | 'task' | 'workflow'
@@ -84,8 +85,8 @@ export type StoredNodeChild = {
   readonly currentAttemptId?: string
   readonly attemptCount: number
   readonly version: number
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 export type StoredAttempt = {
@@ -104,9 +105,9 @@ export type StoredAttempt = {
   readonly idempotencyKey?: readonly unknown[]
   readonly output?: unknown
   readonly error?: StoredError
-  readonly dispatchedAt: Date
-  readonly heartbeatAt?: Date
-  readonly completedAt?: Date
+  readonly dispatchedAt: Timestamp
+  readonly heartbeatAt?: Timestamp
+  readonly completedAt?: Timestamp
 }
 
 export type RunSnapshot = {

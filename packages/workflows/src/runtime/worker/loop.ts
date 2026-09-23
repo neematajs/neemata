@@ -1,6 +1,6 @@
 import { setTimeout as wait } from 'node:timers/promises'
 
-import type { DurationString } from '../../types/index.ts'
+import type { DurationString, Timestamp } from '../../types/index.ts'
 import type { WorkflowScheduler } from '../scheduler.ts'
 import type {
   PruneTerminalRunsParams,
@@ -30,7 +30,7 @@ export type WorkerSchedulingOptions = {
 
 export type WorkerMaintenanceHook = {
   readonly everyMs: number
-  readonly run: (now: Date) => Promise<void>
+  readonly run: (now: Timestamp) => Promise<void>
 }
 
 export type WorkerLoopOptions = {
@@ -83,7 +83,7 @@ type WorkerMode = 'drain' | 'serve'
 
 type PeriodicTask = {
   readonly everyMs: number
-  readonly run: (now: Date) => Promise<void>
+  readonly run: (now: Timestamp) => Promise<void>
   nextAt: number
 }
 
@@ -242,7 +242,7 @@ function resolvePeriodicTasks(options: WorkerLoopOptions): PeriodicTask[] {
       run: (now) =>
         options
           .retentionPruner!.pruneTerminalRuns({
-            olderThan: new Date(now.getTime() - olderThanMs),
+            olderThan: now - olderThanMs,
             batchSize: options.retention!.batchSize,
             statuses: options.retention!.statuses,
           })
@@ -302,7 +302,7 @@ async function runDuePeriodicTasks(
     // A failed pass is retried on its next tick; one transient error must
     // not take the whole worker down with it.
     try {
-      await task.run(new Date(date))
+      await task.run(date)
     } catch (error) {
       report(error)
     }

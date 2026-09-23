@@ -164,10 +164,10 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
       const every = schedules.find((item) => item.name.endsWith('every-next'))
       const cron = schedules.find((item) => item.name.endsWith('cron-next'))
 
-      expect(every?.nextRunAt.getTime()).toBeGreaterThanOrEqual(before + 4_000)
-      expect(every?.nextRunAt.getTime()).toBeLessThanOrEqual(before + 6_000)
-      expect(cron?.nextRunAt.getTime()).toBeGreaterThan(before)
-      expect(cron?.nextRunAt.getTime()).toBeLessThanOrEqual(before + 5_000)
+      expect(every?.nextRunAt).toBeGreaterThanOrEqual(before + 4_000)
+      expect(every?.nextRunAt).toBeLessThanOrEqual(before + 6_000)
+      expect(cron?.nextRunAt).toBeGreaterThan(before)
+      expect(cron?.nextRunAt).toBeLessThanOrEqual(before + 5_000)
     })
 
     it('fires due schedules once per slot and advances past now while skipping missed slots', async () => {
@@ -189,7 +189,7 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
 
       await runtime.scheduler!.reconcile([schedule])
       const [beforeFire] = await runtime.scheduler!.list()
-      const now = new Date(beforeFire!.nextRunAt.getTime() + 1_000)
+      const now = beforeFire!.nextRunAt + 1_000
 
       await expect(
         runtime.scheduler!.fireDue({ now, limit: 10 }),
@@ -206,16 +206,10 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
         name: workflow.name,
         input: { scenario: 'alpha' },
         tags: { tenant: 'tenant-1', schedule: schedule.name },
-        idempotencyKey: [
-          '$schedule',
-          schedule.name,
-          beforeFire!.nextRunAt.toISOString(),
-        ],
+        idempotencyKey: ['$schedule', schedule.name, beforeFire!.nextRunAt],
       })
-      expect(afterFire!.lastSlotAt?.toISOString()).toBe(
-        beforeFire!.nextRunAt.toISOString(),
-      )
-      expect(afterFire!.nextRunAt.getTime()).toBeGreaterThan(now.getTime())
+      expect(afterFire!.lastSlotAt).toBe(beforeFire!.nextRunAt)
+      expect(afterFire!.nextRunAt).toBeGreaterThan(now)
     })
 
     it('uses runnable definition tags for scheduled runs without explicit schedule tags', async () => {
@@ -237,7 +231,7 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
 
       await runtime.scheduler!.reconcile([schedule])
       await runtime.scheduler!.fireDue({
-        now: new Date(Date.now() + 60_000),
+        now: Date.now() + 60_000,
       })
 
       const runs = await client.list({ tags: { scenario: 'alpha' } })
@@ -268,7 +262,7 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
       ])
 
       await expect(
-        runtime.scheduler!.fireDue({ now: new Date(Date.now() + 10_000) }),
+        runtime.scheduler!.fireDue({ now: Date.now() + 10_000 }),
       ).resolves.toStrictEqual({ fired: 0 })
       await expect(client.list()).resolves.toStrictEqual({ runs: [] })
     })

@@ -10,6 +10,7 @@ import type { CommandReleaseOptions } from '../../runtime/executors.ts'
 import type { StoredError, StoredRun } from '../../runtime/state.ts'
 import type { DeadWorkflowCommand } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
 import type { Keys } from './keys.ts'
 import {
@@ -32,16 +33,16 @@ type Item<T> = {
   readonly id: string
   readonly payload: T
   readonly rootRunId?: string
-  readonly runAt?: Date
+  readonly runAt?: Timestamp
   readonly runAtScore?: number
   readonly deliveryCount: number
   readonly lastError?: StoredError
-  readonly deadAt?: Date
-  readonly reapedAt?: Date
-  readonly createdAt: Date
+  readonly deadAt?: Timestamp
+  readonly reapedAt?: Timestamp
+  readonly createdAt: Timestamp
   readonly createdAtScore: number
   readonly leaseToken?: string
-  readonly leaseExpiresAt?: Date
+  readonly leaseExpiresAt?: Timestamp
 }
 
 type Claim<T> = {
@@ -80,32 +81,32 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
   async enqueueWithMarker(
     payload: T,
     markerKey: string,
-    runAt?: Date,
+    runAt?: Timestamp,
   ): Promise<void> {
     await this.#enqueue(payload, runAt, markerKey)
   }
 
-  async enqueue(payload: T, runAt?: Date): Promise<void> {
+  async enqueue(payload: T, runAt?: Timestamp): Promise<void> {
     await this.#enqueue(payload, runAt)
   }
 
   async #enqueue(
     payload: T,
-    runAt: Date | undefined,
+    runAt: Timestamp | undefined,
     markerKey?: string,
   ): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
-    const createdAt = new Date()
+    const createdAt = Date.now()
     const item: Mutable<Item<T>> = {
       id: randomUUID(),
       payload,
       deliveryCount: 0,
       createdAt,
-      createdAtScore: createdAt.getTime(),
+      createdAtScore: createdAt,
     }
     if (runAt !== undefined) {
       item.runAt = runAt
-      item.runAtScore = runAt.getTime()
+      item.runAtScore = runAt
     }
     const markerTarget = markerKey || queue.items
     const hasMarker = markerKey ? '1' : '0'
@@ -296,7 +297,7 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
     const result = await this.#scripts.run(
       'updateDead',
       [queue.items, queue.dead],
-      [id, raw, encode({ ...item, reapedAt: new Date() })],
+      [id, raw, encode({ ...item, reapedAt: Date.now() })],
     )
     return result === 1
   }
@@ -374,7 +375,7 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
     return deleted
   }
 
-  async prune(olderThan: Date): Promise<void> {
+  async prune(olderThan: Timestamp): Promise<void> {
     const queue = this.#keys.queue(this.#kind)
     // Routed workers no longer visit abandoned routes; maintenance owns their
     // expired-family cleanup, including delayed and still-leased commands.
@@ -384,7 +385,7 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
       count = await this.#scripts.run(
         'pruneDead',
         [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-        [String(olderThan.getTime()), String(QUEUE_BATCH_SIZE)],
+        [String(olderThan), String(QUEUE_BATCH_SIZE)],
       )
     } while (count === QUEUE_BATCH_SIZE)
   }

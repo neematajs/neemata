@@ -27,20 +27,19 @@ export function sortedChildren(rows: readonly StoredNodeChild[]) {
 }
 
 export function compareAttempts(left: StoredAttempt, right: StoredAttempt) {
-  const byDispatchedAt =
-    left.dispatchedAt.getTime() - right.dispatchedAt.getTime()
+  const byDispatchedAt = left.dispatchedAt - right.dispatchedAt
   if (byDispatchedAt !== 0) return byDispatchedAt
   return left.id.localeCompare(right.id)
 }
 
 export function compareRunsNewest(left: StoredRun, right: StoredRun) {
-  const byCreatedAt = right.createdAt.getTime() - left.createdAt.getTime()
+  const byCreatedAt = right.createdAt - left.createdAt
   if (byCreatedAt !== 0) return byCreatedAt
   return right.id.localeCompare(left.id)
 }
 
 export function compareRunsOldest(left: StoredRun, right: StoredRun) {
-  const byCreatedAt = left.createdAt.getTime() - right.createdAt.getTime()
+  const byCreatedAt = left.createdAt - right.createdAt
   if (byCreatedAt !== 0) return byCreatedAt
   return left.id.localeCompare(right.id)
 }

@@ -1,5 +1,6 @@
 import type { ContinueRunCommand } from '../../runtime/commands.ts'
 import type { RunCoordinationExecutor } from '../../runtime/executors.ts'
+import type { Timestamp } from '../../types/index.ts'
 import type { QueueItem } from './commands.ts'
 import type { State } from './state.ts'
 import {
@@ -10,7 +11,10 @@ import {
   releaseQueueItem,
 } from './commands.ts'
 
-function earliestRunAt(left: Date | undefined, right: Date | undefined) {
+function earliestRunAt(
+  left: Timestamp | undefined,
+  right: Timestamp | undefined,
+) {
   if (left === undefined || right === undefined) return undefined
   return left <= right ? left : right
 }
@@ -35,7 +39,7 @@ function mergeContinueQueueItem(
 export function enqueueContinue(
   state: State,
   command: ContinueRunCommand,
-  runAt?: Date,
+  runAt?: Timestamp,
 ) {
   const { id, continueRunCommands, wake } = state
 
@@ -48,7 +52,7 @@ export function enqueueContinue(
   )
   if (existingIndex === -1) {
     continueRunCommands.push(queueItem(state, id('continue'), command, runAt))
-    if (runAt === undefined || runAt <= new Date()) {
+    if (runAt === undefined || runAt <= Date.now()) {
       wake.command('continue')
     }
     return
@@ -60,7 +64,7 @@ export function enqueueContinue(
     payload: command,
     runAt: earliestRunAt(existing.runAt, runAt),
   }
-  if (runAt === undefined || runAt <= new Date()) {
+  if (runAt === undefined || runAt <= Date.now()) {
     wake.command('continue')
   }
 }
@@ -139,7 +143,7 @@ export function createRunCoordinationExecutor(
       claimedContinueRunCommands.set(claim.id, {
         ...item,
         leaseToken: claim.leaseToken,
-        leaseExpiresAt: new Date(date.getTime() + worker.leaseMs),
+        leaseExpiresAt: date + worker.leaseMs,
       })
       return claim
     },

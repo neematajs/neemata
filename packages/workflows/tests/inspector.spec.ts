@@ -21,12 +21,6 @@ import {
   nodeUnits,
   serializeWorkflowCatalog,
   serializeWorkflowGraph,
-  toAttemptDto,
-  toNodeSnapshotDto,
-  toNodeUnitDto,
-  toRunDetailDto,
-  toRunFamilyEntryDto,
-  toRunSnapshotDto,
 } from '../src/inspector/index.ts'
 
 const scoreTask = defineTask({
@@ -420,9 +414,9 @@ describe('serializeWorkflowCatalog', () => {
   })
 })
 
-describe('snapshot DTO mappers', () => {
-  const createdAt = new Date('2026-07-08T10:00:00.000Z')
-  const updatedAt = new Date('2026-07-08T10:00:01.000Z')
+describe('stored snapshots', () => {
+  const createdAt = Date.parse('2026-07-08T10:00:00.000Z')
+  const updatedAt = Date.parse('2026-07-08T10:00:01.000Z')
 
   const snapshot: RunSnapshot = {
     run: {
@@ -483,65 +477,15 @@ describe('snapshot DTO mappers', () => {
     ],
   }
 
-  it('converts every Date to an ISO string and round-trips through JSON', () => {
-    const dto = toRunSnapshotDto(snapshot)
-
-    expect(dto.run.createdAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(dto.nodes[0].updatedAt).toBe('2026-07-08T10:00:01.000Z')
-    expect(dto.children[0].createdAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(dto.attempts[0].dispatchedAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(dto.attempts[0].completedAt).toBe('2026-07-08T10:00:01.000Z')
-    expect(JSON.parse(JSON.stringify(dto))).toEqual(dto)
-  })
-
-  it('keeps optional attempt timestamps optional', () => {
-    const attempt: StoredAttempt = {
-      id: 'attempt-2',
-      runId: 'run-1',
-      nodeName: 'extract',
-      childKey: '$self',
-      status: 'started',
-      attemptNumber: 1,
-      retryAttemptNumber: 1,
-      input: { text: 'hi' },
-      dispatchedAt: createdAt,
-      heartbeatAt: updatedAt,
-    }
-
-    const dto = toAttemptDto(attempt)
-    expect(dto.heartbeatAt).toBe('2026-07-08T10:00:01.000Z')
-    expect(dto.completedAt).toBeUndefined()
-  })
-
-  it('passes stored errors through untouched', () => {
-    const attempt: StoredAttempt = {
-      id: 'attempt-3',
-      runId: 'run-1',
-      nodeName: 'extract',
-      childKey: '$self',
-      status: 'failed',
-      attemptNumber: 2,
-      retryAttemptNumber: 2,
-      input: { text: 'hi' },
-      error: {
-        name: 'Error',
-        message: 'boom',
-        stack: 'Error: boom',
-        cause: { message: 'root cause' },
-      },
-      dispatchedAt: createdAt,
-      completedAt: updatedAt,
-    }
-
-    const dto = toAttemptDto(attempt)
-    expect(dto.error).toEqual(attempt.error)
-    expect(JSON.parse(JSON.stringify(dto))).toEqual(dto)
+  it('survives JSON transport unchanged, timestamps included', () => {
+    expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot)
+    expect(snapshot.run.createdAt).toBe(1783504800000)
   })
 })
 
 describe('read model inspector helpers', () => {
-  const createdAt = new Date('2026-07-08T10:00:00.000Z')
-  const updatedAt = new Date('2026-07-08T10:00:01.000Z')
+  const createdAt = Date.parse('2026-07-08T10:00:00.000Z')
+  const updatedAt = Date.parse('2026-07-08T10:00:01.000Z')
 
   const runSummary = (id: string): RunSummary => ({
     id,
@@ -654,7 +598,7 @@ describe('read model inspector helpers', () => {
     ])
   })
 
-  it('maps new read models to wire-safe DTOs', () => {
+  it('keeps read models JSON-safe as they are', () => {
     const node: StoredNode = {
       runId: 'run-1',
       name: 'fanout',
@@ -704,22 +648,7 @@ describe('read model inspector helpers', () => {
     }
     const unit = nodeUnits(detail, 'route')[0]!
 
-    const detailDto = toRunDetailDto(detail)
-    const snapshotDto = toNodeSnapshotDto(snapshot)
-    const familyDto = toRunFamilyEntryDto(familyEntry)
-    const unitDto = toNodeUnitDto(unit)
-
-    expect(detailDto.run.createdAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(detailDto.children[0]?.updatedAt).toBe('2026-07-08T10:00:01.000Z')
-    expect(snapshotDto.node.output).toStrictEqual({ text: 'output' })
-    expect(snapshotDto.attempts[0]?.completedAt).toBe(
-      '2026-07-08T10:00:01.000Z',
-    )
-    expect(familyDto.run.createdAt).toBe('2026-07-08T10:00:00.000Z')
-    expect(unitDto.childRun?.updatedAt).toBe('2026-07-08T10:00:01.000Z')
-    expect(JSON.parse(JSON.stringify(detailDto))).toEqual(detailDto)
-    expect(JSON.parse(JSON.stringify(snapshotDto))).toEqual(snapshotDto)
-    expect(JSON.parse(JSON.stringify(familyDto))).toEqual(familyDto)
-    expect(JSON.parse(JSON.stringify(unitDto))).toEqual(unitDto)
+    for (const value of [detail, snapshot, familyEntry, unit])
+      expect(JSON.parse(JSON.stringify(value))).toEqual(value)
   })
 })

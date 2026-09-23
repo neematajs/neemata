@@ -1,17 +1,7 @@
 import type {
-  RunSnapshot,
-  StoredAttempt,
-  StoredNode,
-  StoredNodeChild,
-  StoredRun,
-} from '../runtime/state.ts'
-import type {
   AttemptSummary,
   NodeChildSummary,
-  NodeSnapshot,
-  NodeSummary,
   RunDetail,
-  RunFamilyEntry,
   RunSummary,
 } from '../runtime/store.ts'
 import type {
@@ -168,124 +158,12 @@ export function serializeWorkflowCatalog(input: {
   return { workflows, tasks }
 }
 
-/**
- * Wire-safe counterpart of a stored type: `Date` fields become ISO-8601
- * strings so the value survives JSON transport unchanged. Applies to the
- * envelope only — payload fields (`input`/`output`/`item`/`error` contents)
- * are stored JSON values passed through untouched; encoding payload `Date`s
- * is the schema layer's concern, and persisted payloads have already been
- * through JSON in any real adapter.
- */
-export type WireSafe<T> = {
-  [K in keyof T]: T[K] extends Date
-    ? string
-    : T[K] extends Date | undefined
-      ? string | undefined
-      : T[K]
-}
-
-type DateKeys<T> = {
-  [K in keyof T]-?: NonNullable<T[K]> extends Date ? K : never
-}[keyof T]
-
-// Requiring every Date key at the type level makes adding a Date field to a
-// stored type a compile error here instead of a silent Date leaking through
-// a DTO typed as string.
-function convertDates<T extends object>(
-  value: T,
-  dateKeys: Record<DateKeys<T>, true>,
-): WireSafe<T> {
-  const next = { ...value } as Record<string, unknown>
-  for (const key of Object.keys(dateKeys)) {
-    const current = next[key]
-    if (current instanceof Date) next[key] = current.toISOString()
-  }
-  return next as WireSafe<T>
-}
-
-export type RunDto = WireSafe<StoredRun>
-export type NodeDto = WireSafe<StoredNode>
-export type NodeChildDto = WireSafe<StoredNodeChild>
-export type AttemptDto = WireSafe<StoredAttempt>
-
-export type RunSnapshotDto = {
-  readonly run: RunDto
-  readonly nodes: readonly NodeDto[]
-  readonly children: readonly NodeChildDto[]
-  readonly attempts: readonly AttemptDto[]
-}
-
 export type NodeUnit = {
   readonly key: string
   readonly parsed?: ParsedChildKey
   readonly child: NodeChildSummary
   readonly attempts: readonly AttemptSummary[]
   readonly childRun?: RunSummary
-}
-
-export type RunSummaryDto = WireSafe<RunSummary>
-export type NodeSummaryDto = WireSafe<NodeSummary>
-export type NodeChildSummaryDto = WireSafe<NodeChildSummary>
-export type AttemptSummaryDto = WireSafe<AttemptSummary>
-
-export type RunDetailDto = {
-  readonly run: RunSummaryDto
-  readonly nodes: readonly NodeSummaryDto[]
-  readonly children: readonly NodeChildSummaryDto[]
-  readonly attempts: readonly AttemptSummaryDto[]
-  readonly childRuns: readonly RunSummaryDto[]
-}
-
-export type NodeSnapshotDto = {
-  readonly node: NodeDto
-  readonly children: readonly NodeChildDto[]
-  readonly attempts: readonly AttemptDto[]
-}
-
-export type RunFamilyEntryDto = {
-  readonly run: RunSummaryDto
-  readonly origin?: RunFamilyEntry['origin']
-}
-
-export type NodeUnitDto = {
-  readonly key: string
-  readonly parsed?: ParsedChildKey
-  readonly child: NodeChildSummaryDto
-  readonly attempts: readonly AttemptSummaryDto[]
-  readonly childRun?: RunSummaryDto
-}
-
-export function toRunDto(run: StoredRun): RunDto {
-  return convertDates(run, {
-    activeSince: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-}
-
-export function toNodeDto(node: StoredNode): NodeDto {
-  return convertDates(node, { createdAt: true, updatedAt: true })
-}
-
-export function toNodeChildDto(child: StoredNodeChild): NodeChildDto {
-  return convertDates(child, { createdAt: true, updatedAt: true })
-}
-
-export function toAttemptDto(attempt: StoredAttempt): AttemptDto {
-  return convertDates(attempt, {
-    dispatchedAt: true,
-    heartbeatAt: true,
-    completedAt: true,
-  })
-}
-
-export function toRunSnapshotDto(snapshot: RunSnapshot): RunSnapshotDto {
-  return {
-    run: toRunDto(snapshot.run),
-    nodes: snapshot.nodes.map(toNodeDto),
-    children: snapshot.children.map(toNodeChildDto),
-    attempts: snapshot.attempts.map(toAttemptDto),
-  }
 }
 
 export function nodeUnits(
@@ -328,65 +206,4 @@ export function nodeUnits(
       ...(childRun === undefined ? {} : { childRun }),
     }
   })
-}
-
-export function toRunSummaryDto(summary: RunSummary): RunSummaryDto {
-  return convertDates(summary, {
-    activeSince: true,
-    createdAt: true,
-    updatedAt: true,
-  })
-}
-
-function toNodeSummaryDto(summary: NodeSummary): NodeSummaryDto {
-  return convertDates(summary, { createdAt: true, updatedAt: true })
-}
-
-function toNodeChildSummaryDto(summary: NodeChildSummary): NodeChildSummaryDto {
-  return convertDates(summary, { createdAt: true, updatedAt: true })
-}
-
-function toAttemptSummaryDto(summary: AttemptSummary): AttemptSummaryDto {
-  return convertDates(summary, {
-    dispatchedAt: true,
-    heartbeatAt: true,
-    completedAt: true,
-  })
-}
-
-export function toRunDetailDto(detail: RunDetail): RunDetailDto {
-  return {
-    run: toRunSummaryDto(detail.run),
-    nodes: detail.nodes.map(toNodeSummaryDto),
-    children: detail.children.map(toNodeChildSummaryDto),
-    attempts: detail.attempts.map(toAttemptSummaryDto),
-    childRuns: detail.childRuns.map(toRunSummaryDto),
-  }
-}
-
-export function toNodeSnapshotDto(snapshot: NodeSnapshot): NodeSnapshotDto {
-  return {
-    node: toNodeDto(snapshot.node),
-    children: snapshot.children.map(toNodeChildDto),
-    attempts: snapshot.attempts.map(toAttemptDto),
-  }
-}
-
-export function toRunFamilyEntryDto(entry: RunFamilyEntry): RunFamilyEntryDto {
-  return {
-    run: toRunSummaryDto(entry.run),
-    ...(entry.origin === undefined ? {} : { origin: entry.origin }),
-  }
-}
-
-export function toNodeUnitDto(unit: NodeUnit): NodeUnitDto {
-  return {
-    key: unit.key,
-    ...(unit.parsed === undefined ? {} : { parsed: unit.parsed }),
-    child: toNodeChildSummaryDto(unit.child),
-    attempts: unit.attempts.map(toAttemptSummaryDto),
-    ...(unit.childRun === undefined
-      ? {}
-      : { childRun: toRunSummaryDto(unit.childRun) }),
-  }
 }

@@ -17,7 +17,6 @@ import {
   mapAttempt,
   jsonRecordArrayColumn,
   jsonRecordColumn,
-  withDateColumns,
   emitStatusChangeNotifySql,
   notifyRunStatusEventColumnsSql,
   isUniqueViolation,
@@ -75,29 +74,11 @@ export const createPostgresWorkflowStore = (
           )
           const snapshots: RunSnapshot[] = rows.map((row) => {
             const run = mapRun(row)
-            const nodes = jsonRecordArrayColumn(row.nodes).map((node) => {
-              const dated = withDateColumns(node, ['created_at', 'updated_at'])
-              return mapNode(dated)
-            })
+            const nodes = jsonRecordArrayColumn(row.nodes).map(mapNode)
             const children = jsonRecordArrayColumn(row.children).map(
-              (child) => {
-                const dated = withDateColumns(child, [
-                  'created_at',
-                  'updated_at',
-                ])
-                return mapNodeChild(dated)
-              },
+              mapNodeChild,
             )
-            const attempts = jsonRecordArrayColumn(row.attempts).map(
-              (attempt) => {
-                const dated = withDateColumns(attempt, [
-                  'dispatched_at',
-                  'heartbeat_at',
-                  'completed_at',
-                ])
-                return mapAttempt(dated)
-              },
-            )
+            const attempts = jsonRecordArrayColumn(row.attempts).map(mapAttempt)
             return { run, nodes, children, attempts }
           })
           const reopening = validateFailedRunRetry(snapshots, params)
@@ -129,13 +110,7 @@ export const createPostgresWorkflowStore = (
               throw new Error(`Run [${guard.id}] has an active attempt`)
             const conflict = jsonRecordColumn(guard.conflict)
             if (conflict) {
-              const holder = mapRun(
-                withDateColumns(conflict, [
-                  'active_since',
-                  'created_at',
-                  'updated_at',
-                ]),
-              )
+              const holder = mapRun(conflict)
               throw new WorkflowRunConflictError({
                 runId: holder.id,
                 status: holder.status,

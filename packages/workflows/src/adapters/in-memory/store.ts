@@ -48,7 +48,7 @@ export function createStore(state: State): WorkflowStore {
       const reopening = validateFailedRunRetry(snapshots, params)
       for (const { run } of reopening) {
         const lease = runLeases.get(run.id)
-        if (lease && lease.expiresAt > new Date()) {
+        if (lease && lease.expiresAt > Date.now()) {
           throw new Error(`Run [${run.id}] is busy`)
         }
         if (
@@ -58,7 +58,7 @@ export function createStore(state: State): WorkflowStore {
           ].some(
             (claim) =>
               claim.payload.runId === run.id &&
-              claim.leaseExpiresAt > new Date(),
+              claim.leaseExpiresAt > Date.now(),
           )
         ) {
           throw new Error(`Run [${run.id}] has an active attempt`)

@@ -197,6 +197,8 @@ const connection = createPostgresWorkflowConnection(
   new Pool({ connectionString: databaseUrl }),
 )
 await verifyPostgresWorkflowSchema(connection) // fail fast on schema drift
+// The pool's timestamptz parser must return a Date (the default), the column
+// text, or Unix milliseconds; anything else fails the read with a TypeError.
 const runtime = createPostgresWorkflowRuntime({ connection })
 
 // Execution-side client: implementations registered for the workers.
@@ -275,8 +277,8 @@ Redis-specific constraints:
   the correctness fallback.
 - Active run families have no TTL. `terminalRetentionMs` starts only after the
   whole root family is terminal and bounds historical memory.
-- Shared APIs retain `Date` objects; Redis stores runtime timestamps as Unix
-  milliseconds and uses server time for leases and retention. Application
+- Runtime timestamps are Unix milliseconds, as everywhere in the runtime; Redis
+  uses server time for leases and retention. Application
   payloads remain opaque JSON through Lua transitions.
 - Queue scans and maintenance reclaim commands after their family expires;
   keep workers or maintenance running to clean up shared queue records.
@@ -349,10 +351,8 @@ transport:
 - `serializeWorkflowGraph(definition)` - stable JSON topology (nodes, targets,
   branch/parallel cases, maps) incl. `title`/`description` metadata.
 - `serializeWorkflowCatalog({ workflows?, tasks? })` - "what exists" listing.
-- `to*Dto` mappers (`toRunSummaryDto`, `toRunDetailDto`, `toRunSnapshotDto`,
-  `toRunEventDto`, ...) - wire-safe counterparts of runtime values: `Date`
-  fields become ISO strings, everything else passes through. Types are the
-  `*Dto` / `WireSafe<T>` exports.
+- Runs, snapshots and read models need no mapping: every runtime time is a
+  `Timestamp` (Unix milliseconds), so they are plain JSON already.
 
 Caveat: run rows store names only — UIs join runs to graph/catalog by
 workflow name; there is no per-run definition snapshot yet.

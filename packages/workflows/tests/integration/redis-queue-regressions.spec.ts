@@ -135,10 +135,10 @@ for (const target of targets) {
             id,
             payload: { kind: 'continueRun', runId: id, workflowName: 'batch' },
             deliveryCount: 3,
-            createdAt: new Date(1000),
+            createdAt: 1000,
             createdAtScore: 1000,
-            deadAt: new Date(2000 + index),
-            ...(index < 250 ? { reapedAt: new Date(3000) } : {}),
+            deadAt: 2000 + index,
+            ...(index < 250 ? { reapedAt: 3000 } : {}),
           }
           seed
             .hset(queue.items, id, encode(item))
@@ -162,7 +162,7 @@ for (const target of targets) {
         expect(calls.mock.calls.length).toBeLessThanOrEqual(4)
         calls.mockClear()
         await runtime.store.pruneTerminalRuns({
-          olderThan: new Date(2255),
+          olderThan: 2255,
           batchSize: 0,
         })
         expect(calls.mock.calls.length).toBeLessThan(15)
@@ -209,7 +209,7 @@ for (const target of targets) {
                   workflowName: 'batch',
                 },
                 deliveryCount: 0,
-                createdAt: new Date(),
+                createdAt: Date.now(),
                 createdAtScore: Date.now(),
               }),
             )
@@ -562,14 +562,8 @@ for (const target of targets) {
           workflowName: 'first',
         }
         const now = Date.now()
-        await runtime.runCoordinationExecutor.enqueueDelayed(
-          older,
-          new Date(now - 1000),
-        )
-        await runtime.runCoordinationExecutor.enqueueDelayed(
-          later,
-          new Date(now - 500),
-        )
+        await runtime.runCoordinationExecutor.enqueueDelayed(older, now - 1000)
+        await runtime.runCoordinationExecutor.enqueueDelayed(later, now - 500)
         const claim = await runtime.runCoordinationExecutor.claim({
           workerId: 'fair',
           workflowNames: ['first', 'second'],
@@ -853,7 +847,7 @@ for (const target of targets) {
           ).resolves.toBeNull()
 
           const evalsha = vi.spyOn(client, 'evalsha')
-          await runtime.store.pruneTerminalRuns({ olderThan: new Date() })
+          await runtime.store.pruneTerminalRuns({ olderThan: Date.now() })
 
           for (const kind of ['continue', 'attempt'] as const) {
             const queue = keys.queue(kind)

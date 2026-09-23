@@ -4,6 +4,7 @@ import type {
   AnyScheduleDefinition,
   RunKind,
   ScheduleDefinition,
+  Timestamp,
 } from '../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
@@ -23,14 +24,14 @@ export type StoredWorkflowSchedule = {
   readonly cron?: string
   readonly everyMs?: number
   readonly enabled: boolean
-  readonly nextRunAt: Date
-  readonly lastSlotAt?: Date
-  readonly createdAt: Date
-  readonly updatedAt: Date
+  readonly nextRunAt: Timestamp
+  readonly lastSlotAt?: Timestamp
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
 }
 
 export type WorkflowSchedulerFireDueOptions = {
-  readonly now?: Date
+  readonly now?: Timestamp
   readonly limit?: number
 }
 
@@ -57,12 +58,12 @@ export type NormalizedScheduleEntry = {
   readonly cron?: string
   readonly everyMs?: number
   readonly enabled: boolean
-  readonly nextRunAt: Date
+  readonly nextRunAt: Timestamp
 }
 
 export function normalizeScheduleDefinitions(
   definitions: readonly AnyScheduleDefinition[],
-  now = new Date(),
+  now = Date.now(),
 ): readonly NormalizedScheduleEntry[] {
   const names = new Set<string>()
   return definitions.map((definition) => {
@@ -76,7 +77,7 @@ export function normalizeScheduleDefinitions(
 
 export function normalizeScheduleDefinition(
   definition: AnyScheduleDefinition,
-  now = new Date(),
+  now = Date.now(),
 ): NormalizedScheduleEntry {
   const cadence = normalizeScheduleCadence(definition)
   const runnableKind = definition.runnable.kind
@@ -100,8 +101,8 @@ export function normalizeScheduleDefinition(
 
 export function nextStoredScheduleRunAt(
   schedule: Pick<StoredWorkflowSchedule, 'cron' | 'everyMs' | 'nextRunAt'>,
-  now: Date,
-): Date {
+  now: Timestamp,
+): Timestamp {
   return nextScheduleRunAt(schedule, now, schedule.nextRunAt)
 }
 
@@ -112,9 +113,9 @@ export async function startStoredScheduleRun(
     readonly attemptExecutor: AttemptExecutor
   },
   schedule: StoredWorkflowSchedule,
-  slot: Date,
+  slot: Timestamp,
 ): Promise<StoredRun> {
-  const idempotencyKey = ['$schedule', schedule.name, slot.toISOString()]
+  const idempotencyKey = ['$schedule', schedule.name, slot]
   const tags = { ...schedule.tags, schedule: schedule.name }
   const run = await runtime.store.createRun({
     kind: schedule.runnableKind,
@@ -199,22 +200,22 @@ function normalizeScheduleCadence(input: {
 
 function nextScheduleRunAt(
   cadence: Pick<StoredWorkflowSchedule, 'cron' | 'everyMs'>,
-  now: Date,
-  base: Date,
-): Date {
+  now: Timestamp,
+  base: Timestamp,
+): Timestamp {
   if (cadence.cron !== undefined) {
     return CronExpressionParser.parse(cadence.cron, {
       currentDate: now,
     })
       .next()
-      .toDate()
+      .getTime()
   }
 
   if (cadence.everyMs === undefined || cadence.everyMs <= 0) {
     throw new Error('Schedule everyMs must be a positive number')
   }
 
-  const elapsed = now.getTime() - base.getTime()
+  const elapsed = now - base
   const missed = Math.max(0, Math.floor(elapsed / cadence.everyMs))
-  return new Date(base.getTime() + (missed + 1) * cadence.everyMs)
+  return base + (missed + 1) * cadence.everyMs
 }

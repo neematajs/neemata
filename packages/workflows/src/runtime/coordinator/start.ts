@@ -9,6 +9,7 @@ import type {
   RunUniqueConstraint,
   TaskInput,
   WorkflowInput,
+  Timestamp,
 } from '../../types/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
@@ -36,7 +37,7 @@ export type StartTaskRunInput<
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: RunUniqueConstraint
-  readonly startAt?: Date
+  readonly startAt?: Timestamp
   readonly connection?: Connection
 }
 
@@ -53,7 +54,7 @@ export type StartWorkflowRunInput<
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: RunUniqueConstraint
-  readonly startAt?: Date
+  readonly startAt?: Timestamp
   readonly connection?: Connection
 }
 
@@ -67,7 +68,7 @@ type WorkflowStartMetadataInput<Workflow extends AnyWorkflowDefinition> = {
 export type WorkflowRuntimeAtomicStart<Connection = never> = {
   readonly startWorkflowRun: (input: {
     readonly run: CreateRunInput
-    readonly startAt?: Date
+    readonly startAt?: Timestamp
     readonly connection?: Connection
   }) => Promise<StoredRun>
   readonly startTaskRun: (input: {
@@ -75,7 +76,7 @@ export type WorkflowRuntimeAtomicStart<Connection = never> = {
     readonly taskName: string
     readonly taskInput: unknown
     readonly idempotencyKey?: readonly unknown[]
-    readonly startAt?: Date
+    readonly startAt?: Timestamp
     readonly connection?: Connection
   }) => Promise<StoredRun>
 }

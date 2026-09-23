@@ -147,7 +147,7 @@ function sweepDeadQueueItems<T extends { readonly runId: string }>(
 ) {
   for (let index = queue.length - 1; index >= 0; index -= 1) {
     const item = queue[index]!
-    if (item.deadAt !== undefined && item.deadAt.getTime() < deadBefore) {
+    if (item.deadAt !== undefined && item.deadAt < deadBefore) {
       queue.splice(index, 1)
     }
   }
@@ -162,7 +162,7 @@ export function createRetentionStore(state: State): RetentionStore {
     async pruneTerminalRuns(params: PruneTerminalRunsParams) {
       const batchSize = normalizePruneBatchSize(params.batchSize)
       const statuses = normalizePruneStatuses(params.statuses)
-      const deadBefore = params.olderThan.getTime()
+      const deadBefore = params.olderThan
       if (batchSize < 1 || statuses.length === 0) {
         sweepDeadCommands(state, deadBefore)
         return { deleted: 0 }
@@ -176,8 +176,7 @@ export function createRetentionStore(state: State): RetentionStore {
             run.updatedAt < params.olderThan,
         )
         .sort((left, right) => {
-          const byUpdatedAt =
-            left.updatedAt.getTime() - right.updatedAt.getTime()
+          const byUpdatedAt = left.updatedAt - right.updatedAt
           if (byUpdatedAt !== 0) return byUpdatedAt
           return left.id.localeCompare(right.id)
         })

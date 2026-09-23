@@ -12,6 +12,7 @@ import type {
   TaskRun,
   WorkflowInput,
   WorkflowRun,
+  Timestamp,
 } from '../types/index.ts'
 import type { WorkflowRuntimeAtomicStart } from './coordinator.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
@@ -55,7 +56,7 @@ export type WorkflowRuntimeStartOptions<Connection = never> = {
    * `restart()` re-applies the stored run's constraint unless overridden here.
    */
   readonly unique?: RunUniqueConstraint
-  readonly startAt?: Date
+  readonly startAt?: Timestamp
   /**
    * Adapter connection already inside the caller's open transaction (the one
    * handed to `transaction()`'s handler, or built over an external client
