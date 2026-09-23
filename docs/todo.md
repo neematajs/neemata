@@ -1,8 +1,6 @@
 # To-do
 
-Work that is known and deliberately not done yet. It is independent of the Effect
-migration unless a section says otherwise; that migration's remaining steps live in
-[effect-migration-plan.md](effect-migration-plan.md).
+Work that is known and deliberately not done yet.
 
 ## Workflows
 

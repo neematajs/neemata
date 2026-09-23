@@ -108,6 +108,3 @@ pinned version, the HTTP handler otherwise starts uninterruptible, so disconnect
 a request does not promptly close its RPC scope. A server-finalizer test verifies
 this behavior. Interruption still does not guarantee a non-cooperative database
 query has stopped.
-
-See the [migration plan](../../docs/effect-migration-plan.md) for the proof scope,
-validation, and the gate before changing workflow storage or execution APIs.
