@@ -106,7 +106,7 @@ config evaluation. `envFiles` is not a config property.
 
 ## Proxy and Health
 
-Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.7` when enabling `proxy`.
+Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.8` when enabling `proxy`.
 The controller config takes required `hostname` and `port`, plus optional
 `healthChecks: { interval? }`, `stickySessions: { enabled?, cookieName?,
 headerName?, ttlMs?, maxEntries? }`, and `tls: { keyPath, certPath }`.
