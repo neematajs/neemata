@@ -4,7 +4,8 @@ Typed workflow and task primitives for Neemata.
 
 ## Imports
 
-Declaration and implementation APIs stay dependency-light:
+The core is Effect-free: definitions take Standard Schemas, handlers return values
+or Promises, and the worker passes them one `env` value.
 
 ```ts
 import {
@@ -14,6 +15,14 @@ import {
   implementWorkflow,
 } from '@nmtjs/workflows'
 ```
+
+`@nmtjs/workflows/effect` exports the same four functions for Effect
+applications: definitions take `effect/Schema` schemas, and handlers return
+Effects whose services come from the worker. It needs the optional `effect` peer,
+pinned to `4.0.0-rc.116`, as does the Effect worker in
+`@nmtjs/workflows/effect/neem`. Applications and the package must use this exact version during the
+release-candidate period; only stable Effect modules are imported. Definitions
+and implementations from either entry point are interchangeable everywhere else.
 
 Postgres runtime code lives behind explicit subpaths:
 
@@ -27,14 +36,101 @@ import {
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
 
-## Schema codecs
+## Schemas, handlers and env
 
-Workflow contracts use `effect/Schema`, pinned to `4.0.0-rc.116`. Applications and
-`@nmtjs/workflows` must use this exact version during the release-candidate period.
-The package imports only stable Effect modules. Task/activity handlers and workflow
-`finish` callbacks return Effects. Their services come from the worker's Layer.
+Definitions take [Standard Schemas](https://standardschema.dev), so any library
+that implements the spec works: Zod, Valibot, ArkType, or Effect through the
+adapter below. Handlers, clients and results see a schema's output type; stores
+see JSON. Schemas must validate synchronously.
+
+A single schema serves values that are stored as they are: it validates them on
+the way in and again when they are read back. Standard Schema validates in one
+direction only, so a transformed value declares both directions, and a single
+transforming schema is rejected at compile time.
 
 ```ts
+import * as z from 'zod'
+
+const date = {
+  decode: z.iso.datetime().transform((stored) => new Date(stored)),
+  encode: z.date().transform((value) => value.toISOString()),
+}
+
+const normalizeDate = defineTask({
+  name: 'normalize-date',
+  input: z.object({ at: z.string() }),
+  output: date,
+})
+
+const implementation = implementTask(normalizeDate, {
+  handler: async ({ at }, lifecycle, env: { clock: Clock }) =>
+    env.clock.round(new Date(at)),
+})
+
+await runExecutionWorker({
+  ...runtime,
+  env: { clock },
+  workflows: [],
+  tasks: [implementation],
+  workerId: 'worker-1',
+})
+```
+
+Whatever a schema produces must be JSON when it is stored; the engine checks.
+`toStoredJsonSchema(definition.input)` returns the JSON Schema of the stored form
+when the library implements Standard JSON Schema, for code generation and tooling.
+
+Dependencies are that one `env` value. The engine neither builds nor disposes
+it: its owner creates it before starting the worker and disposes it afterwards.
+The worker input requires an `env` that satisfies every registered handler at
+once; handlers that ignore it require none. Workflow `finish` receives
+`(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
+functions for a library whose schemas are not Standard Schemas themselves.
+
+## Neem worker
+
+`defineWorkflows` declares what runs where: implementations, schedules and worker
+pools. The planner reads it on the main thread and every worker thread reads it
+again, so it holds no connections. Those belong to the worker definition, whose
+`setup` runs once per thread:
+
+```ts
+import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+
+export const config = defineWorkflows({
+  workflows: () => [checkoutImpl],
+  tasks: () => [chargeCardImpl],
+  workers: { execution: { concurrency: 8 } },
+})
+
+export default defineWorkflowsWorker(config, {
+  setup: async (ctx) => {
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
+    return {
+      runtime: createPostgresWorkflowRuntime({
+        connection: createPostgresWorkflowConnection(pool),
+      }),
+      env: { db: pool, log: ctx.logger }, // checked against every handler's env
+      dispose: () => pool.end(),
+    }
+  },
+})
+```
+
+On stop the worker stops claiming, aborts attempts, joins the loops, waits for
+every handler to settle, and only then disposes the adapter and calls `dispose`.
+A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem
+recycles the thread, and the env is not disposed while that handler still runs. A
+stop during `setup` waits for it and disposes what it acquired. Effect
+applications use the worker in `@nmtjs/workflows/effect/neem` with the same
+config; see below.
+
+## Effect schemas
+
+With `@nmtjs/workflows/effect`, contracts use `effect/Schema`:
+
+```ts
+import { defineTask, implementTask } from '@nmtjs/workflows/effect'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
@@ -49,11 +145,17 @@ const implementation = implementTask(normalizeDate, {
 })
 ```
 
+Effect schemas are not Standard Schemas themselves. The adapter stores each one as
+a `{ decode, encode }` pair: its `Schema.toCodecJson` form and the same codec flipped,
+both through Effect's Standard Schema and Standard JSON Schema converters.
+`schemaOf(definition.input)` returns the declared Effect schema, for composing
+schemas from existing definitions.
+
 Every typed programmatic API takes and returns decoded **Type**: `client.start`
 input and its returned run input/output, task/activity handlers, workflow finish,
 input mappers, map items and per-item inputs, code-defined schedule inputs, and
-metadata callbacks. The engine validates and encodes once with `Schema.toCodecJson`
-when writing storage/commands/child payloads, and decodes when reading them.
+metadata callbacks. The engine encodes once with the definition's schema (for an
+Effect schema, its `Schema.toCodecJson` form) when writing storage/commands/child payloads, and decodes when reading them.
 Restart decodes the stored input and calls `start(Type)`. Retry/restart eligibility
 is unchanged. Untyped `get`, `list`, `listSummaries`, history and inspector reads
 expose stored JSON without definitions. Raw JSON callers decode explicitly with their authored input schema, for example
@@ -71,8 +173,8 @@ The undefined-to-null encoding also applies inside structs. For example,
 `"a": null`; an absent `a` key remains absent. Decoding restores the supplied
 undefined value, while SQL/history readers see null.
 
-Codecs must be synchronous, require no Effect services, and support JSON encoding.
-Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
+Effect schemas must be synchronous, require no Effect services, and support JSON
+encoding. Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
 JSON derivation support is checked when actual values are encoded, not at definition
 or worker registration. For example, `Schema.instanceOf(URL)` alone accepts a URL
 at the authored boundary but cannot persist it. Test custom codecs with representative
@@ -93,7 +195,8 @@ it. This slice adds no format marker, history restriction, or retry/restart ban.
 
 ## Effect execution and services
 
-Use `Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
+This section describes `@nmtjs/workflows/effect` and the Neem integration. Use
+`Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
 handlers and workflow `finish`. Dependency dictionaries, core Containers, plugins,
 and the old execution environment are removed. Resolve services by yielding a
 `Context.Service` inside an Effect. Callback signatures no longer have a `ctx`
@@ -114,7 +217,8 @@ return Effects; synchronous callbacks return values directly.
 ```ts
 import * as Context from 'effect/Context'
 import * as Layer from 'effect/Layer'
-import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
+import { defineWorkflows } from '@nmtjs/workflows/neem'
 import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
 
 class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
@@ -132,20 +236,22 @@ const greeting = implementTask(greet, {
     }),
 })
 
-export default defineWorkflowsWorker(
-  defineWorkflows({
-    layer: Layer.succeed(Prefix, 'Hello'),
-    runtime: Effect.sync(createInMemoryWorkflowRuntime),
-    workflows: () => [],
-    tasks: () => [greeting],
-  }),
-)
+// Shared with the planner: what runs where, without connections or services.
+export const config = defineWorkflows({
+  workflows: () => [],
+  tasks: () => [greeting],
+})
+
+export default defineWorkflowsWorker(config, {
+  layer: Layer.succeed(Prefix, 'Hello'),
+  runtime: Effect.sync(createInMemoryWorkflowRuntime),
+})
 ```
 
 `runtime` is an Effect that acquires the adapter; it may use the same Layer and
 `Effect.acquireRelease` for database connections. A production worker uses a shared
 durable adapter. The in-memory adapter above is only a single-worker example.
-`defineWorkflows`/`defineWorkflowsWorker` check that the Layer provides services
+`defineWorkflowsWorker` checks that the Layer provides services
 required by the adapter, task/activity handlers (including branch/parallel cases),
 and finish. The Layer must not require external services. The worker supplies
 Scope for adapter acquisition, and each handler gets its own Scope.
@@ -161,8 +267,11 @@ to distinguish cancellation, timeout, shutdown, or lease loss; the signal provid
 by `Effect.promise` reflects fiber interruption without that engine classification.
 Prefer native Effect interruption and connect cancellable Promise APIs to a signal.
 
-The engine runs a handler with `runPromiseExitWith` using the worker Context and
-its AbortSignal. Single failures keep the existing StoredError representation;
+Effect handlers receive a `HandlerRuntime` as their env: it runs a handler with
+`runPromiseExitWith` using the worker Context and its AbortSignal. The standalone
+Effect worker functions build it from `context`; a supervisor that drains handlers
+itself passes `env: createHandlerRuntime(context)` and a shared
+`handlers: createHandlerRunner(...)` to the core worker functions. Single failures keep the existing StoredError representation;
 mixed Causes retain their rendered failure and finalizer information. There are
 no persisted typed-error codecs yet. Workflow finish failures retain the existing
 terminal-run behavior, rather than gaining an activity retry policy.

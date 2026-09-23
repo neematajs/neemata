@@ -1,11 +1,17 @@
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import * as workflows from '../src/index.ts'
+import type { EffectSchema } from '../src/effect/index.ts'
+import type * as workflows from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementTask,
+  implementWorkflow,
+  schemaOf,
+} from '../src/effect/index.ts'
+import { toStoredJsonSchema } from '../src/index.ts'
 import { fromPromise } from './support/effect.ts'
-
-const { defineTask, defineWorkflow, implementTask, implementWorkflow } =
-  workflows
 
 describe('workflow API boundaries', () => {
   const prefix = 'prefix'
@@ -357,9 +363,31 @@ describe('workflow API boundaries', () => {
 
     expectTypeOf<
       Schema.Codec<string, string, { readonly service: 'decode' }>
-    >().not.toExtend<workflows.Schema>()
+    >().not.toExtend<EffectSchema>()
     expectTypeOf<
       Schema.Codec<string, string, never, { readonly service: 'encode' }>
-    >().not.toExtend<workflows.Schema>()
+    >().not.toExtend<EffectSchema>()
+  })
+
+  it('reads a declared schema back from a definition', () => {
+    const input = Schema.Struct({ at: Schema.DateFromString })
+    const output = Schema.DateFromString
+    const item = Schema.Number
+    const task = defineTask({ name: 'schema-of', input, output })
+    const workflow = defineWorkflow({ name: 'schema-of', input })
+      .activity('step', { input, output })
+      .mapTask('each', task, { item })
+      .build()
+
+    expect(schemaOf(task.input)).toBe(input)
+    expect(schemaOf(task.output)).toBe(output)
+    expect(schemaOf(workflow.nodes[0].output)).toBe(output)
+    expect(schemaOf(workflow.nodes[1].item)).toBe(item)
+    expect(schemaOf(workflow.output)).toBeUndefined()
+    // The JSON Schema of the stored form comes from the same definition.
+    expect(toStoredJsonSchema(task.input)).toMatchObject({
+      type: 'object',
+      properties: { at: { type: 'string' } },
+    })
   })
 })

@@ -1,6 +1,6 @@
-import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { HandlerRuntime } from '../handler.ts'
+import type { HandlerRunner } from '../handler.ts'
+import type { RegisteredWorkflowImplementation } from '../registry.ts'
 import type { StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 
@@ -20,9 +20,11 @@ export type RuntimeDeps = {
 export type AdvanceOutcome = 'local' | 'parked' | 'terminal'
 
 export type AdvanceCtx = RuntimeDeps & {
-  readonly workflow: WorkflowImplementation
+  // The typed worker entry points proved `env` covers this implementation.
+  readonly workflow: RegisteredWorkflowImplementation
   readonly signal: AbortSignal
-  readonly handlers: HandlerRuntime
+  readonly handlers: HandlerRunner
+  readonly env?: unknown
   readonly run: StoredRun
   /** Decoded Type for user callbacks; run retains its stored JSON representation. */
   readonly workflowInput: unknown

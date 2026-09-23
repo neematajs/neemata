@@ -5,16 +5,20 @@ import * as Schema from 'effect/Schema'
 import { expect, expectTypeOf, it } from 'vitest'
 
 import {
+  createHandlerRuntime,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
-import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
-import {
-  createHandlerRuntime,
-  createInMemoryWorkflowRuntime,
   runExecutionWorker,
+  type Requirements,
+} from '../src/effect/index.ts'
+import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import { defineWorkflows } from '../src/neem/index.ts'
+import {
+  createHandlerRunner,
+  createInMemoryWorkflowRuntime,
+  runExecutionWorker as runStoredExecutionWorker,
 } from '../src/runtime/index.ts'
 
 class Service extends Context.Service<Service, { value: number }>()(
@@ -46,30 +50,28 @@ it('requires the worker Layer to provide task and finish services', () => {
     Service.pipe(Effect.map(({ value }) => value)),
   )
   const config = defineWorkflows({
-    layer,
-    runtime,
     workflows: () => [finish],
     tasks: () => [implementation],
   })
-  expect(defineWorkflowsWorker(config)).toBeDefined()
+  expect(defineWorkflowsWorker(config, { layer, runtime })).toBeDefined()
 
-  // @ts-expect-error No Layer supplies the task service.
-  defineWorkflows({
-    runtime,
+  // The config holds no services, so it needs none to be declared.
+  const tasksOnly = defineWorkflows({
     workflows: () => [],
     tasks: () => [implementation],
   })
+  const finishOnly = defineWorkflows({ workflows: () => [finish] })
+  // @ts-expect-error No Layer supplies the task service.
+  defineWorkflowsWorker(tasksOnly, { runtime })
   // @ts-expect-error No Layer supplies the finish service.
-  defineWorkflowsWorker({ runtime, workflows: () => [finish] })
-  defineWorkflows({
+  defineWorkflowsWorker(finishOnly, { runtime })
+  defineWorkflowsWorker(finishOnly, {
     runtime,
-    workflows: () => [finish],
     // @ts-expect-error The empty Layer cannot provide Service.
     layer: Layer.empty,
   })
-  defineWorkflows({
+  defineWorkflowsWorker(defineWorkflows({ workflows: () => [] }), {
     runtime,
-    workflows: () => [],
     // @ts-expect-error Worker Layers cannot require services outside the worker.
     layer: Layer.effectDiscard(Missing),
   })
@@ -111,27 +113,26 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Service.pipe(Effect.map(({ value }) => value)) })
     .finish(() => Effect.succeed(1))
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof direct.finish>>
-  >().toEqualTypeOf<Service>()
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof branch.finish>>
-  >().toEqualTypeOf<Service>()
-  expectTypeOf<
-    Effect.Services<ReturnType<typeof parallel.finish>>
-  >().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof direct>>().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof branch>>().toEqualTypeOf<Service>()
+  expectTypeOf<Requirements<typeof parallel>>().toEqualTypeOf<Service>()
   // @ts-expect-error Direct activity requirements reach the worker boundary.
-  defineWorkflows({ runtime, workflows: () => [direct] })
+  defineWorkflowsWorker(defineWorkflows({ workflows: () => [direct] }), {
+    runtime,
+  })
   // @ts-expect-error Branch activity requirements reach the worker boundary.
-  defineWorkflows({ runtime, workflows: () => [branch] })
+  defineWorkflowsWorker(defineWorkflows({ workflows: () => [branch] }), {
+    runtime,
+  })
   // @ts-expect-error Parallel activity requirements reach the worker boundary.
-  defineWorkflows({ runtime, workflows: () => [parallel] })
+  defineWorkflowsWorker(defineWorkflows({ workflows: () => [parallel] }), {
+    runtime,
+  })
   expect(
-    defineWorkflows({
-      layer,
-      runtime,
-      workflows: () => [direct, branch, parallel],
-    }),
+    defineWorkflowsWorker(
+      defineWorkflows({ workflows: () => [direct, branch, parallel] }),
+      { layer, runtime },
+    ),
   ).toBeDefined()
 })
 
@@ -145,43 +146,46 @@ it('requires a standalone worker context to cover its handlers', () => {
   const context = Context.make(Service, { value: 1 })
   // Thunks: only the call's types matter, the worker must not run.
   void (() => runExecutionWorker({ ...worker, context }))
+  // A supervisor that drains handlers itself passes the runtime as their env.
+  const handlers = createHandlerRunner()
   void (() =>
-    runExecutionWorker({
+    runStoredExecutionWorker({
       ...worker,
-      handlers: createHandlerRuntime(context),
+      handlers,
+      env: createHandlerRuntime(context),
     }))
   // Built separately, so the call cannot influence what the runtime provides.
   const insufficient = createHandlerRuntime(Context.empty())
   void (() =>
-    runExecutionWorker({
+    runStoredExecutionWorker({
       ...worker,
+      handlers,
       // @ts-expect-error A runtime built from the empty context cannot either.
-      handlers: insufficient,
+      env: insufficient,
     }))
+  // @ts-expect-error Handlers that require services need an env.
+  void (() => runStoredExecutionWorker({ ...worker, handlers }))
   // @ts-expect-error The empty context cannot provide Service.
   void (() => runExecutionWorker({ ...worker, context: Context.empty() }))
-  void (() =>
-    runExecutionWorker({
-      ...worker,
-      handlers: createHandlerRuntime(context),
-      // @ts-expect-error A shared runtime already owns its context and options.
-      context,
-    }))
 })
 
 it('supports scoped handlers and adapter factories with services', () => {
   const scoped = implementTask(task, {
     handler: () => Effect.acquireRelease(Effect.succeed(1), () => Effect.void),
   })
-  expect(
-    defineWorkflows({ runtime, workflows: () => [], tasks: () => [scoped] }),
-  ).toBeDefined()
+  const scopedOnly = defineWorkflows({
+    workflows: () => [],
+    tasks: () => [scoped],
+  })
+  // Scope comes from the worker, not from the Layer.
+  expect(defineWorkflowsWorker(scopedOnly, { runtime })).toBeDefined()
   const factory = Service.pipe(Effect.andThen(runtime))
+  const empty = defineWorkflows({ workflows: () => [] })
   expect(
-    defineWorkflowsWorker({ layer, runtime: factory, workflows: () => [] }),
+    defineWorkflowsWorker(empty, { layer, runtime: factory }),
   ).toBeDefined()
   // @ts-expect-error Adapter factories also require their Layer services.
-  defineWorkflows({ runtime: factory, workflows: () => [] })
+  defineWorkflowsWorker(empty, { runtime: factory })
 })
 
 it('accepts decoded values and Effect handlers without an async compatibility API', () => {

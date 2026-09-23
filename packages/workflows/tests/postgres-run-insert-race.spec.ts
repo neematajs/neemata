@@ -8,7 +8,7 @@ import {
   type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineWorkflow } from '../src/index.ts'
+import { defineWorkflow } from '../src/effect/index.ts'
 import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 
 const createPgliteConnection = () =>

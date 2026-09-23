@@ -13,12 +13,12 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+  runExecutionWorker,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/runtime/index.ts'
 import {
   reapDeadWorkflowCommands,

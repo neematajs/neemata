@@ -7,7 +7,7 @@ import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
-import { WorkflowCleanupTimeoutError, type HandlerRuntime } from '../handler.ts'
+import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -45,7 +45,9 @@ export type RunTaskAttemptInput = {
   readonly leaseMs?: number
   readonly signal?: AbortSignal
   readonly wakeEvents?: WorkflowWakeEvents
-  readonly handlers: HandlerRuntime
+  readonly handlers: HandlerRunner
+  /** Passed to every handler; see `Env` in the implementation API. */
+  readonly env?: unknown
 }
 
 export async function runTaskAttempt(
@@ -123,6 +125,7 @@ export async function runTaskAttempt(
                 `task input [${task.task.name}]`,
               ),
               lifecycle,
+              input.env,
             ),
           lifecycle.signal,
         ),

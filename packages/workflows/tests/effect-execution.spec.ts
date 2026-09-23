@@ -8,17 +8,21 @@ import * as Schema from 'effect/Schema'
 import { pino } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
-import { defineTask, implementTask } from '../src/index.ts'
-import { defineWorkflows, defineWorkflowsWorker } from '../src/neem/index.ts'
 import {
   createHandlerRuntime,
-  WorkflowCleanupTimeoutError,
+  defineTask,
+  implementTask,
+  runExecutionWorker,
   WorkflowHandlerError,
-} from '../src/runtime/handler.ts'
+} from '../src/effect/index.ts'
+import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import { defineWorkflows } from '../src/neem/index.ts'
+import { WorkflowCleanupTimeoutError } from '../src/runtime/handler.ts'
 import {
+  createHandlerRunner,
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
-  runExecutionWorker,
+  runExecutionWorker as runStoredExecutionWorker,
 } from '../src/runtime/index.ts'
 
 const task = defineTask({
@@ -88,8 +92,8 @@ describe('Effect workflow execution', () => {
     const reason = new Error('attempt already cancelled')
     abort.abort(reason)
     const onFatal = vi.fn()
-    const handlers = createHandlerRuntime(Context.empty(), { onFatal })
-    const handler = vi.fn(() => Effect.succeed(1))
+    const handlers = createHandlerRunner({ onFatal })
+    const handler = vi.fn(() => 1)
 
     await expect(handlers.run(handler, abort.signal)).rejects.toBe(reason)
     await handlers.drain()
@@ -104,7 +108,7 @@ describe('Effect workflow execution', () => {
       Cause.interrupt(),
     )
     const failure = await handlers
-      .run(() => Effect.failCause(cause))
+      .run(() => Effect.failCause(cause), new AbortController().signal)
       .catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(WorkflowHandlerError)
     if (!(failure instanceof WorkflowHandlerError))
@@ -151,13 +155,14 @@ describe('Effect workflow execution', () => {
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(timed, 1)
     const fatal = Promise.withResolvers<unknown>()
-    const handlers = createHandlerRuntime(Context.empty(), {
+    const handlers = createHandlerRunner({
       cleanupTimeoutMs: 10,
       onFatal: fatal.resolve,
     })
-    const running = runExecutionWorker({
+    const running = runStoredExecutionWorker({
       ...runtime,
       handlers,
+      env: createHandlerRuntime(Context.empty()),
       tasks: [implementation],
       workflows: [],
       workerId: 'timeout',
@@ -246,7 +251,8 @@ describe('Effect workflow execution', () => {
       runTaskAttempt({
         ...runtime,
         attemptExecutor,
-        handlers: createHandlerRuntime(Context.empty()),
+        handlers: createHandlerRunner(),
+        env: createHandlerRuntime(Context.empty()),
         claimed,
         tasks: [implementation],
         workerId: 'lease',
@@ -298,8 +304,6 @@ it.each([false, true])(
     const adapter = createInMemoryWorkflowRuntime()
     await createWorkflowRuntimeClient(adapter).start(task, 1)
     const config = defineWorkflows({
-      layer,
-      runtime: Effect.succeed(adapter),
       workflows: () => [],
       tasks: () => [implementation],
       workers: {
@@ -309,7 +313,10 @@ it.each([false, true])(
         },
       },
     })
-    const worker = defineWorkflowsWorker(config)
+    const worker = defineWorkflowsWorker(config, {
+      layer,
+      runtime: Effect.succeed(adapter),
+    })
     const channel = new MessageChannel()
     const runtime = await worker.createRuntime({
       mode: 'development',
@@ -366,11 +373,10 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   )
   const worker = defineWorkflowsWorker(
     defineWorkflows({
-      layer,
-      runtime: Effect.sync(createInMemoryWorkflowRuntime),
       workflows: () => [],
       workers: { coordinator: { cleanupTimeoutMs: 10 } },
     }),
+    { layer, runtime: Effect.sync(createInMemoryWorkflowRuntime) },
   )
   const channel = new MessageChannel()
   const runtime = await worker.createRuntime({

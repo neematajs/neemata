@@ -3,11 +3,14 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { expect, it } from 'vitest'
 
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineWorkflow,
+  implementWorkflow,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
-  runWorkflowWorker,
 } from '../src/runtime/index.ts'
 
 const workflow = defineWorkflow({

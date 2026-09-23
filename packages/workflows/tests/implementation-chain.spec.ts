@@ -3,7 +3,12 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementWorkflow,
+  schemaOf,
+} from '../src/effect/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow implementation chain', () => {
@@ -303,9 +308,10 @@ describe('workflow implementation chain', () => {
         ]),
         scenario: Schema.String,
       }),
+      // Definitions hold codecs; the adapter still knows their schemas.
       output: Schema.Union([
-        outpatientWorkflow.output!,
-        obstetricsWorkflow.output!,
+        schemaOf(outpatientWorkflow.output)!,
+        schemaOf(obstetricsWorkflow.output)!,
       ]),
     })
       .branch('content', {

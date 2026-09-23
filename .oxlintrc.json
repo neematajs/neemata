@@ -82,6 +82,42 @@
           }
         ]
       }
+    },
+    {
+      "files": ["packages/workflows/src/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": ["effect", "effect/**", "@effect/**"],
+                "message": "The workflows core is Effect-free; Effect support belongs in src/effect."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["packages/workflows/src/effect/**"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "effect/unstable",
+                  "effect/unstable/**",
+                  "@effect/**"
+                ],
+                "message": "Retained libraries use stable Effect modules only; platform and unstable integrations belong to applications."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

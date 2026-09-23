@@ -9,19 +9,19 @@ import {
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import {
-  defineSchedule,
   defineTask,
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
+  runExecutionWorker,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
+import { defineSchedule } from '../src/index.ts'
 import { decodeNodeOutput } from '../src/runtime/codec.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
   isTerminalRunStatus,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 

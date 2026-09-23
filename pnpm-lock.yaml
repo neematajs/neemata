@@ -460,6 +460,9 @@ importers:
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../neem
+      '@standard-schema/spec':
+        specifier: ^1.1.0
+        version: 1.1.0
       cron-parser:
         specifier: ^5.6.1
         version: 5.6.1
@@ -485,6 +488,9 @@ importers:
       pino:
         specifier: ^10.3.1
         version: 10.3.1
+      zod:
+        specifier: 'catalog:'
+        version: 4.4.3
 
 packages:
 

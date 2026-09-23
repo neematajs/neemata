@@ -1,7 +1,8 @@
 import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { defineSchedule, defineTask, defineWorkflow } from '../src/index.ts'
+import { defineTask, defineWorkflow } from '../src/effect/index.ts'
+import { defineSchedule } from '../src/index.ts'
 
 describe('workflow contract graph', () => {
   const embedding = defineTask({

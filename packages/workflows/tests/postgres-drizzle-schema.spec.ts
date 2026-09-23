@@ -21,10 +21,14 @@ import {
 } from '../src/adapters/postgres.ts'
 import { createSchema } from '../src/adapters/postgres/drizzle.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import {
+  defineTask,
+  defineWorkflow,
+  implementWorkflow,
+  runWorkflowWorker,
+} from '../src/effect/index.ts'
 import {
   createWorkflowRuntimeClient,
-  runWorkflowWorker,
   type WorkflowRuntimeAtomicContinuation,
 } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
@@ -1686,13 +1690,15 @@ test('renews run leases', async () => {
   })
   const lease = await runtime.store.acquireRunLease({
     runId: run.id,
-    leaseMs: 20,
+    leaseMs: 500,
   })
   expect(lease).not.toBeUndefined()
 
+  // Wide margins: a loaded CI runner stretched the former 10 ms pause past the
+  // 20 ms lease, so the renewal found nothing to renew.
   await new Promise((resolve) => setTimeout(resolve, 10))
-  await runtime.store.renewRunLease(lease!, 100)
-  await new Promise((resolve) => setTimeout(resolve, 40))
+  await runtime.store.renewRunLease(lease!, 60_000)
+  await new Promise((resolve) => setTimeout(resolve, 600))
 
   await expect(
     runtime.store.acquireRunLease({

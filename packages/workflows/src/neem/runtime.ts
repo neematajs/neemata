@@ -1,13 +1,7 @@
-import type * as Effect from 'effect/Effect'
-import type * as Scope from 'effect/Scope'
-import * as Layer from 'effect/Layer'
-
 import type {
-  Requirements,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
-import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type {
   AnyScheduleDefinition,
   AnyWorkflowDefinition,
@@ -25,12 +19,6 @@ export type AnyWorkflowImplementation = WorkflowImplementation<
   any
 >
 export type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
-
-export type WorkflowsRuntime<R = never> = Effect.Effect<
-  WorkflowRuntimeAdapter,
-  unknown,
-  R | Scope.Scope
->
 
 export type WorkflowsImplementationsFactory<
   Implementation = AnyWorkflowImplementation,
@@ -76,49 +64,29 @@ export type WorkflowsWorkersConfig = {
     | readonly WorkflowsNamedExecutionWorkerPoolConfig[]
 }
 
+/**
+ * What runs where. The planner reads it on the main thread and every worker
+ * reads it again, so it holds no connections or services: those belong to the
+ * worker definition.
+ */
 export type WorkflowsConfig<
   TWorkflowImplementation extends AnyWorkflowImplementation =
     AnyWorkflowImplementation,
   TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
   TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
-  R = never,
 > = {
-  readonly runtime: WorkflowsRuntime<R>
   readonly workflows: WorkflowsImplementationsFactory<TWorkflowImplementation>
   readonly tasks?: WorkflowTaskImplementationsFactory<TTaskImplementation>
   readonly schedules?: WorkflowSchedulesFactory<TScheduleDefinition>
   readonly workers?: WorkflowsWorkersConfig
-} & WorkflowServices<
-  Requirements<TWorkflowImplementation | TTaskImplementation> | R
->
-
-type WorkflowServices<R> = [Exclude<R, Scope.Scope>] extends [never]
-  ? { readonly layer?: Layer.Layer<never, unknown> }
-  : { readonly layer: Layer.Layer<Exclude<R, Scope.Scope>, unknown> }
-
-// Runtime registries are heterogeneous. The typed configuration above proves
-// service coverage before the planner and worker consume this erased shape.
-export type AnyWorkflowsConfig = {
-  readonly runtime: WorkflowsRuntime<any>
-  readonly workflows: WorkflowsImplementationsFactory
-  readonly tasks?: WorkflowTaskImplementationsFactory
-  readonly schedules?: WorkflowSchedulesFactory
-  readonly workers?: WorkflowsWorkersConfig
-  readonly layer?: Layer.Layer<any, unknown> | Layer.Layer<never, unknown>
 }
 
-export type ResolvedWorkflowsConfig<
-  TWorkflowImplementation extends AnyWorkflowImplementation =
-    AnyWorkflowImplementation,
-  TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
-  TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
-  R = never,
-> = {
-  readonly runtime: WorkflowsRuntime<R>
-  readonly workflows: readonly TWorkflowImplementation[]
-  readonly tasks: readonly TTaskImplementation[]
-  readonly schedules: readonly TScheduleDefinition[]
-  readonly layer: Layer.Layer<any, unknown> | Layer.Layer<never, unknown>
+export type AnyWorkflowsConfig = WorkflowsConfig
+
+export type ResolvedWorkflowsConfig = {
+  readonly workflows: readonly AnyWorkflowImplementation[]
+  readonly tasks: readonly AnyTaskImplementation[]
+  readonly schedules: readonly AnyScheduleDefinition[]
   readonly workers: {
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
     readonly execution: readonly ResolvedExecutionWorkerPool[]
@@ -152,40 +120,24 @@ export function defineWorkflows<
   const W extends AnyWorkflowImplementation = never,
   const T extends AnyTaskImplementation = never,
   const S extends AnyScheduleDefinition = AnyScheduleDefinition,
-  R = never,
->(config: WorkflowsConfig<W, T, S, R>): NoInfer<WorkflowsConfig<W, T, S, R>> {
+>(config: WorkflowsConfig<W, T, S>): WorkflowsConfig<W, T, S> {
   Object.freeze(config)
   return config
 }
 
 export async function resolveWorkflowsConfig(
   config: AnyWorkflowsConfig,
-): Promise<
-  ResolvedWorkflowsConfig<
-    AnyWorkflowImplementation,
-    AnyTaskImplementation,
-    AnyScheduleDefinition,
-    any
-  >
-> {
+): Promise<ResolvedWorkflowsConfig> {
   const workflows = await config.workflows()
   const tasks = (await config.tasks?.()) ?? []
   const schedules = (await config.schedules?.()) ?? []
-  const layer = config.layer ?? Layer.empty
   const coordinator = normalizePool(config.workers?.coordinator)
   const execution = normalizeExecutionPools(
     config.workers?.execution,
     workflows,
     tasks,
   )
-  return {
-    runtime: config.runtime,
-    workflows,
-    tasks,
-    schedules,
-    layer,
-    workers: { coordinator, execution },
-  }
+  return { workflows, tasks, schedules, workers: { coordinator, execution } }
 }
 
 function normalizePool<T extends WorkflowsWorkerPoolConfig>(

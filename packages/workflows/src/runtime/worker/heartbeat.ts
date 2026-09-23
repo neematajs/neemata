@@ -233,7 +233,7 @@ export async function runWithAttemptHeartbeat<T>(
   } catch (error) {
     if (error instanceof WorkflowCleanupTimeoutError) throw error
     if (attemptAbort.signal.aborted) {
-      // The handler runtime bounds cleanup and retains unfinished fibers for the
+      // The handler runner bounds cleanup and retains unfinished handlers for the
       // owner's final drain. An overrun must reach supervision, not become a retry.
       try {
         await work

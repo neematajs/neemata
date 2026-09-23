@@ -8,7 +8,7 @@ import {
   type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
+import { defineWorkflow, implementWorkflow } from '../src/effect/index.ts'
 import {
   createWorkflowRuntimeClient,
   WorkflowRunConflictError,

@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, writeFileSync } from 'node:fs'
 import { threadId } from 'node:worker_threads'
 
-import { defineTask, implementTask } from '@nmtjs/workflows'
+import { defineTask, implementTask } from '@nmtjs/workflows/effect'
 import { defineWorkflows } from '@nmtjs/workflows/neem'
 import {
   createPostgresWorkflowConnection,
@@ -60,7 +60,7 @@ const tasks = [timed, sibling].map((task) =>
   }),
 )
 
-export const config = defineWorkflows({
+export const services = {
   layer,
   runtime: Effect.gen(function* () {
     const pool = yield* Effect.acquireRelease(
@@ -73,6 +73,9 @@ export const config = defineWorkflows({
       connection: createPostgresWorkflowConnection(pool),
     })
   }),
+}
+
+export const config = defineWorkflows({
   workflows: () => [],
   tasks: () => tasks,
   workers: {

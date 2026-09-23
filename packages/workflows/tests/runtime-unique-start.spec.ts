@@ -1,7 +1,7 @@
 import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
-import { defineWorkflow } from '../src/index.ts'
+import { defineWorkflow } from '../src/effect/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,

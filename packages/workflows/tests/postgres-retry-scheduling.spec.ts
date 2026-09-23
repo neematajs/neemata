@@ -8,8 +8,12 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineTask, implementTask } from '../src/index.ts'
-import { runExecutionWorker, startTaskRun } from '../src/runtime/index.ts'
+import {
+  defineTask,
+  implementTask,
+  runExecutionWorker,
+} from '../src/effect/index.ts'
+import { startTaskRun } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))

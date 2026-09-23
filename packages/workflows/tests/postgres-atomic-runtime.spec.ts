@@ -14,12 +14,10 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '../src/index.ts'
-import {
-  createWorkflowRuntimeClient,
   runExecutionWorker,
   runWorkflowWorker,
-} from '../src/runtime/index.ts'
+} from '../src/effect/index.ts'
+import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 const createPgliteConnection = () =>

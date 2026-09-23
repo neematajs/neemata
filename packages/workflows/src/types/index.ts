@@ -1,4 +1,4 @@
-import type * as EffectSchema from 'effect/Schema'
+import type { StandardSchemaV1 } from '@standard-schema/spec'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -67,10 +67,81 @@ export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
 
-/** Codecs must run synchronously and require no services at durable boundaries. */
-export type Schema = EffectSchema.Codec<unknown, unknown>
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly Json[]
+  | { readonly [key: string]: Json }
 
-export type SchemaOutput<T extends Schema> = T['Type']
+/**
+ * A transformed value's durable boundary, as two Standard Schemas: `decode`
+ * validates stored JSON into `Type`, `encode` validates `Type` into the JSON to
+ * store. Standard Schema validates in one direction only, hence the pair.
+ */
+export type WorkflowCodec<Type = any, Encoded = any> = {
+  readonly decode: StandardSchemaV1<unknown, Type>
+  readonly encode: StandardSchemaV1<Type, Encoded>
+}
+
+/**
+ * Handlers, clients and results see a schema's output type; stores see JSON. A
+ * single Standard Schema serves values that are stored as they are: it validates
+ * them on the way in and on the way out. Schemas must validate synchronously.
+ */
+export type Schema = StandardSchemaV1<any, any> | WorkflowCodec
+
+export type SchemaOutput<T extends Schema> =
+  T extends StandardSchemaV1<any, infer Type>
+    ? Type
+    : T extends WorkflowCodec<infer Type>
+      ? Type
+      : never
+
+declare const notStorable: unique symbol
+export type NotStorable<Input, Output> = {
+  readonly [notStorable]: 'This schema transforms its input, so its output cannot be stored and validated again; pass { decode, encode } schemas instead'
+  readonly input: Input
+  readonly output: Output
+}
+
+/**
+ * A type-level function from the schemas a definition API accepts to the value
+ * type each one describes, and to a check on each. It lets an adapter reuse the
+ * builders below with its own schema library; definitions always store a Schema.
+ */
+export interface SchemaKind {
+  readonly schema: unknown
+  readonly bound: unknown
+  readonly type: unknown
+  readonly check: unknown
+}
+
+export interface CodecKind extends SchemaKind {
+  readonly bound: Schema
+  readonly type: this['schema'] extends Schema
+    ? SchemaOutput<this['schema']>
+    : never
+  readonly check: this['schema'] extends StandardSchemaV1<
+    infer Input,
+    infer Output
+  >
+    ? [Output] extends [Input]
+      ? unknown
+      : NotStorable<Input, Output>
+    : unknown
+}
+
+export type SchemaBound<K extends SchemaKind> = K['bound']
+
+export type SchemaType<K extends SchemaKind, S> = (K & {
+  readonly schema: S
+})['type']
+
+export type SchemaCheck<K extends SchemaKind, S> = (K & {
+  readonly schema: S
+})['check']
 
 export type TaskDefinition<
   Name extends string = string,

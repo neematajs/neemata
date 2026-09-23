@@ -4,7 +4,7 @@ import type { ContinueRunCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
 import { decodeStoredValue, decodeNodeOutput } from '../codec.ts'
-import { WorkflowCleanupTimeoutError, type HandlerRuntime } from '../handler.ts'
+import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -33,7 +33,8 @@ export type ContinueWorkflowRunInput = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly handlers: HandlerRuntime
+  readonly handlers: HandlerRunner
+  readonly env?: unknown
   readonly workflows: readonly WorkflowImplementation<
     AnyWorkflowDefinition,
     any
@@ -53,9 +54,7 @@ export async function continueWorkflowRun(
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows,
   })
-  const implementation = registry.getWorkflow(input.command.workflowName) as
-    | WorkflowImplementation
-    | undefined
+  const implementation = registry.getWorkflow(input.command.workflowName)
   if (!implementation) return { status: 'ignored' }
 
   const leaseMs = input.leaseMs ?? 30_000
@@ -163,6 +162,7 @@ export async function continueWorkflowRun(
           workflow: implementation,
           signal,
           handlers: input.handlers,
+          env: input.env,
           run: snapshot.run,
           workflowInput,
           outputs,
@@ -260,7 +260,7 @@ async function runWithRunLeaseRenewal<T>(
           abort.abort(new StaleRunLeaseError())
           return
         }
-        // finish is user Effect work now; a long-running finish must observe
+        // finish is user work; a long-running finish must observe
         // cancellation just like an activity, without allowing a late commit.
         // This costs one run read per renewal tick of a long coordination pass.
         const [run] = await store.loadRuns([lease.runId])

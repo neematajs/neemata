@@ -36,12 +36,8 @@ export type {
   RunCoordinationExecutor,
 } from './executors.ts'
 export { WorkflowRunConflictError } from './errors.ts'
-export {
-  createHandlerRuntime,
-  WorkflowCleanupTimeoutError,
-  WorkflowHandlerError,
-} from './handler.ts'
-export type { HandlerRuntime, HandlerRuntimeOptions } from './handler.ts'
+export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
+export type { HandlerRunner, HandlerRunnerOptions } from './handler.ts'
 export { createInMemoryWorkflowRuntime } from './in-memory.ts'
 export type { InMemoryWorkflowRuntime } from './in-memory.ts'
 export type {
