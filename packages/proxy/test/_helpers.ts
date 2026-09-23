@@ -32,7 +32,15 @@ export async function httpGet(
 }> {
   return await new Promise((resolve, reject) => {
     const req = http.request(
-      { host: '127.0.0.1', port, method: 'GET', path, headers },
+      {
+        host: '127.0.0.1',
+        port,
+        method: 'GET',
+        path,
+        headers,
+        // Shutdown probes must connect to the listener, not reuse a live socket.
+        agent: false,
+      },
       (res) => {
         const chunks: Buffer[] = []
         res.on('data', (c) => chunks.push(Buffer.from(c)))
