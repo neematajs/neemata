@@ -1,8 +1,5 @@
 import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
-import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { RuntimePatchResult } from '../host/runtime.ts'
-import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type ServiceResponse<TEvent, TResult = unknown> =
@@ -71,55 +68,3 @@ export type WatcherResult = {
 }
 
 export type WatcherResponse = ServiceResponse<WatcherEvent, WatcherResult>
-
-export type RuntimeStartRequest = {
-  id: number
-  type: 'start'
-  mode: NeemMode
-  outDir: string
-  env?: NodeJS.ProcessEnv
-  manifestFile: string
-  runtimes?: readonly string[]
-}
-
-export type RuntimeReloadRequest = {
-  id: number
-  type: 'reload'
-  manifestFile: string
-}
-
-export type RuntimeReloadRuntimeRequest = {
-  id: number
-  type: 'reload-runtime'
-  runtimeName: string
-  manifestFile: string
-}
-
-export type RuntimeStopRequest = { id: number; type: 'stop' }
-
-export type RuntimeRequest =
-  | RuntimeStartRequest
-  | RuntimeReloadRequest
-  | RuntimeReloadRuntimeRequest
-  | RuntimeStopRequest
-  | {
-      id: number
-      type: 'apply-patch'
-      runtimeName: string
-      updates: readonly BindingClientHmrUpdate[]
-    }
-  | { id: number; type: 'recovery-output-ready'; runtimeName: string }
-
-export type RuntimeEvent =
-  | ThreadLifecycleEvent
-  | { type: 'runtime-recovering'; runtimeName: string }
-  | { type: 'ready'; health: NeemRuntimeServerHealth }
-  | { type: 'stopped' }
-  | { type: 'error'; error: SerializedError }
-
-export type RuntimeResult = {
-  health?: NeemRuntimeServerHealth
-  patch?: RuntimePatchResult
-}
-
-export type RuntimeResponse = ServiceResponse<RuntimeEvent, RuntimeResult>

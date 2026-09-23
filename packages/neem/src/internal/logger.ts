@@ -31,14 +31,16 @@ export function createLoggerFromConfigInput(
 
 export async function resolveManifestLogger(
   logger: ManifestLogger | undefined,
-  options: { mode: NeemMode; outDir: string },
+  options: { mode: NeemMode; outDir: string; cacheBust?: boolean },
 ): Promise<Logger> {
   if (!logger) return createDefaultLogger(options.mode)
   if (logger.type === 'options') {
     return createDefaultLogger(options.mode, logger.options)
   }
 
-  return importDefault<Logger>(resolve(options.outDir, logger.file))
+  return importDefault<Logger>(resolve(options.outDir, logger.file), {
+    cacheBust: options.cacheBust,
+  })
 }
 
 export function runtimeLabel(runtimeName: string, threadName?: string): string {
