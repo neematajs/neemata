@@ -89,13 +89,11 @@ that ignores its AbortSignal can outlive interruption; the preset cannot kill th
 JavaScript work. Neem's worker shutdown deadline and thread termination remain the
 outer boundary.
 
-The preset does not currently bridge Effect logging into Neem's Pino logger
-([#412](https://github.com/neematajs/neemata/issues/412)).
+The preset does not currently bridge Effect logging into Neem's Pino logger.
 Applications receive `ctx.logger` and own their Effect logger configuration. A runtime
 rejection with a single non-interrupt cause keeps that failure's identity; several
 causes are rendered with `Cause.pretty` and kept as the error's `cause`. Structured
-Cause diagnostics for the host's logs remain a follow-up
-([#413](https://github.com/neematajs/neemata/issues/413)).
+Cause diagnostics for the host's logs remain a follow-up.
 
 ## Application and client boundary
 
