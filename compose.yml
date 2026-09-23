@@ -1,6 +1,7 @@
 services:
   valkey:
     image: valkey/valkey:9-alpine
+    restart: unless-stopped
     ports:
       - '${VALKEY_PORT:-6380}:6379'
     healthcheck:
@@ -12,6 +13,7 @@ services:
 
   redis:
     image: redis:8-alpine
+    restart: unless-stopped
     ports:
       - '${REDIS_PORT:-6379}:6379'
     healthcheck:

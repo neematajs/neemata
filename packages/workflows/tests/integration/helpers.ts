@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
+import type { Redis } from 'ioredis'
+import type { Redis as Valkey } from 'iovalkey'
 import type { Pool as PgPool } from 'pg'
 import * as Context from 'effect/Context'
 import pg from 'pg'
@@ -83,4 +85,15 @@ async function truncateWorkflowTables(pool: PgPool) {
       workflow_runs
     RESTART IDENTITY CASCADE
   `)
+}
+
+export async function matchingKeys(client: Redis | Valkey, pattern: string) {
+  let cursor = '0'
+  const keys: string[] = []
+  do {
+    const result = await client.scan(cursor, 'MATCH', pattern, 'COUNT', 1_000)
+    cursor = result[0]
+    for (const key of result[1]) keys.push(key)
+  } while (cursor !== '0')
+  return keys
 }

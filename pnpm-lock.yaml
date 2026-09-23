@@ -225,6 +225,12 @@ importers:
       effect:
         specifier: 4.0.0-rc.116
         version: 4.0.0-rc.116
+      ioredis:
+        specifier: ^5.11.1
+        version: 5.11.1
+      iovalkey:
+        specifier: ^0.3.3
+        version: 0.3.3
       pg:
         specifier: ^8.22.0
         version: 8.22.0
