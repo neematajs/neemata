@@ -153,6 +153,25 @@ importers:
         specifier: ^7.0.0
         version: 7.1.0
 
+  packages/effect:
+    dependencies:
+      '@nmtjs/neem':
+        specifier: workspace:*
+        version: link:../neem
+    devDependencies:
+      '@effect/platform-node':
+        specifier: 4.0.0-rc.116
+        version: 4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))
+      '@types/node':
+        specifier: ^24.13.2
+        version: 24.13.2
+      effect:
+        specifier: 4.0.0-rc.116
+        version: 4.0.0-rc.116
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
+
   packages/gateway:
     dependencies:
       '@nmtjs/common':
@@ -462,7 +481,7 @@ importers:
         version: 1.0.0-rc.4
       drizzle-orm:
         specifier: 1.0.0-rc.4
-        version: 1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3)
+        version: 1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0-rc.116)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3)
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -676,6 +695,19 @@ packages:
 
   '@dxup/unimport@0.1.2':
     resolution: {integrity: sha512-/B8YJGPzaYq1NbsQmwgP8EZqg40NpTw4ZB3suuI0TplbxKHeK94jeaawLmVhCv+YwUnOpiWEz9U6SeThku/8JQ==}
+
+  '@effect/platform-node-shared@4.0.0-rc.116':
+    resolution: {integrity: sha512-4FB6UriGqArWFUaFqVchhfCRmmtOVzmD/k/bH6LErlKY8a9amt5dk6c3Arsi7AvUpChsdO+3jsG+P85HsxMkNA==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      effect: ^4.0.0-rc.116
+
+  '@effect/platform-node@4.0.0-rc.116':
+    resolution: {integrity: sha512-uA66Nh998OcChBVX83tQDkBDvQQcVaMXodP9gNGWVeIwWWquy7bzIkAq/fMZGKs/BVFhFQ0XCp3VIqYjnXu5ng==}
+    engines: {node: '>=18.0.0'}
+    peerDependencies:
+      effect: ^4.0.0-rc.116
+      redis: '>=5.0.0 <7.0.0'
 
   '@electric-sql/pglite@0.5.3':
     resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
@@ -1809,6 +1841,42 @@ packages:
   '@poppinss/exception@1.2.3':
     resolution: {integrity: sha512-dCED+QRChTVatE9ibtoaxc+WkdzOSjYTKi/+uacHWIsfodVfpsueo3+DKpgU5Px8qXjgmXkSvhXvSCz3fnP9lw==}
 
+  '@redis/bloom@6.2.1':
+    resolution: {integrity: sha512-huQgNLaCIZfQ9SeLn4q9124uOUd8HbZDYHwwUzNcRgHqCHiHKl2dDxMqJCeWh8cMqZAoWuHR8XnWbDMIf+o7ag==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.2.1
+
+  '@redis/client@6.2.1':
+    resolution: {integrity: sha512-LzxBY7SIBvvJiyCgcaJZZakE3fJrZZ++i24+EDW9fKpCl68D35uJcKFpZZwCfOoG9WZTbyZlMzMeM0gtOAMU9Q==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@node-rs/xxhash': ^1.1.0
+      '@opentelemetry/api': '>=1 <2'
+    peerDependenciesMeta:
+      '@node-rs/xxhash':
+        optional: true
+      '@opentelemetry/api':
+        optional: true
+
+  '@redis/json@6.2.1':
+    resolution: {integrity: sha512-AFIUJ8Gj0DaaSBHYuSt8+O0oYWM+50OK1c0OmodB7XERIA8+BbyV3O4v76f9iccWasd1/7qjfZTpuzexUaZtrQ==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.2.1
+
+  '@redis/search@6.2.1':
+    resolution: {integrity: sha512-2vfOAOyYFE7UUw3sBBlkqqruBtOUS4HRY5MtW4hp83llrwvtrTE4r22CEqXddlV+54zkLxBE4nmsIJ/dpezQrQ==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.2.1
+
+  '@redis/time-series@6.2.1':
+    resolution: {integrity: sha512-kiYniph04dJOole+L359B6C9E+jYS2uDP7hca6Onj0xF38ZIpyxARO0Iq0W4ZRn1e8Q6vqW00QFZVSMRA/2Ijw==}
+    engines: {node: '>= 20.0.0'}
+    peerDependencies:
+      '@redis/client': ^6.2.1
+
   '@rolldown/binding-android-arm64@1.0.0-rc.18':
     resolution: {integrity: sha512-lIDyUAfD7U3+BWKzdxMbJcsYHuqXqmGz40aeRqvuAm3y5TkJSYTBW2RDrn65DJFPQqVjUAUqq5uz8urzQ8aBdQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2448,9 +2516,6 @@ packages:
   '@types/node@12.20.55':
     resolution: {integrity: sha512-J8xLz7q2OFulZ2cyGTLE1TbbZcjpno7FaN6zdJNrgAdrJ+DZzh/uFR6YrTb4C+nXakvud8Q4+rbhoIWlYQbUFQ==}
 
-  '@types/node@22.20.2':
-    resolution: {integrity: sha512-xlvWf4Vs9n1PEVYwP1n4vvG07M6y8WgvJ2t0vbrWTmijsIHp1cS+uJ2kMIRdY3nHZK0nCYKrPeD171+SzF4/zw==}
-
   '@types/node@24.13.2':
     resolution: {integrity: sha512-fRa09kZTgu8o71KFcDjUFuc7F+dEbZYZmkI0mg5YBTRs0yMKjYHsq/c0urDKeDb+D5qVgXOdFcuu+DZPKOITwA==}
 
@@ -2465,6 +2530,9 @@ packages:
 
   '@types/ws@7.4.7':
     resolution: {integrity: sha512-JQbbmxZTZehdc2iszGKs5oC3NFnjeay7mtAWrdt7qNtAVK0g19muApzAy4bm9byz79xa2ZnO/BOBC2R8RC5Lww==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@typescript/typescript-aix-ppc64@7.0.1-rc':
     resolution: {integrity: sha512-oqq2ZfEJ7BQuufcC3QBQndZLPNyamYNHLao8lKRBeeSkZKypBqxPSgkzrcFZtbYcIaBvpiyUnQP9MT7DEYHWbw==}
@@ -3498,6 +3566,9 @@ packages:
 
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
+
+  effect@4.0.0-rc.116:
+    resolution: {integrity: sha512-nawqJHSjHV8XIBRZNZ+D7cLZpN3kkSjzy6aiT9ofKENsl7xAMFKEoDa0itN5JFl3GUQ1PIN1T1HNlva5+xyO/A==}
 
   electron-to-chromium@1.5.398:
     resolution: {integrity: sha512-AsvhAxopJGh6museTDMIjn6JpDYOfgu4RLlygomt87MUwBUqTfd/1EiPtx10/LZE8xpTvkP2E9Gafq7lkLtodQ==}
@@ -4880,6 +4951,10 @@ packages:
     resolution: {integrity: sha512-DJnGAeenTdpMEH6uAJRK/uiyEIH9WVsUmoLwzudwGJUwZPp80PDBWPHXSAGNPwNvIXAbe7MSUB1zQFugFml66A==}
     engines: {node: '>=4'}
 
+  redis@6.2.1:
+    resolution: {integrity: sha512-Z9VHtgYs48PiQC77X9O2Er8Hj4T+5BtFjT91/vi5Is1D04N72cA946ZslM1ImJw8ZctFBZWAVjM7S5wJNeHMpg==}
+    engines: {node: '>= 20.0.0'}
+
   regexp-tree@0.1.27:
     resolution: {integrity: sha512-iETxpjK6YoRWJG5o6hXLwvjYAoW+FEZn9os0PD/b6AP6xQwsa/Y7lCVgIixBbUPMfhu+i2LtdeAqVTgGlQarfA==}
     hasBin: true
@@ -5340,11 +5415,12 @@ packages:
       unplugin:
         optional: true
 
-  undici-types@6.21.0:
-    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
-
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
+  undici@8.10.2:
+    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
+    engines: {node: '>=22.19.0'}
 
   undici@8.9.0:
     resolution: {integrity: sha512-aWZpUj7XoGonMClx4gdDRfgBjqeA+F473aDmROQQbM9n6PRfK/u1q/a0X4wMTgcHfT8H6fpbt98PFuDUwFg2YA==}
@@ -5819,6 +5895,18 @@ packages:
       utf-8-validate:
         optional: true
 
+  ws@8.21.3:
+    resolution: {integrity: sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   wsl-utils@0.3.1:
     resolution: {integrity: sha512-g/eziiSUNBSsdDJtCLB8bdYEUMj4jR7AGeUo96p/3dTafgjHhpF4RiCFPiRILwjQoDXx5MqkBr4fwWtR3Ky4Wg==}
     engines: {node: '>=20'}
@@ -6152,6 +6240,25 @@ snapshots:
       - webpack
 
   '@dxup/unimport@0.1.2': {}
+
+  '@effect/platform-node-shared@4.0.0-rc.116(effect@4.0.0-rc.116)':
+    dependencies:
+      '@types/ws': 8.18.1
+      effect: 4.0.0-rc.116
+      ws: 8.21.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@effect/platform-node@4.0.0-rc.116(effect@4.0.0-rc.116)(redis@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@effect/platform-node-shared': 4.0.0-rc.116(effect@4.0.0-rc.116)
+      effect: 4.0.0-rc.116
+      redis: 6.2.1(@opentelemetry/api@1.9.0)
+      undici: 8.10.2
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@electric-sql/pglite@0.5.3': {}
 
@@ -7178,6 +7285,28 @@ snapshots:
 
   '@poppinss/exception@1.2.3': {}
 
+  '@redis/bloom@6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@redis/client': 6.2.1(@opentelemetry/api@1.9.0)
+
+  '@redis/client@6.2.1(@opentelemetry/api@1.9.0)':
+    dependencies:
+      cluster-key-slot: 1.1.2
+    optionalDependencies:
+      '@opentelemetry/api': 1.9.0
+
+  '@redis/json@6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@redis/client': 6.2.1(@opentelemetry/api@1.9.0)
+
+  '@redis/search@6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@redis/client': 6.2.1(@opentelemetry/api@1.9.0)
+
+  '@redis/time-series@6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))':
+    dependencies:
+      '@redis/client': 6.2.1(@opentelemetry/api@1.9.0)
+
   '@rolldown/binding-android-arm64@1.0.0-rc.18':
     optional: true
 
@@ -7553,10 +7682,6 @@ snapshots:
 
   '@types/node@12.20.55': {}
 
-  '@types/node@22.20.2':
-    dependencies:
-      undici-types: 6.21.0
-
   '@types/node@24.13.2':
     dependencies:
       undici-types: 7.18.2
@@ -7574,6 +7699,10 @@ snapshots:
   '@types/resolve@1.20.2': {}
 
   '@types/ws@7.4.7':
+    dependencies:
+      '@types/node': 24.13.2
+
+  '@types/ws@8.18.1':
     dependencies:
       '@types/node': 24.13.2
 
@@ -8176,7 +8305,7 @@ snapshots:
 
   bun-types@1.3.2(@types/react@19.1.9):
     dependencies:
-      '@types/node': 22.20.2
+      '@types/node': 24.13.2
       '@types/react': 19.1.9
 
   bundle-name@4.1.0:
@@ -8498,12 +8627,13 @@ snapshots:
       get-tsconfig: 4.14.0
       jiti: 2.7.0
 
-  drizzle-orm@1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3):
+  drizzle-orm@1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0-rc.116)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3):
     optionalDependencies:
       '@electric-sql/pglite': 0.5.3
       '@opentelemetry/api': 1.9.0
       '@types/pg': 8.20.0
       bun-types: 1.3.2(@types/react@19.1.9)
+      effect: 4.0.0-rc.116
       pg: 8.22.0
       valibot: 1.4.2(typescript@7.0.1-rc)
       zod: 4.4.3
@@ -8520,6 +8650,8 @@ snapshots:
   eastasianwidth@0.2.0: {}
 
   ee-first@1.1.1: {}
+
+  effect@4.0.0-rc.116: {}
 
   electron-to-chromium@1.5.398: {}
 
@@ -10220,6 +10352,17 @@ snapshots:
     dependencies:
       redis-errors: 1.2.0
 
+  redis@6.2.1(@opentelemetry/api@1.9.0):
+    dependencies:
+      '@redis/bloom': 6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))
+      '@redis/client': 6.2.1(@opentelemetry/api@1.9.0)
+      '@redis/json': 6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))
+      '@redis/search': 6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))
+      '@redis/time-series': 6.2.1(@redis/client@6.2.1(@opentelemetry/api@1.9.0))
+    transitivePeerDependencies:
+      - '@node-rs/xxhash'
+      - '@opentelemetry/api'
+
   regexp-tree@0.1.27: {}
 
   require-from-string@2.0.2:
@@ -10775,9 +10918,9 @@ snapshots:
       rolldown: 1.2.2
       unplugin: 3.3.0(esbuild@0.28.1)(rolldown@1.2.2)(rollup@4.62.3)(vite@8.1.5(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
 
-  undici-types@6.21.0: {}
-
   undici-types@7.18.2: {}
+
+  undici@8.10.2: {}
 
   undici@8.9.0: {}
 
@@ -11145,6 +11288,8 @@ snapshots:
   ws@7.5.13: {}
 
   ws@8.21.0: {}
+
+  ws@8.21.3: {}
 
   wsl-utils@0.3.1:
     dependencies:

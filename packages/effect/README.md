@@ -1,0 +1,111 @@
+# @nmtjs/effect
+
+Run a supervised Effect application in a Neem worker. The application supplies its
+services, main effect, and upstreams; the preset owns their lifetime. Neem itself
+has no Effect dependency.
+
+This slice targets **Effect 4.0.0-rc.116**, pinned exactly. The preset imports only
+stable Effect modules. Applications choose and pin their own HTTP, RPC, and platform
+integrations, including any unstable APIs.
+
+During the release-candidate phase, the preset's exact peer pin requires the preset
+and application to upgrade together. Each upgrade must rerun the lifecycle and
+application-boundary tests; compatibility across other RC versions is not promised.
+
+```ts
+// neem.runtime.ts
+import { createEffectRuntime } from '@nmtjs/effect'
+
+export default createEffectRuntime({
+  name: 'api',
+  worker: { entry: './neem.worker.ts' },
+})
+```
+
+```ts
+// neem.worker.ts — HTTP is application code, not part of the preset.
+import { createServer } from 'node:http'
+import { NodeHttpServer } from '@effect/platform-node'
+import { defineEffectWorker } from '@nmtjs/effect/neem/worker'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import { HttpServer, HttpServerResponse } from 'effect/unstable/http'
+
+export default defineEffectWorker(() => ({
+  layer: Layer.empty,
+  main: (ready) =>
+    Effect.gen(function* () {
+      const server = yield* NodeHttpServer.make(createServer, {
+        host: '127.0.0.1',
+        port: 0,
+      })
+      yield* server.serve(Effect.succeed(HttpServerResponse.text('hello')))
+      yield* ready([
+        { type: 'http', url: HttpServer.formatAddress(server.address) },
+      ])
+      yield* Effect.never
+    }),
+}))
+```
+
+Register `./neem.runtime.ts` in Neem's `runtimes`. Normal `neem dev`, `neem build`,
+and `neem start` commands apply. The default planner starts one worker; a custom
+Neem planner can replace it. The worker factory receives Neem's context, including
+its logger, mode, and planner data.
+
+## Lifetime
+
+- The layer is built lazily when Neem starts the worker. It must provide every
+  service required by `main`; `main` also receives an application scope.
+- Call `ready(upstreams)` after resources are listening. `ready()` also supports
+  workers without an HTTP upstream. Keep the main effect alive afterward.
+- One scoped fiber runs the main effect with its layer. A separate ManagedRuntime
+  is unnecessary for this single entry point. Main resources finalize before
+  layer services, so cleanup can still use those services.
+- The fiber's exit drives `NeemRuntime.finished`, after finalizers complete. Any
+  exit before Neem requests stop is a failure, including success and interruption.
+  Neem's existing worker recovery handles that failure.
+- Calling the preset's `runtime.stop()` interrupts the main fiber and waits for
+  finalizers, including during startup. Repeated start/stop calls
+  are idempotent; a stopped instance cannot restart. Finalizer defects remain visible.
+
+**Neem startup limitation:** the host currently queues shutdown behind startup, and
+its worker entry only dispatches normal stop after readiness. SIGTERM during a
+pending start can therefore hit the host's termination deadline without calling the
+preset's `stop()` or running application finalizers. This was reproduced through
+`neem start`, which exited with code 1 after about five seconds. The unit test for
+direct `runtime.stop()` does not establish graceful host shutdown before readiness.
+Resolving this requires a host lifecycle fix before production rollout; this preset
+does not bypass Neem's lifecycle queue.
+
+Compose essential background work into the main effect, or join and supervise its
+fibers explicitly. Forking background work from a layer does not automatically
+make that work's failure fail the main fiber.
+
+Use cooperative work and bounded finalizers. An uninterruptible region or a Promise
+that ignores its AbortSignal can outlive interruption; the preset cannot kill that
+JavaScript work. Neem's worker shutdown deadline and thread termination remain the
+outer boundary. Workflow-specific cleanup and commit fencing belong to later slices.
+
+The preset does not currently bridge Effect logging into Neem's Pino logger.
+Applications receive `ctx.logger` and own their Effect logger configuration. The
+runtime rejection uses `Cause.squash`, so it exposes a representative failure rather
+than every parallel/finalizer cause; complete Cause diagnostics remain an observability
+follow-up before production rollout.
+
+## Application and client boundary
+
+The preset provides no procedures, schemas, transport protocol, or Promise client
+facade. Effect RPC or HttpApi belongs to the application, as do uploads and auth.
+
+The CaseNetwork slice-3 proof uses an application-owned Promise wrapper over
+`RpcClient` for its Vue frontend. Its ManagedRuntime owns the HTTP client protocol;
+each call owns an RPC scope and accepts an AbortSignal. The application explicitly
+marks the HTTP effect returned by `RpcServer.toHttpEffect` interruptible: in the
+pinned version, the HTTP handler otherwise starts uninterruptible, so disconnecting
+a request does not promptly close its RPC scope. A server-finalizer test verifies
+this behavior. Interruption still does not guarantee a non-cooperative database
+query has stopped.
+
+See the [migration plan](../../docs/effect-migration-plan.md) for the proof scope,
+validation, and the gate before changing workflow storage or execution APIs.

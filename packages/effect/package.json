@@ -1,0 +1,66 @@
+{
+  "name": "@nmtjs/effect",
+  "description": "Neem runtime preset for supervised Effect applications.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "clean-build": "rm -rf ./dist",
+    "check:type": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./neem/planner": {
+      "types": "./src/neem/planner.ts",
+      "import": "./dist/neem/planner.js",
+      "module-sync": "./dist/neem/planner.js"
+    },
+    "./neem/worker": {
+      "types": "./src/neem/worker.ts",
+      "import": "./dist/neem/worker.js",
+      "module-sync": "./dist/neem/worker.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./neem/planner": {
+        "types": "./dist/neem/planner.d.ts",
+        "import": "./dist/neem/planner.js",
+        "module-sync": "./dist/neem/planner.js"
+      },
+      "./neem/worker": {
+        "types": "./dist/neem/worker.d.ts",
+        "import": "./dist/neem/worker.js",
+        "module-sync": "./dist/neem/worker.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/neem": "workspace:*"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.116"
+  },
+  "devDependencies": {
+    "@effect/platform-node": "4.0.0-rc.116",
+    "@types/node": "^24.13.2",
+    "effect": "4.0.0-rc.116",
+    "pino": "^10.3.1"
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}
