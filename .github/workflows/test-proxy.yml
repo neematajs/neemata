@@ -45,6 +45,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @nmtjs/proxy run check:rust
       - run: pnpm --filter @nmtjs/proxy run test
+      - run: pnpm run build:ts
       - name: Run Neem e2e tests against the local proxy build
         run: pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
         env:

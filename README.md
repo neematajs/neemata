@@ -110,8 +110,9 @@ vp env exec pnpm check
 The stack installs `@nmtjs/proxy` from npm at the version pinned in
 `packages/neem/package.json`, so `pnpm build`, `pnpm test` and `pnpm check` need no
 Rust toolchain. `pnpm test:proxy` runs the Rust and proxy integration suites and
-builds a local debug binding; set `NEEM_INTERNAL_PROXY_MODULE` to
-`packages/proxy/dist/index.js` to run Neem against it. CI does the same in the
+builds a local debug binding; set `NEEM_INTERNAL_PROXY_MODULE` to the absolute path
+of `packages/proxy/dist/index.js` (for example `$PWD/packages/proxy/dist/index.js`
+from the workspace root) to run Neem against it. CI does the same in the
 **Test proxy** workflow, which runs only when `packages/proxy` changes.
 `pnpm test:prom-client` runs the prom-client Vitest project, which the root Vitest
 run also includes.
