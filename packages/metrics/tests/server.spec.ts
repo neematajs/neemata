@@ -2,7 +2,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createServer } from 'node:http'
 
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {

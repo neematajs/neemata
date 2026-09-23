@@ -1,5 +1,5 @@
-import type { Logger } from '@nmtjs/core'
 import type { Hookable } from 'hookable'
+import type { Logger } from 'pino'
 import { createHooks } from 'hookable'
 
 import type {

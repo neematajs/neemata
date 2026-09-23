@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 import { OperationQueue } from '@nmtjs/common'
 
 import type { NeemConfig } from '../../shared/types.ts'

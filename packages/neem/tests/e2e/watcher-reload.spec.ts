@@ -170,7 +170,7 @@ describe('Neem watcher dev reload', () => {
         "record({ event: 'runtime-start', name: ctx.name })",
         "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
       ),
-      replaceInFile(loggerFile, "'Fixture',", "'Fixture logger-v2',"),
+      replaceInFile(loggerFile, "'Fixture'", "'Fixture logger-v2'"),
       replaceInFile(
         pluginFile,
         "event: 'plugin-runtime-ready',\n        name: event.name,",

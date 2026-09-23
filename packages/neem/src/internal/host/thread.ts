@@ -2,7 +2,7 @@ import type { MessagePort as NodeMessagePort } from 'node:worker_threads'
 import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 import { createFuture } from '@nmtjs/common'
 
 import type {

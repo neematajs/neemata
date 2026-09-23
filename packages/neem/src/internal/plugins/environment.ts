@@ -1,7 +1,7 @@
 import { resolve } from 'node:path'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { Manifest } from '../manifest/manifest.ts'

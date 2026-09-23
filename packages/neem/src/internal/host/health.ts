@@ -1,7 +1,7 @@
 import type { Server, ServerResponse } from 'node:http'
 import { createServer } from 'node:http'
 
-import type { Logger } from '@nmtjs/core'
+import type { Logger } from 'pino'
 
 import type {
   NeemHealthConfig,
