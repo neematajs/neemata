@@ -1,13 +1,23 @@
 import type * as Context from 'effect/Context'
+import type * as Scope from 'effect/Scope'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
 import * as Exit from 'effect/Exit'
 
 /** Retain mixed failures and finalizer defects instead of squashing their Cause. */
 export class WorkflowHandlerError extends Error {
-  constructor(readonly cause: Cause.Cause<unknown>) {
+  declare readonly cause: Cause.Cause<unknown>
+
+  constructor(cause: Cause.Cause<unknown>) {
     super(Cause.pretty(cause), { cause })
     this.name = 'WorkflowHandlerError'
+  }
+}
+
+export class WorkflowCleanupTimeoutError extends Error {
+  constructor(readonly timeoutMs: number) {
+    super(`Workflow cleanup exceeded ${timeoutMs}ms; worker recycling required`)
+    this.name = 'WorkflowCleanupTimeoutError'
   }
 }
 
@@ -16,13 +26,28 @@ export type HandlerRuntimeOptions = {
   readonly onFatal?: (error: unknown) => void
 }
 
-export function createHandlerRuntime(
-  context: Context.Context<never>,
+/**
+ * `run` is a function-typed property so its handler parameter stays
+ * contravariant: a runtime is only assignable where it provides at least the
+ * services required there. Method syntax would compare bivariantly and let a
+ * runtime built from an insufficient context through.
+ *
+ * The default is the erased form every runtime is assignable to. The engine uses
+ * it below the typed entry points, where the durable registry has already erased
+ * the heterogeneous requirements of its handlers.
+ */
+export type HandlerRuntime<R = never> = {
+  readonly run: <A>(
+    handler: () => Effect.Effect<A, unknown, R | Scope.Scope>,
+    signal?: AbortSignal,
+  ) => Promise<A>
+  readonly drain: () => Promise<void>
+}
+
+export function createHandlerRuntime<R>(
+  context: Context.Context<R>,
   options: HandlerRuntimeOptions = {},
-) {
-  // Registration checks the Layer against handler requirements. The durable
-  // registry erases their heterogeneous types at this single execution boundary.
-  const services = context as Context.Context<any>
+): HandlerRuntime<R> {
   const timeoutMs = options.cleanupTimeoutMs ?? 5_000
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
     throw new Error(
@@ -31,14 +56,11 @@ export function createHandlerRuntime(
   }
   const pending = new Set<Promise<unknown>>()
   return {
-    async run<A>(
-      handler: () => Effect.Effect<A, unknown, any>,
-      signal?: AbortSignal,
-    ) {
+    async run(handler, signal) {
       // Do not enter user code for an attempt that has already lost ownership.
       if (signal?.aborted) throw signal.reason
       // These entry-point fibers share services, not the main fiber's lifetime.
-      const work = Effect.runPromiseExitWith(services)(
+      const work = Effect.runPromiseExitWith(context)(
         Effect.scoped(Effect.suspend(handler)),
         { signal },
       )
@@ -79,14 +101,5 @@ export function createHandlerRuntime(
       // Layer services while an uninterruptible handler still uses them.
       while (pending.size > 0) await Promise.allSettled(pending)
     },
-  }
-}
-
-export type HandlerRuntime = ReturnType<typeof createHandlerRuntime>
-
-export class WorkflowCleanupTimeoutError extends Error {
-  constructor(readonly timeoutMs: number) {
-    super(`Workflow cleanup exceeded ${timeoutMs}ms; worker recycling required`)
-    this.name = 'WorkflowCleanupTimeoutError'
   }
 }

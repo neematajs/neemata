@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks'
 
+import type { MaybePromise } from '@nmtjs/common'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -29,8 +30,17 @@ export type HostControllerOptions = {
   onFailure?: (error: Error) => void
 }
 
+class StopRequested extends Error {
+  constructor() {
+    super('Neem server stop requested')
+    this.name = 'StopRequested'
+  }
+}
+
 export class HostController {
   private state: NeemRuntimeServerState = 'idle'
+  // The flag interrupts the operation that is running now; the revision cancels
+  // starts that were queued before the stop and have not run yet.
   private stopRequested = false
   private stopRevision = 0
   private revision = 0
@@ -140,6 +150,16 @@ export class HostController {
     })
   }
 
+  // Every awaited startup or reload step goes through here, so a stop unwinds
+  // the operation without a check after each await. The check before run() is
+  // what closes the gap between steps: returning from this async function
+  // yields, and a stop landing there must not let the next step begin.
+  private async step(run: () => MaybePromise<void>): Promise<void> {
+    if (this.stopRequested) throw new StopRequested()
+    await run()
+    if (this.stopRequested) throw new StopRequested()
+  }
+
   // Shared start/reload bring-up: identical subsystem ordering and error
   // handling, differing only in the reload prelude and success hook/log.
   private async bringUp(options: {
@@ -149,23 +169,20 @@ export class HostController {
     failMessage: string
   }): Promise<void> {
     try {
-      await options.prepare?.()
-      if (this.stopRequested) return
-      await this.startPlugins()
-      if (this.stopRequested) return
-      await this.syncHealthProbe()
-      if (this.stopRequested) return
-      await this.callServerHook('server:start')
-      if (this.stopRequested) return
-      await this.startRuntimes()
-      if (this.stopRequested) return
-      await this.startProxy()
-      if (this.stopRequested) return
-      this.markState('running')
-      await this.callServerHook(options.readyHook)
-      if (this.stopRequested) return
-      options.onReady()
-      this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+      await this.step(() => options.prepare?.())
+      await this.step(() => this.startPlugins())
+      await this.step(() => this.syncHealthProbe())
+      await this.step(() => this.callServerHook('server:start'))
+      await this.step(() => this.startRuntimes())
+      await this.step(() => this.startProxy())
+      // Synchronous effects are steps too: a stop in the gap before them must
+      // not publish a running state or announce readiness.
+      await this.step(() => this.markState('running'))
+      await this.step(() => this.callServerHook(options.readyHook))
+      await this.step(() => {
+        options.onReady()
+        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
+      })
     } catch (error) {
       if (this.stopRequested) return
       const normalized = normalizeError(error)
@@ -203,29 +220,27 @@ export class HostController {
           await this.syncProxyUpstreams()
           detachProxyMs = performance.now() - detachProxyStartedAt
           const stopStartedAt = performance.now()
-          await current.stop()
+          await this.step(() => current.stop())
           stopMs = performance.now() - stopStartedAt
           currentStopped = true
         }
-        if (this.stopRequested) return
 
         this.replaceSnapshot(snapshot)
 
         const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
         if (exists) {
           const startStartedAt = performance.now()
-          next = this.createRuntime(runtimeName)
-          this.runtimes.set(runtimeName, next)
-          await next.start()
+          const created = this.createRuntime(runtimeName)
+          next = created
+          this.runtimes.set(runtimeName, created)
+          await this.step(() => created.start())
           startMs = performance.now() - startStartedAt
         }
-        if (this.stopRequested) return
 
         const attachProxyStartedAt = performance.now()
-        await this.syncProxyUpstreams()
-        if (this.stopRequested) return
+        await this.step(() => this.syncProxyUpstreams())
         attachProxyMs = performance.now() - attachProxyStartedAt
-        this.markState('running')
+        await this.step(() => this.markState('running'))
         const hooksStartedAt = performance.now()
         await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
           mode: this.snapshot.mode,

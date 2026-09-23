@@ -3,6 +3,7 @@ import type * as Scope from 'effect/Scope'
 import * as Layer from 'effect/Layer'
 
 import type {
+  Requirements,
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
@@ -90,13 +91,6 @@ export type WorkflowsConfig<
 } & WorkflowServices<
   Requirements<TWorkflowImplementation | TTaskImplementation> | R
 >
-
-type Requirements<T> =
-  T extends TaskImplementation<AnyTaskDefinition, infer R>
-    ? R
-    : T extends WorkflowImplementation<AnyWorkflowDefinition, infer R>
-      ? R
-      : never
 
 type WorkflowServices<R> = [Exclude<R, Scope.Scope>] extends [never]
   ? { readonly layer?: Layer.Layer<never, unknown> }

@@ -103,8 +103,6 @@ export async function runWithAttemptHeartbeat<T>(
   input: {
     readonly attemptExecutor: AttemptExecutor
     readonly claimed: ClaimedAttempt
-    readonly cleanupTimeoutMs?: number
-    readonly onFatal?: (error: unknown) => void
     readonly leaseMs?: number
     readonly signal?: AbortSignal
     readonly wakeEvents?: Pick<WorkflowWakeEvents, 'onCancellation'>
@@ -237,9 +235,11 @@ export async function runWithAttemptHeartbeat<T>(
     if (attemptAbort.signal.aborted) {
       // The handler runtime bounds cleanup and retains unfinished fibers for the
       // owner's final drain. An overrun must reach supervision, not become a retry.
-      await work.catch((failure: unknown) => {
+      try {
+        await work
+      } catch (failure) {
         if (failure instanceof WorkflowCleanupTimeoutError) throw failure
-      })
+      }
     }
     throw attemptAbort.signal.aborted ? abortFailure : error
   } finally {

@@ -1,5 +1,3 @@
-import type * as Context from 'effect/Context'
-
 import type {
   ActivityNodeImplementation,
   BranchNodeImplementation,
@@ -19,11 +17,7 @@ import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { parseDurationMs } from '../duration.ts'
-import {
-  createHandlerRuntime,
-  WorkflowCleanupTimeoutError,
-  type HandlerRuntime,
-} from '../handler.ts'
+import { WorkflowCleanupTimeoutError, type HandlerRuntime } from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -68,10 +62,7 @@ export type RunActivityAttemptInput = {
   readonly leaseMs?: number
   readonly signal?: AbortSignal
   readonly wakeEvents?: WorkflowWakeEvents
-  readonly context: Context.Context<never>
-  readonly handlers?: HandlerRuntime
-  readonly cleanupTimeoutMs?: number
-  readonly onFatal?: (error: unknown) => void
+  readonly handlers: HandlerRuntime
 }
 
 export async function runActivityAttempt(
@@ -149,7 +140,7 @@ export async function runActivityAttempt(
     output = await runWithAttemptHeartbeat(
       input,
       (lifecycle) =>
-        (input.handlers ?? createHandlerRuntime(input.context, input)).run(
+        input.handlers.run(
           () =>
             node.activity.handler(
               decodeStoredValue(

@@ -21,28 +21,36 @@ import type {
   WorkflowTaskNode,
 } from '../types/index.ts'
 
+/** Services an implementation's handlers require from the worker. */
+export type Requirements<T> =
+  T extends TaskImplementation<AnyTaskDefinition, infer R>
+    ? R
+    : T extends WorkflowImplementation<AnyWorkflowDefinition, infer R>
+      ? R
+      : never
+
 export type AttemptLifecycle = {
   readonly signal: AbortSignal
 }
 
-export type TaskHandler<Deps, Input, Output> = (
+export type TaskHandler<R, Input, Output> = (
   input: Input,
   lifecycle: AttemptLifecycle,
-) => Effect.Effect<Output, unknown, Deps>
+) => Effect.Effect<Output, unknown, R>
 
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
-  Deps = never,
+  R = never,
 > = {
   readonly kind: 'taskImplementation'
   readonly task: Task
-  readonly handler: TaskHandler<Deps, TaskInput<Task>, TaskOutput<Task>>
+  readonly handler: TaskHandler<R, TaskInput<Task>, TaskOutput<Task>>
 }
 
-export function implementTask<Task extends AnyTaskDefinition, Deps = never>(
+export function implementTask<Task extends AnyTaskDefinition, R = never>(
   task: Task,
-  options: { handler: TaskHandler<Deps, TaskInput<Task>, TaskOutput<Task>> },
-): TaskImplementation<Task, Deps> {
+  options: { handler: TaskHandler<R, TaskInput<Task>, TaskOutput<Task>> },
+): TaskImplementation<Task, R> {
   return Object.freeze({
     kind: 'taskImplementation',
     task,
@@ -50,24 +58,20 @@ export function implementTask<Task extends AnyTaskDefinition, Deps = never>(
   })
 }
 
-export type ActivityHandler<Deps, Input, Output> = TaskHandler<
-  Deps,
-  Input,
-  Output
->
+export type ActivityHandler<R, Input, Output> = TaskHandler<R, Input, Output>
 
 export type ActivityImplementation<
   Input = unknown,
   Output = unknown,
-  Deps = any,
+  R = any,
 > = {
   readonly kind: 'activityImplementation'
   readonly name: string
-  readonly handler: ActivityHandler<Deps, Input, Output>
+  readonly handler: ActivityHandler<R, Input, Output>
 }
 
-export type ActivityHandlerInput<Input, Output, Deps> = ActivityHandler<
-  Deps,
+export type ActivityHandlerInput<Input, Output, R> = ActivityHandler<
+  R,
   Input,
   Output
 >
@@ -117,7 +121,7 @@ export type WorkflowMapInputMapper<
 
 export type WorkflowImplementation<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-  WorkflowDeps = never,
+  WorkflowR = never,
 > = {
   readonly kind: 'workflowImplementation'
   readonly workflow: Workflow
@@ -125,7 +129,7 @@ export type WorkflowImplementation<
   readonly finish: (
     outputs: any,
     workflowInput: WorkflowInput<Workflow>,
-  ) => Effect.Effect<WorkflowOutput<Workflow>, unknown, WorkflowDeps>
+  ) => Effect.Effect<WorkflowOutput<Workflow>, unknown, WorkflowR>
 }
 
 type StoredCallback = (...args: any[]) => unknown
@@ -202,14 +206,14 @@ type ActivityImplementationOptions<
   NodeInput,
 > = WorkflowInputMapper<Outputs, Input, NodeInput>
 
-type ActivityImplementationValue<Input, Output, Deps = never> =
-  | ActivityHandlerInput<Input, Output, Deps>
-  | { readonly handler: ActivityHandlerInput<Input, Output, Deps> }
-  | ActivityImplementation<Input, Output, Deps>
+type ActivityImplementationValue<Input, Output, R = never> =
+  | ActivityHandlerInput<Input, Output, R>
+  | { readonly handler: ActivityHandlerInput<Input, Output, R> }
+  | ActivityImplementation<Input, Output, R>
 
-type ActivityCaseDescriptor<Input, Output, Deps = never> = {
+type ActivityCaseDescriptor<Input, Output, R = never> = {
   readonly kind: 'activityCase'
-  readonly value: ActivityImplementationValue<Input, Output, Deps>
+  readonly value: ActivityImplementationValue<Input, Output, R>
   readonly options?: WorkflowInputMapper<any, any, Input>
 }
 
@@ -255,10 +259,10 @@ type CaseImplementationObject<
 }
 
 type CaseImplementers<Outputs extends object, Input> = {
-  readonly activity: <NodeInput, Output, Deps = never>(
-    value: ActivityImplementationValue<NodeInput, Output, Deps>,
+  readonly activity: <NodeInput, Output, R = never>(
+    value: ActivityImplementationValue<NodeInput, Output, R>,
     options?: WorkflowInputMapper<Outputs, Input, NodeInput>,
-  ) => ActivityCaseDescriptor<NodeInput, Output, Deps>
+  ) => ActivityCaseDescriptor<NodeInput, Output, R>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
     options?: WorkflowInputMapper<Outputs, Input, TaskInput<Task>>,
@@ -310,7 +314,7 @@ type NodeOutput<Node> = Node extends {
 
 export type WorkflowImplementationChain<
   Workflow extends AnyWorkflowDefinition,
-  WorkflowDeps,
+  WorkflowR,
   Nodes extends readonly WorkflowNode[],
   Outputs extends object,
   WorkflowArgs = WorkflowInput<Workflow>,
@@ -325,12 +329,12 @@ export type WorkflowImplementationChain<
       infer Output
     >
     ? {
-        readonly [Key in Name]: <Deps = never>(
-          value: ActivityImplementationValue<Input, Output, Deps>,
+        readonly [Key in Name]: <R = never>(
+          value: ActivityImplementationValue<Input, Output, R>,
           options?: ActivityImplementationOptions<Outputs, WorkflowArgs, Input>,
         ) => WorkflowImplementationChain<
           Workflow,
-          WorkflowDeps | Deps,
+          WorkflowR | R,
           Rest,
           Outputs & NodeOutput<Node>,
           WorkflowArgs,
@@ -351,7 +355,7 @@ export type WorkflowImplementationChain<
             >,
           ) => WorkflowImplementationChain<
             Workflow,
-            WorkflowDeps,
+            WorkflowR,
             Rest,
             Outputs & NodeOutput<Node>,
             WorkflowArgs,
@@ -372,7 +376,7 @@ export type WorkflowImplementationChain<
               >,
             ) => WorkflowImplementationChain<
               Workflow,
-              WorkflowDeps,
+              WorkflowR,
               Rest,
               Outputs & NodeOutput<Node>,
               WorkflowArgs,
@@ -399,7 +403,7 @@ export type WorkflowImplementationChain<
                 >
               }) => WorkflowImplementationChain<
                 Workflow,
-                WorkflowDeps | CaseRequirements<Values>,
+                WorkflowR | CaseRequirements<Values>,
                 Rest,
                 Outputs & NodeOutput<Node>,
                 WorkflowArgs,
@@ -422,7 +426,7 @@ export type WorkflowImplementationChain<
                   >,
                 ) => WorkflowImplementationChain<
                   Workflow,
-                  WorkflowDeps | CaseRequirements<Values>,
+                  WorkflowR | CaseRequirements<Values>,
                   Rest,
                   Outputs & NodeOutput<Node>,
                   WorkflowArgs,
@@ -444,7 +448,7 @@ export type WorkflowImplementationChain<
                     >,
                   ) => WorkflowImplementationChain<
                     Workflow,
-                    WorkflowDeps,
+                    WorkflowR,
                     Rest,
                     Outputs & NodeOutput<Node>,
                     WorkflowArgs,
@@ -466,7 +470,7 @@ export type WorkflowImplementationChain<
                       >,
                     ) => WorkflowImplementationChain<
                       Workflow,
-                      WorkflowDeps,
+                      WorkflowR,
                       Rest,
                       Outputs & NodeOutput<Node>,
                       WorkflowArgs,
@@ -475,27 +479,27 @@ export type WorkflowImplementationChain<
                   }
                 : WorkflowImplementationChain<
                     Workflow,
-                    WorkflowDeps,
+                    WorkflowR,
                     Rest,
                     Outputs,
                     WorkflowArgs,
                     Result
                   >
   : {
-      readonly finish: <Deps = never>(
+      readonly finish: <R = never>(
         finish: (
           outputs: Outputs,
           workflowInput: WorkflowArgs,
-        ) => Effect.Effect<Result, unknown, Deps>,
-      ) => WorkflowImplementation<Workflow, WorkflowDeps | Deps>
+        ) => Effect.Effect<Result, unknown, R>,
+      ) => WorkflowImplementation<Workflow, WorkflowR | R>
     }
 
 export type WorkflowImplementer<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-  WorkflowDeps = never,
+  WorkflowR = never,
 > = WorkflowImplementationChain<
   Workflow,
-  WorkflowDeps,
+  WorkflowR,
   WorkflowNodes<Workflow>,
   {},
   WorkflowInput<Workflow>,
@@ -504,13 +508,13 @@ export type WorkflowImplementer<
 
 export function implementWorkflow<
   Workflow extends AnyWorkflowDefinition,
-  WorkflowDeps = never,
->(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowDeps> {
+  WorkflowR = never,
+>(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowR> {
   return createWorkflowChain({
     workflow,
     index: 0,
     implementations: [],
-  }) as WorkflowImplementer<Workflow, WorkflowDeps>
+  }) as WorkflowImplementer<Workflow, WorkflowR>
 }
 
 function createWorkflowChain(state: {
@@ -692,15 +696,15 @@ function nextChain(
 
 function createCaseImplementers(): CaseImplementers<any, any> {
   const helpers: CaseImplementers<any, any> = {
-    activity: <NodeInput, Output, Deps = never>(
-      value: ActivityImplementationValue<NodeInput, Output, Deps>,
+    activity: <NodeInput, Output, R = never>(
+      value: ActivityImplementationValue<NodeInput, Output, R>,
       options?: WorkflowInputMapper<any, any, NodeInput>,
     ) =>
       Object.freeze({
         kind: 'activityCase',
         value,
         options,
-      }) as ActivityCaseDescriptor<NodeInput, Output, Deps>,
+      }) as ActivityCaseDescriptor<NodeInput, Output, R>,
     task: <Task extends AnyTaskDefinition>(
       task: Task,
       options?: WorkflowInputMapper<any, any, any>,

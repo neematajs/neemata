@@ -24,7 +24,6 @@ import {
 
 export type StartTaskRunInput<
   Task extends AnyTaskDefinition,
-  Deps = any,
   Connection = never,
 > = {
   readonly store: WorkflowStore
@@ -32,7 +31,7 @@ export type StartTaskRunInput<
   readonly attemptExecutor: AttemptExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
   readonly task: Task
-  readonly implementation?: TaskImplementation<Task, Deps>
+  readonly implementation?: TaskImplementation<Task, any>
   readonly input: TaskInput<Task>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
@@ -43,14 +42,13 @@ export type StartTaskRunInput<
 
 export type StartWorkflowRunInput<
   Workflow extends AnyWorkflowDefinition,
-  Deps = any,
   Connection = never,
 > = {
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
   readonly workflow: Workflow
-  readonly implementation?: WorkflowImplementation<Workflow, Deps>
+  readonly implementation?: WorkflowImplementation<Workflow, any>
   readonly input: WorkflowInput<Workflow>
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
@@ -84,11 +82,8 @@ export type WorkflowRuntimeAtomicStart<Connection = never> = {
 
 export async function startWorkflowRun<
   Workflow extends AnyWorkflowDefinition,
-  Deps = any,
   Connection = never,
->(
-  input: StartWorkflowRunInput<Workflow, Deps, Connection>,
-): Promise<StoredRun> {
+>(input: StartWorkflowRunInput<Workflow, Connection>): Promise<StoredRun> {
   assertImplementationTarget(
     input.implementation?.workflow,
     input.workflow,
@@ -154,9 +149,8 @@ export async function startWorkflowRun<
 
 export async function startTaskRun<
   Task extends AnyTaskDefinition,
-  Deps = any,
   Connection = never,
->(input: StartTaskRunInput<Task, Deps, Connection>): Promise<StoredRun> {
+>(input: StartTaskRunInput<Task, Connection>): Promise<StoredRun> {
   assertImplementationTarget(
     input.implementation?.task,
     input.task,
