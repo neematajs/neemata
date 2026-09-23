@@ -4,6 +4,7 @@ import { relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
+  NeemBuildConfig,
   NeemEnv,
   NeemHealthConfig,
   NeemLoggerOptions,
@@ -43,6 +44,7 @@ export type ManifestRuntimeConfig = {
 }
 
 export type ManifestConfig = {
+  build?: Pick<NeemBuildConfig, 'updates'>
   logger?: ManifestLogger
   env?: NeemEnv
   proxy?: NeemProxyConfig
@@ -280,6 +282,8 @@ function getRequiredArtifact(
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
   const { proxy, health } = compiled.graph.config
+  const updates = compiled.graph.config.build?.updates
+  const build = updates ? { updates: { ...updates } } : undefined
   const logger = createLogger(compiled)
   const env = copyEnv(compiled.graph.config.env)
   const runtimes = new Map<string, ManifestRuntimeConfig>()
@@ -289,6 +293,7 @@ function createConfig(compiled: CompiledGraph): ManifestConfig {
 
   return {
     logger,
+    build,
     env,
     proxy,
     health,

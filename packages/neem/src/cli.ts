@@ -16,7 +16,12 @@ import type {
 } from './internal/services/protocol.ts'
 import type { NeemTestProbe } from './internal/test-probe.ts'
 import { buildNeem } from './internal/commands/build.ts'
-import { MANIFEST_FILE } from './internal/manifest/manifest.ts'
+import {
+  childLogger,
+  createDefaultLogger,
+  resolveManifestLogger,
+} from './internal/logger.ts'
+import { MANIFEST_FILE, readManifest } from './internal/manifest/manifest.ts'
 import {
   resolveServiceEntry,
   WorkerServiceClient,
@@ -227,6 +232,11 @@ class DevSupervisor {
   private runtime: RuntimeClient | undefined
   private manifestFile: string | undefined
   private manifestRevision = 0
+  private readonly staleWorkers = new Set<string>()
+  private logger = childLogger(
+    createDefaultLogger('development'),
+    'neem:server',
+  )
   private stopped = false
   private stopping: Promise<void> | undefined
 
@@ -322,13 +332,24 @@ class DevSupervisor {
         if (!this.acceptManifest(event)) return
         await this.restartRuntime()
         return
+      case 'worker-patch':
+        await this.applyPatch(event)
+        return
+      case 'worker-patch-failed':
+        this.reportPatchFallback(event.runtimeName, event.reason)
+        return
       case 'error':
+        this.logger.error(
+          { err: deserializeError(event.error) },
+          'Neem watcher build failed',
+        )
         return
     }
   }
 
   private async replaceWatcher(): Promise<void> {
     const previousWatcher = this.watcher
+    this.staleWorkers.clear()
     const previousSignalFiles = this.configSignalFiles
     this.watcher = undefined
     await this.stopRuntime()
@@ -384,6 +405,7 @@ class DevSupervisor {
   }
 
   private reportWatcherError(error: unknown): void {
+    this.logger.error({ err: normalizeError(error) }, 'Neem watcher failed')
     this.options.probe?.emit(
       'watcher:error',
       normalizeEvent({ type: 'error', error: serializeError(error) }),
@@ -392,6 +414,16 @@ class DevSupervisor {
 
   private async restartRuntime(): Promise<void> {
     if (!this.manifestFile) return
+    for (const runtimeName of this.staleWorkers)
+      await this.ensureWorkerOutput(runtimeName)
+    const manifest = await readManifest(this.manifestFile)
+    this.logger = childLogger(
+      await resolveManifestLogger(manifest.config.logger, {
+        mode: 'development',
+        outDir: this.options.outDir,
+      }),
+      'neem:server',
+    )
     await this.stopRuntime()
     if (this.stopped) return
     const runtime = createRuntimeClient({
@@ -400,6 +432,16 @@ class DevSupervisor {
         this.options.probe?.emit(`runtime:${event.type}`, normalizeEvent(event))
         if (event.type === 'error') {
           this.closedFuture.reject(deserializeError(event.error))
+        }
+        if (
+          event.type === 'thread-started' ||
+          event.type === 'thread-stopped'
+        ) {
+          void this.events
+            .run(() => this.handleThreadEvent(event))
+            .catch((error) => {
+              this.closedFuture.reject(normalizeError(error))
+            })
         }
       },
       onFailure: (error) => this.closedFuture.reject(error),
@@ -416,11 +458,105 @@ class DevSupervisor {
 
   private async reloadRuntime(runtimeName: string): Promise<void> {
     if (!this.runtime || !this.manifestFile) return
+    if (this.staleWorkers.has(runtimeName))
+      await this.ensureWorkerOutput(runtimeName)
     await this.runtime.request({
       type: 'reload-runtime',
       runtimeName,
       manifestFile: this.manifestFile,
     })
+  }
+
+  private async handleThreadEvent(
+    event: Extract<RuntimeEvent, { threadId: string }>,
+  ): Promise<void> {
+    if (this.stopped) return
+    const { runtimeName, threadId, type } = event
+    await this.watcher?.request({
+      type:
+        type === 'thread-started'
+          ? 'patch-client-started'
+          : 'patch-client-stopped',
+      runtimeName,
+      clientId: threadId,
+    })
+    if (type === 'thread-started' && this.staleWorkers.has(runtimeName)) {
+      // Host recovery can start from stale output without going through us.
+      // Clear before reloading so the replacement's ready event cannot loop.
+      await this.ensureWorkerOutput(runtimeName)
+      await this.reloadRuntime(runtimeName)
+    }
+  }
+
+  private async applyPatch(
+    event: Extract<WatcherEvent, { type: 'worker-patch' }>,
+  ): Promise<void> {
+    const { runtimeName, updates } = event
+    if (!updates.length) {
+      await this.fallback(runtimeName, 'No active patch clients')
+      return
+    }
+    try {
+      const result = await this.runtime?.request({
+        type: 'apply-patch',
+        runtimeName,
+        updates,
+      })
+      const patch = result?.patch
+      if (patch?.deliveredFiles.length) {
+        await this.watcher?.request({
+          type: 'patch-delivered',
+          runtimeName,
+          filenames: patch.deliveredFiles,
+        })
+      }
+      if (patch?.accepted) {
+        this.staleWorkers.add(runtimeName)
+        this.options.probe?.emit('runtime:patch-applied', {
+          runtimeName,
+          reason: 'Worker generation updated',
+        })
+      }
+      if (!patch?.accepted || patch.reset) {
+        await this.fallback(
+          runtimeName,
+          patch?.reason ?? 'Runtime rejected the patch',
+        )
+      }
+    } catch (error) {
+      if (!this.stopped)
+        await this.fallback(runtimeName, normalizeError(error).message)
+    }
+  }
+
+  private reportPatchFallback(runtimeName: string, reason: string): void {
+    this.logger.warn({ runtimeName, reason }, 'Neem runtime restart fallback')
+    this.options.probe?.emit('runtime:patch-fallback', { runtimeName, reason })
+  }
+
+  private async fallback(runtimeName: string, reason: string): Promise<void> {
+    if (this.stopped) return
+    this.reportPatchFallback(runtimeName, reason)
+    await this.ensureWorkerOutput(runtimeName)
+    await this.reloadRuntime(runtimeName)
+  }
+
+  private async ensureWorkerOutput(runtimeName: string): Promise<void> {
+    this.staleWorkers.delete(runtimeName)
+    try {
+      const result = await this.watcher?.request({
+        type: 'ensure-worker-output',
+        runtimeName,
+      })
+      if (result?.manifest) this.acceptManifest(result.manifest)
+    } catch (error) {
+      // The last successful artifact is still usable when rendering the latest
+      // source fails. A later successful update can bring it forward again.
+      this.logger.error(
+        { err: normalizeError(error), runtimeName },
+        'Neem worker output refresh failed; reloading the last good artifact',
+      )
+    }
   }
 
   private async stopRuntime(): Promise<void> {

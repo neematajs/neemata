@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks'
 
 import type { MaybePromise } from '@nmtjs/common'
+import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -14,6 +15,8 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeUpstreams } from './proxy.ts'
 import type { RecoveryOptions } from './recovery.ts'
+import type { RuntimePatchResult } from './runtime.ts'
+import type { ThreadLifecycleEvent } from './thread.ts'
 import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
 import { callHostHook, createHostHooks } from '../plugins/hooks.ts'
@@ -23,6 +26,7 @@ import { ProxyController } from './proxy.ts'
 import { RuntimeController } from './runtime.ts'
 
 export type HostControllerOptions = {
+  onThreadEvent?: (event: ThreadLifecycleEvent) => void
   snapshot: RuntimeSnapshot
   hooks?: HostHooks
   failOnWorkerError?: boolean
@@ -281,6 +285,31 @@ export class HostController {
     })
   }
 
+  applyPatch(
+    runtimeName: string,
+    updates: readonly BindingClientHmrUpdate[],
+  ): Promise<RuntimePatchResult> {
+    return this.operations.run(async () => {
+      const runtime = this.runtimes.get(runtimeName)
+      if (!runtime || this.stopRequested) {
+        return {
+          accepted: false,
+          deliveredFiles: [],
+          reset: false,
+          reason: `Runtime [${runtimeName}] is not running`,
+        }
+      }
+      // Applying patches can await replacement readiness just like a full reload.
+      // Expose that state so stop interrupts workers before joining the queue.
+      this.markState('reloading')
+      try {
+        return await runtime.applyPatch(updates)
+      } finally {
+        if (!this.stopRequested) this.markState('running')
+      }
+    })
+  }
+
   stop(): Promise<void> {
     this.stopRequested = true
     this.stopRevision++
@@ -403,6 +432,7 @@ export class HostController {
       runtimeName,
       hooks: this.hooks,
       recovery: this.options.recovery,
+      onThreadEvent: this.options.onThreadEvent,
       onRecovered: async () => {
         await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
       },

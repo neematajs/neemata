@@ -11,6 +11,8 @@ const RESPONSE_VERSION = 'good-v1'
 const FAIL_ON_START = false
 
 export default defineRuntimeWorker<ReloadStartFailureData>({
+  // This fixture exercises proxy detachment during a full thread reload.
+  reload: 'thread',
   definition: { fixture: 'reload-start-failure' },
   createRuntime(ctx) {
     let server: Server | undefined

@@ -202,9 +202,13 @@ describe('Neem compiler', () => {
 
   it('uses root watch config for build delay and debounce', async () => {
     const root = await useTempDir()
-    const graph = createCompilerGraph(root, {
-      watch: { buildDelay: 125, debounceDelay: 25 },
-    })
+    const graph = createCompilerGraph(
+      root,
+      {
+        watch: { buildDelay: 125, debounceDelay: 25 },
+      },
+      false,
+    )
     rolldownMock.watch.mockImplementation(() => createWatcher())
 
     await watchGraph(graph)
@@ -220,7 +224,7 @@ describe('Neem compiler', () => {
 
   it('watches infra targets with one watcher and reports one rebuild for all infra metadata', async () => {
     const root = await useTempDir()
-    const graph = createCompilerGraph(root)
+    const graph = createCompilerGraph(root, undefined, false)
     const watchers: Array<EventEmitter & { close: () => Promise<void> }> = []
     rolldownMock.watch.mockImplementation(() => {
       const watcher = createWatcher()
@@ -269,12 +273,11 @@ describe('Neem compiler', () => {
 
     const ready = await graphWatcher.ready
 
-    expect(rolldownMock.watch).toHaveBeenCalledTimes(4)
+    expect(rolldownMock.watch).toHaveBeenCalledTimes(3)
     expect(ready.targets.map((target) => target.artifact.file)).toEqual([
       resolve(root, 'dist/runtime/start.js'),
       resolve(root, 'dist/runtime/worker-entry.js'),
       resolve(root, 'dist/runtime/runner-entry.js'),
-      resolve(root, 'dist/runtime/api/worker/index.js'),
       resolve(root, 'dist/runtime/api/host/index.js'),
       resolve(root, 'dist/runtime/api/planner/index.js'),
     ])
@@ -336,6 +339,7 @@ async function useTempDir(): Promise<string> {
 function createCompilerGraph(
   root: string,
   build?: ReturnType<typeof createBuildGraph>['config']['build'],
+  worker = true,
 ) {
   return createBuildGraph({
     configFile: resolve(root, 'neem.config.ts'),
@@ -350,7 +354,7 @@ function createCompilerGraph(
           planner: './planner.ts',
           declaration: defineRuntime({
             name: 'api',
-            worker: { entry: './worker.ts' },
+            worker: worker ? { entry: './worker.ts' } : undefined,
             host: { entry: './host.ts' },
             planner: './planner.ts',
           }),

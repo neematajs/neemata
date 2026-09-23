@@ -92,6 +92,8 @@ export type NeemBuildConfig = {
   minify?: boolean | 'dce-only'
   define?: Record<string, string>
   watch?: NeemBuildWatchConfig
+  /** Restart the thread after this many accepted development patches. */
+  updates?: { maxPatches?: number }
 }
 
 export type NeemBuildWatchConfig = {
@@ -405,6 +407,7 @@ export type NeemRuntimeWorkerContext<Data = unknown, Definition = unknown> = {
 
 export type NeemRuntimeWorker<Data = unknown, Definition = unknown> = {
   readonly _?: { data: Data; definition: Definition }
+  reload?: 'generation' | 'thread'
   definition: Definition
   createRuntime: (
     ctx: NeemRuntimeWorkerContext<Data, Definition>,

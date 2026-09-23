@@ -27,10 +27,11 @@ export type NeemViteArtifactPluginOptions = {
 /**
  * Rolldown plugin injected into the Vite runtime's worker artifact build.
  *
- * Neem compiles the same worker entry with `rolldown.watch` in dev and
- * `rolldown.build` in `neem build`, so `this.meta.watchMode` is the mode
- * signal. Instead of shipping both code paths behind runtime flags, the
- * plugin resolves `neem-vite:impl` to the dev or prod implementation, so each
+ * Neem compiles the same worker entry with Rolldown's DevEngine in `neem dev`
+ * and `rolldown.build` in `neem build`. The DevEngine reports
+ * `this.meta.watchMode` as false, so the mode signal is its `devMode` input
+ * option (or watch mode for a plain `rolldown.watch` build). Instead of
+ * shipping both code paths behind runtime flags, the plugin resolves `neem-vite:impl` to the dev or prod implementation, so each
  * artifact only ever contains the code it runs: the dev artifact boots Vite's
  * dev server, the prod artifact serves the built app and never imports vite.
  */
@@ -51,18 +52,22 @@ export function neemViteArtifactPlugin(
     return buildConfig
   }
 
+  let dev = false
   const plugin: RolldownPlugin = {
     name: 'neem-vite:artifact',
+    options(input) {
+      dev = this.meta.watchMode || input.experimental?.devMode != null
+    },
     resolveId(id) {
       if (id === VIRTUAL_OPTIONS) return RESOLVED_OPTIONS
       if (id === VIRTUAL_IMPL) {
-        return resolveImplEntry(this.meta.watchMode ? 'dev' : 'prod')
+        return resolveImplEntry(dev ? 'dev' : 'prod')
       }
       return null
     },
     async load(id) {
       if (id !== RESOLVED_OPTIONS) return null
-      if (this.meta.watchMode) {
+      if (dev) {
         return bakedOptionsModule({
           root: options.root,
           base: options.base,
@@ -74,7 +79,7 @@ export function neemViteArtifactPlugin(
       return bakedOptionsModule({ base, routing: options.routing })
     },
     async writeBundle(output) {
-      if (this.meta.watchMode) return
+      if (dev) return
       if (!output.dir) {
         throw new Error('neem-vite requires a directory-based worker artifact')
       }
