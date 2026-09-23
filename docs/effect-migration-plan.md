@@ -671,10 +671,28 @@ Fresh validation with unrestricted filesystem access and `vp env exec`:
 - Workspace build, typecheck, formatting, and `git diff --check` passed.
 - Full `oxlint . --format=agent`: only the existing Deno transport warning.
 
-The user selected `postgres_postgres_20260920_030000.dump` for the isolated
-cutover assessment. It has not yet been restored or assessed. The assessment covers
-stored workflow inputs/outputs and command payloads, retained-history restart, and
-rollback readability; it does not introduce stored-format versioning.
+The selected dump has now been assessed in isolated PostgreSQL instances. Its full
+workflow subset was restored with constraints and indexes; unrelated application
+records were excluded. The assessment covered payloads, commands, history reads,
+real restart submissions, an old-release drain, and rollback. Snapshot-specific
+aggregate evidence stays in a local report, outside the public repository history.
+
+See the [cutover procedure](./effect-cutover.md) for deployment requirements. The
+exercise identified an existing SQL version-2-to-3 prerequisite, historical definition
+and registry drift, and the need to dispose of stranded commands explicitly. A
+drain does not make completed-node history valid under changed definitions.
+
+The reviewed application schemas contain no declared Date/Temporal or other rich
+transformation codecs. The earlier date-bearing real-workflow proof criterion has
+therefore not been demonstrated; do not invent a production field to satisfy it.
+The application proof remains pending. Assessment-only Effect schema candidates
+test JSON shapes/defaults and reuse existing refinement predicates; repeat the
+checks against the final application-owned Effect definitions before release.
+
+No stored-format versioning, legacy-run restrictions, application code changes,
+or framework deletion were introduced by this assessment. Full-application rollback
+and the actual deployment's submission-pause control are not established by the
+isolated workflow-table exercise.
 
 ## Code review cleanup — 2026-09-21
 
