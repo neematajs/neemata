@@ -47,12 +47,15 @@ type Worker = {
   readonly createRuntime: (ctx: any) => any
 }
 
-async function createCoordinator(worker: Worker) {
+async function createCoordinator(
+  worker: Worker,
+  settings: WorkflowsWorkerData['settings'] = {
+    pollIntervalMs: 1,
+    cleanupTimeoutMs: 5,
+  },
+) {
   const channel = new MessageChannel()
-  const data: WorkflowsWorkerData = {
-    role: 'coordinator',
-    settings: { pollIntervalMs: 1, cleanupTimeoutMs: 5 },
-  }
+  const data: WorkflowsWorkerData = { role: 'coordinator', settings }
   const runtime = await worker.createRuntime({
     mode: 'development',
     name: 'workflows:coordinator:0',
@@ -179,6 +182,72 @@ describe('worker startup cleanup deadline', () => {
       )
     } finally {
       adapter.release()
+      await runtime.stop().catch(() => {})
+      close()
+    }
+  })
+})
+
+describe('worker startup settings validation', () => {
+  const invalid = { pollIntervalMs: 1, cleanupTimeoutMs: -1 }
+
+  it('rejects invalid Promise worker settings before setup acquires resources', async () => {
+    let setups = 0
+    let disposals = 0
+    const worker = defineWorkflowsWorker({
+      workflows: () => [],
+      setup: () => {
+        setups++
+        return {
+          runtime: {
+            ...createInMemoryWorkflowRuntime(),
+            dispose: () => {
+              disposals++
+            },
+          },
+          dispose: () => {
+            disposals++
+          },
+        }
+      },
+    })
+    const { runtime, close } = await createCoordinator(worker, invalid)
+
+    try {
+      await expect(runtime.start()).rejects.toThrow(
+        'Workflow cleanupTimeoutMs must be a finite non-negative number',
+      )
+      await runtime.stop().catch(() => {})
+      expect({ setups, disposals }).toEqual({ setups: 0, disposals: 0 })
+    } finally {
+      close()
+    }
+  })
+
+  it('rejects invalid Effect worker settings before building the Layer or adapter', async () => {
+    let acquired = 0
+    const worker = defineEffectWorkflowsWorker({
+      workflows: () => [],
+      runtime: Effect.sync(() => {
+        acquired++
+        return createInMemoryWorkflowRuntime()
+      }),
+      layer: Layer.effectDiscard(
+        Effect.sync(() => {
+          acquired++
+        }),
+      ),
+    })
+    const { runtime, close } = await createCoordinator(worker, invalid)
+
+    try {
+      const error = await settled(runtime.start())
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toBe(
+        'Workflow cleanupTimeoutMs must be a finite non-negative number',
+      )
+      expect(acquired).toBe(0)
+    } finally {
       await runtime.stop().catch(() => {})
       close()
     }

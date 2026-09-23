@@ -79,6 +79,12 @@ export function defineWorkflowsWorker<
         if (stopping) throw new Error('Workflows worker stopped')
         const settings = resolveWorkerSettings(ctx.data.settings)
         const timeoutMs = settings.cleanupTimeoutMs
+        // Created before the Layer and adapter: it validates settings, and a
+        // rejection must not race the cleanup deadline armed on exit.
+        const handlers = createHandlerRunner({
+          cleanupTimeoutMs: timeoutMs,
+          onFatal: fatal,
+        })
         // Keep the deadline armed through adapter and Layer finalizers, so a
         // failed worker cannot hang in cleanup while appearing live.
         const armCleanupDeadline = Effect.sync(() => {
@@ -90,10 +96,6 @@ export function defineWorkflowsWorker<
         const main = Effect.gen(function* () {
           const context = yield* Effect.context<any>()
           const env = createHandlerRuntime(context)
-          const handlers = createHandlerRunner({
-            cleanupTimeoutMs: timeoutMs,
-            onFatal: fatal,
-          })
           const runtime = yield* Effect.acquireRelease(
             definition.runtime as WorkflowsRuntime<any>,
             (runtime) =>

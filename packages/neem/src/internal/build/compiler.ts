@@ -511,6 +511,15 @@ async function watchWorkerTarget(
       },
       async ensureOutput() {
         await engine.ensureLatestBuildOutput()
+        // While the latest source fails to build, DevEngine resolves without
+        // writing output, so the files on disk may predate accepted patches.
+        // Checking first also skips a rejection left by an earlier failure.
+        const state = await engine.getBundleState()
+        if (state.lastBuildErrored || state.hasStaleOutput) {
+          throw new Error(
+            `Worker [${target.key}] source has build errors; its output was not refreshed`,
+          )
+        }
         await outputApplied
       },
     },

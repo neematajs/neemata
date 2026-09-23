@@ -60,6 +60,9 @@ acquisition in the Layer/main Effect, not an async factory. The factory receives
   `ready([{ type: 'http', url: listeningUrl }])` (also `'http2'` or `'ws'`).
   Use real bound URLs, especially with port 0. `ready()` reports no upstreams.
   Startup waits for this signal; it does not infer readiness from Layer success.
+  Under `neem dev`, port 0 binds a new port per generation, so every edit
+  changes upstreams and restarts the runtime; use a fixed development port to
+  keep in-place restarts.
 - Keep main alive after readiness. Compose essential background work into main,
   or explicitly join/supervise its fibers. Forking work in a Layer does not
   automatically make its failure fail main.

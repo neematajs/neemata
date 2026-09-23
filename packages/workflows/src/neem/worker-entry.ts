@@ -71,8 +71,8 @@ export function defineWorkflowsWorker<
         const registry = await resolveWorkflowsRegistry(definition, ctx.data)
         const settings = resolveWorkerSettings(ctx.data.settings)
         const timeoutMs = settings.cleanupTimeoutMs
-        if (stopping) throw new WorkerStopped()
-        const resources = await definition.setup(ctx)
+        // Created before setup: it validates settings, and nothing acquired
+        // yet would need disposal when they are rejected.
         const handlers = createHandlerRunner({
           cleanupTimeoutMs: timeoutMs,
           // finished is observed by Neem before cleanup completes. An overrun
@@ -82,6 +82,8 @@ export function defineWorkflowsWorker<
             fail(error)
           },
         })
+        if (stopping) throw new WorkerStopped()
+        const resources = await definition.setup(ctx)
         // Cleanup can run before the loop exists, when a later startup step fails.
         const serving: { loop?: Promise<void> } = {}
         let cleaning: Promise<void> | undefined

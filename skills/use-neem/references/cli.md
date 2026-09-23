@@ -73,10 +73,31 @@ planned application worker threads.
 
 - Initial watcher readiness starts the runtime service.
 - Config or selected runtime declaration changes restart watcher and runtime.
-- Worker, planner, or runtime host artifact changes reload that runtime.
+- Worker edits are patched into the running threads through Rolldown DevEngine:
+  each thread stops its current runtime generation (`stop()` is awaited), then
+  creates and starts the updated worker in the same thread. Modules on the
+  import path from the edited module to the worker entry re-execute; other
+  module state survives. Every restart of a patched runtime, including host
+  recovery after a crash, first rewrites the worker output so it loads the
+  accepted patches.
+- A worker update restarts the whole runtime (all its worker threads and its
+  host runner) from fresh output instead when the new generation reports
+  different upstreams, a patch is rejected or fails, the worker declares
+  `reload: 'thread'`, a thread reaches `build.updates.maxPatches` accepted
+  patches (default `50`; `0` restarts on every update), a thread is not
+  registered for the update (none running, or started while it was built),
+  or the update changes a module that has not run yet, such as one reached
+  only through a pending dynamic `import()`. The fallback is logged with its
+  reason.
+- Planner or runtime host artifact changes restart that runtime.
 - Plugin or logger artifact changes restart the runtime service.
-- Rebuild errors are reported without automatically exiting. An invalid config
-  edit stops the runtime; fixing the watched config/declaration restarts it.
+- Rebuild errors are reported without automatically exiting. A worker syntax
+  error leaves the last good generation running; the fix is patched in. A
+  restart never loads worker output older than the running generation: when
+  Neem cannot write the latest output, it logs that the restart is deferred and
+  runs it after the worker's next successful build.
+- An invalid config edit stops the runtime; fixing the watched
+  config/declaration restarts it.
 - A failed runtime reload leaves that runtime stopped and readiness unavailable;
   dev remains available for a subsequent edit to recover it.
 - Initial startup failures, service worker failures, and fatal runtime service

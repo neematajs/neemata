@@ -231,8 +231,13 @@ class DevSupervisor {
   private configSignalFiles: readonly string[] | undefined
   private runtime: RuntimeClient | undefined
   private manifestFile: string | undefined
-  private manifestRevision = 0
+  // Runtimes whose worker output on disk predates their running generation.
   private readonly staleWorkers = new Set<string>()
+  // Restarts that found a stale worker failing to build. They wait for its next
+  // successful build rather than load output older than the running generation.
+  private readonly deferredReloads = new Set<string>()
+  private readonly deferredRecoveries = new Set<string>()
+  private restartDeferred = false
   private logger = childLogger(
     createDefaultLogger('development'),
     'neem:server',
@@ -316,7 +321,7 @@ class DevSupervisor {
 
     switch (event.type) {
       case 'ready':
-        this.acceptManifest(event, { resetRevision: true })
+        this.acceptManifest(event)
         await this.restartRuntime()
         return
       case 'config-invalidated':
@@ -324,15 +329,16 @@ class DevSupervisor {
         return
       case 'runtime-changed':
       case 'runtime-host-changed':
-        if (!this.acceptManifest(event)) return
+        this.acceptManifest(event)
         await this.reloadRuntime(event.runtimeName)
         return
       case 'plugin-changed':
       case 'logger-changed':
-        if (!this.acceptManifest(event)) return
+        this.acceptManifest(event)
         await this.restartRuntime()
         return
       case 'worker-patch':
+        if (await this.resumeDeferredRestart(event.runtimeName)) return
         await this.applyPatch(event)
         return
       case 'worker-patch-failed':
@@ -350,6 +356,9 @@ class DevSupervisor {
   private async replaceWatcher(): Promise<void> {
     const previousWatcher = this.watcher
     this.staleWorkers.clear()
+    this.deferredReloads.clear()
+    this.deferredRecoveries.clear()
+    this.restartDeferred = false
     const previousSignalFiles = this.configSignalFiles
     this.watcher = undefined
     await this.stopRuntime()
@@ -412,10 +421,17 @@ class DevSupervisor {
     )
   }
 
-  private async restartRuntime(): Promise<void> {
-    if (!this.manifestFile) return
-    for (const runtimeName of this.staleWorkers)
-      await this.ensureWorkerOutput(runtimeName)
+  private async restartRuntime(): Promise<boolean> {
+    if (!this.manifestFile) return false
+    for (const runtimeName of this.staleWorkers) {
+      if (await this.refreshWorkerOutput(runtimeName)) continue
+      this.restartDeferred = true
+      this.reportRestartDeferred(runtimeName)
+      return false
+    }
+    this.restartDeferred = false
+    this.deferredReloads.clear()
+    this.deferredRecoveries.clear()
     const manifest = await readManifest(this.manifestFile)
     this.logger = childLogger(
       await resolveManifestLogger(manifest.config.logger, {
@@ -425,7 +441,7 @@ class DevSupervisor {
       'neem:server',
     )
     await this.stopRuntime()
-    if (this.stopped) return
+    if (this.stopped) return false
     const runtime = createRuntimeClient({
       probe: this.options.probe,
       onEvent: (event) => {
@@ -443,6 +459,13 @@ class DevSupervisor {
               this.closedFuture.reject(normalizeError(error))
             })
         }
+        if (event.type === 'runtime-recovering') {
+          void this.events
+            .run(() => this.prepareRecovery(event.runtimeName))
+            .catch((error) => {
+              this.closedFuture.reject(normalizeError(error))
+            })
+        }
       },
       onFailure: (error) => this.closedFuture.reject(error),
     })
@@ -454,17 +477,55 @@ class DevSupervisor {
       manifestFile: this.manifestFile,
       runtimes: this.options.runtimes,
     })
+    return true
   }
 
-  private async reloadRuntime(runtimeName: string): Promise<void> {
-    if (!this.runtime || !this.manifestFile) return
-    if (this.staleWorkers.has(runtimeName))
-      await this.ensureWorkerOutput(runtimeName)
+  private async reloadRuntime(runtimeName: string): Promise<boolean> {
+    if (!this.runtime || !this.manifestFile) return false
+    if (
+      this.staleWorkers.has(runtimeName) &&
+      !(await this.refreshWorkerOutput(runtimeName))
+    ) {
+      this.deferredReloads.add(runtimeName)
+      this.reportRestartDeferred(runtimeName)
+      return false
+    }
+    this.deferredReloads.delete(runtimeName)
+    this.deferredRecoveries.delete(runtimeName)
     await this.runtime.request({
       type: 'reload-runtime',
       runtimeName,
       manifestFile: this.manifestFile,
     })
+    return true
+  }
+
+  // A worker patch means the worker builds again, so a restart deferred on its
+  // stale output can run now; fresh output already includes the patched code.
+  private async resumeDeferredRestart(runtimeName: string): Promise<boolean> {
+    if (!this.staleWorkers.has(runtimeName)) return false
+    if (this.restartDeferred) return this.restartRuntime()
+    if (this.deferredRecoveries.has(runtimeName))
+      return this.prepareRecovery(runtimeName)
+    if (!this.deferredReloads.has(runtimeName)) return false
+    return this.reloadRuntime(runtimeName)
+  }
+
+  // Host recovery restarts a crashed runtime from the files on disk, so it
+  // waits here until they include every patch the crashed threads accepted.
+  private async prepareRecovery(runtimeName: string): Promise<boolean> {
+    if (this.stopped || !this.runtime) return false
+    if (
+      this.staleWorkers.has(runtimeName) &&
+      !(await this.refreshWorkerOutput(runtimeName))
+    ) {
+      this.deferredRecoveries.add(runtimeName)
+      this.reportRestartDeferred(runtimeName)
+      return false
+    }
+    this.deferredRecoveries.delete(runtimeName)
+    await this.runtime.request({ type: 'recovery-output-ready', runtimeName })
+    return true
   }
 
   private async handleThreadEvent(
@@ -480,12 +541,6 @@ class DevSupervisor {
       runtimeName,
       clientId: threadId,
     })
-    if (type === 'thread-started' && this.staleWorkers.has(runtimeName)) {
-      // Host recovery can start from stale output without going through us.
-      // Clear before reloading so the replacement's ready event cannot loop.
-      await this.ensureWorkerOutput(runtimeName)
-      await this.reloadRuntime(runtimeName)
-    }
   }
 
   private async applyPatch(
@@ -511,6 +566,8 @@ class DevSupervisor {
         })
       }
       if (patch?.accepted) {
+        // Refreshing here would race later edits: a full DevEngine build can
+        // absorb a pending change without emitting its patch. Restarts refresh.
         this.staleWorkers.add(runtimeName)
         this.options.probe?.emit('runtime:patch-applied', {
           runtimeName,
@@ -529,6 +586,14 @@ class DevSupervisor {
     }
   }
 
+  private reportRestartDeferred(runtimeName: string): void {
+    this.logger.warn(
+      { runtimeName },
+      'Neem restart deferred until the runtime worker builds again; the running generation keeps serving',
+    )
+    this.options.probe?.emit('runtime:restart-deferred', { runtimeName })
+  }
+
   private reportPatchFallback(runtimeName: string, reason: string): void {
     this.logger.warn({ runtimeName, reason }, 'Neem runtime restart fallback')
     this.options.probe?.emit('runtime:patch-fallback', { runtimeName, reason })
@@ -537,25 +602,29 @@ class DevSupervisor {
   private async fallback(runtimeName: string, reason: string): Promise<void> {
     if (this.stopped) return
     this.reportPatchFallback(runtimeName, reason)
-    await this.ensureWorkerOutput(runtimeName)
+    // The rejected update exists only in source; the restart needs fresh output.
+    this.staleWorkers.add(runtimeName)
     await this.reloadRuntime(runtimeName)
   }
 
-  private async ensureWorkerOutput(runtimeName: string): Promise<void> {
-    this.staleWorkers.delete(runtimeName)
+  // Leaves the runtime stale when the latest source fails to build; a deferred
+  // restart retries once the worker builds again.
+  private async refreshWorkerOutput(runtimeName: string): Promise<boolean> {
     try {
       const result = await this.watcher?.request({
         type: 'ensure-worker-output',
         runtimeName,
       })
-      if (result?.manifest) this.acceptManifest(result.manifest)
+      if (!result?.manifest) return false
+      this.acceptManifest(result.manifest)
+      this.staleWorkers.delete(runtimeName)
+      return true
     } catch (error) {
-      // The last successful artifact is still usable when rendering the latest
-      // source fails. A later successful update can bring it forward again.
       this.logger.error(
         { err: normalizeError(error), runtimeName },
-        'Neem worker output refresh failed; reloading the last good artifact',
+        'Neem worker output refresh failed',
       )
+      return false
     }
   }
 
@@ -565,19 +634,10 @@ class DevSupervisor {
     await runtime?.stop()
   }
 
-  private acceptManifest(
-    event: WatcherManifestIdentity,
-    options: { resetRevision?: boolean } = {},
-  ): boolean {
-    const stale =
-      !options.resetRevision &&
-      event.manifestFile === this.manifestFile &&
-      event.manifestRevision < this.manifestRevision
-    if (stale) return false
-
+  // Every manifest snapshot is cumulative and written to the same file, so an
+  // event stamped before a later refresh still describes a change to apply.
+  private acceptManifest(event: WatcherManifestIdentity): void {
     this.manifestFile = event.manifestFile
-    this.manifestRevision = event.manifestRevision
-    return true
   }
 }
 

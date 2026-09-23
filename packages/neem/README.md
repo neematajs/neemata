@@ -9,23 +9,34 @@ Conventional runtime and planner lookup recognizes `.ts`, `.mts`, `.js` and
 or its bundled dependencies stops the current runtime generation and creates
 and starts the updated worker in the same thread. Neem awaits cleanup before
 starting the replacement; planners and hosts keep their existing rebuild and
-reload behavior.
+reload behavior. Every restart of a patched runtime, including host recovery
+after a crash, first rewrites the worker output so it loads the accepted
+patches.
 
-A changed upstream list, a rejected or failed patch, or a worker declaring
-`reload: 'thread'` falls back to a full thread restart. Neem refreshes the full
-bundle before restarting, including when a planner or host changes after an
-accepted patch. Syntax errors are logged and leave the last good generation
-running until the source is fixed. Fallback logs include the reason.
+A changed upstream list, a rejected or failed patch, a thread that was not
+registered for the update, an update to a module that has not run yet (such as
+one reached only through a pending dynamic `import()`), or a worker declaring
+`reload: 'thread'` falls back to restarting the runtime: all of its worker
+threads and its host runner start again from fresh output. Fallback logs
+include the reason. Syntax errors are logged and leave the last good generation
+running until the source is fixed. A restart never loads output older than the
+running generation; when the latest worker output cannot be written, the
+restart is deferred until the worker builds again.
+
+Modules re-executed by a patch can register `import.meta.hot.dispose(callback)`
+to release module-level timers or listeners; the callback receives
+`import.meta.hot.data`, which the next instance of the module sees. Only
+self-accepting boundaries are supported.
 
 Use `defineRuntimeWorker({ definition, createRuntime, reload: 'thread' })` when
-the worker requires a fresh thread on every edit. The default is
+every edit needs that runtime restart with fresh threads. The default is
 `reload: 'generation'`; `stop()` must release the generation's resources before
 its replacement can start.
 
-`build.updates.maxPatches` limits accepted patches per thread (default `50`). After
-that many patches, the next update restarts threads from fresh output. Set it
-to `0` to restart on every update. Production workers are created directly and
-their bundles contain no DevEngine instrumentation.
+`build.updates.maxPatches` limits accepted patches per thread (default `50`).
+After that many patches, the next update restarts the runtime from fresh
+output. Set it to `0` to restart on every update. Production workers are
+created directly and their bundles contain no DevEngine instrumentation.
 
 ## Development environment files
 

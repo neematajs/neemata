@@ -407,7 +407,6 @@ export type WorkflowOptions<
   description?: string
   input: InputSchema & SchemaCheck<K, InputSchema>
   output?: OutputSchema & SchemaCheck<K, OutputSchema>
-  retention?: DurationString
   /** Backstop: fail the run (and cancel its children) when it exceeds this age. */
   timeout?: DurationString
   tags?: RunTagsBuilder<SchemaType<K, InputSchema>>
@@ -629,7 +628,6 @@ class WorkflowDraftBuilder<Name extends string> {
       input: this.options.input,
       output: this.options.output,
       nodes: Object.freeze([...this.nodes]),
-      retention: this.options.retention,
       timeout: this.options.timeout,
       tags: this.options.tags,
       idempotency: this.options.idempotency,

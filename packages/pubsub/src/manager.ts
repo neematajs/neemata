@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream'
 
-import { decodeWith, encodeWith } from '@nmtjs/common'
+import { assertJson, decodeWith, encodeWith } from '@nmtjs/common'
 
 import type { PubSubAdapter, PubSubMessage } from './adapter.ts'
 import type {
@@ -71,9 +71,11 @@ export class PubSubManager {
       }
     }
 
-    return this._subscribe(channelName, selectedEvents, signal) as PubSubStream<
-      SelectedEventUnion<C, Events>
-    >
+    return (await this._subscribe(
+      channelName,
+      selectedEvents,
+      signal,
+    )) as PubSubStream<SelectedEventUnion<C, Events>>
   }
 
   async publish<Event extends ChannelEvent>(
@@ -83,17 +85,20 @@ export class PubSubManager {
   ): Promise<boolean> {
     const channel = resolvePubSubChannel(event.channel, params)
     const encodedPayload = encodeWith(event.payload, payload)
+    // Schemas don't guarantee JSON, and a payload JSON alters could never be
+    // decoded by a subscriber. An absent payload stays absent, as JSON omits it.
+    if (encodedPayload !== undefined) assertJson(encodedPayload, 'payload')
     return await this._publish(channel, {
       event: event.event,
       payload: encodedPayload,
     })
   }
 
-  protected _subscribe(
+  protected async _subscribe(
     channel: string,
     events: Map<string, ChannelEvent>,
     signal?: AbortSignal,
-  ): PubSubStream<unknown> {
+  ): Promise<PubSubStream<unknown>> {
     this.logger?.trace({ channel }, 'Opening pubsub channel')
 
     const { adapter } = this.options
@@ -105,11 +110,16 @@ export class PubSubManager {
       ? AbortSignal.any([signal, controller.signal])
       : controller.signal
 
-    const stream = this.createMessageStream(
-      adapter.subscribe(channel, finalSignal),
-      events,
-      controller,
-    )
+    let messages: AsyncIterable<PubSubMessage>
+    try {
+      messages = await adapter.subscribe(channel, finalSignal)
+    } catch (error) {
+      if (!isAbortError(error))
+        this.logger?.error({ channel, error }, 'Failed to open pubsub channel')
+      throw error
+    }
+
+    const stream = this.createMessageStream(messages, events, controller)
 
     stream.on('close', () => {
       this.logger?.trace({ channel }, 'Pubsub channel stream closed')

@@ -100,6 +100,64 @@ for (const target of serviceTargets) {
         ])
       })
 
+      it('delivers a message published as soon as subscribe resolves', async () => {
+        const channel = defineChannel({
+          name: createTestName('pubsub-ready'),
+          events: { ping: z.number() },
+        })
+        const client = target.createClient()
+        const adapter = new RedisPubSubAdapter(
+          client,
+          createTestLogger('pubsub-ready'),
+        )
+        clients.push(client)
+        adapters.push(adapter)
+        await adapter.initialize()
+        const manager = new PubSubManager({ adapter })
+
+        const stream = await manager.subscribe(channel, undefined)
+        await manager.publish(channel.events.ping, undefined, 1)
+
+        const messages = stream[Symbol.asyncIterator]()
+        await expect(messages.next()).resolves.toEqual({
+          done: false,
+          value: { event: 'ping', payload: 1 },
+        })
+        await messages.return?.()
+      })
+
+      it('ends live subscriptions cleanly when the adapter is disposed', async () => {
+        const channel = defineChannel({
+          name: createTestName('pubsub-dispose'),
+          events: { ping: z.number() },
+        })
+        const logged: unknown[] = []
+        const logger = {
+          ...createTestLogger('pubsub-dispose'),
+          warn: (_obj: unknown, msg?: string) => logged.push(msg),
+          error: (_obj: unknown, msg?: string) => logged.push(msg),
+        }
+        const client = target.createClient()
+        const adapter = new RedisPubSubAdapter(client, logger)
+        clients.push(client)
+        await adapter.initialize()
+        const manager = new PubSubManager({ adapter, logger })
+
+        const stream = await manager.subscribe(channel, undefined)
+        const received: unknown[] = []
+        const consumed = (async () => {
+          for await (const message of stream) received.push(message)
+        })()
+        await manager.publish(channel.events.ping, undefined, 1)
+        await waitFor(() => received.length === 1)
+
+        await adapter.dispose()
+
+        await expect(consumed).resolves.toBeUndefined()
+        expect(received).toEqual([{ event: 'ping', payload: 1 }])
+        expect(logged).toEqual([])
+      })
+
       it('filters selected events and unsubscribes from channels', async () => {
         const channelName = createTestName('pubsub-filter')
         const channel = defineChannel({

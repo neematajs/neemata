@@ -33,7 +33,7 @@ function loopback() {
       for (const listener of listeners) listener(message)
       return true
     },
-    async *subscribe(channel, signal) {
+    async subscribe(channel, signal) {
       const queue: PubSubMessage[] = []
       let wake = Promise.withResolvers<void>()
       const listener = (message: PubSubMessage) => {
@@ -43,15 +43,17 @@ function loopback() {
       }
       listeners.add(listener)
       signal?.addEventListener('abort', () => wake.resolve())
-      try {
-        while (!signal?.aborted) {
-          while (queue.length) yield queue.shift()!
-          wake = Promise.withResolvers()
-          if (!queue.length) await wake.promise
+      return (async function* () {
+        try {
+          while (!signal?.aborted) {
+            while (queue.length) yield queue.shift()!
+            wake = Promise.withResolvers()
+            if (!queue.length) await wake.promise
+          }
+        } finally {
+          listeners.delete(listener)
         }
-      } finally {
-        listeners.delete(listener)
-      }
+      })()
     },
   }
   return { adapter, published }
@@ -98,6 +100,32 @@ describe('channel contracts', () => {
       ),
     ).rejects.toBeInstanceOf(PubSubSchemaError)
     expect(published).toEqual([])
+  })
+
+  it('rejects a payload JSON cannot carry before reaching the adapter', async () => {
+    const { adapter, published } = loopback()
+    const manager = new PubSubManager({ adapter })
+    const events = defineChannel({
+      name: 'events',
+      events: {
+        stamped: z.object({ at: z.date() }),
+        counted: z.bigint(),
+        empty: z.undefined(),
+      },
+    })
+
+    await expect(
+      manager.publish(events.events.stamped, undefined, { at: new Date() }),
+    ).rejects.toThrow(new TypeError('Expected a JSON value at payload.at'))
+    await expect(
+      manager.publish(events.events.counted, undefined, 1n),
+    ).rejects.toThrow(new TypeError('Expected a JSON value at payload'))
+    expect(published).toEqual([])
+
+    // JSON omits an absent payload, and subscribers decode it as absent.
+    await expect(
+      manager.publish(events.events.empty, undefined, undefined),
+    ).resolves.toBe(true)
   })
 
   it('types params, payloads and the selected events', async () => {

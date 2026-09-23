@@ -360,7 +360,6 @@ export type WorkflowDefinition<
   readonly input: Schema
   readonly output?: Schema
   readonly nodes: Nodes
-  readonly retention?: DurationString
   /**
    * Backstop for stuck runs: a non-terminal run older than this is failed by
    * the worker maintenance sweep and its children are cancelled.

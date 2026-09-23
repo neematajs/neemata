@@ -5,5 +5,13 @@ export type PubSubMessage = {
 
 export interface PubSubAdapter {
   publish(channel: string, payload: unknown): Promise<boolean>
-  subscribe(channel: string, signal?: AbortSignal): AsyncIterable<PubSubMessage>
+  /**
+   * Resolves once the broker delivers the channel's messages, so a message
+   * published after it resolves reaches the returned iterable. Aborting the
+   * signal or leaving the iteration releases the subscription.
+   */
+  subscribe(
+    channel: string,
+    signal?: AbortSignal,
+  ): Promise<AsyncIterable<PubSubMessage>>
 }

@@ -15,10 +15,19 @@ const channel = defineChannel({
   events: { message: z.object({ text: z.string() }) },
 })
 
-function createManager(subscribe: PubSubAdapter['subscribe']) {
+function createManager(
+  messages: (
+    channel: string,
+    signal?: AbortSignal,
+  ) => AsyncIterable<PubSubMessage>,
+) {
+  const adapter: PubSubAdapter = {
+    publish: async () => true,
+    subscribe: async (channel, signal) => messages(channel, signal),
+  }
   return new PubSubManager({
     logger: { trace() {}, debug() {}, warn() {}, error() {} },
-    adapter: { publish: async () => true, subscribe },
+    adapter,
   })
 }
 

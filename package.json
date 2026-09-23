@@ -18,14 +18,15 @@
     "bench:integration": "vitest bench --run --config vitest.bench.integration.config.ts",
     "bench:paired": "node scripts/benchmarks/paired.js",
     "check:type": "pnpm run build:proxy && pnpm tsc -b tsconfig.json --noEmit --pretty false",
-    "check:lint": "oxlint --quiet . --format=agent",
+    "check:lint": "oxlint --quiet .",
     "check:fmt": "oxfmt --check .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type && pnpm --filter @nmtjs/proxy run check:rust",
     "fmt": "oxfmt --write .",
     "build:proxy": "pnpm --filter @nmtjs/proxy run build:debug",
     "build:ts": "pnpm tsc -b tsconfig.build.json --pretty false",
     "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
-    "test:proxy": "pnpm --filter @nmtjs/proxy run test"
+    "test:proxy": "pnpm --filter @nmtjs/proxy run test",
+    "version:stack": "node scripts/release.js bump-stack"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",

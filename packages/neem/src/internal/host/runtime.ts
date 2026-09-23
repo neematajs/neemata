@@ -33,6 +33,8 @@ export type RuntimePatchResult = {
 
 export type RuntimeControllerOptions = {
   onThreadEvent?: (event: ThreadLifecycleEvent) => void
+  // Runs after the failed runtime is cleaned up and before it starts again.
+  prepareRecovery?: () => Promise<void>
   snapshot: RuntimeSnapshot
   runtimeName: string
   hooks: HostHooks
@@ -77,6 +79,18 @@ export class RuntimeController {
         deliveredFiles: [],
         reset: true,
         reason: `Worker patch budget reached (${maxPatches})`,
+      }
+    }
+    // A thread that registered after DevEngine computed this update may have
+    // loaded output without it, and the engine would treat it as current.
+    const clients = new Set(updates.map(({ clientId }) => clientId))
+    const missed = this.threads.find((thread) => !clients.has(thread.id))
+    if (missed) {
+      return {
+        accepted: false,
+        deliveredFiles: [],
+        reset: false,
+        reason: `Worker [${missed.name}] started without this update`,
       }
     }
     const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
@@ -307,6 +321,8 @@ export class RuntimeController {
 
       try {
         await this.cleanup()
+        if (this.stopped) return
+        await this.options.prepareRecovery?.()
         if (this.stopped) return
         await this.start()
         if (this.stopped) return

@@ -1,11 +1,10 @@
 name: Build proxy bindings
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
-    inputs:
-      version:
-        required: true
-        type: string
 
 jobs:
   build:
@@ -35,7 +34,6 @@ jobs:
             flags: --use-napi-cross
     env:
       MACOSX_DEPLOYMENT_TARGET: '10.13'
-      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -46,7 +44,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
-          cache-workspaces: packages/proxy
+          rust-src-dir: packages/proxy
       - uses: mlugg/setup-zig@v2
         if: contains(matrix.target, 'musl')
         with:
@@ -56,8 +54,6 @@ jobs:
         with:
           tool: cargo-zigbuild
       - run: pnpm install --frozen-lockfile
-      # N-API embeds the package version in the generated loader.
-      - run: pnpm --dir packages/proxy pkg set version="$RELEASE_VERSION"
       - run: pnpm --dir packages/proxy run build:artifact --target ${{ matrix.target }} ${{ matrix.flags }} -- --locked
       - uses: actions/upload-artifact@v4
         with:

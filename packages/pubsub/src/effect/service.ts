@@ -53,13 +53,15 @@ export function make(options: PubSubManagerOptions): PubSub['Service'] {
     subscribe: (channel, params, events) =>
       Stream.unwrap(
         Effect.tryPromise({
-          try: async () => {
+          // `interrupted` aborts only if the stream is interrupted while the
+          // broker subscription is still being opened, whose result is lost.
+          try: async (interrupted) => {
             const controller = new AbortController()
             const messages = await manager.subscribe(
               channel,
               params,
               events,
-              controller.signal,
+              AbortSignal.any([interrupted, controller.signal]),
             )
             return Stream.fromAsyncIterable(
               releasable(messages, controller),

@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
+import { createFuture } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BuildTarget } from '../../src/internal/build/graph.ts'
@@ -219,6 +220,51 @@ describe('Neem compiler', () => {
         clearScreen: false,
         watcher: { debounceDelay: 25, useDebounce: true },
       })
+    }
+  })
+
+  it('refuses to refresh worker output while the latest source fails to build', async () => {
+    const root = await useTempDir()
+    const valueFile = resolve(root, 'api/value.ts')
+    await mkdir(resolve(root, 'api'), { recursive: true })
+    await writeFile(
+      resolve(root, 'api/worker.ts'),
+      "export { value as default } from './value.ts'\n",
+    )
+    await writeFile(valueFile, "export const value = 'v1'\n")
+    const graph = createCompilerGraph(root)
+    // DevEngine is real here; only the worker group is watched.
+    const workerGraph = {
+      ...graph,
+      runtimes: [],
+      buildGroups: graph.buildGroups.filter(
+        (group) =>
+          group.kind === 'target' && group.target.kind === 'runtime-worker',
+      ),
+    }
+    let settled = createFuture<unknown>()
+    const watcher = await watchGraph(workerGraph, {
+      onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+      onUpdateError: (_runtimeName, error) => settled.resolve(error),
+    })
+    try {
+      await watcher.addPatchClient('api', 'client')
+      await writeFile(valueFile, "export const value = 'v2'\n")
+      expect(await settled.promise).toEqual([
+        expect.objectContaining({
+          update: expect.objectContaining({ type: 'Patch' }),
+        }),
+      ])
+
+      settled = createFuture<unknown>()
+      await writeFile(valueFile, 'export const value = !!!\n')
+      expect(await settled.promise).toBeInstanceOf(Error)
+
+      await expect(watcher.ensureWorkerOutput('api')).rejects.toThrow(
+        'source has build errors',
+      )
+    } finally {
+      await watcher.close()
     }
   })
 

@@ -1,0 +1,5 @@
+# Pinned so new stable releases can't break `clippy -D warnings` without a code change.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

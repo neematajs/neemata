@@ -51,6 +51,10 @@ async function handle(request: RuntimeRequest): Promise<void> {
         post({ id: request.id, type: 'result', data: { patch } })
         return
       }
+      case 'recovery-output-ready':
+        service.releaseRecovery(request.runtimeName)
+        post({ id: request.id, type: 'result' })
+        return
       case 'stop':
         await service.stop()
         post({ id: request.id, type: 'result' })

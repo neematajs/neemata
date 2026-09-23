@@ -379,7 +379,7 @@ histogram.zero({ method: 'POST' })
 Typescript can also enforce label names using `as const`
 
 ```typescript
-import * as client from 'prom-client'
+import * as client from '@nmtjs/prom-client'
 
 const counter = new client.Counter({
   name: 'metric_name',

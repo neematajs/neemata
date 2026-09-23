@@ -3,13 +3,17 @@
 export const NEEM_DEV_RUNTIME = String.raw`
 ;(() => {
   class NeemHotContext {
-    constructor(moduleId) {
+    constructor(moduleId, data) {
       this.moduleId = moduleId
       this.callbacks = []
-      this.data = {}
+      this.disposers = []
+      this.data = data
     }
 
-    dispose() {}
+    dispose(callback) {
+      this.disposers.push(callback)
+    }
+
     prune() {}
     on() {}
     off() {}
@@ -34,9 +38,13 @@ export const NEEM_DEV_RUNTIME = String.raw`
 
   class NeemDevRuntime extends DevRuntime {
     hotContexts = new Map()
+    // import.meta.hot.data outlives module instances, as in Vite.
+    hotData = new Map()
 
     createModuleHotContext(moduleId) {
-      const context = new NeemHotContext(moduleId)
+      let data = this.hotData.get(moduleId)
+      if (!data) this.hotData.set(moduleId, (data = {}))
+      const context = new NeemHotContext(moduleId, data)
       this.hotContexts.set(moduleId, context)
       return context
     }
@@ -59,6 +67,7 @@ export const NEEM_DEV_RUNTIME = String.raw`
       const updateSet = new Set()
       const traversed = new Set()
       for (const changed of changedIds) {
+        // Checked after the patch registers its graph; see unreachedModules.
         if (!this.runtime.isExecuted(changed)) continue
         const rejected = this.bubble(
           changed,
@@ -108,6 +117,28 @@ export const NEEM_DEV_RUNTIME = String.raw`
       return undefined
     }
 
+    // A changed module that has not run yet executes during this update only
+    // when a re-executed module imports it statically (a newly added module).
+    // Otherwise it loads later from its chunk on disk, whose scope-hoisted code
+    // predates the update and ignores patched factories.
+    unreachedModules(changedIds, updateSet) {
+      const pending = changedIds.filter((id) => !this.runtime.isExecuted(id))
+      const reached = new Set(updateSet)
+      let grew = true
+      while (grew) {
+        grew = false
+        for (const id of pending) {
+          if (reached.has(id)) continue
+          const importers = this.runtime.importers.get(id) ?? []
+          if ([...importers].some((importer) => reached.has(importer))) {
+            reached.add(id)
+            grew = true
+          }
+        }
+      }
+      return pending.filter((id) => !reached.has(id))
+    }
+
     async apply(update, url) {
       if (update.type === 'Noop') return { accepted: true, delivered: false }
       if (update.type === 'FullReload') {
@@ -131,11 +162,17 @@ export const NEEM_DEV_RUNTIME = String.raw`
       this.lastSeq = update.seq
 
       const computed = this.compute(update.changedIds)
-      if (computed.type === 'noop') {
-        return { accepted: true, delivered: false }
-      }
       if (computed.type === 'reload') {
         return { accepted: false, delivered: false, reason: computed.reason }
+      }
+      if (computed.type === 'noop') {
+        if (!update.changedIds.length) return { accepted: true, delivered: false }
+        return {
+          accepted: false,
+          delivered: false,
+          reason: 'update changes modules that have not run yet: ' +
+            update.changedIds.join(', '),
+        }
       }
 
       try {
@@ -157,12 +194,31 @@ export const NEEM_DEV_RUNTIME = String.raw`
           }
         }
       }
+      const unreached = this.unreachedModules(
+        update.changedIds,
+        computed.updateSet,
+      )
+      if (unreached.length) {
+        return {
+          accepted: false,
+          delivered: true,
+          reason: 'update changes modules that have not run yet: ' +
+            unreached.join(', '),
+        }
+      }
 
       const applies = computed.boundaries.map(([boundary, acceptedVia]) => ({
         acceptedVia,
         callbacks: this.runtime.hotContexts.get(boundary)?.callbacks ?? [],
       }))
       try {
+        // Release resources of the instances being replaced before their
+        // successors execute, handing state over through hot.data.
+        for (const id of computed.updateSet) {
+          const context = this.runtime.hotContexts.get(id)
+          for (const dispose of context?.disposers ?? [])
+            await dispose(context.data)
+        }
         for (const id of computed.updateSet) this.runtime.removeModuleCache(id)
         for (const { acceptedVia, callbacks } of applies) {
           this.runtime.initModule(acceptedVia)

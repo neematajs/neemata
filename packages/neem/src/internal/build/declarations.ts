@@ -63,28 +63,42 @@ export function resolveRuntimeProjectFiles(
   entries: readonly string[],
 ): readonly RuntimeProjectMatch[] {
   const configDir = dirname(configFile)
-  const positives: RuntimeProjectMatch[] = []
+  const positives: { entry: string; path: string }[] = []
   const negatives = new Set<string>()
 
   for (const entry of entries) {
     const negated = entry.startsWith('!')
     const raw = negated ? entry.slice(1) : entry
-    const matches = expandRuntimeProjectEntry(configDir, raw)
+    const paths = expandRuntimeProjectEntry(configDir, raw)
 
-    if (!negated && matches.length === 0) {
+    if (!negated && paths.length === 0) {
       throw new Error(
         `Runtime project entry [${entry}] matched no files or folders`,
       )
     }
-    for (const match of matches) {
-      if (negated) negatives.add(match.file)
-      else positives.push({ ...match, entry })
+    for (const path of paths) {
+      if (!negated) {
+        positives.push({ entry, path })
+        continue
+      }
+      negatives.add(path)
+      // Excluding a folder also excludes its conventional declaration file.
+      if (statSync(path).isDirectory()) {
+        const file = resolveRuntimeDeclarationFile(path)
+        if (file) negatives.add(file)
+      }
     }
   }
 
+  // Exclusions only remove paths, so an excluded folder is never required to
+  // hold a runtime declaration.
   const selected = new Map<string, RuntimeProjectMatch>()
-  for (const match of positives) {
-    if (!negatives.has(match.file)) selected.set(match.file, match)
+  for (const { entry, path } of positives) {
+    if (negatives.has(path)) continue
+    const match = resolveRuntimeProjectMatch(path)
+    if (!negatives.has(match.file)) {
+      selected.set(match.file, { ...match, entry })
+    }
   }
 
   return [...selected.values()]
@@ -112,11 +126,9 @@ async function loadRuntimeDeclaration(
 function expandRuntimeProjectEntry(
   configDir: string,
   entry: string,
-): readonly RuntimeProjectMatch[] {
+): readonly string[] {
   const pattern = isAbsolute(entry) ? entry : resolve(configDir, entry)
-  const matches = globSync(pattern).sort()
-
-  return matches.map((match) => resolveRuntimeProjectMatch(String(match)))
+  return globSync(pattern).map(String).sort()
 }
 
 function resolveRuntimeProjectMatch(path: string): RuntimeProjectMatch {

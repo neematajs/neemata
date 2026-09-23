@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 
 import type { Logger } from 'pino'
 import type { BindingClientHmrUpdate } from 'rolldown/experimental'
+import { createFuture } from '@nmtjs/common'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
 import type { RuntimeEvent } from './protocol.ts'
@@ -33,6 +34,10 @@ export class RuntimeService {
   private mode: NeemMode | undefined
   private outDir: string | undefined
   private runtimes: readonly string[] | undefined
+  private readonly recoveries = new Map<
+    string,
+    ReturnType<typeof createFuture<void>>
+  >()
 
   async start(
     options: RuntimeServiceOptions,
@@ -59,6 +64,20 @@ export class RuntimeService {
       failOnWorkerError: true,
       onThreadEvent: (event) => options.emit(event),
       recovery: { attempts: options.mode === 'production' ? 3 : 1 },
+      // Dev output on disk can lag patched threads; the supervisor refreshes it
+      // before a crashed runtime restarts from it.
+      prepareRecovery:
+        options.mode === 'development'
+          ? (runtimeName) => {
+              let recovery = this.recoveries.get(runtimeName)
+              if (!recovery) {
+                recovery = createFuture<void>()
+                this.recoveries.set(runtimeName, recovery)
+                options.emit({ type: 'runtime-recovering', runtimeName })
+              }
+              return recovery.promise
+            }
+          : undefined,
       onFailure: (error) => {
         options.emit({ type: 'error', error: serializeError(error) })
       },
@@ -90,6 +109,8 @@ export class RuntimeService {
     manifestFile: string,
   ): Promise<NeemRuntimeServerHealth> {
     const controller = this.requireController()
+    // The reload replaces a recovering runtime, which must not keep waiting.
+    this.releaseRecovery(runtimeName)
     const snapshot = await this.loadSnapshot(manifestFile)
     snapshot.logger.debug(
       `Neem runtime service reloading runtime ${runtimeName}`,
@@ -106,9 +127,16 @@ export class RuntimeService {
     return this.requireController().applyPatch(runtimeName, updates)
   }
 
+  releaseRecovery(runtimeName: string): void {
+    this.recoveries.get(runtimeName)?.resolve()
+    this.recoveries.delete(runtimeName)
+  }
+
   async stop(): Promise<void> {
     const controller = this.controller
     this.controller = undefined
+    for (const runtimeName of this.recoveries.keys())
+      this.releaseRecovery(runtimeName)
     this.logger?.debug('Neem runtime service stopping')
     await controller?.stop()
     this.logger?.debug('Neem runtime service stopped')

@@ -1,8 +1,7 @@
-import { decodeWith, encodeWith, SchemaError } from '@nmtjs/common'
+import { assertJson, decodeWith, encodeWith, SchemaError } from '@nmtjs/common'
 
 import type {
   BranchCaseDefinition,
-  Json,
   Schema,
   WorkflowNode,
 } from '../types/index.ts'
@@ -15,29 +14,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-// No schema library guarantees JSON, and nothing can restore what JSON drops.
-// Undefined properties are the exception: JSON omits them, as readers expect.
-function assertJson(value: unknown, path: string): asserts value is Json {
-  if (value === null) return
-  if (
-    typeof value === 'string' ||
-    typeof value === 'boolean' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  )
-    return
-  if (Array.isArray(value)) {
-    value.forEach((member, index) => assertJson(member, `${path}[${index}]`))
-    return
-  }
-  const prototype = isRecord(value) ? Object.getPrototypeOf(value) : undefined
-  if (prototype === Object.prototype || prototype === null) {
-    for (const [key, member] of Object.entries(value as object))
-      if (member !== undefined) assertJson(member, `${path}.${key}`)
-    return
-  }
-  throw new TypeError(`Expected a JSON value at ${path}`)
-}
-
+// No schema library guarantees JSON, and nothing can restore what JSON drops,
+// so every stored value is checked after encoding.
 export function encodeStoredValue(
   schema: Schema | undefined,
   value: unknown,

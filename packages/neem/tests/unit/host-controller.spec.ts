@@ -12,6 +12,7 @@ const runtime = vi.hoisted(() => ({
   starts: [] as string[],
   patch: vi.fn(),
   stopped: vi.fn(),
+  onFailure: undefined as undefined | ((error: Error) => void),
   ready: undefined as
     | undefined
     | { promise: Promise<void>; reject(e: Error): void },
@@ -19,6 +20,9 @@ const runtime = vi.hoisted(() => ({
 
 vi.mock('../../src/internal/host/runtime.ts', () => ({
   RuntimeController: class {
+    constructor(options: { onFailure?: (error: Error) => void }) {
+      runtime.onFailure = options.onFailure
+    }
     async start() {
       runtime.starts.push('start')
       await runtime.ready!.promise
@@ -37,6 +41,7 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
 afterEach(() => {
   runtime.starts.length = 0
   runtime.ready = undefined
+  runtime.onFailure = undefined
   runtime.patch.mockReset()
   runtime.stopped.mockReset()
 })
@@ -148,4 +153,38 @@ describe('HostController stop during startup', () => {
       expect(runtime.starts.length).toBe(startsAtStop)
     },
   )
+})
+
+describe('HostController patch application', () => {
+  it('keeps an earlier failure after applying a patch', async () => {
+    const ready = createFuture<void>()
+    runtime.ready = ready
+    ready.resolve()
+    runtime.patch.mockResolvedValue({
+      accepted: true,
+      deliveredFiles: [],
+      reset: false,
+    })
+    const controller = new HostController({
+      hooks: createHostHooks(),
+      failOnWorkerError: true,
+      snapshot: createRuntimeSnapshot({
+        mode: 'development',
+        outDir: '.',
+        manifest,
+        logger: pino({ enabled: false }),
+      }),
+    })
+    await controller.start()
+    const failure = new Error('worker failed')
+    runtime.onFailure!(failure)
+
+    await controller.applyPatch('api', [])
+
+    expect(controller.getSnapshot()).toMatchObject({
+      state: 'failed',
+      lastError: failure,
+    })
+    await controller.stop()
+  })
 })

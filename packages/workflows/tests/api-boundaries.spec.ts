@@ -45,7 +45,6 @@ describe('workflow API boundaries', () => {
       scenario: Schema.String,
     }),
     output: Schema.Struct({ caseId: Schema.String }),
-    retention: '30d',
     idempotency: (input) => ['case-generation', input.scenario],
     tags: (input) => ({ kind: input.kind }),
   })

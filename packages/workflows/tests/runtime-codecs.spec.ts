@@ -22,7 +22,7 @@ import {
   defineSchedule,
   defineWorkflow as defineStandardWorkflow,
 } from '../src/index.ts'
-import { decodeNodeOutput } from '../src/runtime/codec.ts'
+import { decodeNodeOutput, encodeStoredValue } from '../src/runtime/codec.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
@@ -705,6 +705,19 @@ it('requires declared output fields after a JSON round trip', () => {
   expect(() => decodeNodeOutput(workflow.nodes[1]!, mapped)).toThrow(
     'Invalid node output [items]',
   )
+})
+
+it('rejects sparse arrays that JSON would store as null', () => {
+  // oxlint-disable-next-line no-sparse-arrays -- Holes are the subject under test.
+  for (const value of [[,], [1, , 2], { items: [, ,] }])
+    expect(() => encodeStoredValue(undefined, value, 'output')).toThrow(
+      'Invalid output',
+    )
+  expect(encodeStoredValue(undefined, [1, null, 2], 'output')).toEqual([
+    1,
+    null,
+    2,
+  ])
 })
 
 describe('parallel output decoding', () => {
