@@ -266,6 +266,23 @@ describe('RuntimeController recovery', () => {
   })
 })
 
+describe('RuntimeController patches', () => {
+  it('rejects an update that a running thread was not registered for', async () => {
+    const { runtime } = await createFixture()
+    await runtime.start()
+    const [registered, missed] = runtime.listThreads()
+
+    const result = await runtime.applyPatch([
+      { clientId: registered!.id, update: { type: 'Noop' } },
+    ])
+
+    expect(result).toMatchObject({
+      accepted: false,
+      reason: `Worker [${missed!.name}] started without this update`,
+    })
+  })
+})
+
 async function createFixture() {
   const outDir = await mkdtemp(resolve(tmpdir(), 'neem-runtime-controller-'))
   tempDirs.push(outDir)

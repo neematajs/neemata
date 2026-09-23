@@ -80,11 +80,14 @@ export default defineRuntimeWorker<WorkerData, Definition>({
   observer immediately while retaining the original promise for Neem.
 - During `neem dev`, an edit to the worker or its bundled dependencies
   replaces the runtime generation in the same thread: Neem awaits `stop()`,
-  creates the updated runtime, then calls `start()`. Module state in unchanged
-  modules survives; runtime resources do not. Changed upstreams, rejected or
-  failed patches, and the `build.updates.maxPatches` budget (default 50) restart
-  the thread instead. Declare `reload: 'thread'` on the worker when a fresh
-  thread is required on every edit.
+  creates the updated runtime, then calls `start()`. Modules on the import path
+  from the edited module to the worker entry re-execute, so their module-level
+  state resets; state in other modules survives, runtime resources do not.
+  Release module-level timers or listeners with `import.meta.hot.dispose`.
+  Changed upstreams, rejected or failed patches, and the
+  `build.updates.maxPatches` budget (default 50) restart the whole runtime (all
+  its worker threads and its host runner) instead. Declare `reload: 'thread'`
+  on the worker when every edit needs that restart.
 
 ## Planner entry
 

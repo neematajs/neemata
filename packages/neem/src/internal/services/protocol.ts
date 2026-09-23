@@ -108,9 +108,11 @@ export type RuntimeRequest =
       runtimeName: string
       updates: readonly BindingClientHmrUpdate[]
     }
+  | { id: number; type: 'recovery-output-ready'; runtimeName: string }
 
 export type RuntimeEvent =
   | ThreadLifecycleEvent
+  | { type: 'runtime-recovering'; runtimeName: string }
   | { type: 'ready'; health: NeemRuntimeServerHealth }
   | { type: 'stopped' }
   | { type: 'error'; error: SerializedError }

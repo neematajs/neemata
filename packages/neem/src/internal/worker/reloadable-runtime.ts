@@ -78,7 +78,7 @@ export class ReloadableRuntime implements NeemRuntime {
         !isDeepStrictEqual(parseRuntimeStartResult(upstreams), this.upstreams)
       ) {
         throw new Error(
-          'Worker update changed runtime upstreams; a thread restart is required',
+          'Worker update changed runtime upstreams; a runtime restart is required',
         )
       }
     } catch (error) {

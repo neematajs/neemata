@@ -3,7 +3,7 @@ import { threadId } from 'node:worker_threads'
 
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
-import { record } from '../../shared/support/_events.ts'
+import { record, wait } from '../../shared/support/_events.ts'
 import { definition } from './definition.ts'
 import { nextGeneration } from './state.ts'
 
@@ -11,11 +11,14 @@ export default defineRuntimeWorker({
   definition,
   createRuntime(ctx) {
     const generation = nextGeneration()
-    const { marker, upstream } = ctx.definition
+    const { marker, upstream, startDelayMs } = ctx.definition
     const crashFile = process.env.NEEM_RESTART_CRASH_FILE
+    const retiredFile = process.env.NEEM_RESTART_RETIRED_FILE
+    const lazyFile = process.env.NEEM_RESTART_LAZY_FILE
     let crashTimer: NodeJS.Timeout | undefined
+    let lazyTimer: NodeJS.Timeout | undefined
     return {
-      start() {
+      async start() {
         record({
           event: 'worker-generation-start',
           name: ctx.name,
@@ -23,6 +26,11 @@ export default defineRuntimeWorker({
           generation,
           marker,
         })
+        // Stands for a service the first definition used and that is gone now.
+        if (retiredFile && marker === 'v1' && existsSync(retiredFile)) {
+          throw new Error('The v1 dependency is retired')
+        }
+        if (startDelayMs) await wait(startDelayMs)
         // One thread consumes the signal; host recovery restarts the pool.
         if (crashFile) {
           crashTimer = setInterval(() => {
@@ -35,12 +43,22 @@ export default defineRuntimeWorker({
             process.exit(1)
           }, 25)
         }
+        if (lazyFile) {
+          lazyTimer = setInterval(() => {
+            if (!existsSync(lazyFile)) return
+            clearInterval(lazyTimer)
+            void import('./lazy-value.ts').then(({ lazyValue }) =>
+              record({ event: 'lazy-loaded', threadId, value: lazyValue }),
+            )
+          }, 25)
+        }
         return upstream
           ? [{ type: 'http' as const, url: 'http://127.0.0.1:12345' }]
           : undefined
       },
       stop() {
         clearInterval(crashTimer)
+        clearInterval(lazyTimer)
         record({
           event: 'worker-generation-stop',
           name: ctx.name,

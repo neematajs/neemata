@@ -28,8 +28,10 @@ export default defineConfig({
 - `env`: `Record<string, string>` baked into the manifest, not env-file paths.
 - `logger`: `NeemLoggerOptions` or a string/file URL module entry; see below.
 - `build`: `sourcemap`, `sourcemapSources: 'include' | 'exclude'`,
-  `minify: boolean | 'dce-only'`, `define: Record<string, string>`, and
-  `watch: { buildDelay?, debounceDelay? }` (delays in milliseconds).
+  `minify: boolean | 'dce-only'`, `define: Record<string, string>`,
+  `watch: { buildDelay?, debounceDelay? }` (delays in milliseconds), and
+  `updates: { maxPatches? }` (dev patches a thread accepts before the next
+  update restarts the runtime; default `50`, `0` restarts on every update).
 - `plugins`: readonly array of `NeemPluginInput` declarations.
 - `outDir`: build default; dev/start have their own CLI defaults.
 

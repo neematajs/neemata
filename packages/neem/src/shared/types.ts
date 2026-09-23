@@ -92,7 +92,7 @@ export type NeemBuildConfig = {
   minify?: boolean | 'dce-only'
   define?: Record<string, string>
   watch?: NeemBuildWatchConfig
-  /** Restart the thread after this many accepted development patches. */
+  /** Restart the runtime once a thread has accepted this many development patches. */
   updates?: { maxPatches?: number }
 }
 

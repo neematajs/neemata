@@ -22,9 +22,10 @@ export default createViteRuntime({
   srvx-based static server (bundled into the artifact) and never imports vite.
 
 The dev/prod split is done at bundle time: the plugin resolves the
-`neem-vite:impl` virtual module to `neem/dev.ts` under `rolldown.watch` and to
-`neem/prod.ts` under `rolldown.build`, so neither artifact carries the other
-mode's code or any mode flags.
+`neem-vite:impl` virtual module to `neem/dev.ts` when the worker is built by
+Rolldown's DevEngine (`neem dev`, detected through its `devMode` input option)
+or a plain `rolldown.watch`, and to `neem/prod.ts` under `rolldown.build`, so
+neither artifact carries the other mode's code or any mode flags.
 
 See `playground/` for a runnable example (`pnpm run playground:dev`,
 `pnpm run playground:build`, `pnpm run playground:start`).

@@ -27,6 +27,7 @@ import { RuntimeController } from './runtime.ts'
 
 export type HostControllerOptions = {
   onThreadEvent?: (event: ThreadLifecycleEvent) => void
+  prepareRecovery?: (runtimeName: string) => Promise<void>
   snapshot: RuntimeSnapshot
   hooks?: HostHooks
   failOnWorkerError?: boolean
@@ -301,11 +302,13 @@ export class HostController {
       }
       // Applying patches can await replacement readiness just like a full reload.
       // Expose that state so stop interrupts workers before joining the queue.
+      // A patch does not repair an earlier failure, so restore it afterwards.
+      const { state, lastError } = this
       this.markState('reloading')
       try {
         return await runtime.applyPatch(updates)
       } finally {
-        if (!this.stopRequested) this.markState('running')
+        if (!this.stopRequested) this.markState(state, lastError)
       }
     })
   }
@@ -427,12 +430,14 @@ export class HostController {
   }
 
   private createRuntime(runtimeName: string): RuntimeController {
+    const { prepareRecovery } = this.options
     return new RuntimeController({
       snapshot: this.snapshot,
       runtimeName,
       hooks: this.hooks,
       recovery: this.options.recovery,
       onThreadEvent: this.options.onThreadEvent,
+      prepareRecovery: prepareRecovery && (() => prepareRecovery(runtimeName)),
       onRecovered: async () => {
         await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
       },
