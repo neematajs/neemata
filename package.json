@@ -10,7 +10,7 @@
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
-    "test:integration:services": "pnpm --filter @nmtjs/workflows run test:integration",
+    "test:integration:services": "pnpm --filter @nmtjs/pubsub --filter @nmtjs/workflows run test:integration",
     "test:unit": "vitest run",
     "test:benchmark-tools": "node --test scripts/benchmarks/*.test.js",
     "test:dev": "vitest dev --ui --coverage",

@@ -7,8 +7,9 @@ unrelated CI machines.
 
 - `runtime` contains deterministic in-memory benchmarks for workflow storage
   operations.
-- `integration` measures the service-backed Postgres workflow runtime. It runs on pull
-  requests but remains informational because services add noise.
+- `integration` measures the service-backed Postgres workflow runtime and Redis and
+  Valkey pubsub. It runs on pull requests but remains informational because services
+  add noise.
 
 Run the deterministic runtime benchmarks directly through Vitest with:
 
@@ -38,9 +39,11 @@ node scripts/benchmarks/run.js runtime --output benchmark-results/runtime.json
 Start the repository services, build, and opt into required service coverage:
 
 ```sh
-docker compose up -d postgres
+docker compose up -d redis valkey postgres
 pnpm build
 NMTJS_REQUIRE_SERVICE_TESTS=1 \
+REDIS_URL=redis://localhost:6379 \
+VALKEY_URL=redis://localhost:6380 \
 POSTGRES_URL=postgres://neemata:neemata@localhost:5432/neemata \
 pnpm bench:integration
 ```

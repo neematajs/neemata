@@ -1,4 +1,11 @@
-import type { StandardSchemaV1 } from '@standard-schema/spec'
+import type {
+  CodecSchema,
+  CodecSchemaCheck,
+  CodecSchemaOutput,
+  Json,
+  NotReversible,
+  StandardCodec,
+} from '@nmtjs/common'
 
 export type MaybePromise<T> = T | Promise<T>
 
@@ -67,44 +74,24 @@ export type TaskStatus = WorkflowStatus
 
 export type RunKind = 'workflow' | 'task'
 
-export type Json =
-  | null
-  | boolean
-  | number
-  | string
-  | readonly Json[]
-  | { readonly [key: string]: Json }
+export type { Json }
 
-/**
- * A transformed value's durable boundary, as two Standard Schemas: `decode`
- * validates stored JSON into `Type`, `encode` validates `Type` into the JSON to
- * store. Standard Schema validates in one direction only, hence the pair.
- */
-export type WorkflowCodec<Type = any, Encoded = any> = {
-  readonly decode: StandardSchemaV1<unknown, Type>
-  readonly encode: StandardSchemaV1<Type, Encoded>
-}
+/** A transformed value's durable boundary; see `StandardCodec`. */
+export type WorkflowCodec<Type = any, Encoded = any> = StandardCodec<
+  Type,
+  Encoded
+>
 
 /**
  * Handlers, clients and results see a schema's output type; stores see JSON. A
  * single Standard Schema serves values that are stored as they are: it validates
  * them on the way in and on the way out. Schemas must validate synchronously.
  */
-export type Schema = StandardSchemaV1<any, any> | WorkflowCodec
+export type Schema = CodecSchema
 
-export type SchemaOutput<T extends Schema> =
-  T extends StandardSchemaV1<any, infer Type>
-    ? Type
-    : T extends WorkflowCodec<infer Type>
-      ? Type
-      : never
+export type SchemaOutput<T extends Schema> = CodecSchemaOutput<T>
 
-declare const notStorable: unique symbol
-export type NotStorable<Input, Output> = {
-  readonly [notStorable]: 'This schema transforms its input, so its output cannot be stored and validated again; pass { decode, encode } schemas instead'
-  readonly input: Input
-  readonly output: Output
-}
+export type NotStorable<Input, Output> = NotReversible<Input, Output>
 
 /**
  * A type-level function from the schemas a definition API accepts to the value
@@ -123,14 +110,7 @@ export interface CodecKind extends SchemaKind {
   readonly type: this['schema'] extends Schema
     ? SchemaOutput<this['schema']>
     : never
-  readonly check: this['schema'] extends StandardSchemaV1<
-    infer Input,
-    infer Output
-  >
-    ? [Output] extends [Input]
-      ? unknown
-      : NotStorable<Input, Output>
-    : unknown
+  readonly check: CodecSchemaCheck<this['schema']>
 }
 
 export type SchemaBound<K extends SchemaKind> = K['bound']

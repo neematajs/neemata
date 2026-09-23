@@ -52,6 +52,13 @@ migration unless a section says otherwise; that migration's remaining steps live
   pool routing in its claim filters. The Redis and Valkey service containers stay in
   `compose.yml` and CI for it.
 
+## Pubsub
+
+- **Overflow policy.** The Redis adapter buffers a channel's messages for a slow
+  local subscriber without bound (`events.on`), as it did before; only the manager's
+  stream applies backpressure. Choose a bounded buffer and what happens when it
+  fills (fail the subscription, or drop).
+
 ## Neem
 
 - **Configurable stop deadline.** A worker gets a hard 5,000 ms to stop, shared by

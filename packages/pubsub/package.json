@@ -1,0 +1,78 @@
+{
+  "name": "@nmtjs/pubsub",
+  "description": "Typed ephemeral publish/subscribe channels with Redis and Valkey adapters.",
+  "type": "module",
+  "scripts": {
+    "clean-build": "rm -rf ./dist",
+    "test": "vitest run --config vitest.config.ts",
+    "test:integration": "vitest run --config vitest.config.ts tests/integration"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js",
+      "module-sync": "./dist/index.js"
+    },
+    "./effect": {
+      "types": "./src/effect/index.ts",
+      "import": "./dist/effect/index.js",
+      "module-sync": "./dist/effect/index.js"
+    },
+    "./redis": {
+      "types": "./src/redis.ts",
+      "import": "./dist/redis.js",
+      "module-sync": "./dist/redis.js"
+    }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "module-sync": "./dist/index.js"
+      },
+      "./effect": {
+        "types": "./dist/effect/index.d.ts",
+        "import": "./dist/effect/index.js",
+        "module-sync": "./dist/effect/index.js"
+      },
+      "./redis": {
+        "types": "./dist/redis.d.ts",
+        "import": "./dist/redis.js",
+        "module-sync": "./dist/redis.js"
+      }
+    }
+  },
+  "dependencies": {
+    "@nmtjs/common": "workspace:*",
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "devDependencies": {
+    "effect": "4.0.0-rc.116",
+    "ioredis": "^5.11.1",
+    "iovalkey": "^0.3.3",
+    "zod": "catalog:"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-rc.116",
+    "ioredis": "^5.10.1",
+    "iovalkey": "^0.3.3"
+  },
+  "peerDependenciesMeta": {
+    "effect": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "iovalkey": {
+      "optional": true
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE.md",
+    "README.md"
+  ]
+}
