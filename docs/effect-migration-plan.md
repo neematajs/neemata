@@ -394,7 +394,7 @@ Two correctness fixes were necessary for that boundary:
 
 The existing plain-JSON regression fixtures retain their payload expectations.
 Transformed representations are documented in
-[`packages/workflows/README.md`](../packages/workflows/README.md#schema-codecs):
+[`packages/workflows/README.md`](../packages/workflows/README.md#effect-schemas):
 Date values persist as ISO strings, `NumberFromString` as a JSON string rather
 than the former decoded number, and explicit Undefined as JSON null. Untyped rich
 values cannot be reconstructed and are rejected at persistence boundaries instead

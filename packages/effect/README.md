@@ -48,6 +48,11 @@ export default defineEffectWorker(() => ({
 }))
 ```
 
+Under `neem dev`, an edit restarts the worker in its existing thread only when the
+new generation reports the same upstreams. With `port: 0` every generation binds a new
+port, so each edit falls back to restarting the runtime; use a fixed port in
+development to keep in-place restarts.
+
 Register `./neem.runtime.ts` in Neem's `runtimes`. Normal `neem dev`, `neem build`,
 and `neem start` commands apply. The default planner starts one worker; a custom
 Neem planner can replace it. The worker factory receives Neem's context, including
@@ -85,10 +90,10 @@ JavaScript work. Neem's worker shutdown deadline and thread termination remain t
 outer boundary. Workflow-specific cleanup and commit fencing belong to later slices.
 
 The preset does not currently bridge Effect logging into Neem's Pino logger.
-Applications receive `ctx.logger` and own their Effect logger configuration. The
-runtime rejection uses `Cause.squash`, so it exposes a representative failure rather
-than every parallel/finalizer cause; complete Cause diagnostics remain an observability
-follow-up before production rollout.
+Applications receive `ctx.logger` and own their Effect logger configuration. A runtime
+rejection with a single non-interrupt cause keeps that failure's identity; several
+causes are rendered with `Cause.pretty` and kept as the error's `cause`. Structured
+Cause diagnostics for the host's logs remain an observability follow-up.
 
 ## Application and client boundary
 
