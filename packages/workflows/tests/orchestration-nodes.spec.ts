@@ -2,6 +2,7 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
 import { defineTask, defineWorkflow, implementWorkflow } from '../src/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 describe('workflow orchestration nodes', () => {
   const embeddingTask = defineTask({
@@ -55,29 +56,35 @@ describe('workflow orchestration nodes', () => {
 
   it('keeps orchestration nodes explicit in implementation order', () => {
     const implementation = implementWorkflow(workflow)
-      .load(async (_ctx, input) => ({ scenarios: input.scenarios }), {
-        input: (_ctx, _outputs, input) => input,
-      })
+      .load(
+        (input) => fromPromise(async () => ({ scenarios: input.scenarios })),
+        {
+          input: (_outputs, input) => input,
+        },
+      )
       .sections(({ activity, task, workflow }) => ({
-        summary: activity(async (_ctx, input) => ({ text: input.text }), {
-          input: (_ctx, { load }) => ({
-            text: load.scenarios.at(0)?.text ?? '',
-          }),
-        }),
+        summary: activity(
+          (input) => fromPromise(async () => ({ text: input.text })),
+          {
+            input: ({ load }) => ({
+              text: load.scenarios.at(0)?.text ?? '',
+            }),
+          },
+        ),
         embedding: task(embeddingTask, {
-          input: (_ctx, { load }) => ({
+          input: ({ load }) => ({
             text: load.scenarios.at(0)?.text ?? '',
           }),
         }),
         child: workflow(childWorkflow, {
-          input: (_ctx, { load }) => ({
+          input: ({ load }) => ({
             scenario: load.scenarios.at(0)?.text ?? '',
           }),
         }),
       }))
       .caseRuns(childWorkflow, {
-        items: (_ctx, { load }) => load.scenarios,
-        input: (_ctx, _outputs, item) => {
+        items: ({ load }) => load.scenarios,
+        input: (_outputs, item) => {
           const text: string = item.text
           expectTypeOf(item).toEqualTypeOf<{
             readonly id: string
@@ -87,25 +94,27 @@ describe('workflow orchestration nodes', () => {
         },
       })
       .embeddings(embeddingTask, {
-        items: (_ctx, { load }) => load.scenarios,
-        input: (_ctx, _outputs, item) => {
+        items: ({ load }) => load.scenarios,
+        input: (_outputs, item) => {
           const id: string = item.id
           expect(id).toBeTypeOf('string')
           return { text: item.text }
         },
       })
-      .finish((_ctx, { sections, caseRuns, embeddings }) => {
-        expectTypeOf(sections.summary.text).toEqualTypeOf<string>()
-        expectTypeOf(sections.embedding.id).toEqualTypeOf<string>()
-        expectTypeOf(sections.child.text).toEqualTypeOf<string>()
-        expectTypeOf(caseRuns.items.at(0)?.runId).toEqualTypeOf<
-          string | undefined
-        >()
-        expectTypeOf(embeddings.items.at(0)?.output.id).toEqualTypeOf<
-          string | undefined
-        >()
-        return { ok: true }
-      })
+      .finish(({ sections, caseRuns, embeddings }) =>
+        fromPromise(() => {
+          expectTypeOf(sections.summary.text).toEqualTypeOf<string>()
+          expectTypeOf(sections.embedding.id).toEqualTypeOf<string>()
+          expectTypeOf(sections.child.text).toEqualTypeOf<string>()
+          expectTypeOf(caseRuns.items.at(0)?.runId).toEqualTypeOf<
+            string | undefined
+          >()
+          expectTypeOf(embeddings.items.at(0)?.output.id).toEqualTypeOf<
+            string | undefined
+          >()
+          return { ok: true }
+        }),
+      )
 
     expect(implementation.nodes.map((node) => node.name)).toStrictEqual([
       'load',

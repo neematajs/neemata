@@ -1,4 +1,4 @@
-import type { Container } from '@nmtjs/core'
+import type * as Context from 'effect/Context'
 
 import type {
   TaskImplementation,
@@ -16,6 +16,7 @@ import type {
   WorkflowWakeEvents,
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
+import { createHandlerRuntime, type HandlerRuntime } from '../handler.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
   runAtomicContinuation,
@@ -67,7 +68,8 @@ export type RunWorkflowWorkerInput = WorkerLoopOptions & {
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly wakeEvents?: WorkflowWakeEvents
   readonly workflows: readonly AnyWorkflowImplementation[]
-  readonly container: Pick<Container, 'createContext'>
+  readonly context: Context.Context<never>
+  readonly handlers?: HandlerRuntime
   readonly reaping?: false | WorkerReapingOptions
   readonly runTimeouts?: false | WorkerRunTimeoutsOptions
 }
@@ -82,7 +84,8 @@ export type RunExecutionWorkerInput = WorkerLoopOptions & {
   readonly activityNames?: readonly string[]
   readonly tasks: readonly AnyTaskImplementation[]
   readonly taskNames?: readonly string[]
-  readonly container: Pick<Container, 'createContext'>
+  readonly context: Context.Context<never>
+  readonly handlers?: HandlerRuntime
   readonly reaping?: false | WorkerReapingOptions
 }
 
@@ -166,7 +169,13 @@ function executionWake(
 export async function runWorkflowWorker(
   input: RunWorkflowWorkerInput,
 ): Promise<WorkerLoopResult> {
-  return drainWorkerPool(workflowWorkerOptions(input), workflowDriver(input))
+  return drainWorkerPool(
+    workflowWorkerOptions(input),
+    workflowDriver({
+      ...input,
+      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
+    }),
+  )
 }
 
 export async function serveWorkflowWorker(
@@ -174,7 +183,10 @@ export async function serveWorkflowWorker(
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
     { ...workflowWorkerOptions(input), signal: input.signal },
-    workflowDriver(input),
+    workflowDriver({
+      ...input,
+      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
+    }),
   )
 }
 
@@ -201,9 +213,8 @@ function workflowDriver(
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
     abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
-    // Continuations stay atomic during shutdown; interrupting coordination
-    // mid-write is less safe than waiting for the claimed command to finish.
-    async execute(claimed) {
+    // Signal only user Effects; storage operations still finish atomically.
+    async execute(claimed, signal) {
       try {
         return await runAtomicContinuation(input, async (scoped) => {
           const leaseMs = input.leaseMs ?? DEFAULT_LEASE_MS
@@ -211,7 +222,11 @@ function workflowDriver(
             store: scoped.store,
             runCoordinationExecutor: scoped.runCoordinationExecutor,
             attemptExecutor: scoped.attemptExecutor,
-            container: input.container,
+            context: input.context,
+            handlers: input.handlers,
+            signal,
+            cleanupTimeoutMs: input.cleanupTimeoutMs,
+            onFatal: input.onFatal,
             workflows: input.workflows,
             workerId: input.workerId,
             command: claimed.command,
@@ -240,7 +255,13 @@ function workflowDriver(
 export async function runExecutionWorker(
   input: RunExecutionWorkerInput,
 ): Promise<WorkerLoopResult> {
-  return drainWorkerPool(executionWorkerOptions(input), executionDriver(input))
+  return drainWorkerPool(
+    executionWorkerOptions(input),
+    executionDriver({
+      ...input,
+      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
+    }),
+  )
 }
 
 export async function serveExecutionWorker(
@@ -248,7 +269,10 @@ export async function serveExecutionWorker(
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
     { ...executionWorkerOptions(input), signal: input.signal },
-    executionDriver(input),
+    executionDriver({
+      ...input,
+      handlers: input.handlers ?? createHandlerRuntime(input.context, input),
+    }),
   )
 }
 

@@ -1,4 +1,4 @@
-import type { Container, DependencyContext } from '@nmtjs/core'
+import type * as Context from 'effect/Context'
 
 import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AnyWorkflowDefinition } from '../../types/index.ts'
@@ -6,6 +6,12 @@ import type { ContinueRunCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
 import { decodeStoredValue, decodeNodeOutput } from '../codec.ts'
+import {
+  createHandlerRuntime,
+  WorkflowCleanupTimeoutError,
+  type HandlerRuntime,
+  type HandlerRuntimeOptions,
+} from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -20,11 +26,13 @@ class StaleRunLeaseError extends Error {
   }
 }
 
-export type ContinueWorkflowRunInput = {
+export type ContinueWorkflowRunInput = HandlerRuntimeOptions & {
+  readonly signal?: AbortSignal
   readonly store: WorkflowStore
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly attemptExecutor: AttemptExecutor
-  readonly container: Pick<Container, 'createContext'>
+  readonly context: Context.Context<never>
+  readonly handlers?: HandlerRuntime
   readonly workflows: readonly WorkflowImplementation<
     AnyWorkflowDefinition,
     any
@@ -55,14 +63,20 @@ export async function continueWorkflowRun(
     leaseMs,
   })
   if (!lease) return { status: 'busy' }
-  const store = createRunLeaseFencedStore(input.store, lease, leaseMs)
 
   try {
     return await runWithRunLeaseRenewal(
       input.store,
       lease,
       leaseMs,
-      async (): Promise<ContinueWorkflowRunResult> => {
+      input.signal,
+      async (signal): Promise<ContinueWorkflowRunResult> => {
+        const store = createRunLeaseFencedStore(
+          input.store,
+          lease,
+          leaseMs,
+          signal,
+        )
         const snapshot = await store.loadRunSnapshot(input.command.runId)
         if (!snapshot) return { status: 'ignored' }
         if (snapshot.run.workflowName !== input.command.workflowName) {
@@ -111,9 +125,6 @@ export async function continueWorkflowRun(
           return { status: 'processed' }
         }
 
-        const workflowCtx = await input.container.createContext(
-          implementation.dependencies,
-        )
         const outputs: Record<string, unknown> = {}
         let workflowInput: unknown
         try {
@@ -149,8 +160,11 @@ export async function continueWorkflowRun(
           attemptExecutor: input.attemptExecutor,
           runCoordinationExecutor: input.runCoordinationExecutor,
           workflow: implementation,
-          workflowCtx: workflowCtx as DependencyContext<any>,
-          run: { ...snapshot.run, input: workflowInput },
+          signal,
+          handlers:
+            input.handlers ?? createHandlerRuntime(input.context, input),
+          run: snapshot.run,
+          workflowInput,
           outputs,
           advance: advanceWorkflowRun,
         })
@@ -160,7 +174,12 @@ export async function continueWorkflowRun(
         return { status: 'processed' }
       },
     ).catch((error: unknown) => {
-      if (error instanceof StaleRunLeaseError) {
+      if (error instanceof WorkflowCleanupTimeoutError) throw error
+      if (
+        error instanceof StaleRunLeaseError ||
+        error instanceof CancelledRunError ||
+        input.signal?.aborted
+      ) {
         return { status: 'busy' } satisfies ContinueWorkflowRunResult
       }
       throw error
@@ -174,10 +193,13 @@ export function createRunLeaseFencedStore(
   store: WorkflowStore,
   lease: RunLease,
   leaseMs: number,
+  signal?: AbortSignal,
 ): WorkflowStore {
   const fence = async <T>(operation: () => Promise<T>): Promise<T> => {
+    signal?.throwIfAborted()
     const renewedLease = await store.renewRunLease(lease, leaseMs)
     if (!renewedLease) throw new StaleRunLeaseError()
+    signal?.throwIfAborted()
     return operation()
   }
 
@@ -215,19 +237,59 @@ export function createRunLeaseFencedStore(
   }
 }
 
+class CancelledRunError extends Error {
+  constructor() {
+    super('Workflow run cancellation observed during coordination')
+    this.name = 'CancelledRunError'
+  }
+}
+
 async function runWithRunLeaseRenewal<T>(
   store: WorkflowStore,
   lease: RunLease,
   leaseMs: number,
-  handler: () => Promise<T>,
+  signal: AbortSignal | undefined,
+  handler: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
-  const intervalMs = Math.max(1, Math.floor(leaseMs / 3))
-  const interval = setInterval(() => {
-    void store.renewRunLease(lease, leaseMs).catch(() => {})
-  }, intervalMs)
+  const abort = new AbortController()
+  const shutdown = () => abort.abort(signal?.reason)
+  if (signal?.aborted) shutdown()
+  else signal?.addEventListener('abort', shutdown, { once: true })
+  let renewing: Promise<void> | undefined
+  const interval = setInterval(
+    () => {
+      if (renewing || abort.signal.aborted) return
+      renewing = (async () => {
+        if (!(await store.renewRunLease(lease, leaseMs))) {
+          abort.abort(new StaleRunLeaseError())
+          return
+        }
+        // finish is user Effect work now; a long-running finish must observe
+        // cancellation just like an activity, without allowing a late commit.
+        const [run] = await store.loadRuns([lease.runId])
+        if (
+          run &&
+          (run.status === 'cancelling' || isTerminalRunStatus(run.status))
+        ) {
+          abort.abort(new CancelledRunError())
+        }
+      })()
+        .catch(() => {
+          // Transient renewal errors retain the existing behavior: every write
+          // still checks ownership through the fenced store before committing.
+        })
+        .finally(() => {
+          renewing = undefined
+        })
+    },
+    Math.max(1, Math.floor(leaseMs / 3)),
+  )
   try {
-    return await handler()
+    abort.signal.throwIfAborted()
+    return await handler(abort.signal)
   } finally {
     clearInterval(interval)
+    signal?.removeEventListener('abort', shutdown)
+    await renewing
   }
 }

@@ -31,10 +31,11 @@ import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 
 Workflow contracts use `effect/Schema`, pinned to `4.0.0-rc.116`. Applications and
 `@nmtjs/workflows` must use this exact version during the release-candidate period.
-The package imports only stable Effect modules. Async handler execution and the
-existing dependency container remain in place until the next migration slice.
+The package imports only stable Effect modules. Task/activity handlers and workflow
+`finish` callbacks return Effects. Their services come from the worker's Layer.
 
 ```ts
+import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
 const normalizeDate = defineTask({
@@ -44,33 +45,26 @@ const normalizeDate = defineTask({
 })
 
 const implementation = implementTask(normalizeDate, {
-  handler: async (_ctx, date) => date.toISOString(),
+  handler: (date) => Effect.succeed(date),
 })
 ```
 
-Submissions, input-mapping callbacks, map `items` callbacks, handler returns, and
-`finish` returns use the schema's **Encoded** type. Handlers and workflow callbacks
-receive its decoded **Type**, including prior node outputs and individual map
-items. An omitted input mapper forwards the decoded workflow input. `client.start`
-returns decoded input (and output when joining a completed run).
+Every typed programmatic API takes and returns decoded **Type**: `client.start`
+input and its returned run input/output, task/activity handlers, workflow finish,
+input mappers, map items and per-item inputs, code-defined schedule inputs, and
+metadata callbacks. The engine validates and encodes once with `Schema.toCodecJson`
+when writing storage/commands/child payloads, and decodes when reading them.
+Restart decodes the stored input and calls `start(Type)`. Retry/restart eligibility
+is unchanged. Untyped `get`, `list`, `listSummaries`, history and inspector reads
+expose stored JSON without definitions. Raw JSON callers decode explicitly with their authored input schema, for example
+`Schema.decodeUnknownSync(MyInput)`; there is no `startEncoded` API.
 
-For the upcoming Effect handler migration, task/activity handlers and `finish`
-will return decoded Type, and the boundary will encode once. The Encoded return
-convention above describes the current async implementation during slice 4.
-
-Durable payloads use `Schema.toCodecJson`: inputs, outputs, map items, schedules,
-and attempt commands are encoded before storage and decoded before execution or
-resumption. History APIs expose that stored representation; they do not require
-registered definitions. Restart reconstructs the submission value with the current
-definition's codec and returns a decoded `RunnableRun`, like `start`. Retry and
-restart eligibility are unchanged.
-
-| Schema                    | Authored Encoded | Decoded Type | Stored JSON |
-| ------------------------- | ---------------- | ------------ | ----------- |
-| `Schema.DateFromString`   | string           | `Date`       | ISO string  |
-| `Schema.Date`             | `Date`           | `Date`       | ISO string  |
-| `Schema.NumberFromString` | string           | number       | string      |
-| `Schema.Undefined`        | undefined        | undefined    | null        |
+| Schema                    | Type      | Stored JSON |
+| ------------------------- | --------- | ----------- |
+| `Schema.DateFromString`   | `Date`    | ISO string  |
+| `Schema.Date`             | `Date`    | ISO string  |
+| `Schema.NumberFromString` | number    | string      |
+| `Schema.Undefined`        | undefined | null        |
 
 The undefined-to-null encoding also applies inside structs. For example,
 `Schema.optional(Schema.String)` stores an explicitly supplied `a: undefined` as
@@ -96,6 +90,108 @@ starts and schedule firing, drain old runs and their children, and stop old work
 before enabling new writers. Re-entry decode failures are terminal. Retained history
 needs a separate compatibility check before resubmission; draining does not convert
 it. This slice adds no format marker, history restriction, or retry/restart ban.
+
+## Effect execution and services
+
+Use `Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
+handlers and workflow `finish`. Dependency dictionaries, core Containers, plugins,
+and the old execution environment are removed. Resolve services by yielding a
+`Context.Service` inside an Effect. Callback signatures no longer have a `ctx`
+argument. Synchronous input/select/items/idempotency callbacks use their explicit
+arguments or immutable closure values; keep them deterministic and brief.
+`finish` runs during coordination and should assemble the result; put long-running
+or retryable work in a task/activity.
+
+| Callback                                                    | Arguments                               |
+| ----------------------------------------------------------- | --------------------------------------- |
+| Task/activity handler                                       | `(input, lifecycle)`                    |
+| `finish`, node `input`, `select`, `items`, node idempotency | `(outputs, workflowInput)`              |
+| Map `input` and map idempotency                             | `(outputs, item, workflowInput, index)` |
+
+Arguments and returned values use decoded schema types. Handlers and `finish`
+return Effects; synchronous callbacks return values directly.
+
+```ts
+import * as Context from 'effect/Context'
+import * as Layer from 'effect/Layer'
+import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
+
+class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
+
+const greet = defineTask({
+  name: 'greet',
+  input: Schema.String,
+  output: Schema.String,
+})
+const greeting = implementTask(greet, {
+  handler: (name) =>
+    Effect.gen(function* () {
+      const prefix = yield* Prefix
+      return `${prefix}, ${name}`
+    }),
+})
+
+export default defineWorkflowsWorker(
+  defineWorkflows({
+    layer: Layer.succeed(Prefix, 'Hello'),
+    runtime: Effect.sync(createInMemoryWorkflowRuntime),
+    workflows: () => [],
+    tasks: () => [greeting],
+  }),
+)
+```
+
+`runtime` is an Effect that acquires the adapter; it may use the same Layer and
+`Effect.acquireRelease` for database connections. A production worker uses a shared
+durable adapter. The in-memory adapter above is only a single-worker example.
+`defineWorkflows`/`defineWorkflowsWorker` check that the Layer provides services
+required by the adapter, task/activity handlers (including branch/parallel cases),
+and finish. The Layer must not require external services. The worker supplies
+Scope for adapter acquisition, and each handler gets its own Scope.
+
+For attempts, typed failures and defects both use the existing retry policy.
+An `Effect.promise` rejection is a defect and still counts as a failed attempt.
+An interruption without an engine abort reason also counts as a failure.
+Engine cancellation, timeout, shutdown and lease loss keep their existing
+classification. The second handler argument is always supplied, even if your
+handler only declares `input`. On abort, `lifecycle.signal.reason` is a
+`WorkflowAttemptAbortError` with the engine's reason. Keep this signal when you need
+to distinguish cancellation, timeout, shutdown, or lease loss; the signal provided
+by `Effect.promise` reflects fiber interruption without that engine classification.
+Prefer native Effect interruption and connect cancellable Promise APIs to a signal.
+
+The engine runs a handler with `runPromiseExitWith` using the worker Context and
+its AbortSignal. Single failures keep the existing StoredError representation;
+mixed Causes retain their rendered failure and finalizer information. There are
+no persisted typed-error codecs yet. Workflow finish failures retain the existing
+terminal-run behavior, rather than gaining an activity retry policy.
+
+On shutdown, the worker stops claims, aborts user Effects, and joins engine work
+and handler finalizers before disposing the adapter and Layer. Handler and
+worker-scope cleanup are bounded by the pool's `cleanupTimeoutMs` (default
+5,000 ms). An overrun fails the runtime's `finished` promise so Neem recycles the
+thread; it does not release shared services while a handler still uses them.
+Recycling also interrupts healthy sibling attempts on that thread; they are
+redelivered through the existing expired-lease path. Keep finalizers short and
+isolate handlers with risky cleanup in separate execution pools. Result commits
+still use the engine's attempt/run fencing even when a handler has already succeeded.
+
+On a requested stop, Neem enforces a separate hard 5,000 ms deadline for the whole
+worker. Setting `cleanupTimeoutMs` above 5,000 cannot extend that deadline, and
+`finished` failures after a stop request do not trigger recovery. Budget handler,
+adapter, and Layer cleanup together to finish within the host deadline; otherwise
+Neem terminates the thread, including on deploy. The current Neem host also does
+not call `runtime.stop()` until startup has completed, so a stop during startup
+cannot rely on these cooperative finalizers. Configurable host deadlines and
+startup-stop handling remain separate host lifecycle work.
+
+Interruption cannot stop Promise work that ignores cancellation. Such work can
+continue after its fiber exits, so integrate its AbortSignal or arrange explicit
+cleanup. An uninterruptible effect/finalizer remains owned by its fiber and can
+require thread termination. Hosts using the lower-level worker loops directly
+must handle cleanup-overrun failures by terminating their execution environment;
+`defineWorkflowsWorker` supplies that supervision through Neem.
 
 ## Runtime Connection
 

@@ -8,6 +8,7 @@ import type {
   WorkflowStore,
 } from '../store.ts'
 import { parseDurationMs } from '../duration.ts'
+import { WorkflowCleanupTimeoutError } from '../handler.ts'
 
 export { DEFAULT_LEASE_MS } from '../executors.ts'
 
@@ -33,6 +34,8 @@ export type WorkerMaintenanceHook = {
 }
 
 export type WorkerLoopOptions = {
+  readonly cleanupTimeoutMs?: number
+  readonly onFatal?: (error: unknown) => void
   readonly workerId: string
   readonly concurrency?: number
   readonly leaseMs?: number
@@ -129,7 +132,13 @@ async function runWorkerPool<Claimed>(
       .then((didProcess) => {
         if (didProcess) processed += 1
       })
-      .catch(report)
+      .catch((error) => {
+        if (error instanceof WorkflowCleanupTimeoutError) {
+          fail(error)
+          executions.abort(error)
+        }
+        report(error)
+      })
       .finally(() => {
         active.delete(task)
         wake.notify()

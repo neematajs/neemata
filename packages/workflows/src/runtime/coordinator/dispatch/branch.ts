@@ -36,11 +36,7 @@ export async function dispatchBranchNode(
   let caseKey = existing.selectedCase
   if (caseKey === undefined) {
     try {
-      caseKey = input.node.select(
-        input.workflowCtx,
-        input.outputs,
-        input.run.input,
-      )
+      caseKey = input.node.select(input.outputs, input.workflowInput)
     } catch (error) {
       await failNodeAndRun({
         store: input.store,
@@ -146,9 +142,8 @@ export async function dispatchBranchNode(
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
-          input.workflowCtx,
           input.outputs,
-          input.run.input,
+          input.workflowInput,
         ),
       resolveNodeInput: () => {
         if (hasStoredNodeInput(existing)) return existing.input
@@ -156,15 +151,10 @@ export async function dispatchBranchNode(
           selected.target.input,
           selected.input
             ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
+                selected.input!(input.outputs, input.workflowInput),
               )
-            : input.run.input,
+            : input.workflowInput,
           `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-          !selected.input,
         )
       },
     })
@@ -192,9 +182,8 @@ export async function dispatchBranchNode(
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
-          input.workflowCtx,
           input.outputs,
-          input.run.input,
+          input.workflowInput,
         ),
       resolveNodeInput: () => {
         if (hasStoredNodeInput(existing)) return existing.input
@@ -202,15 +191,10 @@ export async function dispatchBranchNode(
           selected.target.input,
           selected.input
             ? runWorkflowUserCallback(() =>
-                selected.input!(
-                  input.workflowCtx,
-                  input.outputs,
-                  input.run.input,
-                ),
+                selected.input!(input.outputs, input.workflowInput),
               )
-            : input.run.input,
+            : input.workflowInput,
           `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-          !selected.input,
         )
       },
     })
@@ -235,14 +219,13 @@ export async function dispatchBranchNode(
   if (!hasAttempt) {
     const rawInput = selected.input
       ? runWorkflowUserCallback(() =>
-          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+          selected.input!(input.outputs, input.workflowInput),
         )
-      : input.run.input
+      : input.workflowInput
     nodeInput = encodeWorkflowInput(
       selectedActivityDeclaration.input,
       rawInput,
       `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
-      !selected.input,
     )
     await input.store.setNodeInput({
       runId: input.run.id,
@@ -270,9 +253,8 @@ export async function dispatchBranchNode(
           ? undefined
           : resolveIdempotency(
               selected.idempotency,
-              input.workflowCtx,
               input.outputs,
-              input.run.input,
+              input.workflowInput,
             ),
       })
       return {

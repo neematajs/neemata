@@ -592,7 +592,10 @@ describe('workflow wake events', () => {
           },
         },
       },
-      () => new Promise<never>(() => {}),
+      ({ signal }) =>
+        new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        }),
     )
 
     expect(cancellationWake).toBeDefined()
@@ -639,7 +642,10 @@ describe('workflow wake events', () => {
           },
         },
       },
-      () => new Promise<never>(() => {}),
+      ({ signal }) =>
+        new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        }),
     )
 
     // first wake starts a heartbeat whose snapshot predates the cancellation

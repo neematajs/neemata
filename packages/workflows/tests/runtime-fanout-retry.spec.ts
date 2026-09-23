@@ -1,4 +1,4 @@
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
@@ -14,6 +14,7 @@ import {
   reapDeadWorkflowCommands,
   timeoutExpiredWorkflowRuns,
 } from '../src/runtime/worker.ts'
+import { fromPromise } from './support/effect.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -23,9 +24,8 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  * run statuses, and dead-lettered commands failing their runs.
  */
 describe('workflow fan-out retry state model', () => {
-  const createTestContainer = () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    return new Container({ logger })
+  const createTestContext = () => {
+    return Context.empty()
   }
 
   const memberInput = Schema.Struct({ scenario: Schema.String })
@@ -65,16 +65,15 @@ describe('workflow fan-out retry state model', () => {
     failures: Record<string, number>,
   ) => {
     const remaining = new Map(Object.entries(failures))
-    const memberHandler =
-      (member: string) =>
-      async (_ctx: unknown, input: { scenario: string }) => {
+    const memberHandler = (member: string) => (input: { scenario: string }) =>
+      fromPromise(async () => {
         const left = remaining.get(member) ?? 0
         if (left > 0) {
           remaining.set(member, left - 1)
           throw new Error(`transient failure of [${member}]`)
         }
         return { text: `${member}:${input.scenario}` }
-      }
+      })
     return implementWorkflow(workflow)
       .members(({ activity }) => ({
         a: activity(memberHandler('a')),
@@ -82,7 +81,7 @@ describe('workflow fan-out retry state model', () => {
         c: activity(memberHandler('c')),
         d: activity(memberHandler('d')),
       }))
-      .finish((_ctx, { members }) => members)
+      .finish(({ members }) => fromPromise(() => members))
   }
 
   const drive = async (
@@ -94,14 +93,14 @@ describe('workflow fan-out retry state model', () => {
     for (let round = 0; round < rounds; round += 1) {
       await runWorkflowWorker({
         ...runtime,
-        container: createTestContainer(),
+        context: createTestContext(),
         workflows: [implementation],
         workerId: `coordinator-${round}`,
       })
       await runExecutionWorker({
         tasks: [],
         ...runtime,
-        container: createTestContainer(),
+        context: createTestContext(),
         workflows: [implementation],
         workerId: `activity-${round}`,
       })
@@ -203,8 +202,10 @@ describe('workflow fan-out retry state model', () => {
       })
       .build()
     const implementation = implementWorkflow(workflow)
-      .step(async (_ctx, input) => ({ text: `step:${input.scenario}` }))
-      .finish((_ctx, { step }) => step)
+      .step((input) =>
+        fromPromise(async () => ({ text: `step:${input.scenario}` })),
+      )
+      .finish(({ step }) => fromPromise(() => step))
     const runtime = createInMemoryWorkflowRuntime()
 
     const run = await startWorkflowRun({
@@ -221,7 +222,7 @@ describe('workflow fan-out retry state model', () => {
     // work, so it must report running — never queued (issue #241 problem 1).
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'coordinator-status',
     })
@@ -232,13 +233,13 @@ describe('workflow fan-out retry state model', () => {
     await runExecutionWorker({
       tasks: [],
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'activity-status',
     })
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'coordinator-status-2',
     })
@@ -263,7 +264,7 @@ describe('workflow fan-out retry state model', () => {
 
     const parentImplementation = implementWorkflow(parentWorkflow)
       .child(childWorkflow)
-      .finish((_ctx, { child }) => child)
+      .finish(({ child }) => fromPromise(() => child))
     const runtime = createInMemoryWorkflowRuntime()
 
     const run = await startWorkflowRun({
@@ -277,7 +278,7 @@ describe('workflow fan-out retry state model', () => {
     // status is waiting, not queued and not running.
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [parentImplementation],
       workerId: 'coordinator-parent',
     })
@@ -297,8 +298,10 @@ describe('workflow fan-out retry state model', () => {
       })
       .build()
     const implementation = implementWorkflow(declaredWorkflow)
-      .step(async (_ctx, input) => ({ text: `step:${input.scenario}` }))
-      .finish((_ctx, { step }) => step)
+      .step((input) =>
+        fromPromise(async () => ({ text: `step:${input.scenario}` })),
+      )
+      .finish(({ step }) => fromPromise(() => step))
 
     // Same workflow name, drifted definition: the node's activity was renamed
     // in the deployed worker, so the dispatched command can never resolve.
@@ -312,8 +315,10 @@ describe('workflow fan-out retry state model', () => {
       })
       .build()
     const driftedImplementation = implementWorkflow(driftedWorkflow)
-      .stepRenamed(async (_ctx, input) => ({ text: input.scenario }))
-      .finish((_ctx, outputs) => outputs)
+      .stepRenamed((input) =>
+        fromPromise(async () => ({ text: input.scenario })),
+      )
+      .finish((outputs) => fromPromise(() => outputs))
 
     const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
     const run = await startWorkflowRun({
@@ -324,7 +329,7 @@ describe('workflow fan-out retry state model', () => {
     })
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'coordinator-drift',
       reaping: false,
@@ -339,7 +344,7 @@ describe('workflow fan-out retry state model', () => {
     await runExecutionWorker({
       tasks: [],
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [driftedImplementation],
       activityNames: [command!.activityName],
       workerId: 'drifted-worker',
@@ -362,7 +367,7 @@ describe('workflow fan-out retry state model', () => {
     expect(reaped).toBe(1)
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'coordinator-reap',
       reaping: false,
@@ -399,8 +404,8 @@ describe('workflow fan-out retry state model', () => {
     // No activity worker ever runs, so without the sweep this run would sit
     // in running forever.
     const implementation = implementWorkflow(workflow)
-      .step(async (_ctx, input) => ({ text: input.scenario }))
-      .finish((_ctx, { step }) => step)
+      .step((input) => fromPromise(async () => ({ text: input.scenario })))
+      .finish(({ step }) => fromPromise(() => step))
     const runtime = createInMemoryWorkflowRuntime()
 
     const run = await startWorkflowRun({
@@ -411,7 +416,7 @@ describe('workflow fan-out retry state model', () => {
     })
     await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'coordinator-timeout',
       reaping: false,

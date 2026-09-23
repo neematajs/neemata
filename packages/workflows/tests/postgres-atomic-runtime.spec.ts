@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
@@ -20,13 +20,13 @@ import {
   runExecutionWorker,
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
 
-function createTestContainer() {
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-  return new Container({ logger })
+function createTestContext() {
+  return Context.empty()
 }
 
 function failNextCommandAck(
@@ -101,8 +101,8 @@ test('rolls back empty workflow completion when command ack fails', async () => 
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.Struct({ value: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish(
-    (_ctx, _outputs, input) => ({ value: input.value }),
+  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
+    fromPromise(() => ({ value: input.value })),
   )
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -113,7 +113,7 @@ test('rolls back empty workflow completion when command ack fails', async () => 
     runWorkflowWorker({
       ...failingRuntime,
       workflows: [workflowImpl],
-      container: createTestContainer(),
+      context: createTestContext(),
       workerId: 'workflow-worker',
       onError: (error) => errors.push(error),
     }),
@@ -138,8 +138,8 @@ test('rolls back workflow continuation when command ack lease is stale', async (
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.Struct({ value: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish(
-    (_ctx, _outputs, input) => ({ value: input.value }),
+  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
+    fromPromise(() => ({ value: input.value })),
   )
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -149,7 +149,7 @@ test('rolls back workflow continuation when command ack lease is stale', async (
     runWorkflowWorker({
       ...staleRuntime,
       workflows: [workflowImpl],
-      container: createTestContainer(),
+      context: createTestContext(),
       workerId: 'workflow-worker',
     }),
   ).resolves.toStrictEqual({ processed: 0 })
@@ -178,8 +178,8 @@ test('rolls back activity dispatch when command ack fails', async () => {
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)
-    .content(async (_ctx, input) => ({ value: input.value }))
-    .finish((_ctx, { content }) => content)
+    .content((input) => fromPromise(async () => ({ value: input.value })))
+    .finish(({ content }) => fromPromise(() => content))
   const client = createWorkflowRuntimeClient(runtime)
 
   const run = await client.start(workflow, { value: 'alpha' })
@@ -189,7 +189,7 @@ test('rolls back activity dispatch when command ack fails', async () => {
     runWorkflowWorker({
       ...failingRuntime,
       workflows: [workflowImpl],
-      container: createTestContainer(),
+      context: createTestContext(),
       workerId: 'workflow-worker',
       onError: (error) => errors.push(error),
     }),
@@ -221,7 +221,7 @@ test('rolls back standalone task completion when command ack fails', async () =>
     output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
-    handler: async (_ctx, input) => ({ id: input.text }),
+    handler: (input) => fromPromise(async () => ({ id: input.text })),
   })
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -233,7 +233,7 @@ test('rolls back standalone task completion when command ack fails', async () =>
       workflows: [],
       ...failingRuntime,
       tasks: [taskImpl],
-      container: createTestContainer(),
+      context: createTestContext(),
       workerId: 'task-worker',
       onError: (error) => errors.push(error),
     }),
@@ -260,9 +260,10 @@ test('rolls back standalone task failure when command ack fails', async () => {
     output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
-    handler: async () => {
-      throw new Error('task failed')
-    },
+    handler: () =>
+      fromPromise(async () => {
+        throw new Error('task failed')
+      }),
   })
   const client = createWorkflowRuntimeClient(runtime)
 
@@ -274,7 +275,7 @@ test('rolls back standalone task failure when command ack fails', async () => {
       workflows: [],
       ...failingRuntime,
       tasks: [taskImpl],
-      container: createTestContainer(),
+      context: createTestContext(),
       workerId: 'task-worker',
       onError: (error) => errors.push(error),
     }),
@@ -309,16 +310,16 @@ test('rolls back activity completion when command ack fails', async () => {
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)
-    .content(async (_ctx, input) => ({ value: input.value }))
-    .finish((_ctx, { content }) => content)
-  const container = createTestContainer()
+    .content((input) => fromPromise(async () => ({ value: input.value })))
+    .finish(({ content }) => fromPromise(() => content))
+  const context = createTestContext()
   const client = createWorkflowRuntimeClient(runtime)
 
   const run = await client.start(workflow, { value: 'alpha' })
   await runWorkflowWorker({
     ...runtime,
     workflows: [workflowImpl],
-    container,
+    context,
     workerId: 'workflow-worker',
   })
   const beforeActivity = await runtime.store.loadRunSnapshot(run.id)
@@ -333,7 +334,7 @@ test('rolls back activity completion when command ack fails', async () => {
       tasks: [],
       ...failingRuntime,
       workflows: [workflowImpl],
-      container,
+      context,
       workerId: 'activity-worker',
       onError: (error) => errors.push(error),
     }),
@@ -371,16 +372,16 @@ test('rolls back activity completion when command ack lease is stale', async () 
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)
-    .content(async (_ctx, input) => ({ value: input.value }))
-    .finish((_ctx, { content }) => content)
-  const container = createTestContainer()
+    .content((input) => fromPromise(async () => ({ value: input.value })))
+    .finish(({ content }) => fromPromise(() => content))
+  const context = createTestContext()
   const client = createWorkflowRuntimeClient(runtime)
 
   const run = await client.start(workflow, { value: 'alpha' })
   await runWorkflowWorker({
     ...runtime,
     workflows: [workflowImpl],
-    container,
+    context,
     workerId: 'workflow-worker',
   })
   expect(
@@ -392,7 +393,7 @@ test('rolls back activity completion when command ack lease is stale', async () 
       tasks: [],
       ...staleRuntime,
       workflows: [workflowImpl],
-      container,
+      context,
       workerId: 'activity-worker',
     }),
   ).resolves.toStrictEqual({ processed: 0 })

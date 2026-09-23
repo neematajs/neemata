@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
@@ -15,6 +15,7 @@ import {
   runWorkflowWorker,
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 type RuntimeFactoryOptions = {
   readonly maxDeliveries?: number
@@ -37,8 +38,7 @@ const waitForLeaseExpiry = () => wait(80)
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
 
-const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-const testContainer = new Container({ logger })
+const testContext = Context.empty()
 
 function workflowRuntimeAdapterContract(
   name: string,
@@ -187,7 +187,7 @@ function workflowRuntimeAdapterContract(
         output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const implementation = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+        (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
       )
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -196,7 +196,7 @@ function workflowRuntimeAdapterContract(
       await client.cancel(run.id)
       await runWorkflowWorker({
         ...runtime,
-        container: testContainer,
+        context: testContext,
         workflows: [implementation],
         workerId: 'cancel-worker-1',
       })
@@ -220,18 +220,18 @@ function workflowRuntimeAdapterContract(
         .workflow('child', childWorkflow)
         .build()
       const childImplementation = implementWorkflow(childWorkflow).finish(
-        (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+        (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
       )
       const parentImplementation = implementWorkflow(parentWorkflow)
         .child(childWorkflow)
-        .finish((_ctx, { child }) => ({ caseId: child.caseId }))
+        .finish(({ child }) => fromPromise(() => ({ caseId: child.caseId })))
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(parentWorkflow, { scenario: 'alpha' })
 
       await runWorkflowWorker({
         ...runtime,
-        container: testContainer,
+        context: testContext,
         workflows: [parentImplementation],
         workerId: 'parent-worker-1',
       })
@@ -242,13 +242,13 @@ function workflowRuntimeAdapterContract(
       await client.cancel(run.id)
       await runWorkflowWorker({
         ...runtime,
-        container: testContainer,
+        context: testContext,
         workflows: [parentImplementation],
         workerId: 'parent-worker-2',
       })
       await runWorkflowWorker({
         ...runtime,
-        container: testContainer,
+        context: testContext,
         workflows: [childImplementation],
         workerId: 'child-worker-1',
       })
@@ -1769,8 +1769,8 @@ function workflowRuntimeAdapterContract(
         })
         .build()
       const implementation = implementWorkflow(workflow)
-        .content(async () => ({ ok: true }))
-        .finish((_ctx, { content }) => content)
+        .content(() => fromPromise(async () => ({ ok: true })))
+        .finish(({ content }) => fromPromise(() => content))
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, { scenario: 'alpha' })
@@ -1786,7 +1786,7 @@ function workflowRuntimeAdapterContract(
             },
           },
           atomicContinuation: undefined,
-          container: testContainer,
+          context: testContext,
           workflows: [implementation],
           workerId: 'poison-worker-1',
           onError: (error) => errors.push(error),

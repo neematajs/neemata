@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type { Pool as PgPool } from 'pg'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import pg from 'pg'
 
 import {
@@ -28,9 +28,8 @@ export function requireServiceEnv(target: WorkflowsServiceTarget) {
   }
 }
 
-export function createTestContainer() {
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-  return new Container({ logger })
+export function createTestContext() {
+  return Context.empty()
 }
 
 export function createTestName(prefix: string) {

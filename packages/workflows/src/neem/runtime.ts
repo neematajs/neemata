@@ -1,28 +1,35 @@
-import type { ExecutionEnvironmentPlugin } from '@nmtjs/core'
+import type * as Effect from 'effect/Effect'
+import type * as Scope from 'effect/Scope'
+import * as Layer from 'effect/Layer'
 
 import type {
   TaskImplementation,
   WorkflowImplementation,
 } from '../implement/index.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
-import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
+import type {
+  AnyScheduleDefinition,
+  AnyWorkflowDefinition,
+  AnyTaskDefinition,
+  MaybePromise,
+} from '../types/index.ts'
 import {
   collectChildWorkflowNames,
   collectWorkflowActivityNames,
   collectWorkflowTaskNames,
 } from '../runtime/worker.ts'
 
-export type AnyWorkflowImplementation = Omit<
-  WorkflowImplementation,
-  'finish'
-> & {
-  readonly finish: (...args: any[]) => unknown
-}
-export type AnyTaskImplementation = Omit<TaskImplementation, 'handler'> & {
-  readonly handler: (...args: any[]) => unknown
-}
+export type AnyWorkflowImplementation = WorkflowImplementation<
+  AnyWorkflowDefinition,
+  any
+>
+export type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
-export type WorkflowsRuntimeFactory = () => MaybePromise<WorkflowRuntimeAdapter>
+export type WorkflowsRuntime<R = never> = Effect.Effect<
+  WorkflowRuntimeAdapter,
+  unknown,
+  R | Scope.Scope
+>
 
 export type WorkflowsImplementationsFactory<
   Implementation = AnyWorkflowImplementation,
@@ -43,6 +50,7 @@ export type WorkflowsWorkerPoolConfig = {
   readonly concurrency?: number
   readonly leaseMs?: number
   readonly pollIntervalMs?: number
+  readonly cleanupTimeoutMs?: number
 }
 
 export type WorkflowsExecutionWorkerPoolConfig = WorkflowsWorkerPoolConfig & {
@@ -72,13 +80,37 @@ export type WorkflowsConfig<
     AnyWorkflowImplementation,
   TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
   TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
+  R = never,
 > = {
-  readonly runtime: WorkflowsRuntimeFactory
+  readonly runtime: WorkflowsRuntime<R>
   readonly workflows: WorkflowsImplementationsFactory<TWorkflowImplementation>
   readonly tasks?: WorkflowTaskImplementationsFactory<TTaskImplementation>
   readonly schedules?: WorkflowSchedulesFactory<TScheduleDefinition>
   readonly workers?: WorkflowsWorkersConfig
-  readonly plugins?: readonly ExecutionEnvironmentPlugin[]
+} & WorkflowServices<
+  Requirements<TWorkflowImplementation | TTaskImplementation> | R
+>
+
+type Requirements<T> =
+  T extends TaskImplementation<AnyTaskDefinition, infer R>
+    ? R
+    : T extends WorkflowImplementation<AnyWorkflowDefinition, infer R>
+      ? R
+      : never
+
+type WorkflowServices<R> = [Exclude<R, Scope.Scope>] extends [never]
+  ? { readonly layer?: Layer.Layer<never, unknown> }
+  : { readonly layer: Layer.Layer<Exclude<R, Scope.Scope>, unknown> }
+
+// Runtime registries are heterogeneous. The typed configuration above proves
+// service coverage before the planner and worker consume this erased shape.
+export type AnyWorkflowsConfig = {
+  readonly runtime: WorkflowsRuntime<any>
+  readonly workflows: WorkflowsImplementationsFactory
+  readonly tasks?: WorkflowTaskImplementationsFactory
+  readonly schedules?: WorkflowSchedulesFactory
+  readonly workers?: WorkflowsWorkersConfig
+  readonly layer?: Layer.Layer<any, unknown> | Layer.Layer<never, unknown>
 }
 
 export type ResolvedWorkflowsConfig<
@@ -86,12 +118,13 @@ export type ResolvedWorkflowsConfig<
     AnyWorkflowImplementation,
   TTaskImplementation extends AnyTaskImplementation = AnyTaskImplementation,
   TScheduleDefinition extends AnyScheduleDefinition = AnyScheduleDefinition,
+  R = never,
 > = {
-  readonly runtime: WorkflowsRuntimeFactory
+  readonly runtime: WorkflowsRuntime<R>
   readonly workflows: readonly TWorkflowImplementation[]
   readonly tasks: readonly TTaskImplementation[]
   readonly schedules: readonly TScheduleDefinition[]
-  readonly plugins: readonly ExecutionEnvironmentPlugin[]
+  readonly layer: Layer.Layer<any, unknown> | Layer.Layer<never, unknown>
   readonly workers: {
     readonly coordinator: Required<WorkflowsWorkerPoolConfig>
     readonly execution: readonly ResolvedExecutionWorkerPool[]
@@ -118,70 +151,45 @@ const defaultWorkerConfig = {
   concurrency: 1,
   leaseMs: 30_000,
   pollIntervalMs: 250,
+  cleanupTimeoutMs: 5_000,
 } as const
 
 export function defineWorkflows<
-  const TWorkflowImplementation extends AnyWorkflowImplementation,
-  const TTaskImplementation extends AnyTaskImplementation =
-    AnyTaskImplementation,
-  const TScheduleDefinition extends AnyScheduleDefinition =
-    AnyScheduleDefinition,
->(
-  config: WorkflowsConfig<
-    TWorkflowImplementation,
-    TTaskImplementation,
-    TScheduleDefinition
-  >,
-): WorkflowsConfig<
-  TWorkflowImplementation,
-  TTaskImplementation,
-  TScheduleDefinition
-> {
-  return Object.freeze(config)
+  const W extends AnyWorkflowImplementation = never,
+  const T extends AnyTaskImplementation = never,
+  const S extends AnyScheduleDefinition = AnyScheduleDefinition,
+  R = never,
+>(config: WorkflowsConfig<W, T, S, R>): NoInfer<WorkflowsConfig<W, T, S, R>> {
+  Object.freeze(config)
+  return config
 }
 
-export async function resolveWorkflowsConfig<
-  const TWorkflowImplementation extends AnyWorkflowImplementation,
-  const TTaskImplementation extends AnyTaskImplementation =
-    AnyTaskImplementation,
-  const TScheduleDefinition extends AnyScheduleDefinition =
-    AnyScheduleDefinition,
->(
-  config: WorkflowsConfig<
-    TWorkflowImplementation,
-    TTaskImplementation,
-    TScheduleDefinition
-  >,
+export async function resolveWorkflowsConfig(
+  config: AnyWorkflowsConfig,
 ): Promise<
   ResolvedWorkflowsConfig<
-    TWorkflowImplementation,
-    TTaskImplementation,
-    TScheduleDefinition
+    AnyWorkflowImplementation,
+    AnyTaskImplementation,
+    AnyScheduleDefinition,
+    any
   >
 > {
   const workflows = await config.workflows()
   const tasks = (await config.tasks?.()) ?? []
-  const { workers } = config
-  if (workers && ('activity' in workers || 'task' in workers)) {
-    throw new Error(
-      'Workflows workers.activity and workers.task were replaced by workers.execution',
-    )
-  }
   const schedules = (await config.schedules?.()) ?? []
-  const plugins = config.plugins ?? []
-  const coordinator = normalizePool(workers?.coordinator)
+  const layer = config.layer ?? Layer.empty
+  const coordinator = normalizePool(config.workers?.coordinator)
   const execution = normalizeExecutionPools(
-    workers?.execution,
+    config.workers?.execution,
     workflows,
     tasks,
   )
-
   return {
     runtime: config.runtime,
     workflows,
     tasks,
     schedules,
-    plugins,
+    layer,
     workers: { coordinator, execution },
   }
 }

@@ -1,4 +1,5 @@
-import { normalizeStoredValue } from '../codec.ts'
+import { encodeStoredValue } from '../codec.ts'
+import { WorkflowCleanupTimeoutError } from '../handler.ts'
 import {
   isWorkflowUserCallbackError,
   type AdvanceCtx,
@@ -27,17 +28,19 @@ export async function advanceWorkflowRun(
   if (!nextNode) {
     let output: unknown
     try {
-      output = await input.workflow.finish(
-        input.workflowCtx,
-        input.outputs,
-        input.run.input,
+      output = await input.handlers.run(
+        () => input.workflow.finish(input.outputs, input.workflowInput),
+        input.signal,
       )
-      output = normalizeStoredValue(
+      input.signal.throwIfAborted()
+      output = encodeStoredValue(
         input.workflow.workflow.output,
         output,
         `workflow output [${input.workflow.workflow.name}]`,
       )
     } catch (error) {
+      if (input.signal.aborted || error instanceof WorkflowCleanupTimeoutError)
+        throw error
       await failRunAndWakeParent({
         store: input.store,
         runCoordinationExecutor: input.runCoordinationExecutor,

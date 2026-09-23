@@ -457,9 +457,6 @@ importers:
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      '@nmtjs/core':
-        specifier: workspace:*
-        version: link:../core
       '@nmtjs/neem':
         specifier: workspace:*
         version: link:../neem
@@ -485,6 +482,9 @@ importers:
       pg:
         specifier: ^8.22.0
         version: 8.22.0
+      pino:
+        specifier: ^10.3.1
+        version: 10.3.1
 
 packages:
 

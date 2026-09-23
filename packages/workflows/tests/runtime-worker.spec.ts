@@ -1,4 +1,4 @@
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -22,11 +22,11 @@ import {
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 describe('workflow worker runtime', () => {
-  const createTestContainer = () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    return new Container({ logger })
+  const createTestContext = () => {
+    return Context.empty()
   }
 
   it('starts and completes a standalone task run without parent continuation', async () => {
@@ -36,7 +36,8 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: `embedding:${input.text}` }),
+      handler: (input) =>
+        fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
     const runtime = createInMemoryWorkflowRuntime()
 
@@ -75,7 +76,7 @@ describe('workflow worker runtime', () => {
       attemptExecutor: runtime.attemptExecutor,
       tasks: [implementation],
       workerId: 'task-worker-1',
-      container: createTestContainer(),
+      context: createTestContext(),
       claimed: claimed!,
     })
 
@@ -205,14 +206,14 @@ describe('workflow worker runtime', () => {
       }
     }
 
-    const container = createTestContainer()
+    const context = createTestContext()
     const completionTask = defineTask({
       name: 'atomic-marker-completion-task',
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ id: Schema.String }),
     })
     const completionImplementation = implementTask(completionTask, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const completionRuntime = createInMemoryWorkflowRuntime()
     const completionRun = await startTaskRun({
@@ -232,7 +233,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...completionMarker,
-      container,
+      context,
       tasks: [completionImplementation],
       workerId: 'task-worker-1',
       claimed: completionClaimed!,
@@ -257,9 +258,10 @@ describe('workflow worker runtime', () => {
       retry: { attempts: 2 },
     })
     const retryImplementation = implementTask(retryTask, {
-      handler: async () => {
-        throw new Error('retry me')
-      },
+      handler: () =>
+        fromPromise(async () => {
+          throw new Error('retry me')
+        }),
     })
     const retryRuntime = createInMemoryWorkflowRuntime()
     await startTaskRun({
@@ -279,7 +281,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...retryMarker,
-      container,
+      context,
       tasks: [retryImplementation],
       workerId: 'task-worker-1',
       claimed: retryClaimed!,
@@ -305,11 +307,12 @@ describe('workflow worker runtime', () => {
       .build()
     const reconcileWorkflowImplementation = implementWorkflow(reconcileWorkflow)
       .child(reconcileTask)
-      .finish((_ctx, { child }) => ({ id: child.id }))
+      .finish(({ child }) => fromPromise(() => ({ id: child.id })))
     const reconcileTaskImplementation = implementTask(reconcileTask, {
-      handler: async () => {
-        throw new Error('stale reconcile should not run handler')
-      },
+      handler: () =>
+        fromPromise(async () => {
+          throw new Error('stale reconcile should not run handler')
+        }),
     })
     const reconcileRuntime = createInMemoryWorkflowRuntime()
     const parentRun = await reconcileRuntime.store.createRun({
@@ -323,7 +326,7 @@ describe('workflow worker runtime', () => {
     })
     await runWorkflowWorker({
       ...reconcileRuntime,
-      container,
+      context,
       workflows: [reconcileWorkflowImplementation],
       workerId: 'workflow-worker-1',
     })
@@ -344,7 +347,7 @@ describe('workflow worker runtime', () => {
 
     await runTaskAttempt({
       ...reconcileMarker,
-      container,
+      context,
       tasks: [reconcileTaskImplementation],
       workerId: 'task-worker-1',
       claimed: reconcileClaimed!,
@@ -373,14 +376,15 @@ describe('workflow worker runtime', () => {
       .build()
     const workflowImplementation = implementWorkflow(workflow)
       .child(task)
-      .finish((_ctx, { child }) => ({ id: child.id }))
+      .finish(({ child }) => fromPromise(() => ({ id: child.id })))
     const taskImplementation = implementTask(task, {
-      handler: async () => {
-        throw new Error('stale timed-out attempt should not run handler')
-      },
+      handler: () =>
+        fromPromise(async () => {
+          throw new Error('stale timed-out attempt should not run handler')
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -392,7 +396,7 @@ describe('workflow worker runtime', () => {
     })
     await runWorkflowWorker({
       ...runtime,
-      container,
+      context,
       workflows: [workflowImplementation],
       workerId: 'workflow-worker-1',
     })
@@ -414,7 +418,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       tasks: [taskImplementation],
       workerId: 'task-worker-1',
       claimed: claimed!,
@@ -438,7 +442,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ text: input.text }),
+      (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -455,7 +459,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -478,7 +482,7 @@ describe('workflow worker runtime', () => {
 
     const result = await runWorkflowWorker({
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [],
       workerId: 'retention-worker-1',
       retention: {
@@ -503,8 +507,8 @@ describe('workflow worker runtime', () => {
       })
       .build()
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input) => ({ text: input.text }))
-      .finish((_ctx, { content }) => content)
+      .content((input) => fromPromise(async () => ({ text: input.text })))
+      .finish(({ content }) => fromPromise(() => content))
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
@@ -528,7 +532,7 @@ describe('workflow worker runtime', () => {
           throw new Error('activity queue down')
         },
       },
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
       onError: (error) => errors.push(error),
@@ -551,7 +555,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ text: input.text }),
+      (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -579,7 +583,7 @@ describe('workflow worker runtime', () => {
         },
       },
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
       idleDelayMs: 1,
@@ -597,7 +601,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ text: input.text }),
+      (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const run = await runtime.store.createRun({
@@ -619,7 +623,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -633,7 +637,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -650,7 +654,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ text: input.text }),
+      (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     await runtime.runCoordinationExecutor.enqueue({
@@ -677,7 +681,7 @@ describe('workflow worker runtime', () => {
       store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -698,10 +702,12 @@ describe('workflow worker runtime', () => {
       })
       .build()
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input) => ({ text: `content:${input.text}` }))
-      .finish((_ctx, { content }) => ({ text: content.text }))
+      .content((input) =>
+        fromPromise(async () => ({ text: `content:${input.text}` })),
+      )
+      .finish(({ content }) => fromPromise(() => ({ text: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -715,7 +721,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -725,7 +731,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'activity-worker-1',
     })
@@ -738,7 +744,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -770,25 +776,36 @@ describe('workflow worker runtime', () => {
       .build()
     const implementation = implementWorkflow(workflow)
       .sections(({ activity }) => ({
-        alpha: activity(async (_ctx, input) => ({ text: `a:${input.text}` }), {
-          input: (_ctx, _outputs, input) => input,
-        }),
-        beta: activity(async (_ctx, input) => ({ text: `b:${input.text}` }), {
-          input: (_ctx, _outputs, input) => input,
-        }),
-        gamma: activity(async (_ctx, input) => ({ text: `c:${input.text}` }), {
-          input: (_ctx, _outputs, input) => input,
-        }),
+        alpha: activity(
+          (input) => fromPromise(async () => ({ text: `a:${input.text}` })),
+          {
+            input: (_outputs, input) => input,
+          },
+        ),
+        beta: activity(
+          (input) => fromPromise(async () => ({ text: `b:${input.text}` })),
+          {
+            input: (_outputs, input) => input,
+          },
+        ),
+        gamma: activity(
+          (input) => fromPromise(async () => ({ text: `c:${input.text}` })),
+          {
+            input: (_outputs, input) => input,
+          },
+        ),
       }))
-      .finish((_ctx, { sections }) => ({
-        text: [
-          sections.alpha.text,
-          sections.beta.text,
-          sections.gamma.text,
-        ].join('|'),
-      }))
+      .finish(({ sections }) =>
+        fromPromise(() => ({
+          text: [
+            sections.alpha.text,
+            sections.beta.text,
+            sections.gamma.text,
+          ].join('|'),
+        })),
+      )
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -803,7 +820,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -812,7 +829,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'activity-worker-1',
     })
@@ -823,7 +840,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-2',
     })
@@ -848,14 +865,16 @@ describe('workflow worker runtime', () => {
       .build()
     let calls = 0
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input) => {
-        calls += 1
-        if (calls === 1) throw new Error('transient activity failure')
-        return { text: `content:${input.text}` }
-      })
-      .finish((_ctx, { content }) => ({ text: content.text }))
+      .content((input) =>
+        fromPromise(async () => {
+          calls += 1
+          if (calls === 1) throw new Error('transient activity failure')
+          return { text: `content:${input.text}` }
+        }),
+      )
+      .finish(({ content }) => fromPromise(() => ({ text: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -870,7 +889,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -879,7 +898,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'activity-worker-1',
     })
@@ -887,7 +906,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -921,20 +940,22 @@ describe('workflow worker runtime', () => {
     })
     let timeoutReason: unknown
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input, lifecycle) => {
-        lifecycle?.signal.addEventListener(
-          'abort',
-          () => {
-            timeoutReason = lifecycle.signal.reason
-          },
-          { once: true },
-        )
-        await lateHandlerFinished
-        return { text: `too-late:${input.text}` }
-      })
-      .finish((_ctx, { content }) => ({ text: content.text }))
+      .content((input, lifecycle) =>
+        fromPromise(async () => {
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              timeoutReason = lifecycle.signal.reason
+            },
+            { once: true },
+          )
+          await lateHandlerFinished
+          return { text: `too-late:${input.text}` }
+        }),
+      )
+      .finish(({ content }) => fromPromise(() => ({ text: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -949,7 +970,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -958,7 +979,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'activity-worker-1',
     })
@@ -968,7 +989,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -997,10 +1018,10 @@ describe('workflow worker runtime', () => {
       })
       .build()
     const implementation = implementWorkflow(workflow)
-      .content(async (_ctx, input) => ({ text: input.text }))
-      .finish((_ctx, { content }) => ({ text: content.text }))
+      .content((input) => fromPromise(async () => ({ text: input.text })))
+      .finish(({ content }) => fromPromise(() => ({ text: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
-    const container = createTestContainer()
+    const context = createTestContext()
     const run = await runtime.store.createRun({
       workflowName: workflow.name,
       input: { text: 'alpha' },
@@ -1014,7 +1035,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       workerId: 'workflow-worker-1',
     })
@@ -1043,7 +1064,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor,
-      container,
+      context,
       workflows: [implementation],
       activityNames: ['missing'],
       workerId: 'activity-worker-1',
@@ -1062,12 +1083,13 @@ describe('workflow worker runtime', () => {
     }).build()
     let slowFinished = false
     const implementation = implementWorkflow(workflow).finish(
-      async (_ctx, _outputs, input) => {
-        if (input.text === 'bad') throw new Error('bad finish')
-        await new Promise((resolve) => setTimeout(resolve, 10))
-        slowFinished = true
-        return { text: input.text }
-      },
+      (_outputs, input) =>
+        fromPromise(async () => {
+          if (input.text === 'bad') throw new Error('bad finish')
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          slowFinished = true
+          return { text: input.text }
+        }),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const badRun = await runtime.store.createRun({
@@ -1090,7 +1112,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [implementation],
       workerId: 'workflow-worker-1',
       concurrency: 2,
@@ -1111,7 +1133,8 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: `embedding:${input.text}` }),
+      handler: (input) =>
+        fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const run = await startTaskRun({
@@ -1127,7 +1150,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
     })
@@ -1148,11 +1171,12 @@ describe('workflow worker runtime', () => {
     })
     let calls = 0
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
-        calls += 1
-        if (calls === 1) throw new Error('transient task failure')
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          calls += 1
+          if (calls === 1) throw new Error('transient task failure')
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const run = await startTaskRun({
@@ -1168,7 +1192,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
     })
@@ -1200,21 +1224,22 @@ describe('workflow worker runtime', () => {
     })
     let timeoutReason: unknown
     const implementation = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        calls += 1
-        if (calls === 1) {
-          lifecycle?.signal.addEventListener(
-            'abort',
-            () => {
-              timeoutReason = lifecycle.signal.reason
-            },
-            { once: true },
-          )
-          await lateHandlerFinished
-          return { id: 'too-late' }
-        }
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          calls += 1
+          if (calls === 1) {
+            lifecycle?.signal.addEventListener(
+              'abort',
+              () => {
+                timeoutReason = lifecycle.signal.reason
+              },
+              { once: true },
+            )
+            await lateHandlerFinished
+            return { id: 'too-late' }
+          }
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const run = await startTaskRun({
@@ -1230,7 +1255,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
     })
@@ -1266,10 +1291,11 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
-        await new Promise((resolve) => setTimeout(resolve, 15))
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 15))
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const run = await startTaskRun({
@@ -1285,7 +1311,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
     })
@@ -1308,9 +1334,10 @@ describe('workflow worker runtime', () => {
         retry: { attempts: 3, delay: '1s', backoff: 'exponential' },
       })
       const implementation = implementTask(task, {
-        handler: async () => {
-          throw new Error('still failing')
-        },
+        handler: () =>
+          fromPromise(async () => {
+            throw new Error('still failing')
+          }),
       })
       const runtime = createInMemoryWorkflowRuntime()
       const run = await startTaskRun({
@@ -1326,7 +1353,7 @@ describe('workflow worker runtime', () => {
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
       })
@@ -1340,7 +1367,7 @@ describe('workflow worker runtime', () => {
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
       })
@@ -1354,7 +1381,7 @@ describe('workflow worker runtime', () => {
         store: runtime.store,
         runCoordinationExecutor: runtime.runCoordinationExecutor,
         attemptExecutor: runtime.attemptExecutor,
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
       })
@@ -1380,10 +1407,11 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
-        await new Promise((resolve) => setTimeout(resolve, 45))
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 45))
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     try {
@@ -1407,7 +1435,7 @@ describe('workflow worker runtime', () => {
             return await runtime.attemptExecutor.heartbeat(attempt)
           },
         },
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
         leaseMs: 10,
@@ -1437,17 +1465,18 @@ describe('workflow worker runtime', () => {
     })
     let leaseLostReason: unknown
     const implementation = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        lifecycle?.signal.addEventListener(
-          'abort',
-          () => {
-            leaseLostReason = lifecycle.signal.reason
-          },
-          { once: true },
-        )
-        await new Promise((resolve) => setTimeout(resolve, 30))
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              leaseLostReason = lifecycle.signal.reason
+            },
+            { once: true },
+          )
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     try {
@@ -1479,7 +1508,7 @@ describe('workflow worker runtime', () => {
             await runtime.attemptExecutor.release(attempt)
           },
         },
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
         leaseMs: 3,
@@ -1511,17 +1540,18 @@ describe('workflow worker runtime', () => {
     })
     let cancelReason: unknown
     const implementation = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        lifecycle?.signal.addEventListener(
-          'abort',
-          () => {
-            cancelReason = lifecycle.signal.reason
-          },
-          { once: true },
-        )
-        await new Promise((resolve) => setTimeout(resolve, 30))
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              cancelReason = lifecycle.signal.reason
+            },
+            { once: true },
+          )
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     try {
@@ -1550,7 +1580,7 @@ describe('workflow worker runtime', () => {
             await runtime.attemptExecutor.dispatchTask(...args)
           },
         },
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
         leaseMs: 3,
@@ -1592,10 +1622,11 @@ describe('workflow worker runtime', () => {
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
-        handlerCalls += 1
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          handlerCalls += 1
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -1607,7 +1638,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
       leaseMs: 3,
@@ -1616,7 +1647,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       workflows: [],
       workerId: 'coordinator',
       leaseMs: 3,
@@ -1644,10 +1675,11 @@ describe('workflow worker runtime', () => {
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
-      handler: async (_ctx, input) => {
-        handlerCalls += 1
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input) =>
+        fromPromise(async () => {
+          handlerCalls += 1
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -1661,7 +1693,7 @@ describe('workflow worker runtime', () => {
       store: runtime.store,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
       attemptExecutor: runtime.attemptExecutor,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
       leaseMs: 3,
@@ -1692,18 +1724,19 @@ describe('workflow worker runtime', () => {
       handlerStarted = resolve
     })
     const implementation = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        handlerStarted()
-        lifecycle?.signal.addEventListener(
-          'abort',
-          () => {
-            shutdownReason = lifecycle.signal.reason
-          },
-          { once: true },
-        )
-        await new Promise((resolve) => setTimeout(resolve, 30))
-        return { id: `embedding:${input.text}` }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          handlerStarted()
+          lifecycle?.signal.addEventListener(
+            'abort',
+            () => {
+              shutdownReason = lifecycle.signal.reason
+            },
+            { once: true },
+          )
+          await new Promise((resolve) => setTimeout(resolve, 30))
+          return { id: `embedding:${input.text}` }
+        }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     try {
@@ -1733,7 +1766,7 @@ describe('workflow worker runtime', () => {
             await runtime.attemptExecutor.release(attempt)
           },
         },
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: 'task-worker-1',
         leaseMs: 3,

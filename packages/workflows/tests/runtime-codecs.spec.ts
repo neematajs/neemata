@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -23,6 +23,7 @@ import {
   runExecutionWorker,
   runWorkflowWorker,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const at = '2026-09-20T10:00:00.000Z'
 const payload = Schema.Struct({
@@ -32,7 +33,6 @@ const payload = Schema.Struct({
 const native = Schema.Struct({ at: Schema.Date, count: Schema.Number })
 const encoded = { at, count: '7' }
 const decoded = { at: new Date(at), count: 7 }
-const encode = Schema.encodeSync(payload)
 
 for (const adapter of ['memory', 'postgres'] as const) {
   describe(`${adapter} durable codecs`, () => {
@@ -42,15 +42,13 @@ for (const adapter of ['memory', 'postgres'] as const) {
     })
 
     async function setup() {
-      const container = new Container({
-        logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
-      })
+      const context = Context.empty()
       if (adapter === 'memory')
-        return { ...createInMemoryWorkflowRuntime(), container }
+        return { ...createInMemoryWorkflowRuntime(), context }
       database = new PGlite()
       const connection = createPostgresWorkflowConnection(database)
       await installPostgresWorkflowSchemaForTesting(connection)
-      return { ...createPostgresWorkflowRuntime({ connection }), container }
+      return { ...createPostgresWorkflowRuntime({ connection }), context }
     }
 
     it('resumes parallel children without output schemas after serialization', async () => {
@@ -59,7 +57,9 @@ for (const adapter of ['memory', 'postgres'] as const) {
         name: 'untyped-parallel-child',
         input: Schema.String,
       }).build()
-      const childImpl = implementWorkflow(child).finish(() => undefined)
+      const childImpl = implementWorkflow(child).finish(() =>
+        fromPromise(() => undefined),
+      )
       const workflow = defineWorkflow({
         name: 'untyped-parallel-parent',
         input: Schema.String,
@@ -73,12 +73,14 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const impl = implementWorkflow(workflow)
         .members((h) => ({ a: h.workflow(child), b: h.workflow(child) }))
-        .pause(async (_ctx, input) => input)
-        .finish((_ctx, { members, pause }) => {
-          expect(members.a).toBeUndefined()
-          expect(members.b).toBeUndefined()
-          return pause
-        })
+        .pause((input) => fromPromise(async () => input))
+        .finish(({ members, pause }) =>
+          fromPromise(() => {
+            expect(members.a).toBeUndefined()
+            expect(members.b).toBeUndefined()
+            return pause
+          }),
+        )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, 'done')
       const workers = {
@@ -108,7 +110,9 @@ for (const adapter of ['memory', 'postgres'] as const) {
         name: 'untyped-map-child',
         input: Schema.String,
       }).build()
-      const childImpl = implementWorkflow(child).finish(() => undefined)
+      const childImpl = implementWorkflow(child).finish(() =>
+        fromPromise(() => undefined),
+      )
       const workflow = defineWorkflow({
         name: 'untyped-map-parent',
         input: Schema.String,
@@ -120,18 +124,20 @@ for (const adapter of ['memory', 'postgres'] as const) {
       const impl = implementWorkflow(workflow)
         .items(child, {
           items: () => ['a', 'b'],
-          input: (_ctx, _outputs, item) => item,
+          input: (_outputs, item) => item,
         })
-        .pause(async (_ctx, input) => input)
-        .finish((_ctx, { items, pause }) => {
-          expect(
-            items.items.map(({ item, output }) => ({ item, output })),
-          ).toEqual([
-            { item: 'a', output: undefined },
-            { item: 'b', output: undefined },
-          ])
-          return pause
-        })
+        .pause((input) => fromPromise(async () => input))
+        .finish(({ items, pause }) =>
+          fromPromise(() => {
+            expect(
+              items.items.map(({ item, output }) => ({ item, output })),
+            ).toEqual([
+              { item: 'a', output: undefined },
+              { item: 'b', output: undefined },
+            ])
+            return pause
+          }),
+        )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, 'done')
       const workers = {
@@ -163,21 +169,22 @@ for (const adapter of ['memory', 'postgres'] as const) {
           output: payload,
         })
         const taskImpl = implementTask(task, {
-          handler: async (_ctx, input) => {
-            expect(input).toEqual(decoded)
-            return encode(input)
-          },
+          handler: (input) =>
+            fromPromise(async () => {
+              expect(input).toEqual(decoded)
+              return input
+            }),
         })
         const child = defineWorkflow({
           name: 'codec-child',
           input: payload,
           output: payload,
         }).build()
-        const childImpl = implementWorkflow(child).finish(
-          (_ctx, _outputs, input) => {
+        const childImpl = implementWorkflow(child).finish((_outputs, input) =>
+          fromPromise(() => {
             expect(input).toEqual(decoded)
-            return encode(input)
-          },
+            return input
+          }),
         )
         const workflow = defineWorkflow({
           name: 'codec-parent',
@@ -213,77 +220,80 @@ for (const adapter of ['memory', 'postgres'] as const) {
           .build()
         let firstCalls = 0
         const impl = implementWorkflow(workflow)
-          .first(async (_ctx, input) => {
-            firstCalls++
-            expect(input).toEqual(decoded)
-            return encode(input)
-          })
-          .directTask(task, { input: (_ctx, { first }) => encode(first) })
+          .first((input) =>
+            fromPromise(async () => {
+              firstCalls++
+              expect(input).toEqual(decoded)
+              return input
+            }),
+          )
+          .directTask(task, { input: ({ first }) => first })
           .directWorkflow(child, {
-            input: (_ctx, { directTask }) => encode(directTask),
+            input: ({ directTask }) => directTask,
           })
           .choice({
-            select: (_ctx, { directWorkflow }) => {
+            select: ({ directWorkflow }) => {
               expect(directWorkflow).toEqual(decoded)
               return selected
             },
             cases: (h) => ({
-              activity: h.activity(async (_ctx, input) => input),
+              activity: h.activity((input) => fromPromise(async () => input)),
               task: h.task(task),
               workflow: h.workflow(child),
             }),
           })
           .members((h) => ({
-            activity: h.activity(async (_ctx, input) => input, {
-              input: (_ctx, { choice }) => encode(choice),
+            activity: h.activity((input) => fromPromise(async () => input), {
+              input: ({ choice }) => choice,
             }),
             task: h.task(task),
             workflow: h.workflow(child),
           }))
           .tasks(task, {
-            items: (_ctx, { members }) => {
+            items: ({ members }) => {
               expect(Object.values(members)).toEqual([
                 decoded,
                 decoded,
                 decoded,
               ])
-              return [at, at]
+              return [decoded.at, decoded.at]
             },
-            input: (_ctx, _outputs, item) => {
+            input: (_outputs, item) => {
               expect(item).toEqual(decoded.at)
-              return { at: item.toISOString(), count: '7' }
+              return { at: item, count: 7 }
             },
-            idempotency: (_ctx, _outputs, item, _input, index) => [
+            idempotency: (_outputs, item, _input, index) => [
               item.toISOString(),
               index,
             ],
           })
           .workflows(child, {
-            items: (_ctx, { tasks }) =>
-              tasks.items.map(({ item }) => item.toISOString()),
-            input: (_ctx, _outputs, item) => ({
-              at: item.toISOString(),
-              count: '7',
+            items: ({ tasks }) => tasks.items.map(({ item }) => item),
+            input: (_outputs, item) => ({
+              at: item,
+              count: 7,
             }),
           })
-          .finish((_ctx, outputs, input) => {
-            expect(input).toEqual(decoded)
-            expect(outputs.choice).toEqual(decoded)
-            for (const map of [outputs.tasks, outputs.workflows]) {
-              expect(
-                map.items.map(({ item, output }) => ({ item, output })),
-              ).toEqual([
-                { item: decoded.at, output: decoded },
-                { item: decoded.at, output: decoded },
-              ])
-            }
-            return encode(input)
-          })
+          .finish((outputs, input) =>
+            fromPromise(() => {
+              expect(input).toEqual(decoded)
+              expect(outputs.choice).toEqual(decoded)
+              for (const map of [outputs.tasks, outputs.workflows]) {
+                expect(
+                  map.items.map(({ item, output }) => ({ item, output })),
+                ).toEqual([
+                  { item: decoded.at, output: decoded },
+                  { item: decoded.at, output: decoded },
+                ])
+              }
+              return input
+            }),
+          )
         const client = createWorkflowRuntimeClient({
           ...runtime,
           definitions: [workflow],
         })
-        const run = await client.start(workflow, encoded)
+        const run = await client.start(workflow, decoded)
         expect(run.input).toEqual(decoded)
         expect(run.tags).toEqual({ at })
         expect(run.idempotencyKey).toEqual([7])
@@ -344,21 +354,22 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Date,
       })
       const taskImpl = implementTask(task, {
-        handler: async (_ctx, input) => {
-          expect(input).toEqual(decoded.at)
-          return input
-        },
+        handler: (input) =>
+          fromPromise(async () => {
+            expect(input).toEqual(decoded.at)
+            return input
+          }),
       })
       const workflow = defineWorkflow({
         name: 'native-date-workflow',
         input: Schema.Date,
         output: Schema.Date,
       }).build()
-      const impl = implementWorkflow(workflow).finish(
-        (_ctx, _outputs, input) => {
+      const impl = implementWorkflow(workflow).finish((_outputs, input) =>
+        fromPromise(() => {
           expect(input).toEqual(decoded.at)
           return input
-        },
+        }),
       )
       const client = createWorkflowRuntimeClient({
         ...runtime,
@@ -426,30 +437,33 @@ for (const adapter of ['memory', 'postgres'] as const) {
       let attempts = 0
       let fail = true
       const impl = implementWorkflow(workflow)
-        .saved(async (_ctx, input) => {
-          saved++
-          return encode(input)
-        })
+        .saved((input) =>
+          fromPromise(async () => {
+            saved++
+            return input
+          }),
+        )
         .retried(
-          async (_ctx, input) => {
-            attempts++
-            expect(input).toEqual(decoded)
-            if (fail) throw new Error('retry me')
-            return encode(input)
-          },
+          (input) =>
+            fromPromise(async () => {
+              attempts++
+              expect(input).toEqual(decoded)
+              if (fail) throw new Error('retry me')
+              return input
+            }),
           {
-            input: (_ctx, { saved }) => {
+            input: ({ saved }) => {
               mappings++
-              return encode(saved)
+              return saved
             },
           },
         )
-        .finish((_ctx, { retried }) => encode(retried))
+        .finish(({ retried }) => fromPromise(() => retried))
       const client = createWorkflowRuntimeClient({
         ...runtime,
         definitions: [workflow],
       })
-      const run = await client.start(workflow, encoded)
+      const run = await client.start(workflow, decoded)
       const drain = async () => {
         for (let pass = 0; pass < 3; pass++) {
           await runWorkflowWorker({
@@ -499,16 +513,17 @@ for (const adapter of ['memory', 'postgres'] as const) {
         tags: (input) => ({ at: input.at.toISOString() }),
       })
       const impl = implementTask(task, {
-        handler: async (_ctx, input) => {
-          expect(input).toEqual(decoded)
-          return encode(input)
-        },
+        handler: (input) =>
+          fromPromise(async () => {
+            expect(input).toEqual(decoded)
+            return input
+          }),
       })
       await runtime.scheduler!.reconcile([
         defineSchedule({
           name: 'codec-schedule',
           runnable: task,
-          input: encoded,
+          input: decoded,
           every: '1h',
         }),
       ])
@@ -538,10 +553,11 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Null,
       })
       const taskImpl = implementTask(task, {
-        handler: async (_ctx, input) => {
-          expect(input).toBeUndefined()
-          return null
-        },
+        handler: (input) =>
+          fromPromise(async () => {
+            expect(input).toBeUndefined()
+            return null
+          }),
       })
       const workflow = defineWorkflow({
         name: 'void-workflow',
@@ -555,10 +571,11 @@ for (const adapter of ['memory', 'postgres'] as const) {
       let mappings = 0
       const impl = implementWorkflow(workflow)
         .nil(
-          async (_ctx, input) => {
-            expect(input).toBeUndefined()
-            return null
-          },
+          (input) =>
+            fromPromise(async () => {
+              expect(input).toBeUndefined()
+              return null
+            }),
           {
             input: () => {
               mappings++
@@ -567,17 +584,20 @@ for (const adapter of ['memory', 'postgres'] as const) {
           },
         )
         .void(
-          async (_ctx, input) => {
-            expect(input).toBeNull()
-            return undefined
-          },
-          { input: (_ctx, { nil }) => nil },
+          (input) =>
+            fromPromise(async () => {
+              expect(input).toBeNull()
+              return undefined
+            }),
+          { input: ({ nil }) => nil },
         )
-        .task(task, { input: (_ctx, { void: value }) => value })
-        .finish((_ctx, outputs) => {
-          expect(outputs).toEqual({ nil: null, void: undefined, task: null })
-          return undefined
-        })
+        .task(task, { input: ({ void: value }) => value })
+        .finish((outputs) =>
+          fromPromise(() => {
+            expect(outputs).toEqual({ nil: null, void: undefined, task: null })
+            return undefined
+          }),
+        )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, 'root')
       for (let pass = 0; pass < 4; pass++) {
@@ -631,7 +651,9 @@ for (const adapter of ['memory', 'postgres'] as const) {
         name: 'untyped-codec-output',
         input: Schema.String,
       }).build()
-      const impl = implementWorkflow(workflow).finish(() => new Date(at))
+      const impl = implementWorkflow(workflow).finish(() =>
+        fromPromise(() => new Date(at)),
+      )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, 'input')
       await runWorkflowWorker({

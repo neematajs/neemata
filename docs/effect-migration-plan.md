@@ -1,8 +1,9 @@
 # Neemata × Effect migration
 
 Date: 2026-09-21
-Status: slices 1–4 implemented and reviewed; GO for slice 5. The decoded-Type
-decision below supersedes the earlier Encoded submission/mapper decision.
+Status: slices 1–5 implemented and reviewed; slice 5 review fixes applied.
+Slice 6 preparation is next; deletion remains gated on the application proofs and cutover assessment.
+The decoded-Type decision below supersedes the earlier Encoded submission/mapper decision.
 Baseline: `b2602ae0be76e92dfc06f0392977263c2883ff9c` (`main`).
 
 This plan supersedes [Application Interfaces](application-interfaces-plan.md).
@@ -450,3 +451,124 @@ Full oxlint reports only the existing Deno transport warning. Formatting and
 `git diff --check` passed. Live-service integration suites were not rerun; the
 PostgreSQL regression coverage used PGlite. Work remains uncommitted in
 `dev/effect-migration`; slice 5 implementation has not started.
+
+## Slice 5 implementation — 2026-09-21
+
+Workflow task/activity handlers and finish now return native Effects. Core handler,
+Container, dependency-dictionary, plugin and execution-environment plumbing is
+removed from workflows, including its `@nmtjs/core` dependency. Implementations,
+branch/parallel activities and adapter factories retain their service requirements;
+`defineWorkflows` and `defineWorkflowsWorker` require a closed Layer that supplies
+them. Handler Scope is provided by the engine, independently of the main scope.
+
+All typed submissions, mappers, map items, schedules, handlers and finish use decoded
+Type. The shared codec writes JSON once at persistence boundaries and reconstructs
+Type on reads. Obsolete authored-Encoded aliases/helpers and the separate activity
+mapper type parameter are removed. `start` and restart return decoded views; history
+and other definition-free reads still return stored JSON.
+
+One scoped main fiber owns the worker Layer and adapter. The handler executor uses
+stable `Effect.runPromiseExitWith(context)` with the engine AbortSignal and a Scope
+per invocation. It retains actual fiber completion promises after a cleanup deadline
+expires. The main finalizer stops claims, aborts attempts/finish, joins the worker
+loop, drains those promises, and only then disposes the adapter and Layer. This
+preserves lifetime ordering even when an execution had been awaiting a store read
+when shutdown began.
+
+Typed failures, defects and unexplained interruptions consume attempts under the
+existing retry policy. Engine cancellation/timeout/shutdown/lease-loss reasons keep
+their classifications, including mixed interruption/finalizer failures. Single
+failures retain existing StoredError behavior; mixed Causes retain their rendered
+details. Attempt and coordinator write fencing remains authoritative after success.
+Finish remains coordination work with terminal failure semantics; it should assemble
+results, while retryable or long-running work belongs in tasks/activities.
+
+`cleanupTimeoutMs` defaults to 5 seconds per pool. An overrun stops claims and fails
+`NeemRuntime.finished`, allowing existing host supervision to recycle the thread.
+The deadline remains active through adapter and Layer finalization; a stuck
+Layer cannot leave a failed worker appearing live. An overrun never authorizes
+early service disposal. A live PostgreSQL + Neem test
+proves recovery of the stuck task and a sibling on a new thread, with no premature
+Layer release. Expired-lease takeover redelivers the same durable attempt rather
+than manufacturing a handler failure or consuming a business retry.
+
+Existing engine scenarios use a test-only async-to-Effect helper. Native Effect
+coverage exercises service requirements, scoped resources, typed/defect/Promise
+failures, unexplained and mixed interruption, cancellation, timeout, lease loss,
+late output fencing, shutdown resumption and cleanup overruns. No public async
+handler compatibility API was added.
+
+The lockfile change for this slice removes workflows' core dependency and adds
+Pino for its test logger. Format markers, typed error codecs, graph guards and
+retired-framework deletion remain outside this slice.
+
+Fresh validation (all JavaScript/TypeScript commands through `vp env exec`):
+
+| Check                                                                                    | Result                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm tsc -b tsconfig.build.json --pretty false`                                         | Full workspace build passed.                                                                                                                             |
+| `pnpm tsc -b tsconfig.json --noEmit --pretty false`                                      | Full workspace typecheck passed, including native Effect requirement/rejection assertions.                                                               |
+| Workflows `pnpm vitest run --config vitest.config.ts --reporter=agent`                   | 33 files passed; **564 passed, 2 existing skips**.                                                                                                       |
+| Workflows `pnpm vitest run --config vitest.config.ts tests/integration --reporter=agent` | All 4 files and **18 tests passed**, using a dedicated local PostgreSQL 18.6 database with service tests required. Includes actual Neem thread recovery. |
+| Effect preset unit/type suite                                                            | **15 tests passed**.                                                                                                                                     |
+| `pnpm oxlint . --format=agent`                                                           | No errors; only the existing Deno transport warning.                                                                                                     |
+| Formatting and `git diff --check`                                                        | Passed.                                                                                                                                                  |
+
+The integration suite emitted the pg 8 deprecation warning about concurrent queries
+on one client; it did not fail. The temporary PostgreSQL container and copied recovery
+fixtures were removed after validation. No commits, deployment, CaseNetwork edits,
+or retired-framework deletion were made. Changes remain in `dev/effect-migration`.
+
+The slice 5 review and follow-up are recorded below. Slice 6 still requires the
+real CaseNetwork stream/upload proof and the documented deployment/data compatibility
+assessment before deletion.
+
+## Slice 5 review follow-up — 2026-09-21
+
+The review approved slice 6 preparation. Both lifecycle defects are fixed:
+pre-aborted attempts reject with the engine reason before invoking any user code;
+worker startup shares one promise across asynchronous definition resolution.
+Stopping before a fiber exists settles `finished`, rejects pending startup, and
+prevents later resource acquisition. Four regression cases reproduced the defects
+before the fixes and pass afterwards.
+
+The major-version callback API now drops the vestigial `ctx` parameter throughout:
+handlers take `(input, lifecycle)`, finish and ordinary node callbacks take
+`(outputs, workflowInput)`, and map input/idempotency callbacks take
+`(outputs, item, workflowInput, index)`. Effect handlers obtain services by yielding
+them; synchronous callbacks use explicit arguments or immutable closures. Runtime
+calls, implementation types, examples, fixtures, and tests use the same signatures.
+The low-level executor still accepts an Effect Context for running handlers.
+
+`lifecycle.signal` is deliberately retained: it exposes the engine's typed abort
+reason, while Effect's Promise signal represents fiber interruption. Workflows also
+keeps its scoped-fiber supervisor separate from `@nmtjs/effect`: it has a worker
+definition and must reject `finished` on fatal overruns before finalizers complete.
+Sharing that lifecycle would require extending the preset's public contract; this
+follow-up instead adds coverage for the two divergent lifecycle paths.
+
+The README now documents Neem's hard 5-second requested-stop deadline, the existing
+startup-stop constraint, and that one cleanup overrun recycles healthy siblings.
+Operators should keep finalizers short, budget total cleanup within the host deadline,
+and place risky handlers in separate execution pools. No host timeout or startup
+behavior is changed here.
+
+CaseNetwork client rejection normalization, request-origin/content-type checks,
+and database-cause logging remain prerequisites of its next RPC migration. The real
+stream/upload proof and drain/data-compatibility assessment still precede slice 6
+deletion. Stored-format markers and legacy-run restrictions remain deferred.
+
+Fresh follow-up validation, all JavaScript/TypeScript commands via `vp env exec`:
+
+- Workspace build and typecheck passed (`tsc -b tsconfig.build.json --pretty false`
+  and `tsc -b tsconfig.json --noEmit --pretty false`).
+- Workflows: **568 passed, 2 existing skips**, across 33 files.
+- Live PostgreSQL 18.6: **18 passed**, across all 4 integration files, including
+  actual Neem thread recovery. Service tests were required.
+- Effect preset: **15 passed**.
+- Full `oxlint . --format=agent`: only the existing Deno transport warning.
+- Formatting and `git diff --check` passed.
+
+The temporary PostgreSQL container and copied recovery fixtures were removed and
+removal verified. Work remains uncommitted in `dev/effect-migration`; CaseNetwork
+and the original checkout were not changed.

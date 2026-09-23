@@ -1,4 +1,4 @@
-import type { Container, DependencyContext } from '@nmtjs/core'
+import type * as Context from 'effect/Context'
 
 import type {
   ActivityNodeImplementation,
@@ -17,8 +17,13 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
-import { decodeStoredValue, normalizeStoredValue } from '../codec.ts'
+import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { parseDurationMs } from '../duration.ts'
+import {
+  createHandlerRuntime,
+  WorkflowCleanupTimeoutError,
+  type HandlerRuntime,
+} from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
@@ -63,7 +68,10 @@ export type RunActivityAttemptInput = {
   readonly leaseMs?: number
   readonly signal?: AbortSignal
   readonly wakeEvents?: WorkflowWakeEvents
-  readonly container: Pick<Container, 'createContext'>
+  readonly context: Context.Context<never>
+  readonly handlers?: HandlerRuntime
+  readonly cleanupTimeoutMs?: number
+  readonly onFatal?: (error: unknown) => void
 }
 
 export async function runActivityAttempt(
@@ -140,20 +148,19 @@ export async function runActivityAttempt(
     const timeoutMs = resolveActivityAttemptTimeoutMs(workflow, command)
     output = await runWithAttemptHeartbeat(
       input,
-      async (lifecycle) => {
-        const ctx = await input.container.createContext(
-          node.activity.dependencies,
-        )
-        return await node.activity.handler(
-          ctx as DependencyContext<any>,
-          decodeStoredValue(
-            schemas.input,
-            command.input,
-            `activity input [${schemas.label}]`,
-          ),
-          lifecycle,
-        )
-      },
+      (lifecycle) =>
+        (input.handlers ?? createHandlerRuntime(input.context, input)).run(
+          () =>
+            node.activity.handler(
+              decodeStoredValue(
+                schemas.input,
+                command.input,
+                `activity input [${schemas.label}]`,
+              ),
+              lifecycle,
+            ),
+          lifecycle.signal,
+        ),
       timeoutMs === undefined
         ? undefined
         : {
@@ -167,13 +174,17 @@ export async function runActivityAttempt(
               }),
           },
     )
-    output = normalizeStoredValue(
+    output = encodeStoredValue(
       schemas.output,
       output,
       `activity output [${schemas.label}]`,
     )
   } catch (error) {
-    if (isAttemptHeartbeatLeaseLost(error) || isAttemptShutdown(error)) {
+    if (
+      error instanceof WorkflowCleanupTimeoutError ||
+      isAttemptHeartbeatLeaseLost(error) ||
+      isAttemptShutdown(error)
+    ) {
       throw error
     }
     if (isAttemptCancellationObserved(error)) {

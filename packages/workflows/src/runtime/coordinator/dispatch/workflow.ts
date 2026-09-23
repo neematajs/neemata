@@ -35,9 +35,8 @@ export async function dispatchWorkflowNode(
     resolveIdempotencyKey: () =>
       resolveIdempotency(
         input.node.idempotency,
-        input.workflowCtx,
         input.outputs,
-        input.run.input,
+        input.workflowInput,
       ),
     resolveNodeInput: () => {
       if (hasStoredNodeInput(existing)) return existing.input
@@ -45,15 +44,10 @@ export async function dispatchWorkflowNode(
         input.node.target.input,
         input.node.input
           ? runWorkflowUserCallback(() =>
-              input.node.input!(
-                input.workflowCtx,
-                input.outputs,
-                input.run.input,
-              ),
+              input.node.input!(input.outputs, input.workflowInput),
             )
-          : input.run.input,
+          : input.workflowInput,
         `workflow input [${input.workflow.workflow.name}.${input.node.name}]`,
-        !input.node.input,
       )
     },
   })

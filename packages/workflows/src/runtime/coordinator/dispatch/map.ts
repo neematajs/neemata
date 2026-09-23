@@ -182,7 +182,7 @@ async function dispatchMap<T extends MapDeclaration>(
     const items = encodeMapItems(
       typedDeclaration.item,
       runWorkflowUserCallback(() =>
-        input.node.items(input.workflowCtx, input.outputs, input.run.input),
+        input.node.items(input.outputs, input.workflowInput),
       ),
       `map item [${input.workflow.workflow.name}.${input.node.name}]`,
     )
@@ -319,10 +319,9 @@ async function dispatchMap<T extends MapDeclaration>(
         input.node.target.input,
         runWorkflowUserCallback(() =>
           input.node.input(
-            input.workflowCtx,
             input.outputs,
             item,
-            input.run.input,
+            input.workflowInput,
             child.ordinal,
           ),
         ),
@@ -330,10 +329,9 @@ async function dispatchMap<T extends MapDeclaration>(
       )
       const idempotencyKey = resolveIdempotency(
         input.node.idempotency,
-        input.workflowCtx,
         input.outputs,
         item,
-        input.run.input,
+        input.workflowInput,
         child.ordinal,
       )
       await callbacks.startChild({

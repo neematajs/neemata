@@ -6,7 +6,7 @@ export type {
   WorkflowsNamedExecutionWorkerPoolConfig,
   WorkflowsConfig,
   WorkflowsImplementationsFactory,
-  WorkflowsRuntimeFactory,
+  WorkflowsRuntime,
   WorkflowSchedulesFactory,
   WorkflowsWorkerPoolConfig,
   WorkflowsWorkersConfig,

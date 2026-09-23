@@ -8,7 +8,6 @@ import type {
   AnyWorkflowDefinition,
   RunKind,
   RunnableRun,
-  SchemaInput,
   SchemaOutput,
   TaskInput,
   TaskRun,
@@ -88,6 +87,7 @@ import {
   type RegisteredTaskImplementation,
   type RegisteredWorkflowImplementation,
 } from '../src/runtime/registry.ts'
+import { fromPromise } from './support/effect.ts'
 
 type SemanticWorkflowStoreMethods = {
   listRuns(params?: ListRunsFilter): Promise<ListRunsResult>
@@ -234,8 +234,8 @@ describe('workflow runtime interfaces', () => {
       Awaited<ReturnType<WorkflowRuntimeClient['restart']>>
     >().toEqualTypeOf<RunnableRun>()
     expectTypeOf<
-      SchemaInput<typeof Schema.DateFromString>
-    >().toEqualTypeOf<string>()
+      SchemaOutput<typeof Schema.DateFromString>
+    >().toEqualTypeOf<Date>()
     expectTypeOf<
       SchemaOutput<typeof Schema.DateFromString>
     >().toEqualTypeOf<Date>()
@@ -292,26 +292,27 @@ describe('workflow runtime interfaces', () => {
     >()
   })
 
-  it('keeps two-arg handlers assignable while allowing lifecycle signals', () => {
+  it('keeps input-only handlers assignable while allowing lifecycle signals', () => {
     const task = defineTask({
       name: 'handler-lifecycle-task',
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ id: Schema.String }),
     })
     const lifecycleTask = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        expectTypeOf(lifecycle).toEqualTypeOf<AttemptLifecycle | undefined>()
-        return {
-          id: lifecycle?.signal.aborted ? 'aborted' : input.text,
-        }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          expectTypeOf(lifecycle).toEqualTypeOf<AttemptLifecycle>()
+          return {
+            id: lifecycle.signal.aborted ? 'aborted' : input.text,
+          }
+        }),
     })
-    const twoArgTask = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+    const inputOnlyTask = implementTask(task, {
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
 
     expect(lifecycleTask.handler).toBeTypeOf('function')
-    expect(twoArgTask.handler).toBeTypeOf('function')
+    expect(inputOnlyTask.handler).toBeTypeOf('function')
   })
 
   it('exports semantic orchestration store contracts', () => {
@@ -503,19 +504,19 @@ describe('workflow runtime interfaces', () => {
       .build()
 
     const taskImpl = implementTask(task, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
-    const childImpl = implementWorkflow(child).finish(
-      (_ctx, _outputs, input) => ({
+    const childImpl = implementWorkflow(child).finish((_outputs, input) =>
+      fromPromise(() => ({
         text: input.text,
-      }),
+      })),
     )
     const parentImpl = implementWorkflow(parent)
-      .embedding(task, { input: (_ctx, _outputs, input) => input })
+      .embedding(task, { input: (_outputs, input) => input })
       .child(child, {
-        input: (_ctx, { embedding }) => ({ text: embedding.id }),
+        input: ({ embedding }) => ({ text: embedding.id }),
       })
-      .finish((_ctx, { embedding }) => ({ id: embedding.id }))
+      .finish(({ embedding }) => fromPromise(() => ({ id: embedding.id })))
 
     const registry = createWorkflowRuntimeRegistry({
       workflows: [parentImpl, childImpl],
@@ -543,10 +544,10 @@ describe('workflow runtime interfaces', () => {
       createWorkflowRuntimeRegistry({
         tasks: [
           implementTask(task, {
-            handler: async (_ctx, input) => ({ id: input.text }),
+            handler: (input) => fromPromise(async () => ({ id: input.text })),
           }),
           implementTask(task, {
-            handler: async (_ctx, input) => ({ id: input.text }),
+            handler: (input) => fromPromise(async () => ({ id: input.text })),
           }),
         ],
       }),
@@ -555,8 +556,12 @@ describe('workflow runtime interfaces', () => {
     expect(() =>
       createWorkflowRuntimeRegistry({
         workflows: [
-          implementWorkflow(workflow).finish((_ctx, _outputs, input) => input),
-          implementWorkflow(workflow).finish((_ctx, _outputs, input) => input),
+          implementWorkflow(workflow).finish((_outputs, input) =>
+            fromPromise(() => input),
+          ),
+          implementWorkflow(workflow).finish((_outputs, input) =>
+            fromPromise(() => input),
+          ),
         ],
       }),
     ).toThrow('Duplicate workflow implementation [parent]')
@@ -581,10 +586,10 @@ describe('workflow runtime interfaces', () => {
       .task('embedding', expectedTask)
       .build()
     const parentImpl = implementWorkflow(parent)
-      .embedding(expectedTask, { input: (_ctx, _outputs, input) => input })
-      .finish((_ctx, { embedding }) => ({ id: embedding.id }))
+      .embedding(expectedTask, { input: (_outputs, input) => input })
+      .finish(({ embedding }) => fromPromise(() => ({ id: embedding.id })))
     const wrongTaskImpl = implementTask(sameNameTask, {
-      handler: async (_ctx, input) => ({ id: input.text }),
+      handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
 
     const registry = createWorkflowRuntimeRegistry({ tasks: [wrongTaskImpl] })
@@ -615,11 +620,11 @@ describe('workflow runtime interfaces', () => {
       .workflow('child', child)
       .build()
     const childImpl = implementWorkflow(child)
-      .childTask(childTask, { input: (_ctx, _outputs, input) => input })
-      .finish((_ctx, { childTask }) => childTask)
+      .childTask(childTask, { input: (_outputs, input) => input })
+      .finish(({ childTask }) => fromPromise(() => childTask))
     const parentImpl = implementWorkflow(parent)
-      .child(child, { input: (_ctx, _outputs, input) => input })
-      .finish((_ctx, { child }) => child)
+      .child(child, { input: (_outputs, input) => input })
+      .finish(({ child }) => fromPromise(() => child))
 
     const registry = createWorkflowRuntimeRegistry({
       workflows: [parentImpl, childImpl],
@@ -664,14 +669,14 @@ describe('workflow runtime interfaces', () => {
       })
       .fanout((helpers) => ({ child: helpers.workflow(child) }))
       .embeddings(task, {
-        items: (_ctx, _outputs, input) => [input],
-        input: (_ctx, _outputs, item) => item,
+        items: (_outputs, input) => [input],
+        input: (_outputs, item) => item,
       })
       .children(child, {
-        items: (_ctx, _outputs, input) => [input],
-        input: (_ctx, _outputs, item) => item,
+        items: (_outputs, input) => [input],
+        input: (_outputs, item) => item,
       })
-      .finish(() => ({ ok: true }))
+      .finish(() => fromPromise(() => ({ ok: true })))
 
     const registry = createWorkflowRuntimeRegistry({})
 

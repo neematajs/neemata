@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -24,6 +24,7 @@ import {
   reapDeadWorkflowCommands,
   timeoutExpiredWorkflowRuns,
 } from '../src/runtime/worker.ts'
+import { fromPromise } from './support/effect.ts'
 
 for (const adapter of ['memory', 'postgres'] as const) {
   describe(`${adapter} manual retry`, () => {
@@ -33,20 +34,18 @@ for (const adapter of ['memory', 'postgres'] as const) {
       await database?.close()
     })
     async function setup(maxDeliveries = 20) {
-      const container = new Container({
-        logger: createLogger({ pinoOptions: { enabled: false } }, 'test'),
-      })
+      const context = Context.empty()
       if (adapter === 'memory')
         return {
           ...createInMemoryWorkflowRuntime({ maxDeliveries }),
-          container,
+          context,
         }
       database = new PGlite()
       const connection = createPostgresWorkflowConnection(database)
       await installPostgresWorkflowSchemaForTesting(connection)
       return {
         ...createPostgresWorkflowRuntime({ connection, maxDeliveries }),
-        container,
+        context,
       }
     }
 
@@ -69,16 +68,19 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const impl = implementWorkflow(workflow)
         .members(({ activity }) => ({
-          good: activity(async () => {
-            calls.good++
-            return 'saved'
-          }),
+          good: activity(() =>
+            fromPromise(async () => {
+              calls.good++
+              return 'saved'
+            }),
+          ),
           bad: activity(
-            async (_ctx, input) => {
-              calls.bad++
-              if (fail) throw new Error('temporary')
-              return input
-            },
+            (input) =>
+              fromPromise(async () => {
+                calls.bad++
+                if (fail) throw new Error('temporary')
+                return input
+              }),
             {
               input: () => {
                 mapped++
@@ -88,7 +90,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
             },
           ),
         }))
-        .finish((_ctx, outputs) => outputs.members)
+        .finish((outputs) => fromPromise(() => outputs.members))
       const client = createWorkflowRuntimeClient({
         ...runtime,
         definitions: [workflow],
@@ -166,11 +168,12 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Number,
       })
       const taskImpl = implementTask(task, {
-        handler: async (_ctx, item) => {
-          calls.push(item)
-          if (fail && item !== 1) throw new Error('temporary')
-          return item * 2
-        },
+        handler: (item) =>
+          fromPromise(async () => {
+            calls.push(item)
+            if (fail && item !== 1) throw new Error('temporary')
+            return item * 2
+          }),
       })
       const workflow = defineWorkflow({
         name: 'map-retry',
@@ -180,10 +183,10 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const impl = implementWorkflow(workflow)
         .items(task, {
-          items: (_ctx, _outputs, input) => input,
-          input: (_ctx, _outputs, item) => item,
+          items: (_outputs, input) => input,
+          input: (_outputs, item) => item,
         })
-        .finish((_ctx, outputs) => outputs.items)
+        .finish((outputs) => fromPromise(() => outputs.items))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, [0, 1, 2, 3])
       const coordinate = () =>
@@ -243,10 +246,11 @@ for (const adapter of ['memory', 'postgres'] as const) {
         retry: { attempts: 3 },
       })
       const impl = implementTask(task, {
-        handler: async () => {
-          calls++
-          throw new Error('failed')
-        },
+        handler: () =>
+          fromPromise(async () => {
+            calls++
+            throw new Error('failed')
+          }),
       })
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(task, 7)
@@ -287,11 +291,12 @@ for (const adapter of ['memory', 'postgres'] as const) {
         } as const
         let calls = 0
         let succeed = false
-        const handler = async () => {
-          calls++
-          if (!succeed) throw new Error('temporary')
-          return 7
-        }
+        const handler = () =>
+          fromPromise(async () => {
+            calls++
+            if (!succeed) throw new Error('temporary')
+            return 7
+          })
         const task = defineTask({
           name: 'budget-task',
           input: Schema.Number,
@@ -311,7 +316,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
           .build()
         const workflowImpl = implementWorkflow(workflow)
           .review(handler)
-          .finish((_ctx, outputs) => outputs.review)
+          .finish((outputs) => fromPromise(() => outputs.review))
         const delays: number[] = []
         const dispatch = kind === 'task' ? 'dispatchTask' : 'dispatchActivity'
         // Inspect scheduling without waiting for timers, including transaction-scoped executors.
@@ -415,14 +420,18 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .activity('saved', { input: Schema.Struct({}), output: Schema.Number })
         .build()
       const impl = implementWorkflow(workflow)
-        .saved(async () => {
-          calls++
-          return 42
-        })
-        .finish((_ctx, outputs) => {
-          if (fail) throw new Error('finish failed')
-          return outputs.saved
-        })
+        .saved(() =>
+          fromPromise(async () => {
+            calls++
+            return 42
+          }),
+        )
+        .finish((outputs) =>
+          fromPromise(() => {
+            if (fail) throw new Error('finish failed')
+            return outputs.saved
+          }),
+        )
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, {})
       const coordinate = () =>
@@ -490,12 +499,14 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .activity('work', { input: Schema.Number, output: Schema.Number })
         .build()
       const childImpl = implementWorkflow(child)
-        .work(async (_ctx, value) => {
-          calls.push(value)
-          if (fail && value === 2) throw new Error('nested failed')
-          return value
-        })
-        .finish((_ctx, outputs) => outputs.work)
+        .work((value) =>
+          fromPromise(async () => {
+            calls.push(value)
+            if (fail && value === 2) throw new Error('nested failed')
+            return value
+          }),
+        )
+        .finish((outputs) => fromPromise(() => outputs.work))
       const parent = defineWorkflow({
         name: 'nested-parent',
         input: Schema.Array(Schema.Number),
@@ -504,10 +515,10 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const parentImpl = implementWorkflow(parent)
         .children(child, {
-          items: (_ctx, _outputs, input) => input,
-          input: (_ctx, _outputs, item) => item,
+          items: (_outputs, input) => input,
+          input: (_outputs, item) => item,
         })
-        .finish((_ctx, outputs) => outputs.children)
+        .finish((outputs) => fromPromise(() => outputs.children))
       const workflows = [parentImpl, childImpl]
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(parent, [1, 2])
@@ -556,8 +567,8 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .activity('work', { input: Schema.Number, output: Schema.Number })
         .build()
       const impl = implementWorkflow(workflow)
-        .work(async (_ctx, value) => value)
-        .finish((_ctx, outputs) => outputs.work)
+        .work((value) => fromPromise(async () => value))
+        .finish((outputs) => fromPromise(() => outputs.work))
       const client = createWorkflowRuntimeClient(runtime)
       vi.useFakeTimers({ toFake: ['Date'] })
       vi.setSystemTime(new Date(Date.now() - 7_200_000))
@@ -653,7 +664,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Number,
       })
       const taskImpl = implementTask(task, {
-        handler: async (_ctx, value) => value,
+        handler: (value) => fromPromise(async () => value),
       })
       const workflow = defineWorkflow({
         name: 'callback-map',
@@ -663,13 +674,13 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const impl = implementWorkflow(workflow)
         .items(task, {
-          items: (_ctx, _outputs, input) => input,
-          input: (_ctx, _outputs, item) => {
+          items: (_outputs, input) => input,
+          input: (_outputs, item) => {
             if (fail && item === 1) throw new Error('mapper failed')
             return item
           },
         })
-        .finish((_ctx, outputs) => outputs.items)
+        .finish((outputs) => fromPromise(() => outputs.items))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, [1, 2])
       const coordinate = () =>
@@ -722,10 +733,10 @@ for (const adapter of ['memory', 'postgres'] as const) {
         .build()
       const impl = implementWorkflow(workflow)
         .legacy(child, {
-          items: (_ctx, _outputs, input) => input,
-          input: (_ctx, _outputs, item) => item,
+          items: (_outputs, input) => input,
+          input: (_outputs, item) => item,
         })
-        .finish(() => 'done')
+        .finish(() => fromPromise(() => 'done'))
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(workflow, [1])
       const coordinate = () =>
@@ -822,15 +833,17 @@ for (const adapter of ['memory', 'postgres'] as const) {
         })
           .mapWorkflow('children', child, { item: Schema.Number })
           .build()
-        const childImpl = implementWorkflow(child).finish(() => {
-          throw new Error('failed')
-        })
+        const childImpl = implementWorkflow(child).finish(() =>
+          fromPromise(() => {
+            throw new Error('failed')
+          }),
+        )
         const impl = implementWorkflow(workflow)
           .children(child, {
-            items: (_ctx, _outputs, input) => input,
-            input: (_ctx, _outputs, item) => item,
+            items: (_outputs, input) => input,
+            input: (_outputs, item) => item,
           })
-          .finish((_ctx, outputs) => outputs.children)
+          .finish((outputs) => fromPromise(() => outputs.children))
         const client = createWorkflowRuntimeClient(runtime)
         let queries = 0
         const wrap = (

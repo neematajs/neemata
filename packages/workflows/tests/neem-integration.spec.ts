@@ -1,20 +1,15 @@
 import { MessageChannel } from 'node:worker_threads'
 
 import {
-  createFactoryInjectable,
-  createLazyInjectable,
-  createLogger,
-  createPlugin,
-  createValueInjectable,
-  ExecutionEnvironmentLifecycleHook,
-  provision,
-} from '@nmtjs/core'
-import {
   isNeemRuntimeDeclaration,
   isNeemRuntimeHostFactory,
   isNeemRuntimeWorker,
 } from '@nmtjs/neem'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
+import { pino } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -38,17 +33,18 @@ import {
   createWorkflowRuntimeClient,
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 describe('workflows Neem integration', () => {
-  const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
+  const logger = pino({ enabled: false })
 
   const workflow = defineWorkflow({
     name: 'neem.integration.empty',
     input: Schema.Struct({ id: Schema.String }),
     output: Schema.Struct({ id: Schema.String }),
   }).build()
-  const workflowImpl = implementWorkflow(workflow).finish(
-    (_ctx, _outputs, input) => ({ id: input.id }),
+  const workflowImpl = implementWorkflow(workflow).finish((_outputs, input) =>
+    fromPromise(() => ({ id: input.id })),
   )
 
   it('creates a marked Neem runtime declaration', () => {
@@ -65,7 +61,7 @@ describe('workflows Neem integration', () => {
 
   it('plans coordinator and execution worker groups', async () => {
     const config = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [workflowImpl],
       workers: {
         coordinator: { threads: 2, concurrency: 3 },
@@ -103,10 +99,10 @@ describe('workflows Neem integration', () => {
       })
       .build()
     const pooledImpl = implementWorkflow(pooledWorkflow)
-      .handleUserRequest(async () => ({}))
-      .finish(() => ({}))
+      .handleUserRequest(() => fromPromise(async () => ({})))
+      .finish(() => fromPromise(() => ({})))
     const config = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [pooledImpl],
       workers: {
         execution: [
@@ -163,7 +159,7 @@ describe('workflows Neem integration', () => {
       message: string,
     ) => {
       const config = defineWorkflows({
-        runtime: () => createInMemoryWorkflowRuntime(),
+        runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
         workflows: () => [workflowImpl],
         workers: { execution },
       })
@@ -195,10 +191,10 @@ describe('workflows Neem integration', () => {
   it('rejects unknown execution worker routing before starting the runtime', async () => {
     let runtimeCalls = 0
     const config = defineWorkflows({
-      runtime: () => {
+      runtime: Effect.sync(() => {
         runtimeCalls += 1
         return createInMemoryWorkflowRuntime()
-      },
+      }),
       workflows: () => [workflowImpl],
       workers: { execution: [{ name: 'primary' }] },
     })
@@ -235,12 +231,12 @@ describe('workflows Neem integration', () => {
       .activity('slow', { input: Schema.Struct({}), output: Schema.Struct({}) })
       .build()
     const impl = implementWorkflow(workflowWithActivities)
-      .fast(async () => ({}))
-      .slow(async () => ({}))
-      .finish(() => ({}))
+      .fast(() => fromPromise(async () => ({})))
+      .slow(() => fromPromise(async () => ({})))
+      .finish(() => fromPromise(() => ({})))
 
     const uncovered = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: {
         execution: [{ name: 'interactive', activityNames: ['fast'] }],
@@ -252,7 +248,7 @@ describe('workflows Neem integration', () => {
 
     // a catch-all pool absorbs the rest — same pools plus catch-all resolves
     const covered = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: {
         execution: [
@@ -265,7 +261,7 @@ describe('workflows Neem integration', () => {
 
     // full explicit coverage needs no catch-all
     const explicit = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: {
         execution: [
@@ -279,7 +275,7 @@ describe('workflows Neem integration', () => {
     // a selector naming an unknown activity is always a config bug: with a
     // catch-all it would silently reroute the real activity there
     const typo = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: {
         execution: [
@@ -304,13 +300,13 @@ describe('workflows Neem integration', () => {
       .activity('bulk', { input: Schema.Struct({}), output: Schema.Struct({}) })
       .build()
     const impl = implementWorkflow(workflowWithActivities)
-      .fast(async () => ({}))
-      .slow(async () => ({}))
-      .bulk(async () => ({}))
-      .finish(() => ({}))
+      .fast(() => fromPromise(async () => ({})))
+      .slow(() => fromPromise(async () => ({})))
+      .bulk(() => fromPromise(async () => ({})))
+      .finish(() => fromPromise(() => ({})))
 
     const config = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: {
         execution: [
@@ -327,7 +323,7 @@ describe('workflows Neem integration', () => {
 
     // A single catch-all resolves to every registered execution name.
     const soloConfig = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [impl],
       workers: { execution: [{ name: 'only' }] },
     })
@@ -354,12 +350,12 @@ describe('workflows Neem integration', () => {
       .build()
     const parentImpl = implementWorkflow(parent)
       .child(child)
-      .finish(() => ({}))
+      .finish(() => fromPromise(() => ({})))
 
     await expect(
       resolveWorkflowsConfig(
         defineWorkflows({
-          runtime: () => createInMemoryWorkflowRuntime(),
+          runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
           workflows: () => [parentImpl],
         }),
       ),
@@ -374,7 +370,9 @@ describe('workflows Neem integration', () => {
       input: Schema.Struct({}),
       output: Schema.Struct({}),
     })
-    const taskImpl = implementTask(task, { handler: async () => ({}) })
+    const taskImpl = implementTask(task, {
+      handler: () => fromPromise(async () => ({})),
+    })
     const workflowWithTask = defineWorkflow({
       name: 'neem.integration.workflow-with-routed-task',
       input: Schema.Struct({}),
@@ -384,13 +382,13 @@ describe('workflows Neem integration', () => {
       .build()
     const workflowWithTaskImpl = implementWorkflow(workflowWithTask)
       .run(task, { input: () => ({}) })
-      .finish(() => ({}))
+      .finish(() => fromPromise(() => ({})))
     const resolve = (
       execution: readonly WorkflowsNamedExecutionWorkerPoolConfig[],
     ) =>
       resolveWorkflowsConfig(
         defineWorkflows({
-          runtime: () => createInMemoryWorkflowRuntime(),
+          runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
           workflows: () => [],
           tasks: () => [taskImpl],
           workers: { execution },
@@ -400,7 +398,7 @@ describe('workflows Neem integration', () => {
     await expect(
       resolveWorkflowsConfig(
         defineWorkflows({
-          runtime: () => createInMemoryWorkflowRuntime(),
+          runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
           workflows: () => [workflowWithTaskImpl],
         }),
       ),
@@ -441,18 +439,24 @@ describe('workflows Neem integration', () => {
   })
 
   it('accepts task implementations with typed dependencies', async () => {
-    const prefix = createValueInjectable('typed')
+    const prefix = Context.Reference<string>('test-prefix', {
+      defaultValue: () => 'typed',
+    })
     const task = defineTask({
       name: 'neem.integration.typed-task-dependencies',
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     })
     const taskImpl = implementTask(task, {
-      dependencies: { prefix },
-      handler: (ctx, input) => ({ text: `${ctx.prefix}:${input.text}` }),
+      handler: (input) =>
+        prefix.pipe(
+          Effect.map((value) => ({
+            text: `${value}:${input.text}`,
+          })),
+        ),
     })
     const config = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [],
       tasks: () => [taskImpl],
     })
@@ -462,7 +466,7 @@ describe('workflows Neem integration', () => {
 
   it('rejects invalid worker thread counts by role', async () => {
     const config = defineWorkflows({
-      runtime: () => createInMemoryWorkflowRuntime(),
+      runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
       workflows: () => [workflowImpl],
       workers: {
         coordinator: { threads: 0 },
@@ -482,10 +486,10 @@ describe('workflows Neem integration', () => {
   it('creates and stops a worker runtime and disposes the adapter', async () => {
     const dispose = vi.fn()
     const config = defineWorkflows({
-      runtime: () => ({
+      runtime: Effect.sync(() => ({
         ...createInMemoryWorkflowRuntime(),
         dispose,
-      }),
+      })),
       workflows: () => [workflowImpl],
       workers: {
         coordinator: { pollIntervalMs: 1 },
@@ -513,6 +517,91 @@ describe('workflows Neem integration', () => {
     channel.port2.close()
   })
 
+  it('shares one startup while the workflow definitions are resolving', async () => {
+    const definitions = Promise.withResolvers<void>()
+    const workflows = vi.fn(async () => {
+      await definitions.promise
+      return []
+    })
+    const acquire = vi.fn(createInMemoryWorkflowRuntime)
+    const worker = defineWorkflowsWorker(
+      defineWorkflows({
+        runtime: Effect.sync(acquire),
+        workflows,
+      }),
+    )
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: 'concurrent-start',
+      data: { role: 'coordinator' },
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+    const first = runtime.start()
+    const second = runtime.start()
+    try {
+      expect(first).toBe(second)
+      expect(workflows).toHaveBeenCalledOnce()
+      definitions.resolve()
+      await Promise.all([first, second])
+      expect(acquire).toHaveBeenCalledOnce()
+    } finally {
+      definitions.resolve()
+      await Promise.allSettled([first, second])
+      await runtime.stop()
+      channel.port1.close()
+      channel.port2.close()
+    }
+  })
+
+  it.each([false, true])(
+    'settles finished when stopped before a fiber exists (start pending: %s)',
+    async (startPending) => {
+      const definitions = Promise.withResolvers<void>()
+      const acquire = vi.fn(createInMemoryWorkflowRuntime)
+      const worker = defineWorkflowsWorker(
+        defineWorkflows({
+          runtime: Effect.sync(acquire),
+          workflows: async () => {
+            await definitions.promise
+            return []
+          },
+        }),
+      )
+      const channel = new MessageChannel()
+      const runtime = await worker.createRuntime({
+        mode: 'development',
+        name: 'stop-before-fiber',
+        data: { role: 'coordinator' },
+        logger,
+        definition: worker.definition,
+        port: channel.port1,
+      })
+      const finished = vi.fn()
+      void runtime.finished?.then(finished)
+      const starting = startPending
+        ? expect(runtime.start()).rejects.toThrow('Workflows worker stopped')
+        : undefined
+      try {
+        await runtime.stop()
+        expect(finished).toHaveBeenCalledOnce()
+        await starting
+        await expect(runtime.start()).rejects.toThrow(
+          'Workflows worker stopped',
+        )
+      } finally {
+        definitions.resolve()
+        await starting
+        await runtime.stop()
+        channel.port1.close()
+        channel.port2.close()
+      }
+      expect(acquire).not.toHaveBeenCalled()
+    },
+  )
+
   it('stops promptly by delivering shutdown to an in-flight task handler', async () => {
     const task = defineTask({
       name: 'neem.integration.shutdown-task',
@@ -525,28 +614,29 @@ describe('workflows Neem integration', () => {
       handlerStarted = resolve
     })
     const taskImpl = implementTask(task, {
-      handler: async (_ctx, input, lifecycle) => {
-        handlerStarted()
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(resolve, 300)
-          lifecycle?.signal.addEventListener(
-            'abort',
-            () => {
-              shutdownReason = lifecycle.signal.reason
-              clearTimeout(timeout)
-              resolve()
-            },
-            { once: true },
-          )
-        })
-        return { text: `late:${input.text}` }
-      },
+      handler: (input, lifecycle) =>
+        fromPromise(async () => {
+          handlerStarted()
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(resolve, 300)
+            lifecycle?.signal.addEventListener(
+              'abort',
+              () => {
+                shutdownReason = lifecycle.signal.reason
+                clearTimeout(timeout)
+                resolve()
+              },
+              { once: true },
+            )
+          })
+          return { text: `late:${input.text}` }
+        }),
     })
     const runtimeAdapter = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtimeAdapter)
     const run = await client.start(task, { text: 'alpha' })
     const config = defineWorkflows({
-      runtime: () => runtimeAdapter,
+      runtime: Effect.sync(() => runtimeAdapter),
       workflows: () => [],
       tasks: () => [taskImpl],
       workers: {
@@ -597,7 +687,7 @@ describe('workflows Neem integration', () => {
       },
     } satisfies WorkflowRuntimeAdapter
     const config = defineWorkflows({
-      runtime: () => brokenRuntime,
+      runtime: Effect.sync(() => brokenRuntime),
       workflows: () => [workflowImpl],
       workers: {
         coordinator: { pollIntervalMs: 1 },
@@ -619,7 +709,11 @@ describe('workflows Neem integration', () => {
     await expect(runtime.finished).rejects.toThrow('coordinator claim failed')
     await expect(runtime.stop()).rejects.toThrow('coordinator claim failed')
     expect(errorSpy).toHaveBeenCalledWith(
-      { err: failure },
+      {
+        err: expect.objectContaining({
+          message: expect.stringContaining(failure.message),
+        }),
+      },
       'Neem workflows worker loop failed',
     )
     channel.port1.close()
@@ -631,11 +725,21 @@ describe('workflows Neem integration', () => {
     const disposePluginDependency = vi.fn()
     const beforeInitialize = vi.fn()
     const afterDispose = vi.fn()
-    const pluginDependency = createLazyInjectable<string>()
-    const pluginDependencyFactory = createFactoryInjectable({
-      create: () => 'plugin',
-      dispose: disposePluginDependency,
-    })
+    const pluginDependency = Context.Service<string>('test/plugin')
+    const services = Layer.effect(
+      pluginDependency,
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          beforeInitialize()
+          return 'plugin'
+        }),
+        () =>
+          Effect.sync(() => {
+            disposePluginDependency()
+            afterDispose()
+          }),
+      ),
+    )
     const task = defineTask({
       name: 'neem.integration.task',
       input: Schema.Struct({ text: Schema.String }),
@@ -653,35 +757,30 @@ describe('workflows Neem integration', () => {
       .task('task', task)
       .build()
     const taskImpl = implementTask(task, {
-      dependencies: { pluginDependency },
-      handler: async ({ pluginDependency }, input) => ({
-        text: `${pluginDependency}:${input.text}:task`,
-      }),
+      handler: (input) =>
+        Effect.gen(function* () {
+          const prefix = yield* pluginDependency
+          return { text: `${prefix}:${input.text}:task` }
+        }),
     })
     const fullWorkflowImpl = implementWorkflow(fullWorkflow)
-      .activity(async (_ctx, input) => ({ text: `${input.text}:activity` }), {
-        input: (_ctx, _outputs, input) => ({ text: input.text }),
-      })
+      .activity(
+        (input) =>
+          fromPromise(async () => ({ text: `${input.text}:activity` })),
+        {
+          input: (_outputs, input) => ({ text: input.text }),
+        },
+      )
       .task(task, {
-        input: (_ctx, { activity }) => ({ text: activity.text }),
+        input: ({ activity }) => ({ text: activity.text }),
       })
-      .finish((_ctx, { task }) => ({ text: task.text }))
+      .finish(({ task }) => fromPromise(() => ({ text: task.text })))
     const runtimeAdapter = createInMemoryWorkflowRuntime()
     const config = defineWorkflows({
-      runtime: () => runtimeAdapter,
+      runtime: Effect.sync(() => runtimeAdapter),
       workflows: () => [fullWorkflowImpl],
       tasks: () => [taskImpl],
-      plugins: [
-        createPlugin({
-          name: 'workflow-test',
-          provisions: [provision(pluginDependency, pluginDependencyFactory)],
-          hooks: {
-            [ExecutionEnvironmentLifecycleHook.BeforeInitialize]:
-              beforeInitialize,
-            [ExecutionEnvironmentLifecycleHook.AfterDispose]: afterDispose,
-          },
-        }),
-      ],
+      layer: services,
       workers: {
         coordinator: { pollIntervalMs: 1 },
         execution: { pollIntervalMs: 1 },
@@ -726,7 +825,7 @@ describe('workflows Neem integration', () => {
       }
     }
 
-    expect(disposePluginDependency).toHaveBeenCalledOnce()
+    expect(disposePluginDependency).toHaveBeenCalledTimes(2)
     expect(beforeInitialize).toHaveBeenCalledTimes(2)
     expect(afterDispose).toHaveBeenCalledTimes(2)
   })
@@ -741,7 +840,7 @@ describe('workflows Neem integration', () => {
       immediately: true,
     })
     const config = defineWorkflows({
-      runtime: () => runtimeAdapter,
+      runtime: Effect.sync(() => runtimeAdapter),
       workflows: () => [workflowImpl],
       schedules: () => [schedule],
       workers: {
@@ -792,10 +891,10 @@ describe('workflows Neem integration', () => {
       threads: [],
       options: () =>
         defineWorkflows({
-          runtime: () => {
+          runtime: Effect.sync(() => {
             factoriesCalled += 1
             return createInMemoryWorkflowRuntime()
-          },
+          }),
           workflows: () => {
             factoriesCalled += 1
             return [workflowImpl]

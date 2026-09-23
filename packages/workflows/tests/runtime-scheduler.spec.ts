@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
@@ -19,6 +19,7 @@ import {
   runWorkflowWorker,
   type WorkflowRuntimeAdapter,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 type RuntimeFactory = () =>
   | WorkflowRuntimeAdapter
@@ -27,8 +28,7 @@ type RuntimeFactory = () =>
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
 
-const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-const testContainer = new Container({ logger })
+const testContext = Context.empty()
 
 function schedulerContract(name: string, createRuntime: RuntimeFactory) {
   describe(`${name} workflow scheduler`, () => {
@@ -364,7 +364,7 @@ describe('scheduled workflow worker loop', () => {
       output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
-      (_ctx, _outputs, input) => ({ caseId: input.scenario }),
+      (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
     )
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -380,7 +380,7 @@ describe('scheduled workflow worker loop', () => {
 
     const result = await runWorkflowWorker({
       ...runtime,
-      container: testContainer,
+      context: testContext,
       workflows: [implementation],
       workerId: 'scheduled-worker-1',
       scheduling: { everyMs: 0, batchSize: 10 },

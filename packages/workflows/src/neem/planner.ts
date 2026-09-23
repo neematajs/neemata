@@ -1,7 +1,7 @@
 import { createRuntime, defineRuntimePlanner } from '@nmtjs/neem'
 
 import type {
-  WorkflowsConfig,
+  AnyWorkflowsConfig,
   WorkflowsWorkerData,
   WorkflowWorkerRole,
 } from './runtime.ts'
@@ -12,7 +12,7 @@ export function createWorkflowsRuntime() {
 }
 
 export function defineWorkflowsPlanner<
-  const TConfig extends WorkflowsConfig = WorkflowsConfig,
+  const TConfig extends AnyWorkflowsConfig = AnyWorkflowsConfig,
 >(factory: () => TConfig | Promise<TConfig>) {
   return defineRuntimePlanner<typeof factory, WorkflowsWorkerData>(async () => {
     const config = await resolveWorkflowsConfig(await factory())

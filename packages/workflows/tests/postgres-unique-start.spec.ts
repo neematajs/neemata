@@ -13,6 +13,7 @@ import {
   createWorkflowRuntimeClient,
   WorkflowRunConflictError,
 } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
@@ -236,7 +237,9 @@ test('a rejected unique start leaves the caller transaction usable', async () =>
 test('retry rehydrates the stored unique constraint', async () => {
   const connection = createPgliteConnection()
   await installPostgresWorkflowSchemaForTesting(connection)
-  const implementation = implementWorkflow(workflow).finish(() => undefined)
+  const implementation = implementWorkflow(workflow).finish(() =>
+    fromPromise(() => undefined),
+  )
   const client = createWorkflowRuntimeClient({
     ...createPostgresWorkflowRuntime({ connection }),
     workflows: [implementation],

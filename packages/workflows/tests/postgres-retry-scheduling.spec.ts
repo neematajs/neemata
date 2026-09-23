@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { Container, createLogger } from '@nmtjs/core'
+import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
@@ -10,6 +10,7 @@ import {
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import { defineTask, implementTask } from '../src/index.ts'
 import { runExecutionWorker, startTaskRun } from '../src/runtime/index.ts'
+import { fromPromise } from './support/effect.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -46,9 +47,8 @@ async function waitForTaskCommandRunAt(
 }
 
 describe('postgres retry scheduling', () => {
-  const createTestContainer = () => {
-    const logger = createLogger({ pinoOptions: { enabled: false } }, 'test')
-    return new Container({ logger })
+  const createTestContext = () => {
+    return Context.empty()
   }
 
   it('stores exponential retry run_at values in workflow_commands', async () => {
@@ -63,10 +63,11 @@ describe('postgres retry scheduling', () => {
     })
     let activeWorker: AbortController | undefined
     const implementation = implementTask(task, {
-      handler: async () => {
-        activeWorker?.abort()
-        throw new Error('still failing')
-      },
+      handler: () =>
+        fromPromise(async () => {
+          activeWorker?.abort()
+          throw new Error('still failing')
+        }),
     })
     const run = await startTaskRun({
       store: runtime.store,
@@ -81,7 +82,7 @@ describe('postgres retry scheduling', () => {
     await runExecutionWorker({
       workflows: [],
       ...runtime,
-      container: createTestContainer(),
+      context: createTestContext(),
       tasks: [implementation],
       workerId: 'task-worker-1',
       signal: activeWorker.signal,
@@ -118,7 +119,7 @@ describe('postgres retry scheduling', () => {
       await runExecutionWorker({
         workflows: [],
         ...runtime,
-        container: createTestContainer(),
+        context: createTestContext(),
         tasks: [implementation],
         workerId: `task-worker-2-${retryWorkers++}`,
         signal: activeWorker.signal,

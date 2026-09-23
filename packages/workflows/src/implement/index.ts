@@ -1,33 +1,22 @@
-import type {
-  Dependencies,
-  DependencyContext,
-  Handler,
-  HandlerFn,
-  HandlerInput,
-} from '@nmtjs/core'
+import type * as Effect from 'effect/Effect'
 
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
-  BoundaryInput,
-  BoundaryOutput,
   BranchCaseDefinition,
   IdempotencyKey,
-  MaybePromise,
   RetryPolicy,
-  TaskDecodedInput,
   TaskInput,
-  TaskOutputInput,
+  TaskOutput,
   WorkflowActivityNode,
   WorkflowBranchNode,
   WorkflowChildWorkflowNode,
-  WorkflowDecodedInput,
   WorkflowInput,
   WorkflowMapTaskNode,
   WorkflowMapWorkflowNode,
   WorkflowNode,
   WorkflowNodes,
-  WorkflowOutputInput,
+  WorkflowOutput,
   WorkflowParallelNode,
   WorkflowTaskNode,
 } from '../types/index.ts'
@@ -36,89 +25,61 @@ export type AttemptLifecycle = {
   readonly signal: AbortSignal
 }
 
-export type TaskHandler<Deps extends Dependencies, Input, Output> = HandlerFn<
-  Deps,
-  [input: Input, lifecycle?: AttemptLifecycle],
-  Output
->
+export type TaskHandler<Deps, Input, Output> = (
+  input: Input,
+  lifecycle: AttemptLifecycle,
+) => Effect.Effect<Output, unknown, Deps>
 
 export type TaskImplementation<
   Task extends AnyTaskDefinition = AnyTaskDefinition,
-  Deps extends Dependencies = Dependencies,
-> = Handler<
-  Deps,
-  [input: TaskDecodedInput<Task>, lifecycle?: AttemptLifecycle],
-  TaskOutputInput<Task>
-> & {
+  Deps = never,
+> = {
   readonly kind: 'taskImplementation'
   readonly task: Task
+  readonly handler: TaskHandler<Deps, TaskInput<Task>, TaskOutput<Task>>
 }
 
-export function implementTask<
-  Task extends AnyTaskDefinition,
-  Deps extends Dependencies = {},
->(
+export function implementTask<Task extends AnyTaskDefinition, Deps = never>(
   task: Task,
-  options: {
-    dependencies?: Deps
-    handler: TaskHandler<Deps, TaskDecodedInput<Task>, TaskOutputInput<Task>>
-  },
+  options: { handler: TaskHandler<Deps, TaskInput<Task>, TaskOutput<Task>> },
 ): TaskImplementation<Task, Deps> {
   return Object.freeze({
     kind: 'taskImplementation',
     task,
-    dependencies: options.dependencies ?? ({} as Deps),
     handler: options.handler,
   })
 }
 
-export type ActivityHandler<
-  Deps extends Dependencies,
+export type ActivityHandler<Deps, Input, Output> = TaskHandler<
+  Deps,
   Input,
-  Output,
-> = HandlerFn<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output>
+  Output
+>
 
 export type ActivityImplementation<
   Input = unknown,
   Output = unknown,
-  Deps extends Dependencies = Dependencies,
-> = Handler<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output> & {
+  Deps = any,
+> = {
   readonly kind: 'activityImplementation'
   readonly name: string
+  readonly handler: ActivityHandler<Deps, Input, Output>
 }
 
-export type ActivityHandlerInput<
+export type ActivityHandlerInput<Input, Output, Deps> = ActivityHandler<
+  Deps,
   Input,
-  Output,
-  Deps extends Dependencies,
-> = HandlerInput<Deps, [input: Input, lifecycle?: AttemptLifecycle], Output>
+  Output
+>
 
-export type WorkflowNodeIdempotency<
-  WorkflowDeps extends Dependencies,
-  Outputs extends object,
-  Input,
-> =
-  | ((
-      ctx: DependencyContext<WorkflowDeps>,
-      outputs: Outputs,
-      workflowInput: Input,
-    ) => IdempotencyKey)
+export type WorkflowNodeIdempotency<Outputs extends object, Input> =
+  | ((outputs: Outputs, workflowInput: Input) => IdempotencyKey)
   | {
-      key: (
-        ctx: DependencyContext<WorkflowDeps>,
-        outputs: Outputs,
-        workflowInput: Input,
-      ) => IdempotencyKey
+      key: (outputs: Outputs, workflowInput: Input) => IdempotencyKey
     }
 
-export type WorkflowMapNodeIdempotency<
-  WorkflowDeps extends Dependencies,
-  Outputs extends object,
-  Input,
-  Item,
-> =
+export type WorkflowMapNodeIdempotency<Outputs extends object, Input, Item> =
   | ((
-      ctx: DependencyContext<WorkflowDeps>,
       outputs: Outputs,
       item: Item,
       workflowInput: Input,
@@ -126,7 +87,6 @@ export type WorkflowMapNodeIdempotency<
     ) => IdempotencyKey)
   | {
       key: (
-        ctx: DependencyContext<WorkflowDeps>,
         outputs: Outputs,
         item: Item,
         workflowInput: Input,
@@ -134,61 +94,38 @@ export type WorkflowMapNodeIdempotency<
       ) => IdempotencyKey
     }
 
-export type WorkflowInputMapper<
-  WorkflowDeps extends Dependencies,
-  Outputs extends object,
-  Input,
-  NodeInput,
-> = {
-  readonly input?: (
-    ctx: DependencyContext<WorkflowDeps>,
-    outputs: Outputs,
-    workflowInput: Input,
-  ) => NodeInput
-  readonly idempotency?: WorkflowNodeIdempotency<WorkflowDeps, Outputs, Input>
+export type WorkflowInputMapper<Outputs extends object, Input, NodeInput> = {
+  readonly input?: (outputs: Outputs, workflowInput: Input) => NodeInput
+  readonly idempotency?: WorkflowNodeIdempotency<Outputs, Input>
 }
 
 export type WorkflowMapInputMapper<
-  WorkflowDeps extends Dependencies,
   Outputs extends object,
   Input,
-  ItemInput,
   Item,
   NodeInput,
 > = {
-  readonly items: (
-    ctx: DependencyContext<WorkflowDeps>,
-    outputs: Outputs,
-    workflowInput: Input,
-  ) => readonly ItemInput[]
+  readonly items: (outputs: Outputs, workflowInput: Input) => readonly Item[]
   readonly input: (
-    ctx: DependencyContext<WorkflowDeps>,
     outputs: Outputs,
     item: Item,
     workflowInput: Input,
     index: number,
   ) => NodeInput
-  readonly idempotency?: WorkflowMapNodeIdempotency<
-    WorkflowDeps,
-    Outputs,
-    Input,
-    Item
-  >
+  readonly idempotency?: WorkflowMapNodeIdempotency<Outputs, Input, Item>
 }
 
 export type WorkflowImplementation<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-  WorkflowDeps extends Dependencies = Dependencies,
+  WorkflowDeps = never,
 > = {
   readonly kind: 'workflowImplementation'
   readonly workflow: Workflow
-  readonly dependencies: WorkflowDeps
   readonly nodes: readonly WorkflowNodeImplementation[]
   readonly finish: (
-    ctx: DependencyContext<WorkflowDeps>,
     outputs: any,
-    workflowInput: WorkflowDecodedInput<Workflow>,
-  ) => MaybePromise<WorkflowOutputInput<Workflow>>
+    workflowInput: WorkflowInput<Workflow>,
+  ) => Effect.Effect<WorkflowOutput<Workflow>, unknown, WorkflowDeps>
 }
 
 type StoredCallback = (...args: any[]) => unknown
@@ -260,46 +197,30 @@ export type WorkflowCaseImplementation =
     }
 
 type ActivityImplementationOptions<
-  WorkflowDeps extends Dependencies,
   Outputs extends object,
   Input,
   NodeInput,
-> = WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>
+> = WorkflowInputMapper<Outputs, Input, NodeInput>
 
-type LegacyActivityHandlerObject<Input, Output, Deps extends Dependencies> = {
-  readonly dependencies: Deps
-  readonly handler: (
-    ctx: DependencyContext<Deps>,
-    input: Input,
-    lifecycle?: AttemptLifecycle,
-  ) => MaybePromise<Output>
-}
-
-type ActivityImplementationValue<
-  Input,
-  Output,
-  Deps extends Dependencies = Dependencies,
-> =
+type ActivityImplementationValue<Input, Output, Deps = never> =
   | ActivityHandlerInput<Input, Output, Deps>
-  | LegacyActivityHandlerObject<Input, Output, Deps>
+  | { readonly handler: ActivityHandlerInput<Input, Output, Deps> }
   | ActivityImplementation<Input, Output, Deps>
 
-type ActivityCaseDescriptor<
-  Input,
-  Output,
-  Deps extends Dependencies = Dependencies,
-  EncodedInput = Input,
-> = {
+type ActivityCaseDescriptor<Input, Output, Deps = never> = {
   readonly kind: 'activityCase'
   readonly value: ActivityImplementationValue<Input, Output, Deps>
-  readonly options?: WorkflowInputMapper<any, any, any, EncodedInput>
+  readonly options?: WorkflowInputMapper<any, any, Input>
 }
 
 type AnyActivityImplementationValue<Input, Output> =
   ActivityImplementationValue<Input, Output, any>
 
-type AnyActivityCaseDescriptor<Input, Output, EncodedInput> =
-  ActivityCaseDescriptor<Input, Output, any, EncodedInput>
+type AnyActivityCaseDescriptor<Input, Output> = ActivityCaseDescriptor<
+  Input,
+  Output,
+  any
+>
 
 type RunnableCaseDescriptor<
   Target extends AnyTaskDefinition | AnyWorkflowDefinition,
@@ -307,21 +228,14 @@ type RunnableCaseDescriptor<
 > = {
   readonly kind: 'runnableCase'
   readonly target: Target
-  readonly options?: WorkflowInputMapper<any, any, any, Input>
+  readonly options?: WorkflowInputMapper<any, any, Input>
 }
 
 type CaseImplementationValue<Case> =
   Case extends BranchCaseDefinition<'activity', infer Input, infer Output>
     ?
-        | AnyActivityImplementationValue<
-            BoundaryOutput<Input>,
-            BoundaryInput<Output>
-          >
-        | AnyActivityCaseDescriptor<
-            BoundaryOutput<Input>,
-            BoundaryInput<Output>,
-            BoundaryInput<Input>
-          >
+        | AnyActivityImplementationValue<Input, Output>
+        | AnyActivityCaseDescriptor<Input, Output>
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
         ? Task | RunnableCaseDescriptor<Task, TaskInput<Task>>
@@ -340,70 +254,49 @@ type CaseImplementationObject<
   >
 }
 
-type CaseImplementers<
-  WorkflowDeps extends Dependencies,
-  Outputs extends object,
-  Input,
-> = {
-  readonly activity: <
-    NodeInput,
-    Output,
-    Deps extends Dependencies = Dependencies,
-    EncodedInput = NodeInput,
-  >(
+type CaseImplementers<Outputs extends object, Input> = {
+  readonly activity: <NodeInput, Output, Deps = never>(
     value: ActivityImplementationValue<NodeInput, Output, Deps>,
-    options?: WorkflowInputMapper<WorkflowDeps, Outputs, Input, EncodedInput>,
-  ) => ActivityCaseDescriptor<NodeInput, Output, Deps, EncodedInput>
+    options?: WorkflowInputMapper<Outputs, Input, NodeInput>,
+  ) => ActivityCaseDescriptor<NodeInput, Output, Deps>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
-    options?: WorkflowInputMapper<
-      WorkflowDeps,
-      Outputs,
-      Input,
-      TaskInput<Task>
-    >,
+    options?: WorkflowInputMapper<Outputs, Input, TaskInput<Task>>,
   ) => RunnableCaseDescriptor<Task, TaskInput<Task>>
   readonly workflow: <Workflow extends AnyWorkflowDefinition>(
     workflow: Workflow,
-    options?: WorkflowInputMapper<
-      WorkflowDeps,
-      Outputs,
-      Input,
-      WorkflowInput<Workflow>
-    >,
+    options?: WorkflowInputMapper<Outputs, Input, WorkflowInput<Workflow>>,
   ) => RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
 }
 
+type CaseRequirements<Cases> = {
+  [K in keyof Cases]: Cases[K] extends ActivityCaseDescriptor<any, any, infer R>
+    ? R
+    : Cases[K] extends ActivityImplementationValue<any, any, infer R>
+      ? R
+      : never
+}[keyof Cases]
+
 type CaseImplementationFactory<
   Cases extends Record<string, BranchCaseDefinition>,
-  WorkflowDeps extends Dependencies,
   Outputs extends object,
   Input,
-> = (
-  helpers: CaseImplementers<WorkflowDeps, Outputs, Input>,
-) => CaseImplementationObject<Cases>
+  Values extends CaseImplementationObject<Cases> =
+    CaseImplementationObject<Cases>,
+> = (helpers: CaseImplementers<Outputs, Input>) => Values
 
 type CaseImplementationArgument<
   Cases extends Record<string, BranchCaseDefinition>,
-  WorkflowDeps extends Dependencies,
   Outputs extends object,
   Input,
-> =
-  | CaseImplementationObject<Cases>
-  | CaseImplementationFactory<Cases, WorkflowDeps, Outputs, Input>
+  Values extends CaseImplementationObject<Cases> =
+    CaseImplementationObject<Cases>,
+> = Values | CaseImplementationFactory<Cases, Outputs, Input, Values>
 
 type ItemOfMapNode<Node> = Node extends {
   readonly _types?: { readonly input: infer Input }
 }
-  ? BoundaryOutput<Input> extends readonly (infer Item)[]
-    ? Item
-    : never
-  : never
-
-type InputItemOfMapNode<Node> = Node extends {
-  readonly _types?: { readonly input: infer Input }
-}
-  ? BoundaryInput<Input> extends readonly (infer Item)[]
+  ? Input extends readonly (infer Item)[]
     ? Item
     : never
   : never
@@ -412,16 +305,16 @@ type NodeOutput<Node> = Node extends {
   readonly name: infer Name extends string
   readonly _types?: { readonly output: infer Output }
 }
-  ? { readonly [Key in Name]: BoundaryOutput<Output> }
+  ? { readonly [Key in Name]: Output }
   : {}
 
 export type WorkflowImplementationChain<
   Workflow extends AnyWorkflowDefinition,
-  WorkflowDeps extends Dependencies,
+  WorkflowDeps,
   Nodes extends readonly WorkflowNode[],
   Outputs extends object,
-  WorkflowArgs = WorkflowDecodedInput<Workflow>,
-  Result = WorkflowOutputInput<Workflow>,
+  WorkflowArgs = WorkflowInput<Workflow>,
+  Result = WorkflowOutput<Workflow>,
 > = Nodes extends readonly [
   infer Node,
   ...infer Rest extends readonly WorkflowNode[],
@@ -432,21 +325,12 @@ export type WorkflowImplementationChain<
       infer Output
     >
     ? {
-        readonly [Key in Name]: <Deps extends Dependencies = Dependencies>(
-          value: ActivityImplementationValue<
-            BoundaryOutput<Input>,
-            BoundaryInput<Output>,
-            Deps
-          >,
-          options?: ActivityImplementationOptions<
-            WorkflowDeps,
-            Outputs,
-            WorkflowArgs,
-            BoundaryInput<Input>
-          >,
+        readonly [Key in Name]: <Deps = never>(
+          value: ActivityImplementationValue<Input, Output, Deps>,
+          options?: ActivityImplementationOptions<Outputs, WorkflowArgs, Input>,
         ) => WorkflowImplementationChain<
           Workflow,
-          WorkflowDeps,
+          WorkflowDeps | Deps,
           Rest,
           Outputs & NodeOutput<Node>,
           WorkflowArgs,
@@ -461,7 +345,6 @@ export type WorkflowImplementationChain<
           readonly [Key in Name]: (
             task: Task,
             options?: WorkflowInputMapper<
-              WorkflowDeps,
               Outputs,
               WorkflowArgs,
               TaskInput<Task>
@@ -483,7 +366,6 @@ export type WorkflowImplementationChain<
             readonly [Key in Name]: (
               workflow: Child,
               options?: WorkflowInputMapper<
-                WorkflowDeps,
                 Outputs,
                 WorkflowArgs,
                 WorkflowInput<Child>
@@ -502,21 +384,22 @@ export type WorkflowImplementationChain<
               infer Cases extends Record<string, BranchCaseDefinition>
             >
           ? {
-              readonly [Key in Name]: (options: {
+              readonly [Key in Name]: <
+                const Values extends CaseImplementationObject<Cases>,
+              >(options: {
                 select: (
-                  ctx: DependencyContext<WorkflowDeps>,
                   outputs: Outputs,
                   workflowInput: WorkflowArgs,
                 ) => keyof Cases & string
                 cases: CaseImplementationFactory<
                   Cases,
-                  WorkflowDeps,
                   Outputs,
-                  WorkflowArgs
+                  WorkflowArgs,
+                  Values
                 >
               }) => WorkflowImplementationChain<
                 Workflow,
-                WorkflowDeps,
+                WorkflowDeps | CaseRequirements<Values>,
                 Rest,
                 Outputs & NodeOutput<Node>,
                 WorkflowArgs,
@@ -528,16 +411,18 @@ export type WorkflowImplementationChain<
                 infer Cases extends Record<string, BranchCaseDefinition>
               >
             ? {
-                readonly [Key in Name]: (
+                readonly [Key in Name]: <
+                  const Values extends CaseImplementationObject<Cases>,
+                >(
                   cases: CaseImplementationArgument<
                     Cases,
-                    WorkflowDeps,
                     Outputs,
-                    WorkflowArgs
+                    WorkflowArgs,
+                    Values
                   >,
                 ) => WorkflowImplementationChain<
                   Workflow,
-                  WorkflowDeps,
+                  WorkflowDeps | CaseRequirements<Values>,
                   Rest,
                   Outputs & NodeOutput<Node>,
                   WorkflowArgs,
@@ -552,10 +437,8 @@ export type WorkflowImplementationChain<
                   readonly [Key in Name]: (
                     task: Task,
                     options: WorkflowMapInputMapper<
-                      WorkflowDeps,
                       Outputs,
                       WorkflowArgs,
-                      InputItemOfMapNode<Node>,
                       ItemOfMapNode<Node>,
                       TaskInput<Task>
                     >,
@@ -576,10 +459,8 @@ export type WorkflowImplementationChain<
                     readonly [Key in Name]: (
                       workflow: Child,
                       options: WorkflowMapInputMapper<
-                        WorkflowDeps,
                         Outputs,
                         WorkflowArgs,
-                        InputItemOfMapNode<Node>,
                         ItemOfMapNode<Node>,
                         WorkflowInput<Child>
                       >,
@@ -601,39 +482,32 @@ export type WorkflowImplementationChain<
                     Result
                   >
   : {
-      readonly finish: (
+      readonly finish: <Deps = never>(
         finish: (
-          ctx: DependencyContext<WorkflowDeps>,
           outputs: Outputs,
           workflowInput: WorkflowArgs,
-        ) => MaybePromise<Result>,
-      ) => WorkflowImplementation<Workflow, WorkflowDeps>
+        ) => Effect.Effect<Result, unknown, Deps>,
+      ) => WorkflowImplementation<Workflow, WorkflowDeps | Deps>
     }
 
 export type WorkflowImplementer<
   Workflow extends AnyWorkflowDefinition = AnyWorkflowDefinition,
-  WorkflowDeps extends Dependencies = {},
+  WorkflowDeps = never,
 > = WorkflowImplementationChain<
   Workflow,
   WorkflowDeps,
   WorkflowNodes<Workflow>,
   {},
-  WorkflowDecodedInput<Workflow>,
-  WorkflowOutputInput<Workflow>
+  WorkflowInput<Workflow>,
+  WorkflowOutput<Workflow>
 >
 
 export function implementWorkflow<
   Workflow extends AnyWorkflowDefinition,
-  WorkflowDeps extends Dependencies = {},
->(
-  workflow: Workflow,
-  options?: {
-    dependencies?: WorkflowDeps
-  },
-): WorkflowImplementer<Workflow, WorkflowDeps> {
+  WorkflowDeps = never,
+>(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowDeps> {
   return createWorkflowChain({
     workflow,
-    dependencies: options?.dependencies ?? ({} as WorkflowDeps),
     index: 0,
     implementations: [],
   }) as WorkflowImplementer<Workflow, WorkflowDeps>
@@ -641,7 +515,6 @@ export function implementWorkflow<
 
 function createWorkflowChain(state: {
   workflow: AnyWorkflowDefinition
-  dependencies: Dependencies
   index: number
   implementations: readonly WorkflowNodeImplementation[]
 }): unknown {
@@ -653,7 +526,6 @@ function createWorkflowChain(state: {
         Object.freeze({
           kind: 'workflowImplementation',
           workflow: state.workflow,
-          dependencies: state.dependencies,
           nodes: Object.freeze([...state.implementations]),
           finish,
         }),
@@ -665,7 +537,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           value: ActivityImplementationValue<unknown, unknown>,
-          options?: WorkflowInputMapper<any, any, any, any>,
+          options?: WorkflowInputMapper<any, any, any>,
         ) =>
           nextChain(state, {
             kind: 'activity',
@@ -681,7 +553,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           task: AnyTaskDefinition,
-          options?: WorkflowInputMapper<any, any, any, any>,
+          options?: WorkflowInputMapper<any, any, any>,
         ) => {
           assertSameRunnable(
             node.task,
@@ -703,7 +575,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           workflow: AnyWorkflowDefinition,
-          options?: WorkflowInputMapper<any, any, any, any>,
+          options?: WorkflowInputMapper<any, any, any>,
         ) => {
           assertSameRunnable(
             node.workflow,
@@ -724,7 +596,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           task: AnyTaskDefinition,
-          options: WorkflowMapInputMapper<any, any, any, any, any, any>,
+          options: WorkflowMapInputMapper<any, any, any, any>,
         ) => {
           assertSameRunnable(
             node.task,
@@ -747,7 +619,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (
           workflow: AnyWorkflowDefinition,
-          options: WorkflowMapInputMapper<any, any, any, any, any, any>,
+          options: WorkflowMapInputMapper<any, any, any, any>,
         ) => {
           assertSameRunnable(
             node.workflow,
@@ -770,7 +642,7 @@ function createWorkflowChain(state: {
       return Object.freeze({
         [node.name]: (options: {
           select: (...args: readonly unknown[]) => string
-          cases: CaseImplementationFactory<any, any, any, any>
+          cases: CaseImplementationFactory<any, any, any>
         }) => {
           const cases = options.cases(createCaseImplementers())
 
@@ -786,7 +658,7 @@ function createWorkflowChain(state: {
     case 'parallel':
       return Object.freeze({
         [node.name]: (
-          casesOrFactory: CaseImplementationArgument<any, any, any, any>,
+          casesOrFactory: CaseImplementationArgument<any, any, any>,
         ) => {
           const cases =
             typeof casesOrFactory === 'function'
@@ -806,7 +678,6 @@ function createWorkflowChain(state: {
 function nextChain(
   state: {
     workflow: AnyWorkflowDefinition
-    dependencies: Dependencies
     index: number
     implementations: readonly WorkflowNodeImplementation[]
   },
@@ -819,25 +690,20 @@ function nextChain(
   })
 }
 
-function createCaseImplementers(): CaseImplementers<any, any, any> {
-  const helpers: CaseImplementers<any, any, any> = {
-    activity: <
-      NodeInput,
-      Output,
-      Deps extends Dependencies = Dependencies,
-      EncodedInput = NodeInput,
-    >(
+function createCaseImplementers(): CaseImplementers<any, any> {
+  const helpers: CaseImplementers<any, any> = {
+    activity: <NodeInput, Output, Deps = never>(
       value: ActivityImplementationValue<NodeInput, Output, Deps>,
-      options?: WorkflowInputMapper<any, any, any, EncodedInput>,
+      options?: WorkflowInputMapper<any, any, NodeInput>,
     ) =>
       Object.freeze({
         kind: 'activityCase',
         value,
         options,
-      }) as ActivityCaseDescriptor<NodeInput, Output, Deps, EncodedInput>,
+      }) as ActivityCaseDescriptor<NodeInput, Output, Deps>,
     task: <Task extends AnyTaskDefinition>(
       task: Task,
-      options?: WorkflowInputMapper<any, any, any, any>,
+      options?: WorkflowInputMapper<any, any, any>,
     ) =>
       Object.freeze({
         kind: 'runnableCase',
@@ -846,7 +712,7 @@ function createCaseImplementers(): CaseImplementers<any, any, any> {
       }) as RunnableCaseDescriptor<Task, TaskInput<Task>>,
     workflow: <Workflow extends AnyWorkflowDefinition>(
       workflow: Workflow,
-      options?: WorkflowInputMapper<any, any, any, any>,
+      options?: WorkflowInputMapper<any, any, any>,
     ) =>
       Object.freeze({
         kind: 'runnableCase',
@@ -939,14 +805,19 @@ function createActivityImplementation(
     return value
   }
 
-  const { dependencies = {}, handler } =
-    typeof value === 'function' ? { handler: value } : (value as any)
+  const handler =
+    typeof value === 'function'
+      ? value
+      : value !== null && typeof value === 'object' && 'handler' in value
+        ? value.handler
+        : undefined
+  if (typeof handler !== 'function')
+    throw new Error(`Missing activity handler [${name}]`)
 
   return Object.freeze({
     kind: 'activityImplementation',
     name,
-    dependencies,
-    handler,
+    handler: handler as ActivityImplementation['handler'],
   })
 }
 
