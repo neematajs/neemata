@@ -64,6 +64,7 @@ const normalizeDate = defineTask({
 })
 
 const implementation = implementTask(normalizeDate, {
+  pool: 'dates',
   handler: async ({ at }, lifecycle, env: { clock: Clock }) =>
     env.clock.round(new Date(at)),
 })
@@ -200,6 +201,7 @@ const normalizeDate = defineTask({
 })
 
 const implementation = implementTask(normalizeDate, {
+  pool: 'dates',
   handler: (date) => Effect.succeed(date),
 })
 ```
@@ -274,10 +276,21 @@ Arguments and returned values use decoded schema types. Handlers and `finish`
 return Effects; synchronous callbacks return values directly.
 
 ```ts
+// app.planner.ts
+import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
+
+export default defineWorkflowsPlanner(() => ({
+  pools: { greetings: { concurrency: 4 } },
+}))
+
+// app.worker.ts
 import * as Context from 'effect/Context'
 import * as Layer from 'effect/Layer'
 import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
-import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
+import {
+  createPostgresWorkflowConnection,
+  createPostgresWorkflowRuntime,
+} from '@nmtjs/workflows/postgres'
 
 class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
 
@@ -287,6 +300,7 @@ const greet = defineTask({
   output: Schema.String,
 })
 const greeting = implementTask(greet, {
+  pool: 'greetings',
   handler: (name) =>
     Effect.gen(function* () {
       const prefix = yield* Prefix
@@ -298,13 +312,26 @@ export default defineWorkflowsWorker({
   workflows: () => [],
   tasks: () => [greeting],
   layer: Layer.succeed(Prefix, 'Hello'),
-  runtime: Effect.sync(createInMemoryWorkflowRuntime),
+  runtime: Effect.acquireRelease(
+    Effect.sync(
+      () => new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+    ),
+    (pool) => Effect.promise(() => pool.end()),
+  ).pipe(
+    Effect.map((pool) =>
+      createPostgresWorkflowRuntime({
+        connection: createPostgresWorkflowConnection(pool),
+      }),
+    ),
+  ),
 })
 ```
 
-`runtime` is an Effect that acquires the adapter; it may use the same Layer and
-`Effect.acquireRelease` for database connections. A production worker uses a shared
-durable adapter. The in-memory adapter above is only a single-worker example.
+`runtime` is an Effect that acquires the adapter once per thread, in the
+worker's Scope, so `Effect.acquireRelease` ties connections to the thread's
+lifetime; it may also use services from the Layer. Coordinator and pool threads
+must share one durable store, Postgres or Redis: the in-memory adapter would
+give every thread its own.
 `defineWorkflowsWorker` checks that the Layer provides services
 required by the adapter, task/activity handlers (including branch/parallel cases),
 and finish. The Layer must not require external services. The worker supplies
@@ -405,9 +432,10 @@ keeping historical runs from filling Redis memory.
 Lookup keys reused by a newer run retain that run's ownership. Routed polling
 removes expired-family commands when they become due on a worker's routes.
 Retention maintenance also sweeps abandoned routes and commands with future
-schedules or leases; run `store.pruneTerminalRuns()` periodically, or configure
-worker retention, to reclaim those commands and their indexes. The terminal-run
-index expires after its latest retained entry.
+schedules or leases; run `store.pruneTerminalRuns()` periodically, or pass
+`retention` to standalone worker loops, to reclaim those commands and their
+indexes; Neem workers do not prune on their own. The terminal-run index expires
+after its latest retained entry.
 
 Delayed starts and retry backoff are supported. Recurring/cron schedules are
 intentionally not part of the Redis runtime; use a Postgres runtime for durable
