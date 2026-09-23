@@ -1,5 +1,5 @@
 import type { Server } from 'node:http'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -10,8 +10,12 @@ type RecoveryProxyData = {
   attempt: number
   marker: string
   port: number
-  recoveryDelayMs: number
+  release: string
 }
+
+// Bounded below Neem's 30 s worker startup deadline so a test that never
+// releases fails on its own assertions instead of hanging.
+const RELEASE_TIMEOUT_MS = 20_000
 
 export default defineRuntimeWorker<RecoveryProxyData>({
   definition: { fixture: 'recovery-proxy' },
@@ -28,7 +32,10 @@ export default defineRuntimeWorker<RecoveryProxyData>({
             name: ctx.name,
             port: ctx.data.port,
           })
-          await wait(ctx.data.recoveryDelayMs)
+          const deadline = Date.now() + RELEASE_TIMEOUT_MS
+          while (!existsSync(ctx.data.release) && Date.now() < deadline) {
+            await wait(25)
+          }
         }
 
         server = createServer((request, response) => {

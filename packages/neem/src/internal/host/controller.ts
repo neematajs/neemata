@@ -449,8 +449,8 @@ export class HostController {
     })
   }
 
-  // Worker failure and recovery must not fail on proxy mutations; the error is logged,
-  // kept in proxy health, and retried by the next reconcile.
+  // Worker failure and recovery must not fail on proxy mutations; the proxy logs the
+  // error, reports it in health, and retries the reconcile in the background.
   private async refreshProxyUpstreams(): Promise<void> {
     await this.proxy
       ?.setUpstreams(this.collectRuntimeUpstreams())

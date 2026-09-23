@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -18,7 +18,9 @@ describe('Neem recovery health and proxy behavior', () => {
     const fixture = await createNeemFixture({ config: 'recovery-proxy' })
     const [proxyPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-proxy-marker')
+    const releaseFile = resolve(fixture.dir, 'recovery-proxy-release')
     await rm(markerFile, { force: true })
+    await rm(releaseFile, { force: true })
 
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -28,6 +30,7 @@ describe('Neem recovery health and proxy behavior', () => {
           NEEM_RECOVERY_PROXY_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_PROXY_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_PROXY_MARKER: markerFile,
+          NEEM_RECOVERY_PROXY_RELEASE: releaseFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -68,6 +71,7 @@ describe('Neem recovery health and proxy behavior', () => {
     expect(restarting.status).toBe(503)
     expect(restarting.headers.get('retry-after')).toBe('1')
     expect(await restarting.text()).toBe('No upstream available\n')
+    await writeFile(releaseFile, '')
 
     await waitForMatchingEventCount(
       fixture.eventsFile,

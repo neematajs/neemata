@@ -44,6 +44,9 @@ type NativeProxyRouting =
   | { type: 'subdomain'; name?: string }
   | { type: 'default' }
 
+const RECONCILE_RETRY_BASE_MS = 100
+const RECONCILE_RETRY_MAX_MS = 5_000
+
 type NativeProxyConstructor = new (options: NativeProxyOptions) => NativeProxy
 type RuntimeProxyConfigs = Record<
   string,
@@ -59,6 +62,8 @@ export class ProxyController {
   private desired = new Map<string, NeemProxyUpstreamSnapshot>()
   private applied = new Map<string, NeemProxyUpstreamSnapshot>()
   private failures = new Map<string, NeemProxyUpstreamFailure>()
+  private retryTimer: ReturnType<typeof setTimeout> | undefined
+  private retryAttempt = 0
 
   constructor(private readonly snapshot: RuntimeSnapshot) {
     const config = snapshot.config.proxy
@@ -105,6 +110,8 @@ export class ProxyController {
     const proxy = this.proxy
     this.proxy = undefined
     this.running = false
+    this.cancelRetry()
+    this.retryAttempt = 0
     if (!proxy) return
 
     this.logger.info('Neem proxy stopping')
@@ -116,7 +123,10 @@ export class ProxyController {
     this.logger.debug('Neem proxy stopped')
   }
 
-  /** Rejects with this call's own reconcile error; earlier failures are retried, not rethrown. */
+  /**
+   * Rejects with this call's own reconcile error. Failed reconciles are retried
+   * in the background until upstreams converge or a newer call supersedes them.
+   */
   async setUpstreams(upstreams: readonly RuntimeUpstreams[]): Promise<void> {
     this.desired = createDesiredUpstreams(
       filterRuntimeUpstreams(upstreams, this.snapshot.config.runtimes),
@@ -168,10 +178,19 @@ export class ProxyController {
   }
 
   private async reconcile(): Promise<void> {
+    this.cancelRetry()
     if (!this.proxy) return
 
     await this.mutations
       .run(async () => {
+        // A failed add for an upstream that is no longer desired has nothing left
+        // to retry and would otherwise keep proxy health unready.
+        for (const key of this.failures.keys()) {
+          if (!this.desired.has(key) && !this.applied.has(key)) {
+            this.failures.delete(key)
+          }
+        }
+
         // Diff when the mutation runs: reconciles queued earlier may already have
         // applied part of this change, and native add/remove reject repeats.
         const removals = [...this.applied.values()].filter(
@@ -192,15 +211,46 @@ export class ProxyController {
           await this.addUpstream(upstream).catch(collect)
         if (errors.length > 0) throw errors[0]
       })
-      .catch((error) => {
-        const normalized = normalizeError(error)
-        this.logger.warn(
-          new Error('Failed to reconcile proxy upstreams', {
-            cause: normalized,
-          }),
-        )
-        throw normalized
-      })
+      .then(
+        () => {
+          // A later reconcile converged, so any retry scheduled by an earlier one is moot.
+          this.cancelRetry()
+          this.retryAttempt = 0
+        },
+        (error) => {
+          const normalized = normalizeError(error)
+          this.logger.warn(
+            new Error('Failed to reconcile proxy upstreams', {
+              cause: normalized,
+            }),
+          )
+          this.scheduleRetry()
+          throw normalized
+        },
+      )
+  }
+
+  // Failure and recovery refreshes may be the last lifecycle event for a while,
+  // so a transient native error must not leave routing stale until the next one.
+  private scheduleRetry(): void {
+    this.cancelRetry()
+    if (!this.proxy) return
+    const delay = Math.min(
+      RECONCILE_RETRY_BASE_MS * 2 ** this.retryAttempt,
+      RECONCILE_RETRY_MAX_MS,
+    )
+    this.retryAttempt++
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = undefined
+      this.reconcile().catch(() => undefined)
+    }, delay)
+    this.retryTimer.unref()
+  }
+
+  private cancelRetry(): void {
+    if (!this.retryTimer) return
+    clearTimeout(this.retryTimer)
+    this.retryTimer = undefined
   }
 
   private async addUpstream(
