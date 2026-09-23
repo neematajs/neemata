@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -21,6 +21,61 @@ afterEach(async () => {
 })
 
 describe('ThreadController', () => {
+  it('lets requested-stop cleanup finish before terminating a starting worker', async () => {
+    const fixture = await createThreadFixture(
+      `import ${JSON.stringify(REAL_WORKER_ENTRY)}`,
+      `
+      import { appendFileSync } from 'node:fs'
+      export default Object.freeze({
+        [Symbol.for('neem:runtime-worker')]: true,
+        createRuntime(ctx) {
+          const started = Promise.withResolvers()
+          return {
+            start() {
+              ctx.port.postMessage('starting')
+              return started.promise
+            },
+            async stop() {
+              appendFileSync(ctx.data.eventsFile, 'stop\\n')
+              started.reject(new Error('startup interrupted'))
+              await new Promise(resolve => setTimeout(resolve, 50))
+              appendFileSync(ctx.data.eventsFile, 'finalized\\n')
+            },
+          }
+        },
+      })
+      `,
+    )
+    const eventsFile = resolve(fixture.snapshot.outDir, 'cleanup.txt')
+    const hooks = createHostHooks()
+    const entered = createFuture<void>()
+    let failures = 0
+    hooks.hook('worker:fail', () => {
+      failures++
+    })
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact, data: { eventsFile } },
+      index: 0,
+      hooks,
+    })
+    thread.port.on('message', () => entered.resolve())
+    const start = thread.start().catch((error: unknown) => error)
+    try {
+      const result = await raceWithTimeout(entered.promise, 2_000)
+      expect(result.timedOut).toBe(false)
+      await thread.stop()
+      expect(await start).toBeUndefined()
+      expect(await readFile(eventsFile, 'utf8')).toBe('stop\nfinalized\n')
+      expect(failures).toBe(0)
+      expect(thread.getState()).toBe('stopped')
+    } finally {
+      await thread.stop()
+      await start
+    }
+  })
+
   it('stops when the worker exits after stop cleanup despite live handles', async () => {
     const fixture = await createThreadFixture(`
       import { parentPort } from 'node:worker_threads'

@@ -64,6 +64,7 @@ export class RuntimeService {
     this.controller = controller
     await controller.start()
     const health = controller.getHealth()
+    if (this.controller !== controller) return health
     snapshot.logger.info('Neem runtime service ready')
     snapshot.logger.trace(
       { ready: health.ready, revision: health.revision },

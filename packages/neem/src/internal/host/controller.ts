@@ -31,6 +31,8 @@ export type HostControllerOptions = {
 
 export class HostController {
   private state: NeemRuntimeServerState = 'idle'
+  private stopRequested = false
+  private stopRevision = 0
   private revision = 0
   private lastError: Error | undefined
   private snapshot: RuntimeSnapshot
@@ -84,7 +86,12 @@ export class HostController {
   }
 
   start(): Promise<void> {
+    const revision = this.stopRevision
     return this.operations.run(async () => {
+      // A stop also cancels starts queued before it; a later explicit start may
+      // still restart this controller after the queued shutdown has finished.
+      if (revision !== this.stopRevision) return
+      this.stopRequested = false
       if (this.state === 'running') return
       this.markState('starting')
       this.logger.info('Neem server starting')
@@ -108,6 +115,7 @@ export class HostController {
 
   reload(snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
+      if (this.stopRequested) return
       this.markState('reloading')
       this.logger.debug('Neem server reloading')
       this.logger.trace(
@@ -142,16 +150,24 @@ export class HostController {
   }): Promise<void> {
     try {
       await options.prepare?.()
+      if (this.stopRequested) return
       await this.startPlugins()
+      if (this.stopRequested) return
       await this.syncHealthProbe()
+      if (this.stopRequested) return
       await this.callServerHook('server:start')
+      if (this.stopRequested) return
       await this.startRuntimes()
+      if (this.stopRequested) return
       await this.startProxy()
+      if (this.stopRequested) return
       this.markState('running')
       await this.callServerHook(options.readyHook)
+      if (this.stopRequested) return
       options.onReady()
       this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
     } catch (error) {
+      if (this.stopRequested) return
       const normalized = normalizeError(error)
       this.markState('failed', normalized)
       this.logger.error({ err: normalized }, options.failMessage)
@@ -163,6 +179,7 @@ export class HostController {
 
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
     return this.operations.run(async () => {
+      if (this.stopRequested) return
       const reloadStartedAt = performance.now()
       const current = this.runtimes.get(runtimeName)
       let currentDetached = false
@@ -190,6 +207,7 @@ export class HostController {
           stopMs = performance.now() - stopStartedAt
           currentStopped = true
         }
+        if (this.stopRequested) return
 
         this.replaceSnapshot(snapshot)
 
@@ -201,9 +219,11 @@ export class HostController {
           await next.start()
           startMs = performance.now() - startStartedAt
         }
+        if (this.stopRequested) return
 
         const attachProxyStartedAt = performance.now()
         await this.syncProxyUpstreams()
+        if (this.stopRequested) return
         attachProxyMs = performance.now() - attachProxyStartedAt
         this.markState('running')
         const hooksStartedAt = performance.now()
@@ -235,6 +255,7 @@ export class HostController {
         }
         await next?.stop().catch(() => undefined)
         await this.syncProxyUpstreams().catch(() => undefined)
+        if (this.stopRequested) return
         this.markState('failed', normalized)
         this.logger.error(
           { err: normalized, runtimeName },
@@ -246,7 +267,18 @@ export class HostController {
   }
 
   stop(): Promise<void> {
+    this.stopRequested = true
+    this.stopRevision++
+    // Interrupt active startup before joining the serial queue; otherwise a
+    // worker awaiting readiness prevents its own stop request from reaching it.
+    const interrupted =
+      this.state === 'starting' || this.state === 'reloading'
+        ? Promise.allSettled(
+            [...this.runtimes.values()].map((runtime) => runtime.stop()),
+          )
+        : undefined
     return this.operations.run(async () => {
+      await interrupted
       if (this.state === 'stopped') return
       this.markState('stopping')
       this.logger.info('Neem server stopping')
@@ -288,11 +320,12 @@ export class HostController {
       runtimes.set(runtimeName, this.createRuntime(runtimeName))
     }
 
+    // Publish ownership before readiness so stop can reach starting workers.
+    this.runtimes = runtimes
     try {
       await Promise.all(
         [...runtimes.values()].map((runtime) => runtime.start()),
       )
-      this.runtimes = runtimes
     } catch (error) {
       await Promise.allSettled(
         [...runtimes.values()].map((runtime) => runtime.stop()),

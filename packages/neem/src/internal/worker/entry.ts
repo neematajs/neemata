@@ -23,7 +23,7 @@ const workerData = rawWorkerData as RuntimeWorkerData
 
 let runtime: NeemRuntime | undefined
 let logger: Logger | undefined
-let started = false
+let stopping: Promise<void> | undefined
 let stopRequested = false
 
 function postMessage(message: WorkerMessage): void {
@@ -84,16 +84,19 @@ async function resolveWorkerLogger(
   )
 }
 
-async function stopRuntime(options: { force?: boolean } = {}): Promise<void> {
-  if (runtime && (started || options.force)) {
-    logger?.trace({ force: options.force }, 'Stopping Neem runtime worker')
-    await runtime.stop()
+function stopRuntime(): Promise<void> {
+  // The factory may still be resolving when stop arrives. Its eventual runtime
+  // must be stopped once, even if start has not completed (or has not run yet).
+  return (stopping ??= (async () => {
+    const current = runtime ?? (await initialization)
+    logger?.trace('Stopping Neem runtime worker')
+    await current.stop()
     logger?.trace('Neem runtime worker stopped')
-  }
-  started = false
+  })())
 }
 
 async function stopAndExit(): Promise<void> {
+  if (stopRequested) return
   stopRequested = true
   try {
     await stopRuntime()
@@ -141,31 +144,36 @@ process.on('unhandledRejection', (error) => {
 
 async function main(): Promise<void> {
   try {
-    runtime = await createRuntime(workerData)
+    runtime = await initialization
   } catch (error) {
+    if (stopRequested) return
     reportError(error, 'bootstrap')
     process.exit(1)
   }
 
+  if (stopRequested) return
   try {
     logger?.trace('Starting Neem runtime worker')
     const result = await runtime.start()
+    if (stopRequested) return
     const upstreams = parseRuntimeStartResult(result)
-    started = true
     logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
     postMessage({ type: 'ready', data: { upstreams } })
     void watchRuntimeFinished(runtime)
   } catch (error) {
-    await stopRuntime({ force: true }).catch((cleanupError) => {
+    if (stopRequested) return
+    await stopRuntime().catch((cleanupError) => {
       logger?.warn(
         new Error('Neem runtime cleanup after start error failed', {
           cause: normalizeError(cleanupError),
         }),
       )
     })
+    if (stopRequested) return
     reportError(error, 'start')
     process.exit(1)
   }
 }
 
+const initialization = createRuntime(workerData)
 void main()
