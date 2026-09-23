@@ -51,17 +51,19 @@ test.skipIf(!postgresTarget.url)(
       await runningHarness?.cleanup()
     }
 
-    await bench(
-      `persists ${startsPerSample} workflow starts`,
-      {
-        beforeAll: setup,
-        afterAll: (mode) => {
-          if (mode === 'run') return teardown()
+    // Tinybench skips afterAll hooks when an iteration throws.
+    try {
+      await bench(
+        `persists ${startsPerSample} workflow starts`,
+        { beforeAll: setup },
+        async () => {
+          await Promise.all(
+            inputs.map((input) => client!.start(workflow, input)),
+          )
         },
-      },
-      async () => {
-        await Promise.all(inputs.map((input) => client!.start(workflow, input)))
-      },
-    ).run(benchmarkOptions)
+      ).run(benchmarkOptions)
+    } finally {
+      await teardown()
+    }
   },
 )

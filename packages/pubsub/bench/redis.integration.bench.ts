@@ -104,23 +104,23 @@ for (const target of serviceTargets) {
 
       let publish: () => Promise<boolean> = async () => false
 
-      await bench(
-        `publishes and receives ${messagesPerSample} messages`,
-        {
-          beforeAll: setup,
-          afterAll: (mode) => {
-            if (mode === 'run') return teardown()
+      // Tinybench skips afterAll hooks when an iteration throws.
+      try {
+        await bench(
+          `publishes and receives ${messagesPerSample} messages`,
+          { beforeAll: setup },
+          async () => {
+            for (let index = 0; index < messagesPerSample; index++) {
+              const received = pendingMessage!
+              if (!(await publish())) throw new Error('PubSub publish failed')
+              if ((await received).done) throw new Error('PubSub stream closed')
+              pendingMessage = iterator!.next()
+            }
           },
-        },
-        async () => {
-          for (let index = 0; index < messagesPerSample; index++) {
-            const received = pendingMessage!
-            if (!(await publish())) throw new Error('PubSub publish failed')
-            if ((await received).done) throw new Error('PubSub stream closed')
-            pendingMessage = iterator!.next()
-          }
-        },
-      ).run(benchmarkOptions)
+        ).run(benchmarkOptions)
+      } finally {
+        await teardown()
+      }
     },
   )
 }
