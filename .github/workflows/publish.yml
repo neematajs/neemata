@@ -1,10 +1,7 @@
 name: Publish Neem stack
 
 permissions:
-  contents: write
-  actions: write
-  attestations: write
-  id-token: write
+  contents: read
 
 # Serialize releases across all publishing workflows and branches.
 concurrency:
@@ -35,24 +32,42 @@ on:
         type: boolean
         required: true
         default: true
-      version:
-        description: 'Version to publish'
-        type: string
-        required: true
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check committed stack version
+        id: read
+        run: |
+          version=$(node scripts/release.js stack)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: [version]
     if: ${{ inputs.run_tests }}
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
   build-and-publish:
-    needs: [test]
-    if: ${{ always() && (!inputs.run_tests || needs.test.result == 'success') }}
+    needs: [version, test]
+    permissions:
+      # Only the publish job mints npm OIDC tokens and creates tags/releases.
+      contents: write
+      id-token: write
+    if: >-
+      always() && !cancelled() && needs.version.result == 'success' &&
+      (!inputs.run_tests || needs.test.result == 'success')
     runs-on: ubuntu-latest
     env:
-      VERSION_TAG: v${{ inputs.version }}
-      RELEASE_VERSION: ${{ inputs.version }}
+      VERSION_TAG: v${{ needs.version.outputs.version }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -71,10 +86,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Set version
+      - name: Add shared README and license
         run: |
-          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec npm pkg set version="$RELEASE_VERSION" repository.type=git repository.url=https://github.com/neematajs/neemata
-          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/README.md" ./
+          # Packages with their own README keep it; the rest get the root one.
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec sh -c 'test -f README.md || cp "$GITHUB_WORKSPACE/README.md" ./'
           pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
       - name: Build TypeScript packages

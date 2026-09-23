@@ -1,7 +1,13 @@
 {
   "name": "@nmtjs/nuxt",
+  "version": "0.17.0-beta.17",
   "description": "Neem runtime preset for hosting Nuxt apps.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neematajs/neemata",
+    "directory": "packages/nuxt"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
     "clean-build": "rm -rf ./dist",

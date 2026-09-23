@@ -1,5 +1,8 @@
 name: Test
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   pull_request:
@@ -22,8 +25,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-workspaces: packages/proxy
-          components: rustfmt, clippy
+          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -67,8 +69,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-workspaces: packages/proxy
-          components: rustfmt, clippy
+          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -88,6 +89,26 @@ jobs:
       - run: |
           pnpm run test --reporter=agent --reporter=github-actions
           pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
+
+  # prom-client's engines still include Node 22, which the main test matrix doesn't cover.
+  tests-prom-client-node22:
+    needs: [lint]
+    name: Tests (prom-client, Node 22)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nmtjs/prom-client run test --reporter=github-actions
 
   tests-bun:
     needs: [lint]
@@ -111,8 +132,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-workspaces: packages/proxy
-          components: rustfmt, clippy
+          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -180,8 +200,7 @@ jobs:
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-workspaces: packages/proxy
-          components: rustfmt, clippy
+          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:

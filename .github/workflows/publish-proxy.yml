@@ -1,8 +1,7 @@
 name: Publish proxy
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 # Serialize releases across all publishing workflows and branches.
 concurrency:
@@ -13,10 +12,6 @@ concurrency:
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Version to publish
-        type: string
-        required: true
       run_tests:
         description: Run package tests before publishing
         type: boolean
@@ -35,7 +30,23 @@ on:
         default: true
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check committed proxy version
+        id: read
+        run: |
+          version=$(node scripts/release.js package proxy)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: [version]
     if: inputs.run_tests
     runs-on: ubuntu-24.04
     steps:
@@ -47,27 +58,29 @@ jobs:
           cache: pnpm
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-workspaces: packages/proxy
-          components: rustfmt, clippy
+          rust-src-dir: packages/proxy
       - run: pnpm install --frozen-lockfile
       - name: Check and test proxy
         run: pnpm --dir packages/proxy run check:rust && pnpm --dir packages/proxy run test
 
   build:
+    needs: [version]
     uses: ./.github/workflows/proxy-build.yml
-    with:
-      version: ${{ inputs.version }}
 
   publish:
-    needs: [test, build]
+    needs: [version, test, build]
+    permissions:
+      # Only the publish job mints npm OIDC tokens and creates tags/releases.
+      contents: write
+      id-token: write
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && needs.version.result == 'success' &&
       (!inputs.run_tests || needs.test.result == 'success') &&
       needs.build.result == 'success'
     runs-on: ubuntu-24.04
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      VERSION_TAG: proxy-v${{ inputs.version }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: proxy-v${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -87,8 +100,6 @@ jobs:
         with:
           name: proxy-loader
           path: packages/proxy/dist
-      - name: Set package version
-        run: pnpm --dir packages/proxy pkg set version="$RELEASE_VERSION"
       - name: Assemble proxy platform packages
         working-directory: packages/proxy
         run: |

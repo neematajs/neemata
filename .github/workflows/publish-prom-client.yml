@@ -1,8 +1,7 @@
 name: Publish prom-client
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 # Serialize releases across all publishing workflows and branches.
 concurrency:
@@ -13,10 +12,6 @@ concurrency:
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: Version to publish
-        type: string
-        required: true
       run_tests:
         description: Run package tests before publishing
         type: boolean
@@ -35,7 +30,23 @@ on:
         default: true
 
 jobs:
+  version:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check committed prom-client version
+        id: read
+        run: |
+          version=$(node scripts/release.js package prom-client)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: [version]
     if: inputs.run_tests
     runs-on: ubuntu-24.04
     steps:
@@ -49,12 +60,18 @@ jobs:
       - run: pnpm --dir packages/prom-client run check:type && pnpm --dir packages/prom-client run test
 
   publish:
-    needs: [test]
-    if: always() && !cancelled() && (!inputs.run_tests || needs.test.result == 'success')
+    needs: [version, test]
+    permissions:
+      # Only the publish job mints npm OIDC tokens and creates tags/releases.
+      contents: write
+      id-token: write
+    if: >-
+      always() && !cancelled() && needs.version.result == 'success' &&
+      (!inputs.run_tests || needs.test.result == 'success')
     runs-on: ubuntu-24.04
     env:
-      RELEASE_VERSION: ${{ inputs.version }}
-      VERSION_TAG: prom-client-v${{ inputs.version }}
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      VERSION_TAG: prom-client-v${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -64,8 +81,6 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Set package version
-        run: pnpm --dir packages/prom-client pkg set version="$RELEASE_VERSION"
       - name: Publish package
         run: |
           TAG=$(node scripts/tag.js "$RELEASE_VERSION")

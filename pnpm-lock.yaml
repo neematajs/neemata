@@ -83,7 +83,7 @@ importers:
         specifier: workspace:*
         version: link:../neem
       '@nmtjs/prom-client':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../prom-client
       pino:
         specifier: ^10.3.1
@@ -132,7 +132,7 @@ importers:
         specifier: workspace:*
         version: link:../metrics
       '@nmtjs/proxy':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../proxy
       '@types/node':
         specifier: ^24.13.2

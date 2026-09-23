@@ -1,7 +1,13 @@
 {
   "name": "@nmtjs/pubsub",
+  "version": "0.17.0-beta.17",
   "description": "Typed ephemeral publish/subscribe channels with Redis and Valkey adapters.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/neematajs/neemata",
+    "directory": "packages/pubsub"
+  },
   "scripts": {
     "clean-build": "rm -rf ./dist",
     "test": "vitest run --config vitest.config.ts",
