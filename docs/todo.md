@@ -88,13 +88,11 @@ Work that is known and deliberately not done yet.
 
 ## Metrics
 
-- Narrow `@nmtjs/metrics` to Neem host and worker observation once the retired
-  framework is deleted, and decide whether the forked `@nmtjs/prom-client` is still
+- Narrow `@nmtjs/metrics` to Neem host and worker observation now that the old
+  framework is gone, and decide whether the forked `@nmtjs/prom-client` is still
   needed. Applications can export their own metrics from workers through OTLP.
 
 ## Effect preset (`@nmtjs/effect`)
-
-These two concern the Effect adapter rather than the migration itself.
 
 - **Logging bridge.** Effect logs are not routed into Neem's Pino logger;
   applications receive `ctx.logger` and configure Effect logging themselves.

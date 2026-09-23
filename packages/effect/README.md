@@ -4,7 +4,7 @@ Run a supervised Effect application in a Neem worker. The application supplies i
 services, main effect, and upstreams; the preset owns their lifetime. Neem itself
 has no Effect dependency.
 
-This slice targets **Effect 4.0.0-rc.116**, pinned exactly. The preset imports only
+It targets **Effect 4.0.0-rc.116**, pinned exactly. The preset imports only
 stable Effect modules. Applications choose and pin their own HTTP, RPC, and platform
 integrations, including any unstable APIs.
 
@@ -87,7 +87,7 @@ make that work's failure fail the main fiber.
 Use cooperative work and bounded finalizers. An uninterruptible region or a Promise
 that ignores its AbortSignal can outlive interruption; the preset cannot kill that
 JavaScript work. Neem's worker shutdown deadline and thread termination remain the
-outer boundary. Workflow-specific cleanup and commit fencing belong to later slices.
+outer boundary.
 
 The preset does not currently bridge Effect logging into Neem's Pino logger.
 Applications receive `ctx.logger` and own their Effect logger configuration. A runtime
@@ -100,9 +100,9 @@ Cause diagnostics for the host's logs remain an observability follow-up.
 The preset provides no procedures, schemas, transport protocol, or Promise client
 facade. Effect RPC or HttpApi belongs to the application, as do uploads and auth.
 
-The CaseNetwork slice-3 proof uses an application-owned Promise wrapper over
-`RpcClient` for its Vue frontend. Its ManagedRuntime owns the HTTP client protocol;
-each call owns an RPC scope and accepts an AbortSignal. The application explicitly
+For a Promise-based frontend, one tested pattern is an application-owned wrapper
+over `RpcClient`. Its ManagedRuntime owns the HTTP client protocol; each call owns
+an RPC scope and accepts an AbortSignal. The application explicitly
 marks the HTTP effect returned by `RpcServer.toHttpEffect` interruptible: in the
 pinned version, the HTTP handler otherwise starts uninterruptible, so disconnecting
 a request does not promptly close its RPC scope. A server-finalizer test verifies
