@@ -368,6 +368,8 @@ export class ThreadController {
     this.failureCount += 1
     this.lastError = error
     this.state = 'failed'
+    // Failed workers exit; advertising their upstreams would route traffic to a dead port.
+    this.upstreams = []
     this.logger.error({ err: error }, 'Neem worker failed')
   }
 

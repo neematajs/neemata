@@ -1395,6 +1395,129 @@ describe('Proxy wiring', () => {
     }
   })
 
+  describe('upstream availability errors', () => {
+    const expectNoUpstream = (res: Awaited<ReturnType<typeof httpGet>>) => {
+      expect(res.status).toBe(503)
+      expect(res.headers['retry-after']).toBe('1')
+      expect(res.headers['content-type']).toBe('text/plain; charset=utf-8')
+      expect(res.body).toBe('No upstream available\n')
+    }
+
+    it('answers 503 with Retry-After while a path route has no upstream', async () => {
+      const port = await getFreePort()
+      const proxy = new NeemataProxy({
+        listen: `127.0.0.1:${port}`,
+        applications: [{ name: 'api', routing: { type: 'path', name: 'api' } }],
+      })
+      const u = {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: upstreamHttp1Port,
+      } as const
+
+      await proxy.start()
+      try {
+        expectNoUpstream(await httpGet(port, '/api/hello'))
+
+        const head = await httpRequest(port, {
+          method: 'HEAD',
+          path: '/api/hello',
+        })
+        expect(head.status).toBe(503)
+        expect(head.headers['retry-after']).toBe('1')
+        expect(head.body).toBe('')
+
+        await proxy.addUpstream('api', u)
+        await waitFor(
+          async () => await httpGet(port, '/api/hello'),
+          (r) => r.status === 200,
+        )
+
+        await proxy.removeUpstream('api', u)
+        expectNoUpstream(await httpGet(port, '/api/hello'))
+
+        // Unmatched routes stay a plain 404.
+        const unmatched = await httpGet(port, '/other')
+        expect(unmatched.status).toBe(404)
+        expect(unmatched.headers['retry-after']).toBeUndefined()
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('answers 502 when a registered upstream refuses connections', async () => {
+      const upstreamPort = await getFreePort()
+      const upstream = http.createServer((_req, res) => res.end('alive'))
+      await new Promise<void>((resolve) =>
+        upstream.listen(upstreamPort, '127.0.0.1', resolve),
+      )
+
+      const port = await getFreePort()
+      const proxy = new NeemataProxy({
+        listen: `127.0.0.1:${port}`,
+        applications: [{ name: 'api', routing: { type: 'path', name: 'api' } }],
+        // Keep the dead upstream marked healthy so the request reaches it.
+        healthCheckIntervalMs: 60_000,
+      })
+
+      await proxy.addUpstream('api', {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: upstreamPort,
+      })
+      await proxy.start()
+      try {
+        await waitFor(
+          async () => await httpGet(port, '/api/hello'),
+          (r) => r.status === 200 && r.body === 'alive',
+        )
+
+        upstream.closeAllConnections()
+        await new Promise<void>((resolve) => upstream.close(() => resolve()))
+
+        const res = await httpGet(port, '/api/hello')
+        expect(res.status).toBe(502)
+        expect(res.headers['retry-after']).toBeUndefined()
+        expect(res.headers['content-type']).toBe('text/plain; charset=utf-8')
+        expect(res.body).toBe('Upstream request failed\n')
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('answers 503 with Retry-After once health checks mark the upstream down', async () => {
+      const port = await getFreePort()
+      const proxy = new NeemataProxy({
+        listen: `127.0.0.1:${port}`,
+        applications: [{ name: 'api', routing: { type: 'path', name: 'api' } }],
+        healthCheckIntervalMs: 100,
+      })
+
+      await proxy.addUpstream('api', {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: await getFreePort(),
+      })
+      await proxy.start()
+      try {
+        expectNoUpstream(
+          await waitFor(
+            async () => await httpGet(port, '/api/hello'),
+            (r) => r.status === 503,
+          ),
+        )
+      } finally {
+        await proxy.stop()
+      }
+    })
+  })
+
   it('fails over to healthy upstream when one becomes unavailable', async () => {
     // Create spies to track which upstream receives requests
     const upstream1Spy = vi.fn()

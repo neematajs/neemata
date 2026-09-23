@@ -390,7 +390,6 @@ export class HostController {
 
   private async syncProxyUpstreams(): Promise<void> {
     await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-    await this.proxy?.waitForIdle()
   }
 
   private async syncHealthProbe(): Promise<void> {
@@ -438,9 +437,8 @@ export class HostController {
       recovery: this.options.recovery,
       onThreadEvent: this.options.onThreadEvent,
       prepareRecovery: prepareRecovery && (() => prepareRecovery(runtimeName)),
-      onRecovered: async () => {
-        await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-      },
+      onRecovered: () => this.refreshProxyUpstreams(),
+      onUpstreamsChange: () => this.refreshProxyUpstreams(),
       onFailure: (error) => {
         const failOnWorkerError =
           this.options.failOnWorkerError ?? this.snapshot.mode === 'production'
@@ -449,6 +447,14 @@ export class HostController {
         this.options.onFailure?.(error)
       },
     })
+  }
+
+  // Worker failure and recovery must not fail on proxy mutations; the proxy logs the
+  // error, reports it in health, and retries the reconcile in the background.
+  private async refreshProxyUpstreams(): Promise<void> {
+    await this.proxy
+      ?.setUpstreams(this.collectRuntimeUpstreams())
+      .catch(() => undefined)
   }
 
   private replaceSnapshot(snapshot: RuntimeSnapshot): void {

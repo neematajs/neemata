@@ -12,5 +12,7 @@ export default defineRuntimePlanner(() => {
     10,
   )
 
-  return { workers: [{ attempt, marker, port }] }
+  const release = process.env.NEEM_RECOVERY_PROXY_RELEASE ?? ''
+
+  return { workers: [{ attempt, marker, port, release }] }
 })

@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
+import { createFuture } from '@nmtjs/common'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
-import type { NeemProxyConfig } from '../../src/shared/types.ts'
+import type {
+  NeemProxyConfig,
+  NeemProxyUpstream,
+  NeemRuntimeUpstream,
+} from '../../src/shared/types.ts'
 import {
   createDesiredUpstreams,
   createNativeProxyOptions,
@@ -11,18 +16,43 @@ import {
   toProxyUpstream,
 } from '../../src/internal/host/proxy.ts'
 
-vi.mock('@nmtjs/proxy', () => ({
-  Proxy: class {
-    async start() {}
-    async stop() {}
-    // stands in for the port the OS picks when `port: 0` is configured
-    address() {
-      return { hostname: '127.0.0.1', port: 54321 }
-    }
-    async addUpstream() {}
-    async removeUpstream() {}
-  },
+// Mirrors the native registry, which rejects repeated adds and removals.
+const native = vi.hoisted(() => ({
+  registered: new Set<string>(),
+  beforeMutation: async (_operation: 'add' | 'remove', _key: string) => {},
 }))
+
+vi.mock('@nmtjs/proxy', () => {
+  const key = (runtimeName: string, upstream: NeemProxyUpstream) =>
+    `${runtimeName}:${upstream.transport}:${upstream.hostname}:${upstream.port}`
+  return {
+    Proxy: class {
+      async start() {}
+      async stop() {}
+      // stands in for the port the OS picks when `port: 0` is configured
+      address() {
+        return { hostname: '127.0.0.1', port: 54321 }
+      }
+      async addUpstream(runtimeName: string, upstream: NeemProxyUpstream) {
+        const id = key(runtimeName, upstream)
+        await native.beforeMutation('add', id)
+        if (native.registered.has(id))
+          throw new Error('Upstream already exists')
+        native.registered.add(id)
+      }
+      async removeUpstream(runtimeName: string, upstream: NeemProxyUpstream) {
+        const id = key(runtimeName, upstream)
+        await native.beforeMutation('remove', id)
+        if (!native.registered.delete(id)) throw new Error('Upstream not found')
+      }
+    },
+  }
+})
+
+beforeEach(() => {
+  native.registered.clear()
+  native.beforeMutation = async () => {}
+})
 
 describe('Neem proxy helpers', () => {
   it('normalizes wildcard runtime upstreams to loopback', () => {
@@ -211,5 +241,167 @@ describe('Neem proxy helpers', () => {
         },
       ),
     ).toThrow('Multiple Neem proxy default routes configured')
+  })
+})
+
+describe('ProxyController upstream reconciliation', () => {
+  const first = { type: 'http', url: 'http://127.0.0.1:4101/' } as const
+  const second = { type: 'http', url: 'http://127.0.0.1:4102/' } as const
+
+  async function startController(
+    upstreams: readonly NeemRuntimeUpstream[] = [first, second],
+  ) {
+    const noop = () => {}
+    const logger = {
+      info: noop,
+      debug: noop,
+      trace: noop,
+      warn: noop,
+      child: (): unknown => logger,
+    }
+    const controller = new ProxyController({
+      logger,
+      config: {
+        proxy: { hostname: '127.0.0.1', port: 0 },
+        runtimes: { api: { proxy: {} } },
+      },
+    } as unknown as RuntimeSnapshot)
+    await controller.start([{ runtimeName: 'api', upstreams }])
+    return controller
+  }
+
+  it('removes every failed worker when failures overlap a pending removal', async () => {
+    const controller = await startController()
+    const release = createFuture<void>()
+    native.beforeMutation = async () => {
+      await release.promise
+    }
+
+    const firstFailed = controller.setUpstreams([
+      { runtimeName: 'api', upstreams: [second] },
+    ])
+    const bothFailed = controller.setUpstreams([
+      { runtimeName: 'api', upstreams: [] },
+    ])
+    release.resolve()
+
+    await expect(firstFailed).resolves.toBeUndefined()
+    await expect(bothFailed).resolves.toBeUndefined()
+    expect(native.registered.size).toBe(0)
+    expect(controller.getHealth()).toMatchObject({
+      appliedUpstreams: [],
+      failedUpstreams: [],
+      ready: true,
+    })
+    await controller.stop()
+  })
+
+  it('does not fail a later reconcile with an earlier reconcile error', async () => {
+    const controller = await startController()
+    native.beforeMutation = async (operation, key) => {
+      if (operation === 'remove' && key.endsWith(':4101')) {
+        throw new Error('native remove failed')
+      }
+    }
+
+    await expect(
+      controller.setUpstreams([{ runtimeName: 'api', upstreams: [second] }]),
+    ).rejects.toThrow('native remove failed')
+    expect(controller.getHealth().ready).toBe(false)
+
+    native.beforeMutation = async () => {}
+    await expect(
+      controller.setUpstreams([{ runtimeName: 'api', upstreams: [second] }]),
+    ).resolves.toBeUndefined()
+    expect([...native.registered]).toEqual(['api:http:127.0.0.1:4102'])
+    expect(controller.getHealth()).toMatchObject({
+      failedUpstreams: [],
+      ready: true,
+    })
+    await controller.stop()
+  })
+
+  describe('with a failing add', () => {
+    const firstKey = 'api:http:127.0.0.1:4101'
+    let addAttempts = 0
+
+    beforeEach(() => {
+      addAttempts = 0
+      vi.useFakeTimers()
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    const failAdds = (times: number) => {
+      native.beforeMutation = async (operation, key) => {
+        if (operation !== 'add' || key !== firstKey) return
+        addAttempts++
+        if (addAttempts <= times) throw new Error('native add failed')
+      }
+    }
+
+    it('retries in the background until the upstream is applied', async () => {
+      const controller = await startController([second])
+      failAdds(1)
+
+      await expect(
+        controller.setUpstreams([
+          { runtimeName: 'api', upstreams: [first, second] },
+        ]),
+      ).rejects.toThrow('native add failed')
+      expect(controller.getHealth().ready).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(addAttempts).toBe(2)
+      expect(native.registered).toContain(firstKey)
+      expect(controller.getHealth()).toMatchObject({
+        failedUpstreams: [],
+        ready: true,
+      })
+      expect(vi.getTimerCount()).toBe(0)
+      await controller.stop()
+    })
+
+    it('cancels the pending retry on stop', async () => {
+      const controller = await startController([second])
+      failAdds(Infinity)
+
+      await expect(
+        controller.setUpstreams([
+          { runtimeName: 'api', upstreams: [first, second] },
+        ]),
+      ).rejects.toThrow('native add failed')
+      expect(vi.getTimerCount()).toBe(1)
+
+      await controller.stop()
+      expect(vi.getTimerCount()).toBe(0)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(addAttempts).toBe(1)
+    })
+
+    it('forgets the failure once the upstream is no longer desired', async () => {
+      const controller = await startController([second])
+      failAdds(Infinity)
+
+      await expect(
+        controller.setUpstreams([
+          { runtimeName: 'api', upstreams: [first, second] },
+        ]),
+      ).rejects.toThrow('native add failed')
+      expect(controller.getHealth().failedUpstreams).toHaveLength(1)
+
+      await controller.setUpstreams([
+        { runtimeName: 'api', upstreams: [second] },
+      ])
+
+      expect(controller.getHealth()).toMatchObject({
+        failedUpstreams: [],
+        ready: true,
+      })
+      expect(vi.getTimerCount()).toBe(0)
+      await controller.stop()
+    })
   })
 })

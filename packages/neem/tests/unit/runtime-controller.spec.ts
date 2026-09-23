@@ -4,11 +4,13 @@ import { resolve } from 'node:path'
 import { createFuture } from '@nmtjs/common'
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
+import type { RecoveryOptions } from '../../src/internal/host/recovery.ts'
 import type {
   HostRunner,
   HostRunnerOptions,
 } from '../../src/internal/host/runner.ts'
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
+import type { NeemRuntimeUpstream } from '../../src/shared/types.ts'
 import { RuntimeController } from '../../src/internal/host/runtime.ts'
 import * as logging from '../../src/internal/logger.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
@@ -262,6 +264,49 @@ describe('RuntimeController recovery', () => {
   })
 })
 
+describe('RuntimeController upstreams', () => {
+  const first = { type: 'http', url: 'http://127.0.0.1:4101/' } as const
+  const second = { type: 'http', url: 'http://127.0.0.1:4102/' } as const
+
+  it('detaches a crashed worker before recovery and reattaches after it', async () => {
+    const { runtime, onRecovered, onUpstreamsChange, advertised } =
+      await createFixture()
+    host.plan.mockResolvedValue({
+      workers: [{ upstreams: [first] }, { upstreams: [second] }],
+    })
+    await runtime.start()
+    expect(runtime.getUpstreams()).toEqual([first, second])
+
+    runtime.listThreads()[0]!.port.postMessage('crash')
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+
+    // The crashed worker is dropped immediately, the rest once cleanup stops them.
+    expect(onUpstreamsChange).toHaveBeenCalledTimes(2)
+    expect(advertised).toEqual([[second], []])
+    expect(runtime.getUpstreams()).toEqual([first, second])
+  })
+
+  it('detaches a crashed worker when recovery is disabled', async () => {
+    const { runtime, onFailure, advertised } = await createFixture({
+      recovery: { attempts: 0 },
+    })
+    host.plan.mockResolvedValue({
+      workers: [{ upstreams: [first] }, { upstreams: [second] }],
+    })
+    await runtime.start()
+
+    runtime.listThreads()[0]!.port.postMessage('crash')
+    await vi.waitFor(() => expect(onFailure).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+
+    expect(advertised).toEqual([[second]])
+    expect(runtime.getUpstreams()).toEqual([second])
+  })
+})
+
 describe('RuntimeController patches', () => {
   it('rejects an update that a running thread was not registered for', async () => {
     const { runtime } = await createFixture()
@@ -279,7 +324,7 @@ describe('RuntimeController patches', () => {
   })
 })
 
-async function createFixture() {
+async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
   const outDir = await createTempDir('neem-runtime-controller-')
   const workerEntry = new URL(
     '../../src/internal/worker/entry.ts',
@@ -301,7 +346,7 @@ async function createFixture() {
           async start() {
             if (data.behavior === 'hang') await new Promise(() => {})
             if (data.behavior === 'fail') throw new Error('replacement startup failed')
-            return []
+            return data.upstreams ?? []
           },
           async stop() {},
         }
@@ -368,6 +413,10 @@ async function createFixture() {
   const error = vi.spyOn(snapshot.logger, 'error')
   const hooks = createHostHooks()
   const onRecovered = vi.fn()
+  const advertised: Array<readonly NeemRuntimeUpstream[]> = []
+  const onUpstreamsChange = vi.fn((runtime: RuntimeController) => {
+    advertised.push(runtime.getUpstreams())
+  })
   const onFailure = vi.fn<(error: Error, runtime: RuntimeController) => void>()
   host.start.mockResolvedValue()
   host.plan.mockResolvedValue({ workers: [{}, {}] })
@@ -378,10 +427,20 @@ async function createFixture() {
     snapshot,
     runtimeName: 'api',
     hooks,
-    recovery: { delayMs: 0 },
+    recovery: { delayMs: 0, ...options.recovery },
     onRecovered,
+    onUpstreamsChange,
     onFailure,
   })
   onTestFinished(() => runtime.stop())
-  return { runtime, hooks, onRecovered, onFailure, warn, error }
+  return {
+    runtime,
+    hooks,
+    onRecovered,
+    onUpstreamsChange,
+    advertised,
+    onFailure,
+    warn,
+    error,
+  }
 }

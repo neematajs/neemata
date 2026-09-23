@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -18,7 +18,9 @@ describe('Neem recovery health and proxy behavior', () => {
     const fixture = await createNeemFixture({ config: 'recovery-proxy' })
     const [proxyPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-proxy-marker')
+    const releaseFile = resolve(fixture.dir, 'recovery-proxy-release')
     await rm(markerFile, { force: true })
+    await rm(releaseFile, { force: true })
 
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -28,6 +30,7 @@ describe('Neem recovery health and proxy behavior', () => {
           NEEM_RECOVERY_PROXY_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_PROXY_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_PROXY_MARKER: markerFile,
+          NEEM_RECOVERY_PROXY_RELEASE: releaseFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -54,6 +57,21 @@ describe('Neem recovery health and proxy behavior', () => {
     const crash = await fetchJson(`http://127.0.0.1:${proxyPort}/api/crash`)
     expect(crash?.status).toBe(200)
     expect(crash?.body).toMatchObject({ crashing: true, attempt: 1 })
+
+    await waitForMatchingEventCount(
+      fixture.eventsFile,
+      (event) => event.event === 'recovery-proxy-delay' && event.attempt === 2,
+      1,
+    )
+
+    // The crashed worker is detached while its replacement starts.
+    const restarting = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+    )
+    expect(restarting.status).toBe(503)
+    expect(restarting.headers.get('retry-after')).toBe('1')
+    expect(await restarting.text()).toBe('No upstream available\n')
+    await writeFile(releaseFile, '')
 
     await waitForMatchingEventCount(
       fixture.eventsFile,
@@ -268,6 +286,13 @@ describe('Neem recovery health and proxy behavior', () => {
       ready: false,
       lastError: { message: expect.stringContaining('bad-partial') },
     })
+
+    const failedProxy = await fetch(
+      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+    )
+    expect(failedProxy.status).toBe(503)
+    expect(failedProxy.headers.get('retry-after')).toBe('1')
+    expect(await failedProxy.text()).toBe('No upstream available\n')
 
     await writeFileAtomically(workerFile, fixedWorker)
     await waitForProbeEventCount(neem, 'runtime:patch-fallback', 2)
