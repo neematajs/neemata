@@ -113,9 +113,15 @@ export async function startStoredScheduleRun(
     readonly attemptExecutor: AttemptExecutor
   },
   schedule: StoredWorkflowSchedule,
-  slot: Timestamp,
+  slot: Timestamp | 'manual',
 ): Promise<StoredRun> {
-  const idempotencyKey = ['$schedule', schedule.name, slot]
+  // A slot identifies one recurring fire, so every scheduler instance derives
+  // the same key for it. A manual trigger is its own event: a time-based key
+  // would collapse triggers that land in the same millisecond.
+  const idempotencyKey =
+    slot === 'manual'
+      ? ['$schedule', schedule.name, 'manual', crypto.randomUUID()]
+      : ['$schedule', schedule.name, slot]
   const tags = { ...schedule.tags, schedule: schedule.name }
   const run = await runtime.store.createRun({
     kind: schedule.runnableKind,

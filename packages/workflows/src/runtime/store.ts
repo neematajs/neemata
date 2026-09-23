@@ -1,4 +1,5 @@
 import type {
+  CancellationPolicy,
   ResolvedRunUnique,
   RunKind,
   WorkflowNodeKind,
@@ -169,6 +170,8 @@ export type EnsureChildRunParams = {
   readonly rootRunId: string
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
+  /** Stored on the child edge when the run is created; absent means propagate. */
+  readonly cancellation?: CancellationPolicy
 }
 
 export type EnsureChildRunResult = {
@@ -196,6 +199,13 @@ export type CreateAttemptInput = {
   readonly childKey: string
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
+  /**
+   * The attempt this one retries. When set, the attempt is created only while
+   * `after` is still the child's current attempt; otherwise the child's current
+   * attempt is returned unchanged. Two workers recovering the same failure
+   * therefore share one successor instead of superseding each other.
+   */
+  readonly after?: string
 }
 
 export type NodeChildRef = {

@@ -206,6 +206,8 @@ export const createPostgresWorkflowNodeStore = (
       await ready
       // Lock the child before allocating its next attempt number. CTE dependencies
       // keep the attempt, child pointer and node hint atomic, including notifications.
+      // The `after` check reads the locked row, so of two concurrent retries of one
+      // attempt the second sees the first's successor and creates nothing.
       const attempt = await one(
         db,
         `
@@ -226,6 +228,8 @@ export const createPostgresWorkflowNodeStore = (
             attempt_count + 1, next_retry_attempt_number, $6::jsonb, $7::jsonb, now()
           FROM child
           WHERE status IN (${nodeStatusSourcesSql('running', { self: true })})
+            AND ($8::text IS NULL OR current_attempt_id IS NULL
+              OR current_attempt_id::text = $8::text)
           RETURNING *, ${payloadColumnsSql()}, NULL::text AS old_status
         ), attempt_event_source AS (
           SELECT inserted.*, child.root_run_id FROM inserted CROSS JOIN child
@@ -252,7 +256,11 @@ export const createPostgresWorkflowNodeStore = (
         ), ${emitStatusChangeNotifySql('attempt_event_source', 'attempt_started')},
         ${emitStatusChangeNotifySql('updated_child', 'child_running')},
         ${emitStatusChangeNotifySql('updated_node', 'node_running')}
-        SELECT inserted.*, EXISTS (SELECT 1 FROM child) AS child_exists
+        SELECT inserted.*, EXISTS (SELECT 1 FROM child) AS child_exists,
+          (
+            SELECT current_attempt_id FROM child
+            WHERE current_attempt_id::text <> $8::text
+          ) AS superseded_by
           ${notifyRunStatusEventColumnsSql('attempt_started', 'child_running', 'node_running')}
         FROM (SELECT 1) AS result LEFT JOIN inserted ON true
       `,
@@ -264,12 +272,29 @@ export const createPostgresWorkflowNodeStore = (
           id(),
           json(input.input),
           input.idempotencyKey ? json(input.idempotencyKey) : null,
+          input.after ?? null,
         ],
       )
       if (!attempt?.child_exists) {
         throw new Error(
           `Missing node child [${input.runId}.${input.nodeName}.${input.childKey}]`,
         )
+      }
+      const supersededBy = attempt.superseded_by as string | null
+      if (supersededBy) {
+        // A retry whose predecessor was already superseded is a replay by a
+        // worker that lost the claim: hand back the successor. It is read in a
+        // new statement because one committed while this statement waited for
+        // the child lock is invisible to this statement's snapshot.
+        const current = await one(
+          db,
+          `SELECT *, ${payloadColumnsSql()} FROM workflow_attempts WHERE id = $1`,
+          [supersededBy],
+        )
+        if (!current) {
+          throw new Error(`Missing attempt [${supersededBy}]`)
+        }
+        return mapAttempt(current)
       }
       if (!attempt.id) {
         throw new Error(

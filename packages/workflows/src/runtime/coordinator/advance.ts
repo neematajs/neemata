@@ -22,7 +22,7 @@ export async function advanceWorkflowRun(
   input: AdvanceCtx,
 ): Promise<AdvanceOutcome> {
   const nextNode = input.workflow.nodes.find(
-    (node) => !Object.prototype.hasOwnProperty.call(input.outputs, node.name),
+    (node) => !Object.hasOwn(input.outputs, node.name),
   )
 
   if (!nextNode) {

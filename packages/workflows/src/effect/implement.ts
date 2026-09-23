@@ -10,7 +10,7 @@ import type {
   TaskImplementation,
   WorkflowImplementation,
   WorkflowImplementationOptions,
-  WorkflowInputMapper,
+  WorkflowInputMapperArguments,
   WorkflowMapInputMapper,
 } from '../implement/index.ts'
 import type {
@@ -37,11 +37,27 @@ import {
   implementTask as implementStoredTask,
 } from '../implement/index.ts'
 
+declare const unsupportedEnv: unique symbol
+
+/**
+ * Stands in for the env of a core handler that an Effect worker cannot supply:
+ * such a worker passes handlers a HandlerRuntime and nothing else. No Layer or
+ * Context provides it, so the worker fails to compile rather than at runtime.
+ */
+type UnsupportedEnv<E> = { readonly [unsupportedEnv]: E }
+
 type Provided<E> = 0 extends 1 & E
   ? any
-  : E extends HandlerRuntime<infer R>
-    ? R
-    : never
+  : // Env-less core handlers accept whatever runtime the worker passes.
+    [HandlerRuntime] extends [E]
+    ? never
+    : E extends HandlerRuntime<infer R>
+      ? // The runtime is the whole env an Effect worker passes: a subtype
+        // asking for more than it would find those members undefined.
+        [HandlerRuntime<R>] extends [E]
+        ? R
+        : UnsupportedEnv<E>
+      : UnsupportedEnv<E>
 
 /**
  * Services an implementation's handlers require from the worker. Lists in the
@@ -109,41 +125,61 @@ type AnyActivityCaseDescriptor<Input, Output> = ActivityCaseDescriptor<
   any
 >
 
-type CaseImplementationValue<Case> =
+// A case given as a bare value has no mapper, so it is accepted only where the
+// workflow input is what the case takes; otherwise a helper must supply one.
+type BareCaseValue<WorkflowArgs, Input, Value> = [WorkflowArgs] extends [Input]
+  ? Value
+  : never
+
+type CaseImplementationValue<Case, WorkflowArgs> =
   Case extends BranchCaseDefinition<'activity', infer Input, infer Output>
     ?
-        | AnyActivityImplementationValue<Input, Output>
+        | BareCaseValue<
+            WorkflowArgs,
+            Input,
+            AnyActivityImplementationValue<Input, Output>
+          >
         | AnyActivityCaseDescriptor<Input, Output>
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
-        ? Task | RunnableCaseDescriptor<Task, TaskInput<Task>>
+        ?
+            | BareCaseValue<WorkflowArgs, TaskInput<Task>, Task>
+            | RunnableCaseDescriptor<Task, TaskInput<Task>>
         : never
       : Case extends BranchCaseDefinition<'workflow', any, any, infer Workflow>
         ? Workflow extends AnyWorkflowDefinition
-          ? Workflow | RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
+          ?
+              | BareCaseValue<WorkflowArgs, WorkflowInput<Workflow>, Workflow>
+              | RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
           : never
         : never
 
 type CaseImplementationObject<
   Cases extends Record<string, BranchCaseDefinition>,
+  WorkflowArgs,
 > = {
   readonly [CaseName in keyof Cases & string]: CaseImplementationValue<
-    Cases[CaseName]
+    Cases[CaseName],
+    WorkflowArgs
   >
 }
 
 type CaseImplementers<Outputs extends object, Input> = {
   readonly activity: <NodeInput, Output, R = never>(
     value: ActivityImplementationValue<NodeInput, Output, R>,
-    options?: ActivityImplementationOptions<Outputs, Input, NodeInput>,
+    ...options: WorkflowInputMapperArguments<Outputs, Input, NodeInput>
   ) => ActivityCaseDescriptor<NodeInput, Output, R>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
-    options?: WorkflowInputMapper<Outputs, Input, TaskInput<Task>>,
+    ...options: WorkflowInputMapperArguments<Outputs, Input, TaskInput<Task>>
   ) => RunnableCaseDescriptor<Task, TaskInput<Task>>
   readonly workflow: <Workflow extends AnyWorkflowDefinition>(
     workflow: Workflow,
-    options?: WorkflowInputMapper<Outputs, Input, WorkflowInput<Workflow>>,
+    ...options: WorkflowInputMapperArguments<
+      Outputs,
+      Input,
+      WorkflowInput<Workflow>
+    >
   ) => RunnableCaseDescriptor<Workflow, WorkflowInput<Workflow>>
 }
 
@@ -159,16 +195,16 @@ type CaseImplementationFactory<
   Cases extends Record<string, BranchCaseDefinition>,
   Outputs extends object,
   Input,
-  Values extends CaseImplementationObject<Cases> =
-    CaseImplementationObject<Cases>,
+  Values extends CaseImplementationObject<Cases, Input> =
+    CaseImplementationObject<Cases, Input>,
 > = (helpers: CaseImplementers<Outputs, Input>) => Values
 
 type CaseImplementationArgument<
   Cases extends Record<string, BranchCaseDefinition>,
   Outputs extends object,
   Input,
-  Values extends CaseImplementationObject<Cases> =
-    CaseImplementationObject<Cases>,
+  Values extends CaseImplementationObject<Cases, Input> =
+    CaseImplementationObject<Cases, Input>,
 > = Values | CaseImplementationFactory<Cases, Outputs, Input, Values>
 
 // The chain below mirrors the one in ../implement/index.ts with Effect handlers.
@@ -193,7 +229,7 @@ export type WorkflowImplementationChain<
     ? {
         readonly [Key in Name]: <R = never>(
           value: ActivityImplementationValue<Input, Output, R>,
-          options?: ActivityImplementationOptions<Outputs, WorkflowArgs, Input>,
+          ...options: WorkflowInputMapperArguments<Outputs, WorkflowArgs, Input>
         ) => WorkflowImplementationChain<
           Workflow,
           WorkflowR | R,
@@ -210,11 +246,11 @@ export type WorkflowImplementationChain<
       ? {
           readonly [Key in Name]: (
             task: Task,
-            options?: WorkflowInputMapper<
+            ...options: WorkflowInputMapperArguments<
               Outputs,
               WorkflowArgs,
               TaskInput<Task>
-            >,
+            >
           ) => WorkflowImplementationChain<
             Workflow,
             WorkflowR,
@@ -231,11 +267,11 @@ export type WorkflowImplementationChain<
         ? {
             readonly [Key in Name]: (
               workflow: Child,
-              options?: WorkflowInputMapper<
+              ...options: WorkflowInputMapperArguments<
                 Outputs,
                 WorkflowArgs,
                 WorkflowInput<Child>
-              >,
+              >
             ) => WorkflowImplementationChain<
               Workflow,
               WorkflowR,
@@ -251,7 +287,10 @@ export type WorkflowImplementationChain<
             >
           ? {
               readonly [Key in Name]: <
-                const Values extends CaseImplementationObject<Cases>,
+                const Values extends CaseImplementationObject<
+                  Cases,
+                  WorkflowArgs
+                >,
               >(options: {
                 select: (
                   outputs: Outputs,
@@ -278,7 +317,10 @@ export type WorkflowImplementationChain<
               >
             ? {
                 readonly [Key in Name]: <
-                  const Values extends CaseImplementationObject<Cases>,
+                  const Values extends CaseImplementationObject<
+                    Cases,
+                    WorkflowArgs
+                  >,
                 >(
                   cases: CaseImplementationArgument<
                     Cases,

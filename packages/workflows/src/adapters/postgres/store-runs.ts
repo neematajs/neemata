@@ -20,6 +20,7 @@ import {
   many,
   payloadColumnsSql,
   payloadRowJsonSql,
+  creationOffsetMicros,
   mapAttempt,
   mapAttemptSummary,
   mapDeadCommand,
@@ -34,7 +35,6 @@ import {
   normalizePruneBatchSize,
   normalizePruneStatuses,
   notifyRunStatusEventColumnsSql,
-  now,
   one,
   runnableName,
   sameValue,
@@ -70,12 +70,35 @@ export type CreateStoredRunOptions = {
   readonly recoverUniqueViolation?: boolean
 }
 
-export const createStoredRunWithState = async (
+// A self-rooted child would sit outside the family that pruning and family
+// listings select by root. A run's root never changes, so reading it ahead of
+// the insert is safe; a missing parent still fails the insert's foreign key.
+const inheritParentRoot = async (
   connection: WorkflowPostgresConnection,
   input: CreateRunInput,
+): Promise<CreateRunInput> => {
+  if (
+    input.rootRunId !== undefined ||
+    input.parentRunId === undefined ||
+    !isUuid(input.parentRunId)
+  ) {
+    return input
+  }
+  const parent = await one<{ root_run_id: string }>(
+    connection,
+    'SELECT root_run_id FROM workflow_runs WHERE id = $1',
+    [input.parentRunId],
+  )
+  return parent ? { ...input, rootRunId: parent.root_run_id } : input
+}
+
+export const createStoredRunWithState = async (
+  connection: WorkflowPostgresConnection,
+  rawInput: CreateRunInput,
   options: CreateStoredRunOptions = {},
 ): Promise<{ readonly run: StoredRun; readonly created: boolean }> => {
   const recoverUniqueViolation = options.recoverUniqueViolation ?? true
+  const input = await inheritParentRoot(connection, rawInput)
   const loadIdempotentRun = async () => {
     if (!input.idempotencyKey) return undefined
     const existing = await one(
@@ -142,7 +165,7 @@ export const createStoredRunWithState = async (
   // including a caller-provided one. The retry covers a holder leaving its
   // uniqueness scope between the conflict and the recovery read.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const date = now()
+    const date = Date.now()
     const runId = id()
     const row = await one(
       connection,
@@ -157,7 +180,7 @@ export const createStoredRunWithState = async (
         VALUES (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
           $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14,
-          1, $15, $15, $15
+          1, $15, $15::timestamptz + ($16::int * interval '1 microsecond'), $15
         )
         ON CONFLICT DO NOTHING
         RETURNING *, ${payloadColumnsSql()}, NULL::text AS old_status
@@ -182,6 +205,7 @@ export const createStoredRunWithState = async (
         input.unique?.scope ?? null,
         input.unique?.behavior ?? null,
         timestampParam(date),
+        creationOffsetMicros(date),
       ],
     )
     if (row) return { run: mapRun(row), created: true }
@@ -251,11 +275,23 @@ export const pruneTerminalRunsInTransaction = async (
             AND r.status IN (${statusList})
             AND r.updated_at < $1
             AND NOT EXISTS (
+              -- Deleting the root cascades over both links, so liveness has
+              -- to be checked over both as well.
+              WITH RECURSIVE descendants AS (
+                SELECT c.id, c.status
+                FROM workflow_runs c
+                WHERE (c.parent_run_id = r.id OR c.root_run_id = r.id)
+                  AND c.id <> r.id
+                UNION
+                SELECT c.id, c.status
+                FROM workflow_runs c
+                JOIN descendants d
+                  ON (c.parent_run_id = d.id OR c.root_run_id = d.id)
+                 AND c.id <> d.id
+              )
               SELECT 1
-              FROM workflow_runs d
-              WHERE d.root_run_id = r.id
-                AND d.id <> r.id
-                AND d.status NOT IN (${terminalStatusList})
+              FROM descendants
+              WHERE status NOT IN (${terminalStatusList})
             )
           ORDER BY r.updated_at, r.id
           LIMIT ${batchParam}
@@ -268,10 +304,14 @@ export const pruneTerminalRunsInTransaction = async (
     deleted = rows.length
   }
 
+  // An unreaped dead command is the only thing that still settles its run,
+  // and maintenance prunes before it reaps: after downtime longer than the
+  // retention window, age alone would strand the run as active.
   await connection.query(
     `
       DELETE FROM workflow_commands
       WHERE dead_at IS NOT NULL
+        AND reaped_at IS NOT NULL
         AND dead_at < $1
     `,
     [timestampParam(params.olderThan)],
@@ -384,6 +424,9 @@ const runSummaryColumnsSql = (alias: string) => `
   ${alias}.root_run_id,
   ${alias}.tags,
   ${alias}.idempotency_key,
+  ${alias}.unique_key,
+  ${alias}.unique_scope,
+  ${alias}.unique_behavior,
   ${alias}.version,
   ${alias}.active_since,
   ${alias}.created_at,
@@ -435,6 +478,8 @@ const buildListRunsQueryParts = (
     const statuses = Array.isArray(filter.status)
       ? filter.status
       : [filter.status]
+    // No status matches an empty selection, and `IN ()` is not valid SQL.
+    if (statuses.length === 0) return undefined
     where.push(
       `r.status IN (${statuses.map((status) => push(status)).join(', ')})`,
     )

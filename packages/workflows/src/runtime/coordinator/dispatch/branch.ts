@@ -139,6 +139,11 @@ export async function dispatchBranchNode(
       nodeName: input.node.name,
       childKey,
       workflowName: selected.target.name,
+      cancellation:
+        selectedDeclaration.kind === 'workflow'
+          ? (selectedDeclaration as BranchCaseDefinition<'workflow'>)
+              .cancellation
+          : undefined,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
@@ -179,6 +184,7 @@ export async function dispatchBranchNode(
       childKey,
       taskName: taskTarget.name,
       timeout: taskDeclaration.timeout ?? taskTarget.timeout,
+      retry: taskDeclaration.retry ?? taskTarget.retry,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
@@ -243,6 +249,7 @@ export async function dispatchBranchNode(
     runId: input.run.id,
     nodeName: input.node.name,
     childKey,
+    retry: selected.retry,
     prepareAttempt: async () => {
       const result = await input.store.ensureChildAttempt({
         runId: input.run.id,

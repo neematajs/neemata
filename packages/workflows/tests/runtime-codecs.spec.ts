@@ -2,7 +2,9 @@ import { PGlite } from '@electric-sql/pglite'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
 import { afterEach, describe, expect, it } from 'vitest'
+import * as z from 'zod'
 
+import type { WorkflowParallelNode } from '../src/types/index.ts'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
@@ -16,7 +18,10 @@ import {
   runExecutionWorker,
   runWorkflowWorker,
 } from '../src/effect/index.ts'
-import { defineSchedule } from '../src/index.ts'
+import {
+  defineSchedule,
+  defineWorkflow as defineStandardWorkflow,
+} from '../src/index.ts'
 import { decodeNodeOutput } from '../src/runtime/codec.ts'
 import {
   createInMemoryWorkflowRuntime,
@@ -700,4 +705,43 @@ it('requires declared output fields after a JSON round trip', () => {
   expect(() => decodeNodeOutput(workflow.nodes[1]!, mapped)).toThrow(
     'Invalid node output [items]',
   )
+})
+
+describe('parallel output decoding', () => {
+  const text = z.string()
+  const child = defineStandardWorkflow({
+    name: 'null-proto.schema-less',
+    input: text,
+  }).build()
+
+  function parallel(key: string): WorkflowParallelNode {
+    // Stored or hand-built definitions can bypass the reserved-name builders.
+    return {
+      kind: 'parallel',
+      name: 'pair',
+      cases: { [key]: { kind: 'workflow', target: child } },
+    }
+  }
+
+  it('preserves an own schema-less __proto__ output without a prototype', () => {
+    const stored = JSON.parse('{"__proto__":{"value":"kept"}}')
+    const output = decodeNodeOutput(parallel('__proto__'), stored)
+
+    expect(Object.getOwnPropertyDescriptor(output, '__proto__')?.value).toEqual(
+      {
+        value: 'kept',
+      },
+    )
+    expect(Object.getPrototypeOf(output)).toBeNull()
+  })
+
+  it('does not restore an inherited constructor for an absent schema-less output', () => {
+    const output = decodeNodeOutput(parallel('constructor'), JSON.parse('{}'))
+
+    expect(
+      Object.getOwnPropertyDescriptor(output, 'constructor'),
+    ).toBeUndefined()
+    expect(Object.getOwnPropertyNames(output)).toEqual([])
+    expect(Object.getPrototypeOf(output)).toBeNull()
+  })
 })

@@ -381,12 +381,15 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
     // expired-family cleanup, including delayed and still-leased commands.
     await this.#pruneOrphans(queue.ready, queue.claimed, queue.dead)
     let count: number
+    let offset = 0
     do {
-      count = await this.#scripts.run(
+      const page = (await this.#scripts.runRaw(
         'pruneDead',
         [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-        [String(olderThan), String(QUEUE_BATCH_SIZE)],
-      )
+        [String(olderThan), String(QUEUE_BATCH_SIZE), String(offset)],
+      )) as [number, number]
+      count = Number(page[0])
+      offset += Number(page[1])
     } while (count === QUEUE_BATCH_SIZE)
   }
 

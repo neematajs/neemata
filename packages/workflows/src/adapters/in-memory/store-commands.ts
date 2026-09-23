@@ -46,6 +46,7 @@ function requeueDead<T>(queue: QueueItem<T>[], commandId: string) {
     payload: item.payload,
     deliveryCount: 0,
     createdAt: item.createdAt,
+    sequence: item.sequence,
   }
   return true
 }
@@ -92,19 +93,19 @@ export function createCommandStore(state: State): CommandStore {
     async listUnreapedDeadCommands(params) {
       const limit = params?.limit ?? Number.POSITIVE_INFINITY
       const dead: DeadWorkflowCommand[] = []
+      // The reaper re-reads one command by id to confirm it is still dead; an
+      // unrelated match from either queue would pass for the one it listed.
+      const unreaped = (item: QueueItem<unknown>) =>
+        item.deadAt !== undefined &&
+        item.reapedAt === undefined &&
+        (params?.commandId === undefined || item.id === params.commandId)
       for (const item of continueRunCommands) {
-        if (
-          item.deadAt === undefined ||
-          item.reapedAt !== undefined ||
-          (params?.commandId !== undefined && item.id !== params.commandId)
-        ) {
-          continue
-        }
+        if (!unreaped(item)) continue
         const command = mapDeadCommand(item, 'continue')
         if (command !== undefined) dead.push(command)
       }
       for (const item of attemptCommands) {
-        if (item.deadAt === undefined || item.reapedAt !== undefined) continue
+        if (!unreaped(item)) continue
         const command = mapDeadCommand(
           item,
           item.payload.kind === 'activityAttempt' ? 'activity' : 'task',

@@ -151,6 +151,7 @@ for _, key in ipairs(external) do
   if redis.call('GET', key) == redis.call('HGET', KEYS[1], 'owner:' .. key) then redis.call('PERSIST', key) end
 end
 redis.call('PERSIST', ARGV[7] .. 'runs:ordered')
+redis.call('PERSIST', KEYS[11])
 local familyIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds'))
 for _, id in ipairs(familyIds) do
   redis.call('ZREM', KEYS[11], id)
@@ -249,6 +250,9 @@ redis.call('SET', ARGV[3], run.rootRunId)
 redis.call('ZADD', KEYS[5], order, run.id)
 redis.call('ZADD', ARGV[8] .. 'runs:ordered', order, run.id)
 redis.call('PERSIST', ARGV[8] .. 'runs:ordered')
+-- Expiry entries must outlive the ids they are needed to remove from the
+-- chronological index, which new work has just made permanent.
+redis.call('PERSIST', ARGV[8] .. 'runs:terminal')
 if ARGV[5] ~= '' then
   redis.call('SET', ARGV[5], run.id)
   trackExternal(KEYS[1], ARGV[5], run.id)
@@ -310,7 +314,9 @@ else
   end
 end
 
-child = applyChanges(child, { childRunId = requested.id, status = 'running' }, ARGV[7])
+local link = { childRunId = requested.id, status = 'running' }
+if ARGV[9] ~= '' then link.cancellation = ARGV[9] end
+child = applyChanges(child, link, ARGV[7])
 local linkedRaw = cjson.encode(child)
 redis.call('HSET', KEYS[3], ARGV[1], linkedRaw)
 redis.call('PUBLISH', KEYS[8], '1')
@@ -400,6 +406,14 @@ if ARGV[8] == '1' and child.currentAttemptId then
   if not current then return { 'missing-attempt' } end
   return { 'existing', current }
 end
+-- A retry whose predecessor was already superseded is a replay by a worker
+-- that lost the claim: hand back the successor instead of superseding the new
+-- claimant's attempt. Deciding here keeps concurrent retries to one successor.
+if ARGV[10] ~= '' and child.currentAttemptId and child.currentAttemptId ~= ARGV[10] then
+  local current = redis.call('HGET', KEYS[4], child.currentAttemptId)
+  if not current then return { 'missing-attempt' } end
+  return { 'existing', current }
+end
 if isTerminal(child.status) then return { 'terminal-child' } end
 
 local attempt = cjson.decode(ARGV[3])
@@ -467,6 +481,13 @@ local attempt = cjson.decode(attemptRaw)
 if attempt.leaseToken ~= ARGV[2] or attempt.status ~= 'started' then
   return { 'stale' }
 end
+-- Reaping, dispatch failure and the continuation fence settle without a claim.
+if ARGV[7] ~= '' then
+  local itemRaw = redis.call('HGET', KEYS[4], ARGV[7])
+  if not itemRaw or cjson.decode(itemRaw).leaseToken ~= ARGV[8] then
+    return { 'stale' }
+  end
+end
 local childRaw = redis.call('HGET', KEYS[2], ARGV[3])
 if not childRaw then return { 'stale' } end
 local child = cjson.decode(childRaw)
@@ -511,18 +532,32 @@ if remaining == 0 then
       redis.call('PEXPIRE', key, ARGV[5])
     end
   end
-  redis.call('ZREMRANGEBYSCORE', KEYS[4], '-inf', now)
   local runIds = cjson.decode(redis.call('HGET', KEYS[1], 'runIds') or '[]')
+  -- An active family keeps the chronological index alive, so ids whose
+  -- families expired would stay there for good unless they leave with their
+  -- expiry entries. This transition indexes every run of the family, so the
+  -- batch has to grow with the family or large families outpace it for good;
+  -- twice the inflow also drains a backlog while keeping the work
+  -- proportional to what the transition does anyway.
+  local expired = redis.call(
+    'ZRANGEBYSCORE', KEYS[4], '-inf', now, 'LIMIT', 0, 1000 + 2 * #runIds
+  )
+  -- unpack() is limited by the Lua stack, far below what a large family removes.
+  for first = 1, #expired, 1000 do
+    local last = math.min(first + 999, #expired)
+    redis.call('ZREM', ARGV[7], unpack(expired, first, last))
+    redis.call('ZREM', KEYS[4], unpack(expired, first, last))
+  end
   for _, runId in ipairs(runIds) do
     redis.call('ZREM', KEYS[3], runId)
     redis.call('ZADD', KEYS[4], expiresAt, runId)
   end
+  -- The expiry entries may only expire together with the chronological index:
+  -- alone they would take the record of which ids to remove from it with them.
   local latest = redis.call('ZREVRANGE', KEYS[4], 0, 0, 'WITHSCORES')
-  if #latest > 0 then
+  if #latest > 0 and redis.call('ZCARD', KEYS[3]) == 0 then
     redis.call('PEXPIREAT', KEYS[4], latest[2])
-    if redis.call('ZCARD', KEYS[3]) == 0 then
-      redis.call('PEXPIREAT', ARGV[7], latest[2])
-    end
+    redis.call('PEXPIREAT', ARGV[7], latest[2])
   end
 end
 redis.call('PUBLISH', KEYS[5], '1')

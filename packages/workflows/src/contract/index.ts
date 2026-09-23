@@ -81,13 +81,12 @@ type OutputMismatch<Message extends string, Expected, Received> = {
   readonly received: Received
 }
 
-type OutputMatches<
-  Received,
-  Expected,
-  Message extends string,
-> = Received extends Expected
-  ? unknown
-  : OutputMismatch<Message, Expected, Received>
+type OutputMatches<Received, Expected, Message extends string> =
+  // Tuple-wrapped so a union is compared whole: distributing would let the
+  // members that do match absorb the mismatch of those that do not.
+  [Received] extends [Expected]
+    ? unknown
+    : OutputMismatch<Message, Expected, Received>
 
 export type BranchCaseHelpers<K extends SchemaKind = CodecKind> = {
   activity<
@@ -432,6 +431,10 @@ export type ScheduleOptions<
 
 const nodeNamePattern = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/
 
+// Names cross JSON, jsonb, Lua/cjson, schema libraries and user code, where
+// handling of reserved keys such as `__proto__` is outside our control.
+const reservedNodeNames = new Set(['__proto__', 'constructor', 'prototype'])
+
 function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   if (!nodeNamePattern.test(name)) {
     throw new Error(`Invalid workflow node name: ${name}`)
@@ -439,9 +442,27 @@ function assertNodeName(name: string, nodes: readonly WorkflowNode[]) {
   if (name === 'input') {
     throw new Error('Workflow node name cannot be "input"')
   }
+  if (reservedNodeNames.has(name)) {
+    throw new Error(`Workflow node name cannot be "${name}"`)
+  }
   if (nodes.some((node) => node.name === name)) {
     throw new Error(`Duplicate workflow node name: ${name}`)
   }
+}
+
+// Case and member keys cross the same external boundaries as node names,
+// so null-prototype engine dictionaries do not make reserved keys safe there.
+function assertCaseKeys<Cases extends object>(
+  kind: 'branch case' | 'parallel member',
+  nodeName: string,
+  cases: Cases,
+): Cases {
+  for (const key of Object.keys(cases)) {
+    if (reservedNodeNames.has(key)) {
+      throw new Error(`Workflow ${kind} key cannot be "${key}": ${nodeName}`)
+    }
+  }
+  return cases
 }
 
 function assertMapConcurrency(options: { readonly concurrency?: number }) {
@@ -538,7 +559,11 @@ class WorkflowDraftBuilder<Name extends string> {
             ? undefined
             : this.toCodec(options.output),
         cases: Object.freeze(
-          options.cases(createBranchCaseHelpers(this.toCodec)),
+          assertCaseKeys(
+            'branch case',
+            name,
+            options.cases(createBranchCaseHelpers(this.toCodec)),
+          ),
         ),
       }),
     )
@@ -555,7 +580,11 @@ class WorkflowDraftBuilder<Name extends string> {
           ? {}
           : { description: options.description }),
         cases: Object.freeze(
-          casesFactory(createBranchCaseHelpers(this.toCodec)),
+          assertCaseKeys(
+            'parallel member',
+            name,
+            casesFactory(createBranchCaseHelpers(this.toCodec)),
+          ),
         ),
       }),
     )

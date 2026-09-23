@@ -87,7 +87,7 @@ function decodeOutputField(
   target: Record<string, unknown>,
 ) {
   if (schema) target[key] = decodeWith(schema, owner[key])
-  else if (key in owner) target[key] = owner[key]
+  else if (Object.hasOwn(owner, key)) target[key] = owner[key]
 }
 
 function decodeAggregate(
@@ -118,7 +118,7 @@ function decodeAggregate(
     }
     case 'parallel': {
       const stored = decodeRecord(value)
-      const outputs: Record<string, unknown> = {}
+      const outputs: Record<string, unknown> = Object.create(null)
       for (const [key, member] of Object.entries(node.cases))
         decodeOutputField(caseOutput(member), stored, key, outputs)
       return outputs

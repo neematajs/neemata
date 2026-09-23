@@ -890,3 +890,158 @@ payloads are a schema concern and unchanged.
   per-query expressions or stored generated columns, was considered and rejected: it
   guards only against parsers the check already reports, and costs either a column
   list at every query or twenty duplicated columns and a schema version.
+
+## Review fixes — 2026-09-22
+
+Three independent reviews (engine and contracts, PostgreSQL, Redis) of the stack tip
+found defects that mostly predate the migration. Fixed with a regression test each:
+
+- **Stranded work without an atomic completion step** (Redis, in-memory). A redelivered
+  task attempt whose run is already terminal replays the parent wake before it
+  acknowledges. A redelivered superseded attempt re-dispatches the retry whose command
+  was lost, and a retry budget is still spent when the worker died before creating the
+  retry. These live in the engine, so every adapter gets them.
+- **Claim fencing.** `atomicCompletion.run` receives the claim and the caller's context.
+  PostgreSQL still fences through its transaction; Redis and in-memory now refuse a
+  settlement from a worker whose claim was taken over. It is not a transaction there:
+  the new claimant replays the remaining idempotent writes.
+- **Retention** collects a dead command only after the reaper recorded its outcome, in
+  all three adapters; before that it is the only thing that can settle its run.
+- **PostgreSQL.** Nested transactions are savepoints, so a recoverable failure inside an
+  atomic completion rolls back its own writes. A plain client serializes top-level
+  queries with transactions. Schedule rows keep decoded string inputs. Schema version 4
+  adds `workflow_node_children.cancellation` and an index on `workflow_commands.attempt_id`.
+- **Declared but unread options.** A task node's `retry` travels on the command with the
+  task's own policy as fallback. `cancellation: 'detach'` is stored on the child edge,
+  because cancellation and the reaper run without the implementation registry.
+- **Smaller.** Manual schedule triggers have their own identity instead of a millisecond
+  slot. Branch output checks compare whole unions. Reserved node names are rejected.
+  The Effect Neem worker bounds cleanup after a failed startup; Effect workers reject core
+  handlers whose `env` a handler runtime cannot satisfy; registry validation covers
+  schedule targets. The in-memory clock is the wall clock with a separate sequence for
+  ordering. Redis `dispose()` disconnects when `quit()` fails, and maintenance collects
+  commands whose run no longer exists.
+
+### Second review pass
+
+A second pass over the fixes found gaps in them and a few new defects:
+
+- Settlement was fenced but retry creation was not: a stalled worker could create a
+  second successor and supersede the new claimant's work. `createAttempt` takes
+  `after`, the attempt being retried, and creates the successor only while that attempt
+  is still current; otherwise it returns the existing successor, even one that already
+  settled the child. The check is atomic in each adapter and independent of the claim.
+- The reaper marked a dead command reaped when its attempt had already completed,
+  without finishing the node and run, so exhausted deliveries stranded the run. It now
+  replays the recorded outcome through the same helpers redelivery uses, including a
+  lost retry dispatch and a lost parent wake.
+- A repeated `cancel` of a terminal run replays the parent wake a failed first cancel
+  lost.
+- In-memory retention requires the whole family to be terminal, as PostgreSQL and
+  Redis already did, so a running detached child survives its parent being pruned.
+- PostgreSQL: sibling nested scopes and parent-level queries on one transaction
+  connection are serialized, since savepoints form a stack; an empty `status` filter
+  returns nothing instead of invalid SQL; run detail reports a stored `detach`; run
+  summaries carry the `unique` key.
+- The Effect env check requires that a plain handler runtime satisfies the whole env.
+
+Deferred to [todo.md](todo.md): run-lease fencing that is atomic with the mutation,
+a startup deadline for workers (a Layer that fails part-way can hang inside its own
+build), the reaper's missing backoff for activity retries, and batched dead-command
+deletion in PostgreSQL retention.
+
+### Third review pass
+
+Findings fell from nineteen to twelve to seven. Fixed:
+
+- The run-timeout sweep failed a run and then woke its parent, so a failed enqueue lost
+  the wake for good. Before failing a run that has a parent, the sweep now enqueues a
+  continuation for that run itself: it cannot run early because the sweep holds the
+  run's lease, and a coordination pass over a terminal run already replays the parent
+  wake. Scheduling the parent's own continuation in advance was rejected: adapters
+  merge it into a pending one, which a worker can consume before the run is failed.
+- Coordinator re-dispatch of an existing retry ignored its backoff, for tasks and
+  activities. The backoff calculation lives in the coordinator's attempt module now and
+  the worker imports it.
+- Reserved keys are rejected as parallel member and branch case keys, in the contract
+  builders and in implementation normalization.
+- PostgreSQL: a transaction's connection rejects work once its handler has settled, and
+  the transaction ends only after queued work has finished, so a sibling scope still
+  running when the outer transaction rolls back can no longer commit on the bare client.
+  Run timestamps are the real time; `created_at` adds a per-process microsecond offset
+  in SQL so creation order survives a burst within one millisecond. A two-session test
+  on the live server covers the `createAttempt({ after })` lock wait.
+- Redis: expired run ids leave the chronological index with their expiry entries, in
+  bounded batches, and the terminal index no longer expires on its own while a run is
+  active.
+- In-memory retention computes family eligibility in one pass.
+
+Deferred to [todo.md](todo.md): fencing the writes after settlement by the originating
+attempt on Redis and in-memory, which only matters once a manual retry reopens the records.
+
+### Fourth review pass
+
+No P1 findings; PostgreSQL came back clean. Fixed:
+
+- Two regressions from the third pass. In-memory retention grouped families by
+  `rootRunId` while deletion followed `parentRunId`; both now use one family function.
+  An interrupted timeout turned into a cancellation, because descendants were cancelled
+  before the run was failed: the sweep now enqueues the run's continuation, fails the
+  run, then cancels descendants and wakes the parent, and a coordination pass over a
+  `failed` run cancels its live non-detached descendants, so either interruption
+  recovers with the timeout error intact.
+- Neem startup rejects two distinct implementations of one definition, which the
+  execution registry otherwise rejects at claim time, failing unrelated work.
+- In-memory `fireDue` re-reads the schedule after creating the run and writes only the
+  fields a fire owns, so a `setEnabled` during the await is kept.
+- Redis expired-index cleanup scales with the ids a transition adds (`1000 + 2n`, in
+  chunks below Lua's `unpack` limit), so large families no longer outpace it.
+- The PostgreSQL test installer scopes its constraint, index and enum checks to the
+  target schema; the isolated integration harness now verifies its schema.
+
+### Fifth review pass
+
+No P1 findings; Redis came back clean. Fixed:
+
+- Cancelling a parent terminalized child workflow runs without their coordination lease,
+  so a child coordinator paused mid-pass could resume and create a grandchild that
+  nothing cancelled. A child workflow run is now settled only under its own lease: if a
+  coordinator holds it, cancellation is requested and the child's continuation settles
+  it, including what it created meanwhile. The lease-fenced `ensureChildRun` also
+  refuses to create a child for a run that is `cancelling` or terminal. The timeout and
+  reaper path shares the helper.
+- A manual retry could not advance an activity whose child had completed while its node
+  was cancelled by a timeout in between; activity dispatch now completes the node from
+  the child's output, as branch dispatch already did.
+- A run created with `parentRunId` and no `rootRunId` takes its parent's root, in
+  in-memory and PostgreSQL as Redis already did, and PostgreSQL pruning checks live
+  descendants through both links, matching what deletion cascades over. The shared
+  contract suite holds every adapter to both.
+- Both Redis script loaders are covered for `SCRIPT FLUSH` recovery.
+
+### Sixth review pass
+
+No P1 findings, PostgreSQL clean for the third pass running, and no defect found in the
+fifth-pass fixes. Fixed:
+
+- A step's input mapper was optional even when the workflow input did not fit the step
+  input, so a mismatch compiled and failed during coordination. The mapper is required
+  whenever the workflow input is not assignable to the step input, for nodes and for
+  branch and parallel cases (a bare case value is accepted only when the input fits), in
+  both chains; `any` stays permissive. Handler `env` and Effect requirement inference
+  is unchanged. Three test call sites were genuinely wrong and gained a mapper.
+- The task-run twin of the fifth-pass activity fix: after a timeout between a child
+  task's settlement and its node or run completion, a manual retry of the parent
+  reopened the task run but the dispatch guard returned on the preserved completed
+  attempt. Dispatch now completes the node and run from the stored output and wakes the
+  parent without rerunning the handler. Covered on in-memory, Redis and Valkey, along
+  with the lease-held cancellation scenario.
+
+### Seventh review pass
+
+PostgreSQL and Redis both clean, no defect found in the sixth-pass fixes, and one P2 in
+the engine: an activity attempt ran its handler for a run that was already `cancelling`,
+starting side effects after the cancellation had been observed. The attempt is now
+acknowledged without running and the coordinator settles the run. The review series ends
+here: findings went nineteen, twelve, seven, five, three, two, one, with no P1 since the
+third pass.

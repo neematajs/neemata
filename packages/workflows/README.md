@@ -491,6 +491,12 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
 
+A transaction's connection, such as the `connection` passed to
+`atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work
+on it inside the handler. Once the handler settles, the connection rejects further
+queries instead of letting them run outside the transaction, and the transaction
+ends only after work already queued on it has finished.
+
 The client and its type parsers stay yours. The adapter reads `timestamptz` columns
 through whatever parser the client has, so that parser must return a `Date` (the
 `pg` and PGlite default), the column's text, or Unix milliseconds. Any other value,
@@ -558,7 +564,7 @@ verification:
 
 ```sql
 INSERT INTO workflow_schema_version (id, version)
-VALUES (1, 2)
+VALUES (1, 4)
 ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
 ```
 
@@ -634,5 +640,22 @@ ALTER TABLE workflow_attempts ADD COLUMN retry_attempt_number integer;
 UPDATE workflow_attempts SET retry_attempt_number = attempt_number;
 ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL;
 UPDATE workflow_schema_version SET version = 3 WHERE id = 1;
+COMMIT;
+```
+
+## Schema version 4 migration
+
+Apply after the version 3 migration, with workflow workers stopped. The column
+records a child workflow's `cancellation: 'detach'` policy, so cancelling a parent
+leaves that child running; existing children keep propagating. The index serves the
+existence check every attempt dispatch makes.
+
+```sql
+BEGIN;
+ALTER TABLE workflow_node_children ADD COLUMN cancellation text;
+CREATE INDEX workflow_commands_attempt_idx
+  ON workflow_commands (attempt_id)
+  WHERE attempt_id IS NOT NULL;
+UPDATE workflow_schema_version SET version = 4 WHERE id = 1;
 COMMIT;
 ```

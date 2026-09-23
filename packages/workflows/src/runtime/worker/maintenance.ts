@@ -1,14 +1,18 @@
 import type { WorkflowImplementation } from '../../implement/index.ts'
 import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
+import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
-import type { RunSnapshot } from '../state.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
-import { cancelRunTree } from '../coordinator/cancel.ts'
+import { cancelRunDescendants } from '../coordinator/cancel.ts'
 import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
 import { wakeParentRun } from '../wake.ts'
-import { shouldCompleteNodeFromAttempt } from './reconcile.ts'
+import {
+  replayCompletedAttempt,
+  replaySupersededAttempt,
+  shouldCompleteNodeFromAttempt,
+} from './reconcile.ts'
 
 type AnyWorkflowImplementation = WorkflowImplementation<
   AnyWorkflowDefinition,
@@ -73,6 +77,13 @@ export async function reapDeadWorkflowCommands(
       const snapshot = await scopedInput.store.loadRunSnapshot(command.runId)
       const run = snapshot?.run
       if (!run || ['completed', 'cancelled'].includes(run.status)) {
+        // The dead command may have been the only durable trigger of the
+        // parent wake; no redelivery is left to replay it.
+        await wakeParentRun({
+          store: scopedInput.store,
+          runCoordinationExecutor: scopedInput.runCoordinationExecutor,
+          run,
+        })
         await scopedInput.store.markDeadCommandReaped(command.id)
         reaped += 1
         continue
@@ -97,11 +108,41 @@ export async function reapDeadWorkflowCommands(
           const attempt = snapshot?.attempts.find(
             (attempt) => attempt.id === command.attemptId,
           )
-          if (
-            !child ||
-            child.currentAttemptId !== command.attemptId ||
-            attempt?.status === 'completed'
-          ) {
+          const isCurrentAttempt = child?.currentAttemptId === command.attemptId
+          // A settled or superseded attempt is not this command's to fail, but
+          // the worker may have died between its writes. With the delivery
+          // budget spent, this is the last chance to replay what a redelivery
+          // would have repaired.
+          if (!child || !isCurrentAttempt || attempt?.status === 'completed') {
+            const attemptCommand = deadAttemptCommand(command)
+            if (child && attempt && attemptCommand) {
+              if (isCurrentAttempt) {
+                await replayCompletedAttempt(
+                  scopedInput,
+                  attemptCommand,
+                  attempt,
+                )
+              } else {
+                await replaySupersededAttempt(
+                  scopedInput,
+                  attemptCommand,
+                  child,
+                  attempt,
+                  {
+                    currentAttempt: snapshot?.attempts.find(
+                      (attempt) => attempt.id === child.currentAttemptId,
+                    ),
+                    // Only the dispatching node's policy travels with the
+                    // command. Without it a lost retry is dispatched at once,
+                    // which a dead-lettered recovery has long earned.
+                    resolveRetry: () =>
+                      attemptCommand.kind === 'taskAttempt'
+                        ? attemptCommand.retry
+                        : undefined,
+                  },
+                )
+              }
+            }
             await scopedInput.store.markDeadCommandReaped(command.id)
             reaped += 1
             continue
@@ -133,9 +174,8 @@ export async function reapDeadWorkflowCommands(
 
       if (run.kind === 'task' || command.kind === 'continue') {
         // No coordination pass will run for this run, so cancel its live
-        // descendants and nodes here — a failed run must not leave children
-        // executing or nodes reporting running/waiting.
-        await cancelDescendants(scopedInput, snapshot!)
+        // descendants and nodes here.
+        await cancelRunDescendants({ ...scopedInput, snapshot: snapshot! })
         const failed = await scopedInput.store.failRun({
           runId: command.runId,
           error,
@@ -176,25 +216,16 @@ function attemptCommandChildKey(
   return undefined
 }
 
-async function cancelDescendants(
-  input: Pick<
-    ReapDeadWorkflowCommandsInput,
-    'store' | 'attemptExecutor' | 'runCoordinationExecutor'
-  >,
-  snapshot: RunSnapshot,
-): Promise<void> {
-  const runId = snapshot.run.id
-  for (const child of snapshot.children) {
-    if (child.childRunId === undefined) continue
-    await cancelRunTree({
-      store: input.store,
-      attemptExecutor: input.attemptExecutor,
-      runCoordinationExecutor: input.runCoordinationExecutor,
-      runId: child.childRunId,
-    })
-  }
-  await input.attemptExecutor.deleteUnclaimed({ runId })
-  await input.store.cancelNonTerminalRunNodes({ runId })
+/** Every adapter dead-letters the command it was given, unchanged. */
+function deadAttemptCommand(
+  command: DeadWorkflowCommand,
+): AttemptCommand | undefined {
+  const payload = command.payload as Partial<AttemptCommand> | null | undefined
+  return (payload?.kind === 'activityAttempt' ||
+    payload?.kind === 'taskAttempt') &&
+    attemptCommandChildKey(command) !== undefined
+    ? (payload as AttemptCommand)
+    : undefined
 }
 
 export type TimeoutExpiredWorkflowRunsInput = {
@@ -255,13 +286,24 @@ export async function timeoutExpiredWorkflowRuns(
           run.activeSince >= now - timeoutMs
         )
           continue
-        await cancelDescendants(scoped, snapshot!)
+        // The writes below are separate, and a later sweep skips a terminal
+        // run. The run's own continuation is the durable intent: it cannot
+        // pass while this lease is held, and a pass over a failed run replays
+        // the descendant cancellation and the parent wake until they land.
+        await input.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: run.workflowName,
+        })
+        // Failing first keeps the timeout error: were the nodes cancelled
+        // before a lost `failRun`, that continuation would cancel the run.
         const failed = await scoped.store.failRun({
           runId: run.id,
           error: new Error(
             `Workflow run [${run.id}] timed out after [${implementation.workflow.timeout}]`,
           ),
         })
+        await cancelRunDescendants({ ...scoped, snapshot: snapshot! })
         await wakeParentRun({
           store: scoped.store,
           runCoordinationExecutor: input.runCoordinationExecutor,

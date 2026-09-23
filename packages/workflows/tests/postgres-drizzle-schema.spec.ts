@@ -8,7 +8,7 @@ import { getTableName } from 'drizzle-orm'
 import { getTableConfig } from 'drizzle-orm/pg-core'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
-import { expectTypeOf, test, expect } from 'vitest'
+import { describe, expectTypeOf, test, expect } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -538,7 +538,7 @@ test('creates drizzle schema with canonical runtime names', () => {
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
   expectTypeOf(schema.tables).toHaveProperty('schedules')
-  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(3)
+  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(4)
 
   expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
   expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()
@@ -2810,4 +2810,25 @@ test('groups attempt persistence while preserving history and current-attempt fe
   } finally {
     await database.close()
   }
+})
+
+describe('command dispatch indexes', () => {
+  test('attempt dispatch can look up an existing command by an index', async () => {
+    const connection = createPgliteConnection()
+    await installPostgresWorkflowSchemaForTesting(connection)
+
+    expect(
+      (
+        await connection.query(
+          `SELECT indexdef FROM pg_indexes WHERE indexname = 'workflow_commands_attempt_idx'`,
+        )
+      ).rows,
+    ).toEqual([
+      {
+        indexdef: expect.stringMatching(
+          /ON public\.workflow_commands USING btree \(attempt_id\) WHERE \(attempt_id IS NOT NULL\)/,
+        ),
+      },
+    ])
+  })
 })

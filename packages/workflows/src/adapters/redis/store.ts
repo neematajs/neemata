@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  ClaimedAttempt,
   ContinueRunCommand,
   TaskAttemptCommand,
 } from '../../runtime/commands.ts'
@@ -427,17 +428,7 @@ export class StoreRuntime {
       ensureChildRun: (params) => this.#ensureChildRun(params),
       ensureChildAttempt: (params) => this.#ensureChildAttempt(params),
       createAttempt: (input) => this.#createAttempt(input),
-      completeCurrentAttempt: (params) => this.#completeCurrentAttempt(params),
-      failCurrentAttempt: (params) =>
-        this.#settleCurrentAttempt(params.attemptId, params.leaseToken, {
-          status: 'failed',
-          error: toStoredError(params.error),
-        }),
-      timeoutCurrentAttempt: (params) =>
-        this.#settleCurrentAttempt(params.attemptId, params.leaseToken, {
-          status: 'timedOut',
-          error: toStoredError(params.error),
-        }),
+      ...this.#attemptSettlement(),
       completeNodeChild: (params) =>
         this.#updateChild(params.runId, params.nodeName, params.childKey, {
           status: 'completed',
@@ -910,6 +901,7 @@ export class StoreRuntime {
           idempotencyKey,
           String(Date.now()),
           this.#keys.prefix,
+          params.cancellation ?? '',
         ],
       ),
     )
@@ -992,6 +984,7 @@ export class StoreRuntime {
           `attempts:${nodeField}`,
           ensure ? '1' : '0',
           String(Date.now()),
+          ('after' in input ? input.after : undefined) ?? '',
         ],
       ),
     )
@@ -1013,28 +1006,47 @@ export class StoreRuntime {
     }
   }
 
-  #completeCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    output: unknown
-  }) {
-    return this.#settleAttempt(
-      params.attemptId,
-      params.leaseToken,
-      {
-        status: 'completed',
-        output: params.output,
-      },
-      true,
-    )
+  /**
+   * The attempt's own token never rotates, so it cannot tell a worker whose
+   * queue claim was taken over from the new claimant. Settling through this
+   * store additionally requires the claim to still be the queue item's.
+   */
+  claimScopedStore(store: WorkflowStore, claim: ClaimedAttempt): WorkflowStore {
+    return { ...store, ...this.#attemptSettlement(claim) }
   }
 
-  #settleCurrentAttempt(
-    attemptId: string,
-    leaseToken: string,
-    settled: Pick<StoredAttempt, 'status'> & Partial<StoredAttempt>,
-  ) {
-    return this.#settleAttempt(attemptId, leaseToken, settled, false)
+  #attemptSettlement(
+    claim?: ClaimedAttempt,
+  ): Pick<
+    WorkflowStore,
+    'completeCurrentAttempt' | 'failCurrentAttempt' | 'timeoutCurrentAttempt'
+  > {
+    return {
+      completeCurrentAttempt: (params) =>
+        this.#settleAttempt(
+          params.attemptId,
+          params.leaseToken,
+          { status: 'completed', output: params.output },
+          true,
+          claim,
+        ),
+      failCurrentAttempt: (params) =>
+        this.#settleAttempt(
+          params.attemptId,
+          params.leaseToken,
+          { status: 'failed', error: toStoredError(params.error) },
+          false,
+          claim,
+        ),
+      timeoutCurrentAttempt: (params) =>
+        this.#settleAttempt(
+          params.attemptId,
+          params.leaseToken,
+          { status: 'timedOut', error: toStoredError(params.error) },
+          false,
+          claim,
+        ),
+    }
   }
 
   async #settleAttempt(
@@ -1042,6 +1054,7 @@ export class StoreRuntime {
     leaseToken: string,
     settled: Pick<StoredAttempt, 'status'> & Partial<StoredAttempt>,
     completeChild: boolean,
+    claim?: ClaimedAttempt,
   ) {
     const rootRunId = await this.#client.get(this.#keys.attemptRoot(attemptId))
     if (!rootRunId) return undefined
@@ -1063,6 +1076,7 @@ export class StoreRuntime {
           this.#keys.familyAttempts(rootRunId),
           this.#keys.familyChildren(rootRunId),
           this.#keys.runWake(rootRunId),
+          this.#keys.queue('attempt').items,
         ],
         [
           attemptId,
@@ -1071,6 +1085,8 @@ export class StoreRuntime {
           encode(settled),
           String(Date.now()),
           completeChild ? '1' : '0',
+          claim?.id ?? '',
+          claim?.leaseToken ?? '',
         ],
       ),
     )
@@ -1503,25 +1519,26 @@ const decodeScriptValue = <T>(value: string | undefined): T => {
   return decode<T>(value)
 }
 
-const decodeRecord = <T>(values: Record<string, string>) => {
-  const decoded: Record<string, T> = {}
-  for (const key in values) {
+export function decodeRecord<T>(values: Record<string, string>) {
+  const decoded: Record<string, T> = Object.create(null)
+  for (const key of Object.keys(values)) {
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
   return decoded
 }
 
-const decodeOrderedRecord = <T>(
+export function decodeOrderedRecord<T>(
   values: Record<string, string>,
   orderedKeys: readonly string[],
-) => {
-  const decoded: Record<string, T> = {}
+) {
+  const decoded: Record<string, T> = Object.create(null)
   for (const key of orderedKeys) {
+    if (!Object.hasOwn(values, key)) continue
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)
   }
-  for (const key in values) {
+  for (const key of Object.keys(values)) {
     if (Object.hasOwn(decoded, key)) continue
     const raw = values[key]
     if (raw !== undefined) decoded[key] = decode<T>(raw)

@@ -1,4 +1,4 @@
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 3
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 4
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   version: WORKFLOW_POSTGRES_SCHEMA_VERSION,
   enums: [
@@ -96,6 +96,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
     'workflow_node_children_node_idx',
     'workflow_node_children_child_run_idx',
     'workflow_commands_run_idx',
+    'workflow_commands_attempt_idx',
     'workflow_commands_claim_idx',
     'workflow_commands_dead_idx',
     'workflow_commands_continue_dedup_idx',
@@ -193,6 +194,12 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       table: 'workflow_commands',
       unique: false,
       columns: ['run_id'],
+    },
+    workflow_commands_attempt_idx: {
+      table: 'workflow_commands',
+      unique: false,
+      columns: ['attempt_id'],
+      predicate: 'attempt_id IS NOT NULL',
     },
     workflow_commands_continue_dedup_idx: {
       table: 'workflow_commands',
@@ -305,6 +312,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       output: { type: 'jsonb', nullable: true },
       error: { type: 'jsonb', nullable: true },
       child_run_id: { type: 'uuid', nullable: true },
+      cancellation: { type: 'text', nullable: true },
       current_attempt_id: { type: 'uuid', nullable: true },
       attempt_count: { type: 'int4', nullable: false },
       version: { type: 'int4', nullable: false },

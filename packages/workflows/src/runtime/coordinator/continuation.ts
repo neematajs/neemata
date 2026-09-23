@@ -9,6 +9,7 @@ import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
+import { cancelRunDescendants } from './cancel.ts'
 import { getWorkflowNodeDeclaration } from './codec.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
 
@@ -92,6 +93,16 @@ export async function continueWorkflowRun(
           return { status: 'processed' }
         }
         if (isTerminalRunStatus(snapshot.run.status)) {
+          // A timeout fails the run before cancelling what it started, so an
+          // interrupted sweep leaves the rest to this pass.
+          if (snapshot.run.status === 'failed') {
+            await cancelRunDescendants({
+              store,
+              attemptExecutor: input.attemptExecutor,
+              runCoordinationExecutor: input.runCoordinationExecutor,
+              snapshot,
+            })
+          }
           await wakeParentRun({
             store,
             runCoordinationExecutor: input.runCoordinationExecutor,
@@ -125,7 +136,7 @@ export async function continueWorkflowRun(
           return { status: 'processed' }
         }
 
-        const outputs: Record<string, unknown> = {}
+        const outputs: Record<string, unknown> = Object.create(null)
         let workflowInput: unknown
         try {
           workflowInput = decodeStoredValue(
@@ -230,7 +241,19 @@ export function createRunLeaseFencedStore(
       fence(() => store.cancelNonTerminalRunNodes(params)),
     ensureNodeChildren: (params) =>
       fence(() => store.ensureNodeChildren(params)),
-    ensureChildRun: (params) => fence(() => store.ensureChildRun(params)),
+    ensureChildRun: (params) =>
+      fence(async () => {
+        // Renewal only observes a cancellation on its next tick; a child run
+        // started in between would execute until the cancelling pass finds it.
+        const [run] = await store.loadRuns([lease.runId])
+        if (
+          run &&
+          (run.status === 'cancelling' || isTerminalRunStatus(run.status))
+        ) {
+          throw new CancelledRunError()
+        }
+        return store.ensureChildRun(params)
+      }),
     ensureChildAttempt: (params) =>
       fence(() => store.ensureChildAttempt(params)),
     selectNodeCase: (params) => fence(() => store.selectNodeCase(params)),

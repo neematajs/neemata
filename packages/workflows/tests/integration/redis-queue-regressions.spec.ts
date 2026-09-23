@@ -11,7 +11,7 @@ import { Queue } from '../../src/adapters/redis/queue.ts'
 import { encode } from '../../src/adapters/redis/state.ts'
 import { defineWorkflow, implementWorkflow } from '../../src/index.ts'
 import { runWorkflowWorker } from '../../src/runtime/index.ts'
-import { matchingKeys, wait } from './helpers.ts'
+import { activityCommand, matchingKeys, wait } from './helpers.ts'
 
 type Target = {
   readonly name: string
@@ -144,6 +144,9 @@ for (const target of targets) {
             .hset(queue.items, id, encode(item))
             .zadd(queue.dead, 2000 + index, id)
             .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+            // A dead command keeps its run's dedup entry until a successor
+            // command takes it over, as one has for the first run.
+            .hset(queue.dedup, id, index === 0 ? 'successor' : id)
         }
         await seed.exec()
         const calls = vi.spyOn(client, 'evalsha')
@@ -160,6 +163,26 @@ for (const target of targets) {
           await runtime.store.listDeadCommands({ runId: 'dead-299' }),
         ).toHaveLength(1)
         expect(calls.mock.calls.length).toBeLessThanOrEqual(4)
+        // More than a full page of kept commands sorts before every reaped
+        // one, so cleanup only reaches those by paging past what it keeps.
+        const older = client.pipeline()
+        for (let index = 0; index < 200; index += 1) {
+          const id = `kept-${index}`
+          const item = {
+            id,
+            payload: { kind: 'continueRun', runId: id, workflowName: 'batch' },
+            deliveryCount: 3,
+            createdAt: 1000,
+            createdAtScore: 1000,
+            deadAt: 1000 + index,
+          }
+          older
+            .hset(queue.items, id, encode(item))
+            .zadd(queue.dead, 1000 + index, id)
+            .sadd(`${keys.prefix}queue:continue:run:${id}`, id)
+            .hset(queue.dedup, id, id)
+        }
+        await older.exec()
         calls.mockClear()
         await runtime.store.pruneTerminalRuns({
           olderThan: 2255,
@@ -167,12 +190,27 @@ for (const target of targets) {
         })
         expect(calls.mock.calls.length).toBeLessThan(15)
         expect(reads).not.toHaveBeenCalled()
-        expect(await client.zcard(queue.dead)).toBe(44)
-        expect(await client.hget(queue.items, 'dead-255')).toBeNull()
+        // Past the cutoff, only reaped records go: an unreaped dead command is
+        // all that can still settle its run.
+        expect(await client.zcard(queue.dead)).toBe(250)
+        expect(await client.hget(queue.items, 'kept-0')).not.toBeNull()
+        expect(await client.hget(queue.items, 'kept-199')).not.toBeNull()
+        expect(await client.hget(queue.items, 'dead-0')).toBeNull()
+        expect(await client.hget(queue.items, 'dead-249')).toBeNull()
+        expect(await client.hget(queue.items, 'dead-250')).not.toBeNull()
         expect(await client.hget(queue.items, 'dead-256')).not.toBeNull()
         expect(
-          await client.exists(`${keys.prefix}queue:continue:run:dead-255`),
+          await client.exists(`${keys.prefix}queue:continue:run:dead-249`),
         ).toBe(0)
+        // Dedup entries go with the pruned commands that own them, and stay
+        // for kept commands and for a successor that took the entry over.
+        expect(await client.hlen(queue.dedup)).toBe(251)
+        expect(await client.hget(queue.dedup, 'dead-0')).toBe('successor')
+        expect(await client.hget(queue.dedup, 'dead-1')).toBeNull()
+        expect(await client.hget(queue.dedup, 'dead-249')).toBeNull()
+        expect(await client.hget(queue.dedup, 'dead-250')).toBe('dead-250')
+        expect(await client.hget(queue.dedup, 'kept-0')).toBe('kept-0')
+        expect(await client.hget(queue.dedup, 'kept-199')).toBe('kept-199')
       })
 
       it('batches deletion across empty run indexes', async () => {
@@ -914,24 +952,6 @@ for (const target of targets) {
 }
 
 type HgetCommand = (...arguments_: readonly unknown[]) => Promise<string | null>
-
-function activityCommand(
-  runId: string,
-  workflowName: string,
-  activityName: string,
-) {
-  return {
-    kind: 'activityAttempt' as const,
-    workflowName,
-    activityName,
-    runId,
-    nodeName: activityName,
-    childKey: '$self',
-    attemptId: randomUUID(),
-    leaseToken: randomUUID(),
-    input: null,
-  }
-}
 
 async function waitUntil(condition: () => Promise<boolean>) {
   const deadline = Date.now() + 2_000

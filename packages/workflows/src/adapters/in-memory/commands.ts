@@ -21,6 +21,8 @@ export type QueueItem<T> = {
   readonly deadAt?: Timestamp
   readonly reapedAt?: Timestamp
   readonly createdAt: Timestamp
+  /** Creation order among items sharing a `createdAt`. */
+  readonly sequence: number
 }
 
 export type InspectQueueItem<T> = {
@@ -75,7 +77,7 @@ export function compareAttemptCommands(
   if (byRunAt !== 0) return byRunAt
   const byCreatedAt = left.createdAt - right.createdAt
   if (byCreatedAt !== 0) return byCreatedAt
-  return left.id.localeCompare(right.id)
+  return left.sequence - right.sequence
 }
 
 export function matchesClaim(
@@ -93,7 +95,7 @@ export function queueItem<T>(
   payload: T,
   runAt?: Timestamp,
 ): QueueItem<T> {
-  const { now } = state
+  const { now, sequence } = state
 
   return {
     id: itemId,
@@ -101,6 +103,7 @@ export function queueItem<T>(
     ...(runAt === undefined ? {} : { runAt }),
     deliveryCount: 0,
     createdAt: now(),
+    sequence: sequence(),
   }
 }
 

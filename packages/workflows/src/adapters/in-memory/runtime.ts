@@ -23,6 +23,7 @@ import type {
   WorkflowStore,
 } from '../../runtime/store.ts'
 import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
+import type { WorkflowRuntimeAtomicCompletion } from '../../runtime/worker.ts'
 import type { InspectQueueItem, QueueItem } from './commands.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { inspectQueueItem } from './commands.ts'
@@ -30,6 +31,7 @@ import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import { createScheduler } from './schedules.ts'
 import { createState } from './state.ts'
+import { createNodeStore } from './store-nodes.ts'
 import { createRunWithState } from './store-runs.ts'
 import { createStore } from './store.ts'
 
@@ -40,6 +42,7 @@ export type InMemoryWorkflowRuntime = {
   readonly retentionPruner: WorkflowRetentionPruner
   readonly scheduler: WorkflowScheduler
   readonly atomicStart: WorkflowRuntimeAtomicStart
+  readonly atomicCompletion: WorkflowRuntimeAtomicCompletion
   readonly inspect: () => {
     readonly runs: readonly StoredRun[]
     readonly nodes: readonly StoredNode[]
@@ -106,6 +109,27 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  // Not a transaction: it only fences the attempt settlement by the queue
+  // claim, so a worker that was taken over cannot commit its result.
+  const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
+    run: (handler, claimed, context) => {
+      const {
+        completeCurrentAttempt,
+        failCurrentAttempt,
+        timeoutCurrentAttempt,
+      } = createNodeStore(state, claimed)
+      return handler({
+        ...context,
+        store: {
+          ...context.store,
+          completeCurrentAttempt,
+          failCurrentAttempt,
+          timeoutCurrentAttempt,
+        },
+      })
+    },
+  }
+
   function inspect(): ReturnType<InMemoryWorkflowRuntime['inspect']> {
     const {
       runs,
@@ -144,6 +168,7 @@ export function createInMemoryWorkflowRuntime(
     runCoordinationExecutor,
     attemptExecutor,
     atomicStart,
+    atomicCompletion,
     scheduler,
     inspect,
     wakeEvents: state.wake.events,

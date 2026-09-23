@@ -19,10 +19,10 @@ import type { State } from './state.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import {
   compareAttempts,
-  compareRunsNewest,
   compareRunsOldest,
   runSnapshot,
   sameValue,
+  sortedRunsNewest,
   valueKey,
 } from './records.ts'
 
@@ -146,7 +146,7 @@ function attemptSummary(attempt: StoredAttempt): AttemptSummary {
 
 export function createRunWithState(
   state: State,
-  input: CreateRunInput,
+  rawInput: CreateRunInput,
 ): { readonly run: StoredRun; readonly created: boolean } {
   const {
     id,
@@ -157,6 +157,17 @@ export function createRunWithState(
     allUniqueRunKeys,
     wake,
   } = state
+
+  // A self-rooted child would sit outside the family that retention and
+  // family listings select by root.
+  const parentRootRunId =
+    rawInput.rootRunId === undefined && rawInput.parentRunId !== undefined
+      ? runs.get(rawInput.parentRunId)?.rootRunId
+      : undefined
+  const input =
+    parentRootRunId === undefined
+      ? rawInput
+      : { ...rawInput, rootRunId: parentRootRunId }
 
   if (input.idempotencyKey) {
     const existingRunId = runIdempotencyKeys.get(valueKey(input.idempotencyKey))
@@ -264,9 +275,9 @@ export function createRunStore(state: State): RunStore {
         throw new Error(`Invalid run list cursor [${filter.cursor}]`)
       }
 
-      const filtered = [...runs.values()]
-        .filter((run) => runMatchesFilter(run, filter))
-        .sort(compareRunsNewest)
+      const filtered = sortedRunsNewest(
+        [...runs.values()].filter((run) => runMatchesFilter(run, filter)),
+      )
 
       const page = filtered.slice(offset, offset + limit)
       const nextOffset = offset + page.length

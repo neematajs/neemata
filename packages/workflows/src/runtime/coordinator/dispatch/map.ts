@@ -78,6 +78,7 @@ export async function dispatchMapTaskNode(
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
+        retry: declaration.retry ?? declaration.task.retry,
       })
     },
     startChild: async ({ child, nodeInput, idempotencyKey, declaration }) => {
@@ -100,6 +101,7 @@ export async function dispatchMapTaskNode(
         taskInput: nodeInput,
         idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
+        retry: declaration.retry ?? declaration.task.retry,
       })
       return ensured.childRun
     },
@@ -122,7 +124,7 @@ export async function dispatchMapWorkflowNode(
         workflowName: childRun.workflowName,
       })
     },
-    startChild: async ({ child, nodeInput, idempotencyKey }) => {
+    startChild: async ({ child, nodeInput, idempotencyKey, declaration }) => {
       const ensured = await input.store.ensureChildRun({
         runId: input.run.id,
         nodeName: input.node.name,
@@ -132,6 +134,7 @@ export async function dispatchMapWorkflowNode(
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
+        cancellation: declaration.cancellation,
       })
       await input.runCoordinationExecutor.enqueue({
         kind: 'continueRun',

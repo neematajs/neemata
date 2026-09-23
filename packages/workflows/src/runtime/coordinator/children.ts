@@ -1,4 +1,8 @@
-import type { DurationString } from '../../types/index.ts'
+import type {
+  CancellationPolicy,
+  DurationString,
+  RetryPolicy,
+} from '../../types/index.ts'
 import type { StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
@@ -32,6 +36,7 @@ export async function dispatchChildTaskRun(
     readonly childKey: string
     readonly taskName: string
     readonly timeout?: DurationString
+    readonly retry?: RetryPolicy
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -67,6 +72,7 @@ export async function dispatchChildTaskRun(
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: input.timeout,
+        retry: input.retry,
       })
       await input.store.waitNode({
         runId: input.run.id,
@@ -155,6 +161,7 @@ export async function dispatchChildTaskRun(
     taskInput: nodeInput,
     idempotencyKey,
     timeout: input.timeout,
+    retry: input.retry,
   })
   await input.store.waitNode({
     runId: input.run.id,
@@ -168,6 +175,7 @@ export async function dispatchChildWorkflow(
     readonly nodeName: string
     readonly childKey: string
     readonly workflowName: string
+    readonly cancellation?: CancellationPolicy
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -277,6 +285,7 @@ export async function dispatchChildWorkflow(
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
+    cancellation: input.cancellation,
   })
 
   await input.runCoordinationExecutor.enqueue({

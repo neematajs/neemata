@@ -11,6 +11,7 @@ type FakeSubscriber = EventEmitter & {
   subscribe: ReturnType<typeof vi.fn>
   unsubscribe: ReturnType<typeof vi.fn>
   quit: ReturnType<typeof vi.fn>
+  disconnect: ReturnType<typeof vi.fn>
 }
 
 const createHarness = () => {
@@ -19,6 +20,7 @@ const createHarness = () => {
   subscriber.subscribe = vi.fn().mockResolvedValue(undefined)
   subscriber.unsubscribe = vi.fn().mockResolvedValue(undefined)
   subscriber.quit = vi.fn().mockResolvedValue(undefined)
+  subscriber.disconnect = vi.fn()
   const keys = new Keys('nmtjs:test:wakes:')
   const events = new WakeEvents(
     { duplicate: () => subscriber } as unknown as WorkflowRedisClient,
@@ -163,5 +165,50 @@ describe('Redis workflow wake events', () => {
     await settle()
     expect(subscriber.unsubscribe).toHaveBeenCalledTimes(2)
     await events.dispose()
+  })
+})
+
+describe('Redis workflow wake events disposal', () => {
+  it('force-closes the subscriber when a graceful quit fails', async () => {
+    const { events, subscriber } = createHarness()
+    subscriber.quit.mockRejectedValueOnce(new Error('Connection is closed.'))
+
+    await expect(events.dispose()).resolves.toBeUndefined()
+
+    expect(subscriber.disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a gracefully closed subscriber alone', async () => {
+    const { events, subscriber } = createHarness()
+
+    await events.dispose()
+
+    expect(subscriber.quit).toHaveBeenCalledTimes(1)
+    expect(subscriber.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('makes concurrent and later callers wait for the same closure', async () => {
+    const { events, subscriber } = createHarness()
+    let rejectQuit!: (error: unknown) => void
+    subscriber.quit.mockReturnValueOnce(
+      new Promise((_resolve, reject) => {
+        rejectQuit = reject
+      }),
+    )
+
+    const first = events.dispose()
+    let secondSettled = false
+    const second = events.dispose().then(() => {
+      secondSettled = true
+    })
+    await settle()
+    expect(secondSettled).toBe(false)
+
+    rejectQuit(new Error('Connection is closed.'))
+    await Promise.all([first, second])
+    await events.dispose()
+
+    expect(subscriber.quit).toHaveBeenCalledTimes(1)
+    expect(subscriber.disconnect).toHaveBeenCalledTimes(1)
   })
 })

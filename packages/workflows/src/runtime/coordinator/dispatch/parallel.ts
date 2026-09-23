@@ -69,7 +69,7 @@ export async function dispatchParallelNode(
   )
   const childRuns = await loadChildRuns(input.store, ensured.children)
 
-  const outputs: Record<string, unknown> = {}
+  const outputs: Record<string, unknown> = Object.create(null)
   let hasLocalWork = false
 
   let failedChildren = 0
@@ -191,6 +191,11 @@ export async function dispatchParallelNode(
           input: nodeInput,
           rootRunId: input.run.rootRunId,
           idempotencyKey,
+          cancellation:
+            memberDeclaration.kind === 'workflow'
+              ? (memberDeclaration as BranchCaseDefinition<'workflow'>)
+                  .cancellation
+              : undefined,
         })
         if (member.kind === 'workflow') {
           await input.runCoordinationExecutor.enqueue({
@@ -215,6 +220,7 @@ export async function dispatchParallelNode(
             taskInput: nodeInput,
             idempotencyKey,
             timeout: taskDeclaration.timeout ?? taskTarget.timeout,
+            retry: taskDeclaration.retry ?? taskTarget.retry,
           })
         }
         continue
@@ -264,6 +270,7 @@ export async function dispatchParallelNode(
         runId: input.run.id,
         nodeName: input.node.name,
         childKey,
+        retry: member.retry,
         prepareAttempt: async () => {
           const result = await input.store.ensureChildAttempt({
             runId: input.run.id,
@@ -357,6 +364,7 @@ async function redispatchParallelChildRun(
     taskInput: childRun.input,
     idempotencyKey: childRun.idempotencyKey,
     timeout: taskDeclaration?.timeout ?? taskTarget.timeout,
+    retry: taskDeclaration?.retry ?? taskTarget.retry,
   })
 }
 

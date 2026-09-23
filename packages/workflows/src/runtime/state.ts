@@ -1,4 +1,5 @@
 import type {
+  CancellationPolicy,
   ResolvedRunUnique,
   RunKind,
   WorkflowNodeKind,
@@ -81,6 +82,11 @@ export type StoredNodeChild = {
   readonly output?: unknown
   readonly error?: StoredError
   readonly childRunId?: string
+  /**
+   * Persisted on the edge because cancellation walks the tree from stored
+   * state alone, without workflow definitions. Absent means propagate.
+   */
+  readonly cancellation?: CancellationPolicy
   /** Cleared by manual retry while attemptCount and attempt history survive. */
   readonly currentAttemptId?: string
   readonly attemptCount: number

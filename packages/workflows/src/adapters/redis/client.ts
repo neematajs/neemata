@@ -12,6 +12,7 @@ export type WorkflowRedisClient = {
   duplicate(options?: { readonly lazyConnect?: boolean }): WorkflowRedisClient
   connect(): Promise<void>
   quit(): Promise<unknown>
+  disconnect(): void
   on(event: string, listener: (...args: any[]) => void): unknown
   subscribe(...args: any[]): Promise<unknown>
   unsubscribe(...args: any[]): Promise<unknown>

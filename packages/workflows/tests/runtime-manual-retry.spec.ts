@@ -6,6 +6,7 @@ import * as Schema from 'effect/Schema'
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as z from 'zod'
 
 import {
   createPostgresWorkflowConnection,
@@ -22,8 +23,17 @@ import {
   runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
+  defineTask as defineStandardTask,
+  defineWorkflow as defineStandardWorkflow,
+  implementTask as implementStandardTask,
+  implementWorkflow as implementStandardWorkflow,
+} from '../src/index.ts'
+import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  runExecutionWorker as runStoredExecutionWorker,
+  runWorkflowWorker as runStoredWorkflowWorker,
+  type WorkflowStore,
 } from '../src/runtime/index.ts'
 import {
   reapDeadWorkflowCommands,
@@ -31,6 +41,27 @@ import {
 } from '../src/runtime/worker.ts'
 import { matchingKeys } from './integration/helpers.ts'
 import { fromPromise } from './support/effect.ts'
+
+const text = z.string()
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Suspends the first matching call so the test can interleave other actors. */
+function gate() {
+  const reached = Promise.withResolvers<void>()
+  const released = Promise.withResolvers<void>()
+  let used = false
+  return {
+    reached: reached.promise,
+    release: () => released.resolve(),
+    async pass() {
+      if (used) return
+      used = true
+      reached.resolve()
+      await released.promise
+    },
+  }
+}
 
 for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
   const unavailable =
@@ -366,11 +397,18 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
           'atomicCompletion' in runtime ? runtime.atomicCompletion : undefined
         if (atomicCompletion) {
           const original = atomicCompletion.run.bind(atomicCompletion)
-          vi.spyOn(atomicCompletion, 'run').mockImplementation((handler) =>
-            original(async (scoped) => {
-              interceptBackoff(scoped.attemptExecutor)
-              return handler(scoped)
-            }),
+          vi.spyOn(atomicCompletion, 'run').mockImplementation(
+            (handler, claimed, context) =>
+              original(
+                async (scoped) => {
+                  // Only a transactional adapter hands back a new executor.
+                  if (scoped.attemptExecutor !== runtime.attemptExecutor)
+                    interceptBackoff(scoped.attemptExecutor)
+                  return handler(scoped)
+                },
+                claimed,
+                context,
+              ),
           )
         }
         const client = createWorkflowRuntimeClient(runtime)
@@ -956,3 +994,215 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
     )
   })
 }
+
+describe('manual retry over an activity that settled before its node', () => {
+  it('completes the node from the completed child and advances', async () => {
+    let firstRan = 0
+    const workflow = defineStandardWorkflow({
+      name: 'manual-retry.settled-activity',
+      input: text,
+      output: text,
+      timeout: '20ms',
+    })
+      .activity('first', { input: text, output: text })
+      .activity('second', { input: text, output: text })
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .first(async (input) => {
+        firstRan += 1
+        return `${input}-first`
+      })
+      .second(async (input) => `${input}-second`, {
+        input: ({ first }) => first,
+      })
+      .finish(({ second }) => second)
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implementation],
+      tasks: [],
+      workerId: 'manual-retry',
+      reaping: false,
+      runTimeouts: false,
+    } as const
+    const run = await client.start(workflow, 'hi')
+    await runStoredWorkflowWorker(workers)
+
+    // The attempt and its child settle; the node completion is still pending
+    // when the run times out.
+    const paused = gate()
+    const execution = runStoredExecutionWorker({
+      ...workers,
+      store: {
+        ...runtime.store,
+        completeNode: async (params) => {
+          await paused.pass()
+          return runtime.store.completeNode(params)
+        },
+      },
+    })
+    await paused.reached
+    await wait(30)
+    expect(
+      await timeoutExpiredWorkflowRuns({
+        ...runtime,
+        workflows: [implementation],
+      }),
+    ).toStrictEqual({ timedOut: 1 })
+    paused.release()
+    await execution
+    await runStoredWorkflowWorker(workers)
+
+    const timedOut = (await client.get(run.id))!
+    expect(timedOut.run.status).toBe('failed')
+    expect(timedOut.nodes.find((node) => node.name === 'first')!.status).toBe(
+      'cancelled',
+    )
+    expect(
+      timedOut.children.find((child) => child.nodeName === 'first')!.status,
+    ).toBe('completed')
+
+    await client.retry(run.id)
+    for (let pass = 0; pass < 3; pass += 1) {
+      await runStoredWorkflowWorker(workers)
+      await runStoredExecutionWorker(workers)
+    }
+
+    const retried = (await client.get(run.id))!
+    expect(retried.run.status).toBe('completed')
+    expect(retried.run.output).toBe('hi-first-second')
+    expect(firstRan).toBe(1)
+  })
+})
+
+describe('manual retry over a child task whose attempt settled before its run', () => {
+  /**
+   * The task worker settles its attempt, then is suspended on `gatedWrite`
+   * while the parent times out. It resumes and acknowledges before the retry,
+   * so nothing stale writes after the reopen.
+   */
+  async function timeOutParentMidSettlement(options: {
+    readonly gatedWrite: 'completeNode' | 'completeRun' | 'failNodeChild'
+    readonly handler: (input: string, ran: number) => string
+  }) {
+    let taskRan = 0
+    const task = defineStandardTask({
+      name: `manual-retry.settled-task.${options.gatedWrite}`,
+      input: text,
+      output: text,
+    })
+    const taskImplementation = implementStandardTask(task, {
+      pool: 'test',
+      handler: async (input) => {
+        taskRan += 1
+        return options.handler(input, taskRan)
+      },
+    })
+    const workflow = defineStandardWorkflow({
+      name: `manual-retry.settled-task-workflow.${options.gatedWrite}`,
+      input: text,
+      output: text,
+      timeout: '20ms',
+    })
+      .task('first', task)
+      .activity('second', { input: text, output: text })
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .first(task)
+      .second(async (input) => `${input}-second`, {
+        input: ({ first }) => first,
+      })
+      .finish(({ second }) => second)
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'manual-retry',
+      reaping: false,
+      runTimeouts: false,
+    } as const
+    const run = await client.start(workflow, 'hi')
+    await runStoredWorkflowWorker(workers)
+
+    const paused = gate()
+    const gated: WorkflowStore = {
+      ...runtime.store,
+      [options.gatedWrite]: async (params: never) => {
+        await paused.pass()
+        return runtime.store[options.gatedWrite](params)
+      },
+    }
+    const execution = runStoredExecutionWorker({ ...workers, store: gated })
+    await paused.reached
+    await wait(30)
+    expect(
+      await timeoutExpiredWorkflowRuns({
+        ...runtime,
+        workflows: [implementation],
+      }),
+    ).toStrictEqual({ timedOut: 1 })
+    paused.release()
+    await execution
+    await runStoredWorkflowWorker(workers)
+
+    const timedOut = (await client.get(run.id))!
+    expect(timedOut.run.status).toBe('failed')
+    const taskRunId = timedOut.children.find(
+      (child) => child.nodeName === 'first',
+    )!.childRunId!
+    expect((await client.get(taskRunId))!.run.status).toBe('cancelled')
+    expect(runtime.inspect().taskCommands).toHaveLength(0)
+
+    await client.retry(run.id)
+    for (let pass = 0; pass < 3; pass += 1) {
+      await runStoredWorkflowWorker(workers)
+      await runStoredExecutionWorker(workers)
+    }
+    return {
+      parent: (await client.get(run.id))!,
+      taskRun: (await client.get(taskRunId))!,
+      taskRan: () => taskRan,
+    }
+  }
+
+  it.each(['completeNode', 'completeRun'] as const)(
+    'completes the task run from the completed attempt when the timeout lands before its %s',
+    async (gatedWrite) => {
+      const result = await timeOutParentMidSettlement({
+        gatedWrite,
+        handler: (input) => `${input}-task`,
+      })
+
+      expect(result.taskRun.run.status).toBe('completed')
+      expect(result.taskRun.run.output).toBe('hi-task')
+      expect(
+        result.taskRun.attempts.map((attempt) => attempt.status),
+      ).toStrictEqual(['completed'])
+      expect(result.parent.run.status).toBe('completed')
+      expect(result.parent.run.output).toBe('hi-task-second')
+      expect(result.taskRan()).toBe(1)
+    },
+  )
+
+  it('still reruns a task whose preserved attempt failed', async () => {
+    const result = await timeOutParentMidSettlement({
+      gatedWrite: 'failNodeChild',
+      handler: (input, ran) => {
+        if (ran === 1) throw new Error('first try fails')
+        return `${input}-task`
+      },
+    })
+
+    expect(
+      result.taskRun.attempts.map((attempt) => attempt.status),
+    ).toStrictEqual(['failed', 'completed'])
+    expect(result.parent.run.status).toBe('completed')
+    expect(result.parent.run.output).toBe('hi-task-second')
+    expect(result.taskRan()).toBe(2)
+  })
+})

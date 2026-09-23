@@ -1304,6 +1304,80 @@ function workflowRuntimeAdapterContract(
       ).resolves.toBeDefined()
     })
 
+    it('roots a parent-linked run in its parent family when the root id is omitted', async () => {
+      const runtime = await createRuntime()
+      const root = await runtime.store.createRun({
+        workflowName: 'inherited-root-parent',
+        input: {},
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'inherited-root-child',
+        input: {},
+        parentRunId: root.id,
+        idempotencyKey: ['inherited-root-child'],
+      })
+      const grandchild = await runtime.store.createRun({
+        workflowName: 'inherited-root-grandchild',
+        input: {},
+        parentRunId: child.id,
+      })
+
+      expect(child.rootRunId).toBe(root.id)
+      expect(grandchild.rootRunId).toBe(root.id)
+      await expect(
+        runtime.store.createRun({
+          workflowName: 'inherited-root-child',
+          input: {},
+          parentRunId: root.id,
+          idempotencyKey: ['inherited-root-child'],
+        }),
+      ).resolves.toMatchObject({ id: child.id, rootRunId: root.id })
+      const family = await runtime.store.listRunFamily(root.id)
+      expect(family.map((member) => member.run.id).sort()).toStrictEqual(
+        [root.id, child.id, grandchild.id].sort(),
+      )
+    })
+
+    it('keeps a terminal parent while a run linked only by parent id is live', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'prune-parent-link-parent',
+        input: {},
+      })
+      const child = await runtime.store.createRun({
+        workflowName: 'prune-parent-link-child',
+        input: {},
+        parentRunId: parent.id,
+      })
+      await runtime.store.markRunRunning({ runId: child.id })
+      await runtime.store.completeRun({
+        runId: parent.id,
+        output: { ok: true },
+      })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
+      ).resolves.toStrictEqual({ deleted: 0 })
+      await expect(
+        runtime.store.loadRunSnapshot(parent.id),
+      ).resolves.toBeDefined()
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toMatchObject({ run: { status: 'running' } })
+
+      await runtime.store.completeRun({ runId: child.id, output: { ok: true } })
+
+      await expect(
+        runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
+      ).resolves.toStrictEqual({ deleted: 1 })
+      await expect(
+        runtime.store.loadRunSnapshot(parent.id),
+      ).resolves.toBeUndefined()
+      await expect(
+        runtime.store.loadRunSnapshot(child.id),
+      ).resolves.toBeUndefined()
+    })
+
     it('loads run rows in batch, skipping unknown ids', async () => {
       const runtime = await createRuntime()
       const first = await runtime.store.createRun({
@@ -1420,7 +1494,7 @@ function workflowRuntimeAdapterContract(
       }
     })
 
-    it('sweeps old dead commands during pruning', async () => {
+    it('sweeps old dead commands during pruning once they are reaped', async () => {
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const run = await runtime.store.createRun({
         workflowName: 'dead-command-sweep-workflow',
@@ -1439,14 +1513,20 @@ function workflowRuntimeAdapterContract(
       await runtime.runCoordinationExecutor.release(claimed!, {
         error: new Error('dead command'),
       })
-      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
-
-      await expect(
+      const [dead] = await runtime.store.listDeadCommands()
+      expect(dead).toBeDefined()
+      const prune = () =>
         runtime.store.pruneTerminalRuns({
           olderThan: Date.now() + 1_000,
           statuses: [],
-        }),
-      ).resolves.toStrictEqual({ deleted: 0 })
+        })
+
+      // Until it is reaped, the dead command is all that can settle its run.
+      await expect(prune()).resolves.toStrictEqual({ deleted: 0 })
+      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+
+      await runtime.store.markDeadCommandReaped(dead!.id)
+      await expect(prune()).resolves.toStrictEqual({ deleted: 0 })
       await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
       await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeDefined()
     })
@@ -2796,6 +2876,120 @@ function workflowRuntimeAdapterContract(
       ).rejects.toThrow('Conflicting child run')
     })
 
+    it('creates one successor for an attempt, however many workers retry it', async () => {
+      const runtime = await createRuntime()
+      const run = await runtime.store.createRun({
+        workflowName: 'retry-successor-workflow',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: run.id,
+        name: 'step',
+        kind: 'activity',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: run.id,
+        nodeName: 'step',
+        children: [{ childKey: '$self', kind: 'activity' }],
+      })
+      const child = { runId: run.id, nodeName: 'step', childKey: '$self' }
+      const first = await runtime.store.createAttempt({ ...child, input: 1 })
+      await runtime.store.failCurrentAttempt({
+        attemptId: first.id,
+        leaseToken: first.leaseToken!,
+        error: new Error('first failed'),
+      })
+
+      const retry = { ...child, input: 1, after: first.id }
+      const [second, replay] = await Promise.all([
+        runtime.store.createAttempt(retry),
+        runtime.store.createAttempt(retry),
+      ])
+      expect(replay.id).toBe(second.id)
+      expect(second.attemptNumber).toBe(2)
+
+      // A successor that already settled the child is still what a late
+      // retry of the first attempt gets back.
+      await runtime.store.completeCurrentAttempt({
+        attemptId: second.id,
+        leaseToken: second.leaseToken!,
+        output: 'done',
+      })
+      const late = await runtime.store.createAttempt(retry)
+      expect(late).toMatchObject({ id: second.id, status: 'completed' })
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      expect(snapshot?.attempts.map((attempt) => attempt.id).sort()).toEqual(
+        [first.id, second.id].sort(),
+      )
+      expect(snapshot?.children[0]?.attemptCount).toBe(2)
+    })
+
+    it('persists the child cancellation policy outside the child run identity', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'detaching-parent',
+        input: { scenario: 'alpha' },
+      })
+      await runtime.store.createNode({
+        runId: parent.id,
+        name: 'children',
+        kind: 'parallel',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: parent.id,
+        nodeName: 'children',
+        children: [
+          { childKey: 'member:detached', kind: 'workflow' },
+          { childKey: 'member:default', kind: 'workflow' },
+        ],
+      })
+      const childParams = (childKey: string) => ({
+        runId: parent.id,
+        nodeName: 'children',
+        childKey,
+        childKind: 'workflow' as const,
+        childName: 'child',
+        input: { scenario: 'alpha' },
+        rootRunId: parent.rootRunId,
+      })
+
+      const detached = await runtime.store.ensureChildRun({
+        ...childParams('member:detached'),
+        cancellation: 'detach',
+      })
+      const defaulted = await runtime.store.ensureChildRun(
+        childParams('member:default'),
+      )
+      expect(detached.child.cancellation).toBe('detach')
+      expect(defaulted.child).not.toHaveProperty('cancellation')
+
+      // Cancellation walks stored edges, so every read path must carry it.
+      const snapshot = await runtime.store.loadRunSnapshot(parent.id)
+      const loaded = await runtime.store.loadNodeChildren({
+        runId: parent.id,
+        nodeName: 'children',
+      })
+      for (const children of [snapshot!.children, loaded.children]) {
+        expect(
+          Object.fromEntries(
+            children.map((child) => [child.childKey, child.cancellation]),
+          ),
+        ).toEqual({
+          'member:default': undefined,
+          'member:detached': 'detach',
+        })
+      }
+
+      // A replay that declares another policy is the same child, and the
+      // policy recorded when the run was created stays authoritative.
+      const replayed = await runtime.store.ensureChildRun(
+        childParams('member:detached'),
+      )
+      expect(replayed.created).toBe(false)
+      expect(replayed.childRun.id).toBe(detached.childRun.id)
+      expect(replayed.child.cancellation).toBe('detach')
+    })
+
     it('refuses to start a child run on a terminal child record', async () => {
       const runtime = await createRuntime()
       const parent = await runtime.store.createRun({
@@ -3352,10 +3546,19 @@ function workflowRuntimeAdapterContract(
         parentNodeName: 'done',
         rootRunId: first.rootRunId,
       })
+      const unique = {
+        key: ['summary'],
+        scope: 'active',
+        behavior: 'reject',
+      } as const
       const second = await runtime.store.createRun({
         workflowName: 'summary-root',
         input: { root: 2 },
+        unique,
       })
+      await expect(
+        runtime.store.listRunSummaries({ name: 'summary-root', limit: 1 }),
+      ).resolves.toMatchObject({ runs: [{ id: second.id, unique }] })
 
       const roots = await runtime.store.listRunSummaries({
         name: 'summary-root',

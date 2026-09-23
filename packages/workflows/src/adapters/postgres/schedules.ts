@@ -7,15 +7,7 @@ import {
   startStoredScheduleRun,
   type StoredWorkflowSchedule,
 } from '../../runtime/scheduler.ts'
-import {
-  id,
-  json,
-  many,
-  one,
-  parseJsonColumn,
-  timestampColumn,
-  timestampParam,
-} from './sql.ts'
+import { id, json, many, one, timestampColumn, timestampParam } from './sql.ts'
 
 type PostgresWorkflowSchedulerContext = {
   readonly db: WorkflowPostgresConnection
@@ -45,12 +37,6 @@ export function createPostgresWorkflowScheduler(
   ctx: PostgresWorkflowSchedulerContext,
 ): WorkflowScheduler {
   const { db, ready } = ctx
-  let lastTriggerTimestamp = 0
-  const triggerSlot = () => {
-    const current = Date.now()
-    lastTriggerTimestamp = Math.max(current, lastTriggerTimestamp + 1)
-    return lastTriggerTimestamp
-  }
 
   return {
     async reconcile(entries) {
@@ -214,12 +200,11 @@ export function createPostgresWorkflowScheduler(
           [name],
         )
         if (!row) throw new Error(`Unknown workflow schedule [${name}]`)
-        const slot = triggerSlot()
         const schedule = mapSchedule(row)
         const run = await startStoredScheduleRun(
           ctx.createRuntime(tx),
           schedule,
-          slot,
+          'manual',
         )
         await tx.query(
           `
@@ -228,7 +213,7 @@ export function createPostgresWorkflowScheduler(
                 updated_at = now()
             WHERE id = $1
           `,
-          [schedule.id, timestampParam(slot)],
+          [schedule.id, timestampParam(Date.now())],
         )
         return run
       })
@@ -277,8 +262,10 @@ function mapSchedule(row: ScheduleRow): StoredWorkflowSchedule {
     name: row.name,
     runnableKind: row.runnable_kind,
     runnableName: row.runnable_name,
-    input: parseJsonColumn(row.input),
-    tags: parseJsonColumn(row.tags) as Readonly<Record<string, string>>,
+    // The driver has already decoded jsonb; parsing a string input again
+    // would read application data as another JSON document.
+    input: row.input,
+    tags: row.tags as Readonly<Record<string, string>>,
     ...(row.cron === null ? {} : { cron: row.cron }),
     ...(row.every_ms === null ? {} : { everyMs: Number(row.every_ms) }),
     enabled: row.enabled,
