@@ -190,8 +190,10 @@ function workflowRuntimeAdapterContract(
         input: Schema.Struct({ scenario: Schema.String }),
         output: Schema.Struct({ caseId: Schema.String }),
       }).build()
-      const implementation = implementWorkflow(workflow).finish(
-        (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
+      const implementation = implementWorkflow(workflow, {
+        pool: 'test',
+      }).finish((_outputs, input) =>
+        fromPromise(() => ({ caseId: input.scenario })),
       )
       const runtime = await createRuntime()
       const client = createWorkflowRuntimeClient(runtime)
@@ -223,10 +225,14 @@ function workflowRuntimeAdapterContract(
       })
         .workflow('child', childWorkflow)
         .build()
-      const childImplementation = implementWorkflow(childWorkflow).finish(
-        (_outputs, input) => fromPromise(() => ({ caseId: input.scenario })),
+      const childImplementation = implementWorkflow(childWorkflow, {
+        pool: 'test',
+      }).finish((_outputs, input) =>
+        fromPromise(() => ({ caseId: input.scenario })),
       )
-      const parentImplementation = implementWorkflow(parentWorkflow)
+      const parentImplementation = implementWorkflow(parentWorkflow, {
+        pool: 'test',
+      })
         .child(childWorkflow)
         .finish(({ child }) => fromPromise(() => ({ caseId: child.caseId })))
       const runtime = await createRuntime()
@@ -1772,7 +1778,7 @@ function workflowRuntimeAdapterContract(
           output: Schema.Struct({ ok: Schema.Boolean }),
         })
         .build()
-      const implementation = implementWorkflow(workflow)
+      const implementation = implementWorkflow(workflow, { pool: 'test' })
         .content(() => fromPromise(async () => ({ ok: true })))
         .finish(({ content }) => fromPromise(() => content))
       const runtime = await createRuntime({ maxDeliveries: 1 })

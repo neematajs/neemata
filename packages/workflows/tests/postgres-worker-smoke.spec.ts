@@ -49,10 +49,10 @@ test('runs direct child and mapWorkflow through postgres workers', async () => {
     })
     .build()
 
-  const childImpl = implementWorkflow(childWorkflow).finish((_outputs, input) =>
-    fromPromise(() => ({ id: `child:${input.text}` })),
+  const childImpl = implementWorkflow(childWorkflow, { pool: 'test' }).finish(
+    (_outputs, input) => fromPromise(() => ({ id: `child:${input.text}` })),
   )
-  const parentImpl = implementWorkflow(parentWorkflow)
+  const parentImpl = implementWorkflow(parentWorkflow, { pool: 'test' })
     .primary(childWorkflow, {
       input: (_outputs, input) => ({ text: input.scenario }),
     })

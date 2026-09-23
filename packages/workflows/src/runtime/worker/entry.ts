@@ -108,9 +108,12 @@ export type RunExecutionWorkerInput<
     readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
     readonly wakeEvents?: WorkflowWakeEvents
     readonly workflows: readonly W[]
-    readonly activityNames?: readonly string[]
     readonly tasks: readonly T[]
-    readonly taskNames?: readonly string[]
+    /**
+     * Serve only the tasks, and the activities of the workflows, implemented for
+     * this pool. Omitted, the worker serves all of them.
+     */
+    readonly pool?: string
     readonly reaping?: false | WorkerReapingOptions
   }
 
@@ -305,20 +308,24 @@ function executionDriver(
   input: RunExecutionWorkerInput,
   handlers: HandlerRunner,
 ): WorkerDriver<ClaimedAttempt> {
-  const workflowNames = input.workflows.map(
+  // A workflow's activities all run on its pool, so its name routes them.
+  const served = <T extends { readonly pool: string }>(
+    implementations: readonly T[],
+  ) =>
+    input.pool === undefined
+      ? implementations
+      : implementations.filter(({ pool }) => pool === input.pool)
+  const workflowNames = served(input.workflows).map(
     (implementation) => implementation.workflow.name,
   )
-  const activityNames =
-    input.activityNames ?? collectWorkflowActivityNames(input.workflows)
-  const taskNames =
-    input.taskNames ??
-    input.tasks.map((implementation) => implementation.task.name)
+  const taskNames = served(input.tasks).map(
+    (implementation) => implementation.task.name,
+  )
   return {
     claim: () =>
       input.attemptExecutor.claim({
         workerId: input.workerId,
         workflowNames,
-        activityNames,
         taskNames,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
@@ -346,26 +353,47 @@ function executionDriver(
   }
 }
 
-export function collectWorkflowActivityNames(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
-): readonly string[] {
-  const names = new Set<string>()
-  for (const workflow of workflows) {
-    for (const node of workflow.nodes) {
-      if (node.kind === 'activity') {
-        names.add(node.activity.name)
-        continue
-      }
+/** Every pool named by an implementation, for checking against declared pools. */
+export function collectImplementationPools(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'pool'>[],
+  tasks: readonly Pick<AnyTaskImplementation, 'pool'>[],
+): ReadonlySet<string> {
+  return new Set([...workflows, ...tasks].map(({ pool }) => pool))
+}
 
+/**
+ * Names that more than one definition object carries. Children and tasks are
+ * resolved by name, so a same-named copy would be encoded with one schema and
+ * decoded with another, and is the only way workflows could start each other in
+ * a cycle: definitions cannot reference each other as objects.
+ */
+export function findConflictingDefinitions(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
+  tasks: readonly Pick<AnyTaskImplementation, 'task'>[],
+): readonly string[] {
+  // Workflows and tasks are separate namespaces, as in the registry.
+  const seen = {
+    workflow: new Map<string, object>(),
+    task: new Map<string, object>(),
+  }
+  const conflicts = new Set<string>()
+  const add = (definition: AnyWorkflowDefinition | AnyTaskDefinition) => {
+    const known = seen[definition.kind].get(definition.name)
+    if (known === undefined)
+      seen[definition.kind].set(definition.name, definition)
+    else if (known !== definition) conflicts.add(definition.name)
+  }
+  for (const { task } of tasks) add(task)
+  for (const { workflow, nodes } of workflows) {
+    add(workflow)
+    for (const node of nodes) {
       if (node.kind === 'branch' || node.kind === 'parallel') {
-        for (const member of Object.values(node.cases)) {
-          if (member.kind === 'activity') names.add(member.activity.name)
-        }
-      }
+        for (const member of Object.values(node.cases))
+          if (member.kind !== 'activity') add(member.target)
+      } else if (node.kind !== 'activity') add(node.target)
     }
   }
-
-  return [...names]
+  return [...conflicts]
 }
 
 export function collectWorkflowTaskNames(

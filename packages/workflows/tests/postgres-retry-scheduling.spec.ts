@@ -67,6 +67,7 @@ describe('postgres retry scheduling', () => {
     })
     let activeWorker: AbortController | undefined
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: () =>
         fromPromise(async () => {
           activeWorker?.abort()

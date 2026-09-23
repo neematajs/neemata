@@ -4,8 +4,9 @@ export {
 } from './worker/activity-attempt.ts'
 export {
   collectChildWorkflowNames,
-  collectWorkflowActivityNames,
+  collectImplementationPools,
   collectWorkflowTaskNames,
+  findConflictingDefinitions,
   runExecutionWorker,
   runWorkflowWorker,
   serveExecutionWorker,

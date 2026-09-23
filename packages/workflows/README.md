@@ -87,23 +87,72 @@ once; handlers that ignore it require none. Workflow `finish` receives
 `(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
 functions for a library whose schemas are not Standard Schemas themselves.
 
-## Neem worker
+## Pools: tasks, workflows and activities
 
-`defineWorkflows` declares what runs where: implementations, schedules and worker
-pools. The planner reads it on the main thread and every worker thread reads it
-again, so it holds no connections. Those belong to the worker definition, whose
-`setup` runs once per thread:
+Only tasks and workflows carry placement. Each names the execution pool whose
+workers run it, and nothing is placed implicitly:
 
 ```ts
-import { defineWorkflows, defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+implementTask(renderPdf, { pool: 'pdf', handler })
 
-export const config = defineWorkflows({
+implementWorkflow(checkout, { pool: 'checkout' }) // its activities run here
+  .price(loadPrice) // activity: inherits the pool
+  .receipt(renderPdf, { input: ({ price }) => price }) // task node: pdf pool
+  .finish(({ receipt }) => receipt)
+```
+
+An activity is a private step of its workflow and has no placement options. A
+step that needs its own pool, because it is heavy, risky to clean up, or has to
+be isolated from the rest, should be a task: a task can be a node or a map item,
+has its own retry and timeout policy, and is its own run in the inspector.
+Promoting a step to a task is how it gets isolated, and that decision is then
+visible in the contract. The workflow itself is advanced by coordinator threads,
+so `finish` must be quick.
+
+A pool is only a name here; its size and timing are a deployment decision made
+by the planner. Workers claim the tasks, and the activities of the workflows,
+implemented for their pool. Routing is decided by workers, not stamped on queued
+work, so moving an implementation to another pool takes effect for already
+queued work on the next deploy. A standalone worker takes
+`runExecutionWorker({ pool: 'pdf', ... })`; without `pool` it serves everything.
+
+Pool `concurrency` is capacity per process, not a limit: three instances of a
+pool with two slots run six handlers. Cluster-wide limits are not implemented.
+
+## Neem integration
+
+The planner owns the thread layout. It runs on the main thread and imports no
+application code:
+
+```ts
+// app.planner.ts
+import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
+
+export default defineWorkflowsPlanner(() => ({
+  coordinator: { threads: 1, concurrency: 4 },
+  pools: {
+    checkout: { concurrency: 8 },
+    pdf: { threads: 2, concurrency: 1, cleanupTimeoutMs: 1_000 },
+  },
+}))
+```
+
+Each pool and the coordinator take `threads`, `concurrency`, `leaseMs`,
+`pollIntervalMs` and `cleanupTimeoutMs`. Coordinator threads advance runs and own
+schedules and maintenance; pool threads run handlers. Every pool an
+implementation names must be declared here; there is no default pool. Every
+thread receives its settings and the declared pool names from the planner.
+
+The worker definition is the application side, and `setup` runs once per thread:
+
+```ts
+// app.worker.ts
+import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+
+export default defineWorkflowsWorker({
   workflows: () => [checkoutImpl],
-  tasks: () => [chargeCardImpl],
-  workers: { execution: { concurrency: 8 } },
-})
-
-export default defineWorkflowsWorker(config, {
+  tasks: () => [renderPdfImpl],
+  schedules: () => [nightly],
   setup: async (ctx) => {
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
     return {
@@ -117,13 +166,22 @@ export default defineWorkflowsWorker(config, {
 })
 ```
 
+Startup fails when an implementation names a pool the planner did not declare,
+when a workflow references a child workflow or task with no registered
+implementation, or when one name is carried by more than one definition object.
+Children and tasks resolve by name, so a same-named copy would be encoded with
+one schema and decoded with another; it is also the only way workflows could
+start each other in a cycle, since definitions cannot reference each other.
+Share one definition module between a reference and its implementation. An
+implementation listed more than once is deduplicated. `ctx.data` names the thread's role and pool, for a `setup` that
+needs different resources per pool.
+
 On stop the worker stops claiming, aborts attempts, joins the loops, waits for
 every handler to settle, and only then disposes the adapter and calls `dispose`.
 A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem
 recycles the thread, and the env is not disposed while that handler still runs. A
 stop during `setup` waits for it and disposes what it acquired. Effect
-applications use the worker in `@nmtjs/workflows/effect/neem` with the same
-config; see below.
+applications use the worker in `@nmtjs/workflows/effect/neem`; see below.
 
 ## Effect schemas
 
@@ -218,7 +276,6 @@ return Effects; synchronous callbacks return values directly.
 import * as Context from 'effect/Context'
 import * as Layer from 'effect/Layer'
 import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
-import { defineWorkflows } from '@nmtjs/workflows/neem'
 import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
 
 class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
@@ -236,13 +293,9 @@ const greeting = implementTask(greet, {
     }),
 })
 
-// Shared with the planner: what runs where, without connections or services.
-export const config = defineWorkflows({
+export default defineWorkflowsWorker({
   workflows: () => [],
   tasks: () => [greeting],
-})
-
-export default defineWorkflowsWorker(config, {
   layer: Layer.succeed(Prefix, 'Hello'),
   runtime: Effect.sync(createInMemoryWorkflowRuntime),
 })

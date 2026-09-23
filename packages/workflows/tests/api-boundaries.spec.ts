@@ -88,6 +88,7 @@ describe('workflow API boundaries', () => {
 
   it('retains definition-owned start metadata and implementation-owned node idempotency', () => {
     const taskImpl = implementTask(embedding, {
+      pool: 'test',
       handler(input) {
         return fromPromise(async () => {
           return { id: input.text }
@@ -95,7 +96,7 @@ describe('workflow API boundaries', () => {
       },
     })
 
-    const workflowImpl = implementWorkflow(workflow)
+    const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.scenario })), {
         input: (_outputs, input) => ({ scenario: input.scenario }),
         idempotency: (_outputs, input) => [prefix, input.scenario],
@@ -172,7 +173,7 @@ describe('workflow API boundaries', () => {
     })
 
     expect(() =>
-      implementWorkflow(workflow)
+      implementWorkflow(workflow, { pool: 'test' })
         .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
           select: (_outputs, input) => input.kind,
@@ -190,7 +191,7 @@ describe('workflow API boundaries', () => {
     )
 
     expect(() =>
-      implementWorkflow(workflow)
+      implementWorkflow(workflow, { pool: 'test' })
         .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
           select: (_outputs, input) => input.kind,
@@ -213,7 +214,7 @@ describe('workflow API boundaries', () => {
     ).toThrow('Unknown workflow branch case implementation [caseContent.extra]')
 
     expect(() =>
-      implementWorkflow(workflow)
+      implementWorkflow(workflow, { pool: 'test' })
         .content((input) => fromPromise(async () => ({ text: input.scenario })))
         .caseContent({
           select: (_outputs, input) => input.kind,
@@ -269,6 +270,7 @@ describe('workflow API boundaries', () => {
     >().toEqualTypeOf<Date | undefined>()
 
     implementTask(dateTask, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           expectTypeOf(input).toEqualTypeOf<Date>()
@@ -276,7 +278,7 @@ describe('workflow API boundaries', () => {
         }),
     })
 
-    implementWorkflow(dateWorkflow)
+    implementWorkflow(dateWorkflow, { pool: 'test' })
       .normalize(
         (input) =>
           fromPromise(async () => {
@@ -335,7 +337,7 @@ describe('workflow API boundaries', () => {
       }))
       .build()
 
-    implementWorkflow(workflow)
+    implementWorkflow(workflow, { pool: 'test' })
       .choice({
         select: () => 'date',
         cases: (h) => ({

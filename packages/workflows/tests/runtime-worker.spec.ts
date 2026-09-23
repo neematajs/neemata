@@ -38,6 +38,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
@@ -216,6 +217,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const completionImplementation = implementTask(completionTask, {
+      pool: 'test',
       handler: (input) => fromPromise(async () => ({ id: input.text })),
     })
     const completionRuntime = createInMemoryWorkflowRuntime()
@@ -262,6 +264,7 @@ describe('workflow worker runtime', () => {
       retry: { attempts: 2 },
     })
     const retryImplementation = implementTask(retryTask, {
+      pool: 'test',
       handler: () =>
         fromPromise(async () => {
           throw new Error('retry me')
@@ -310,10 +313,14 @@ describe('workflow worker runtime', () => {
     })
       .task('child', reconcileTask)
       .build()
-    const reconcileWorkflowImplementation = implementWorkflow(reconcileWorkflow)
+    const reconcileWorkflowImplementation = implementWorkflow(
+      reconcileWorkflow,
+      { pool: 'test' },
+    )
       .child(reconcileTask)
       .finish(({ child }) => fromPromise(() => ({ id: child.id })))
     const reconcileTaskImplementation = implementTask(reconcileTask, {
+      pool: 'test',
       handler: () =>
         fromPromise(async () => {
           throw new Error('stale reconcile should not run handler')
@@ -380,10 +387,11 @@ describe('workflow worker runtime', () => {
     })
       .task('child', task)
       .build()
-    const workflowImplementation = implementWorkflow(workflow)
+    const workflowImplementation = implementWorkflow(workflow, { pool: 'test' })
       .child(task)
       .finish(({ child }) => fromPromise(() => ({ id: child.id })))
     const taskImplementation = implementTask(task, {
+      pool: 'test',
       handler: () =>
         fromPromise(async () => {
           throw new Error('stale timed-out attempt should not run handler')
@@ -448,7 +456,7 @@ describe('workflow worker runtime', () => {
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -513,7 +521,7 @@ describe('workflow worker runtime', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.text })))
       .finish(({ content }) => fromPromise(() => content))
     const runtime = createInMemoryWorkflowRuntime()
@@ -561,7 +569,7 @@ describe('workflow worker runtime', () => {
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -607,7 +615,7 @@ describe('workflow worker runtime', () => {
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -660,7 +668,7 @@ describe('workflow worker runtime', () => {
       input: Schema.Struct({ text: Schema.String }),
       output: Schema.Struct({ text: Schema.String }),
     }).build()
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) => fromPromise(() => ({ text: input.text })),
     )
     const runtime = createInMemoryWorkflowRuntime()
@@ -708,7 +716,7 @@ describe('workflow worker runtime', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) =>
         fromPromise(async () => ({ text: `content:${input.text}` })),
       )
@@ -781,7 +789,7 @@ describe('workflow worker runtime', () => {
         }),
       }))
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .sections(({ activity }) => ({
         alpha: activity(
           (input) => fromPromise(async () => ({ text: `a:${input.text}` })),
@@ -871,7 +879,7 @@ describe('workflow worker runtime', () => {
       })
       .build()
     let calls = 0
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) =>
         fromPromise(async () => {
           calls += 1
@@ -946,7 +954,7 @@ describe('workflow worker runtime', () => {
       releaseLateHandler = resolve
     })
     let timeoutReason: unknown
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input, lifecycle) =>
         fromPromise(async () => {
           lifecycle?.signal.addEventListener(
@@ -1024,7 +1032,7 @@ describe('workflow worker runtime', () => {
         output: Schema.Struct({ text: Schema.String }),
       })
       .build()
-    const implementation = implementWorkflow(workflow)
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
       .content((input) => fromPromise(async () => ({ text: input.text })))
       .finish(({ content }) => fromPromise(() => ({ text: content.text })))
     const runtime = createInMemoryWorkflowRuntime()
@@ -1073,7 +1081,6 @@ describe('workflow worker runtime', () => {
       attemptExecutor,
       context,
       workflows: [implementation],
-      activityNames: ['missing'],
       workerId: 'activity-worker-1',
     })
 
@@ -1089,7 +1096,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ text: Schema.String }),
     }).build()
     let slowFinished = false
-    const implementation = implementWorkflow(workflow).finish(
+    const implementation = implementWorkflow(workflow, { pool: 'test' }).finish(
       (_outputs, input) =>
         fromPromise(async () => {
           if (input.text === 'bad') throw new Error('bad finish')
@@ -1140,6 +1147,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => ({ id: `embedding:${input.text}` })),
     })
@@ -1178,6 +1186,7 @@ describe('workflow worker runtime', () => {
     })
     let calls = 0
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           calls += 1
@@ -1231,6 +1240,7 @@ describe('workflow worker runtime', () => {
     })
     let timeoutReason: unknown
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           calls += 1
@@ -1298,6 +1308,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           await new Promise((resolve) => setTimeout(resolve, 15))
@@ -1341,6 +1352,7 @@ describe('workflow worker runtime', () => {
         retry: { attempts: 3, delay: '1s', backoff: 'exponential' },
       })
       const implementation = implementTask(task, {
+        pool: 'test',
         handler: () =>
           fromPromise(async () => {
             throw new Error('still failing')
@@ -1414,6 +1426,7 @@ describe('workflow worker runtime', () => {
       output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           await new Promise((resolve) => setTimeout(resolve, 45))
@@ -1472,6 +1485,7 @@ describe('workflow worker runtime', () => {
     })
     let leaseLostReason: unknown
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           lifecycle?.signal.addEventListener(
@@ -1547,6 +1561,7 @@ describe('workflow worker runtime', () => {
     })
     let cancelReason: unknown
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           lifecycle?.signal.addEventListener(
@@ -1629,6 +1644,7 @@ describe('workflow worker runtime', () => {
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           handlerCalls += 1
@@ -1682,6 +1698,7 @@ describe('workflow worker runtime', () => {
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input) =>
         fromPromise(async () => {
           handlerCalls += 1
@@ -1731,6 +1748,7 @@ describe('workflow worker runtime', () => {
       handlerStarted = resolve
     })
     const implementation = implementTask(task, {
+      pool: 'test',
       handler: (input, lifecycle) =>
         fromPromise(async () => {
           handlerStarted()

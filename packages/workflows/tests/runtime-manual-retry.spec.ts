@@ -66,7 +66,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
           }),
         }))
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .members(({ activity }) => ({
           good: activity(() =>
             fromPromise(async () => {
@@ -168,6 +168,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Number,
       })
       const taskImpl = implementTask(task, {
+        pool: 'test',
         handler: (item) =>
           fromPromise(async () => {
             calls.push(item)
@@ -181,7 +182,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .mapTask('items', task, { item: Schema.Number, concurrency: 1 })
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .items(task, {
           items: (_outputs, input) => input,
           input: (_outputs, item) => item,
@@ -246,6 +247,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
         retry: { attempts: 3 },
       })
       const impl = implementTask(task, {
+        pool: 'test',
         handler: () =>
           fromPromise(async () => {
             calls++
@@ -303,7 +305,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
           output: Schema.Number,
           retry,
         })
-        const taskImpl = implementTask(task, { handler })
+        const taskImpl = implementTask(task, { pool: 'test', handler })
         const workflow = defineWorkflow({
           name: 'budget-workflow',
           input: Schema.Number,
@@ -314,7 +316,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
             retry,
           })
           .build()
-        const workflowImpl = implementWorkflow(workflow)
+        const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
           .review(handler)
           .finish((outputs) => fromPromise(() => outputs.review))
         const delays: number[] = []
@@ -419,7 +421,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .activity('saved', { input: Schema.Struct({}), output: Schema.Number })
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .saved(() =>
           fromPromise(async () => {
             calls++
@@ -498,7 +500,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .activity('work', { input: Schema.Number, output: Schema.Number })
         .build()
-      const childImpl = implementWorkflow(child)
+      const childImpl = implementWorkflow(child, { pool: 'test' })
         .work((value) =>
           fromPromise(async () => {
             calls.push(value)
@@ -513,7 +515,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .mapWorkflow('children', child, { item: Schema.Number, concurrency: 1 })
         .build()
-      const parentImpl = implementWorkflow(parent)
+      const parentImpl = implementWorkflow(parent, { pool: 'test' })
         .children(child, {
           items: (_outputs, input) => input,
           input: (_outputs, item) => item,
@@ -566,7 +568,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .activity('work', { input: Schema.Number, output: Schema.Number })
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .work((value) => fromPromise(async () => value))
         .finish((outputs) => fromPromise(() => outputs.work))
       const client = createWorkflowRuntimeClient(runtime)
@@ -664,6 +666,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
         output: Schema.Number,
       })
       const taskImpl = implementTask(task, {
+        pool: 'test',
         handler: (value) => fromPromise(async () => value),
       })
       const workflow = defineWorkflow({
@@ -672,7 +675,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .mapTask('items', task, { item: Schema.Number, concurrency: 1 })
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .items(task, {
           items: (_outputs, input) => input,
           input: (_outputs, item) => {
@@ -731,7 +734,7 @@ for (const adapter of ['memory', 'postgres'] as const) {
       })
         .mapWorkflow('legacy', child, { item: Schema.Number })
         .build()
-      const impl = implementWorkflow(workflow)
+      const impl = implementWorkflow(workflow, { pool: 'test' })
         .legacy(child, {
           items: (_outputs, input) => input,
           input: (_outputs, item) => item,
@@ -833,12 +836,13 @@ for (const adapter of ['memory', 'postgres'] as const) {
         })
           .mapWorkflow('children', child, { item: Schema.Number })
           .build()
-        const childImpl = implementWorkflow(child).finish(() =>
-          fromPromise(() => {
-            throw new Error('failed')
-          }),
+        const childImpl = implementWorkflow(child, { pool: 'test' }).finish(
+          () =>
+            fromPromise(() => {
+              throw new Error('failed')
+            }),
         )
-        const impl = implementWorkflow(workflow)
+        const impl = implementWorkflow(workflow, { pool: 'test' })
           .children(child, {
             items: (_outputs, input) => input,
             input: (_outputs, item) => item,

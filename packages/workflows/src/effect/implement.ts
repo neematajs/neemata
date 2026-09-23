@@ -1,6 +1,7 @@
 import type * as Effect from 'effect/Effect'
 
 import type {
+  ActivityImplementationOptions,
   AttemptLifecycle,
   ItemOfMapNode,
   NodeOutput,
@@ -8,6 +9,7 @@ import type {
   TaskHandler as StoredTaskHandler,
   TaskImplementation,
   WorkflowImplementation,
+  WorkflowImplementationOptions,
   WorkflowInputMapper,
   WorkflowMapInputMapper,
 } from '../implement/index.ts'
@@ -74,16 +76,17 @@ function storedHandler<R, Input, Output>(
 
 export function implementTask<Task extends AnyTaskDefinition, R = never>(
   task: Task,
-  options: { handler: TaskHandler<R, TaskInput<Task>, TaskOutput<Task>> },
+  options: {
+    /** The execution pool whose workers run this task. */
+    pool: string
+    handler: TaskHandler<R, TaskInput<Task>, TaskOutput<Task>>
+  },
 ): TaskImplementation<Task, HandlerRuntime<R>> {
-  return implementStoredTask(task, { handler: storedHandler(options.handler) })
+  return implementStoredTask(task, {
+    pool: options.pool,
+    handler: storedHandler(options.handler),
+  })
 }
-
-type ActivityImplementationOptions<
-  Outputs extends object,
-  Input,
-  NodeInput,
-> = WorkflowInputMapper<Outputs, Input, NodeInput>
 
 // A stored ActivityImplementation is not accepted here: its Promise handler
 // would compete with the Effect one when inferring Output.
@@ -94,7 +97,7 @@ type ActivityImplementationValue<Input, Output, R = never> =
 type ActivityCaseDescriptor<Input, Output, R = never> = {
   readonly kind: 'activityCase'
   readonly value: ActivityImplementationValue<Input, Output, R>
-  readonly options?: WorkflowInputMapper<any, any, Input>
+  readonly options?: ActivityImplementationOptions<any, any, Input>
 }
 
 type AnyActivityImplementationValue<Input, Output> =
@@ -132,7 +135,7 @@ type CaseImplementationObject<
 type CaseImplementers<Outputs extends object, Input> = {
   readonly activity: <NodeInput, Output, R = never>(
     value: ActivityImplementationValue<NodeInput, Output, R>,
-    options?: WorkflowInputMapper<Outputs, Input, NodeInput>,
+    options?: ActivityImplementationOptions<Outputs, Input, NodeInput>,
   ) => ActivityCaseDescriptor<NodeInput, Output, R>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
@@ -365,8 +368,11 @@ export type WorkflowImplementer<
 export function implementWorkflow<
   Workflow extends AnyWorkflowDefinition,
   WorkflowR = never,
->(workflow: Workflow): WorkflowImplementer<Workflow, WorkflowR> {
-  return createImplementationChain(workflow, {
+>(
+  workflow: Workflow,
+  options: WorkflowImplementationOptions,
+): WorkflowImplementer<Workflow, WorkflowR> {
+  return createImplementationChain(workflow, options, {
     handler: storedHandler,
     finish:
       (finish: FinishHandler<unknown, unknown, unknown, unknown>) =>

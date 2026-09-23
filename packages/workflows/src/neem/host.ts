@@ -1,12 +1,8 @@
 import { defineRuntimeHost } from '@nmtjs/neem'
 
-import type { AnyWorkflowsConfig } from './runtime.ts'
+import type { ResolvedWorkflowsPlan } from './runtime.ts'
 
-type WorkflowsPlannerFactory = () =>
-  | Promise<AnyWorkflowsConfig>
-  | AnyWorkflowsConfig
-
-export default defineRuntimeHost<WorkflowsPlannerFactory | undefined>(
+export default defineRuntimeHost<ResolvedWorkflowsPlan | undefined>(
   async (params) => ({
     async start() {
       if (!params.options) {
@@ -16,6 +12,7 @@ export default defineRuntimeHost<WorkflowsPlannerFactory | undefined>(
       params.logger.debug(
         {
           threads: params.threads.length,
+          pools: Object.keys(params.options.pools),
         },
         'Neem workflows runtime host started',
       )

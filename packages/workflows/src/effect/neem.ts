@@ -9,16 +9,18 @@ import * as Layer from 'effect/Layer'
 
 import type {
   AnyTaskImplementation,
-  AnyWorkflowsConfig,
   AnyWorkflowImplementation,
-  WorkflowsConfig,
+  WorkflowsRegistry,
   WorkflowsWorkerData,
 } from '../neem/runtime.ts'
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition } from '../types/index.ts'
 import type { Requirements } from './implement.ts'
-import { resolveWorkflowsConfig } from '../neem/runtime.ts'
-import { resolveExecutionWorkerPool, runRoleLoop } from '../neem/serve.ts'
+import {
+  resolveWorkerSettings,
+  resolveWorkflowsRegistry,
+} from '../neem/runtime.ts'
+import { runRoleLoop } from '../neem/serve.ts'
 import {
   createHandlerRunner,
   WorkflowCleanupTimeoutError,
@@ -31,30 +33,25 @@ export type WorkflowsRuntime<R = never> = Effect.Effect<
   R | Scope.Scope
 >
 
-/** The services of one worker thread: the adapter and what handlers require. */
-export type WorkflowsWorkerServices<
-  W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
-  T extends AnyTaskImplementation = AnyTaskImplementation,
-  R = never,
-> = { readonly runtime: WorkflowsRuntime<R> } & WorkflowServices<
-  Requirements<W | T> | R
->
-
 type WorkflowServices<R> = [Exclude<R, Scope.Scope>] extends [never]
   ? { readonly layer?: Layer.Layer<never, unknown> }
   : { readonly layer: Layer.Layer<Exclude<R, Scope.Scope>, unknown> }
 
-export function defineWorkflowsWorker<
-  W extends AnyWorkflowImplementation,
-  T extends AnyTaskImplementation,
+/** What a worker thread serves, the adapter, and the Layer its handlers require. */
+export type WorkflowsWorkerDefinition<
+  W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
+  T extends AnyTaskImplementation = AnyTaskImplementation,
   R = never,
->(
-  definition: WorkflowsConfig<W, T, AnyScheduleDefinition>,
-  services: NoInfer<WorkflowsWorkerServices<W, T, R>> & {
-    readonly runtime: WorkflowsRuntime<R>
-  },
-) {
-  return defineRuntimeWorker<WorkflowsWorkerData, AnyWorkflowsConfig>({
+> = WorkflowsRegistry<W, T, AnyScheduleDefinition> & {
+  readonly runtime: WorkflowsRuntime<R>
+} & WorkflowServices<Requirements<W | T> | R>
+
+export function defineWorkflowsWorker<
+  const W extends AnyWorkflowImplementation = never,
+  const T extends AnyTaskImplementation = never,
+  R = never,
+>(definition: WorkflowsWorkerDefinition<W, T, R>) {
+  return defineRuntimeWorker<WorkflowsWorkerData, unknown>({
     definition,
     createRuntime(ctx) {
       const abort = new AbortController()
@@ -76,14 +73,10 @@ export function defineWorkflowsWorker<
       // Workflow supervision deliberately lives here: it needs the worker
       // definition and can report fatal overruns before scoped cleanup finishes.
       async function initialize() {
-        const config = await resolveWorkflowsConfig(ctx.definition)
+        const registry = await resolveWorkflowsRegistry(definition, ctx.data)
         if (stopping) throw new Error('Workflows worker stopped')
-        const pool =
-          ctx.data.role === 'execution'
-            ? resolveExecutionWorkerPool(config, ctx.data)
-            : undefined
-        const timeoutMs =
-          pool?.cleanupTimeoutMs ?? config.workers.coordinator.cleanupTimeoutMs
+        const settings = resolveWorkerSettings(ctx.data.settings)
+        const timeoutMs = settings.cleanupTimeoutMs
         const main = Effect.gen(function* () {
           const context = yield* Effect.context<any>()
           const env = createHandlerRuntime(context)
@@ -92,13 +85,16 @@ export function defineWorkflowsWorker<
             onFatal: fatal,
           })
           const runtime = yield* Effect.acquireRelease(
-            services.runtime as WorkflowsRuntime<any>,
+            definition.runtime as WorkflowsRuntime<any>,
             (runtime) =>
               Effect.promise(async () => {
                 await runtime.dispose?.()
               }),
           )
-          if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
+          if (
+            ctx.data.role === 'coordinator' &&
+            registry.schedules.length > 0
+          ) {
             if (!runtime.scheduler)
               return yield* Effect.die(
                 new Error(
@@ -106,14 +102,14 @@ export function defineWorkflowsWorker<
                 ),
               )
             yield* Effect.promise(() =>
-              runtime.scheduler!.reconcile(config.schedules),
+              runtime.scheduler!.reconcile(registry.schedules),
             )
           }
           const loop = runRoleLoop({
             data: ctx.data,
+            settings,
             runtime,
-            config,
-            executionPool: pool,
+            registry,
             handlers,
             env,
             workerId: ctx.name,
@@ -142,7 +138,7 @@ export function defineWorkflowsWorker<
         })
         // The typed services check coverage; the registry erases the distinct
         // requirements of its handlers and adapter factory here.
-        const layer = (services.layer ?? Layer.empty) as Layer.Layer<
+        const layer = (definition.layer ?? Layer.empty) as Layer.Layer<
           any,
           unknown
         >

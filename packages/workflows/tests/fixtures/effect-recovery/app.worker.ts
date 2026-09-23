@@ -1,5 +1,5 @@
 import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
 
-import { config, services } from './config.ts'
+import { registry, services } from './config.ts'
 
-export default defineWorkflowsWorker(config, services)
+export default defineWorkflowsWorker({ ...registry, ...services })

@@ -7,17 +7,16 @@ import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { AnyScheduleDefinition, MaybePromise } from '../types/index.ts'
 import type {
   AnyTaskImplementation,
-  AnyWorkflowsConfig,
   AnyWorkflowImplementation,
-  WorkflowsConfig,
+  WorkflowsRegistry,
   WorkflowsWorkerData,
 } from './runtime.ts'
 import {
   createHandlerRunner,
   WorkflowCleanupTimeoutError,
 } from '../runtime/handler.ts'
-import { resolveWorkflowsConfig } from './runtime.ts'
-import { resolveExecutionWorkerPool, runRoleLoop } from './serve.ts'
+import { resolveWorkerSettings, resolveWorkflowsRegistry } from './runtime.ts'
+import { runRoleLoop } from './serve.ts'
 
 // A stop during startup ends initialization without being a failure.
 class WorkerStopped extends Error {
@@ -33,23 +32,21 @@ export type WorkflowsWorkerResources<E> = {
   readonly dispose?: () => MaybePromise<void>
 } & (unknown extends E ? { readonly env?: E } : { readonly env: E })
 
-export type WorkflowsWorkerOptions<
+export type WorkflowsWorkerDefinition<
   W extends AnyWorkflowImplementation = AnyWorkflowImplementation,
   T extends AnyTaskImplementation = AnyTaskImplementation,
-> = {
+> = WorkflowsRegistry<W, T, AnyScheduleDefinition> & {
+  /** Runs once per worker thread; `ctx.data` names its role and pool. */
   readonly setup: (
-    ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, AnyWorkflowsConfig>,
-  ) => MaybePromise<WorkflowsWorkerResources<Env<W | T>>>
+    ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>,
+  ) => MaybePromise<WorkflowsWorkerResources<NoInfer<Env<W | T>>>>
 }
 
 export function defineWorkflowsWorker<
-  W extends AnyWorkflowImplementation,
-  T extends AnyTaskImplementation,
->(
-  definition: WorkflowsConfig<W, T, AnyScheduleDefinition>,
-  options: WorkflowsWorkerOptions<W, T>,
-) {
-  return defineRuntimeWorker<WorkflowsWorkerData, AnyWorkflowsConfig>({
+  const W extends AnyWorkflowImplementation = never,
+  const T extends AnyTaskImplementation = never,
+>(definition: WorkflowsWorkerDefinition<W, T>) {
+  return defineRuntimeWorker<WorkflowsWorkerData, unknown>({
     definition,
     createRuntime(ctx) {
       const abort = new AbortController()
@@ -71,15 +68,11 @@ export function defineWorkflowsWorker<
       }
 
       async function initialize() {
-        const config = await resolveWorkflowsConfig(ctx.definition)
-        const pool =
-          ctx.data.role === 'execution'
-            ? resolveExecutionWorkerPool(config, ctx.data)
-            : undefined
-        const timeoutMs =
-          pool?.cleanupTimeoutMs ?? config.workers.coordinator.cleanupTimeoutMs
+        const registry = await resolveWorkflowsRegistry(definition, ctx.data)
+        const settings = resolveWorkerSettings(ctx.data.settings)
+        const timeoutMs = settings.cleanupTimeoutMs
         if (stopping) throw new WorkerStopped()
-        const resources = await options.setup(ctx)
+        const resources = await definition.setup(ctx)
         const handlers = createHandlerRunner({
           cleanupTimeoutMs: timeoutMs,
           // finished is observed by Neem before cleanup completes. An overrun
@@ -119,19 +112,19 @@ export function defineWorkflowsWorker<
         // A stop that arrived during setup still owns what setup acquired.
         if (stopping) throw new WorkerStopped()
 
-        if (ctx.data.role === 'coordinator' && config.schedules.length > 0) {
+        if (ctx.data.role === 'coordinator' && registry.schedules.length > 0) {
           if (!resources.runtime.scheduler)
             throw new Error(
               'Workflow runtime adapter does not support schedules',
             )
-          await resources.runtime.scheduler.reconcile(config.schedules)
+          await resources.runtime.scheduler.reconcile(registry.schedules)
         }
         if (stopping) throw new WorkerStopped()
         serving.loop = runRoleLoop({
           data: ctx.data,
+          settings,
           runtime: resources.runtime,
-          config,
-          executionPool: pool,
+          registry,
           handlers,
           env: resources.env,
           workerId: ctx.name,

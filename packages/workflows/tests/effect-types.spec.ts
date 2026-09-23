@@ -14,7 +14,6 @@ import {
   type Requirements,
 } from '../src/effect/index.ts'
 import { defineWorkflowsWorker } from '../src/effect/neem.ts'
-import { defineWorkflows } from '../src/neem/index.ts'
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,
@@ -38,6 +37,7 @@ const workflow = defineWorkflow({
   output: Schema.NumberFromString,
 }).build()
 const implementation = implementTask(task, {
+  pool: 'test',
   handler: (input) =>
     Effect.gen(function* () {
       const service = yield* Service
@@ -46,31 +46,33 @@ const implementation = implementTask(task, {
 })
 
 it('requires the worker Layer to provide task and finish services', () => {
-  const finish = implementWorkflow(workflow).finish(() =>
+  const finish = implementWorkflow(workflow, { pool: 'test' }).finish(() =>
     Service.pipe(Effect.map(({ value }) => value)),
   )
-  const config = defineWorkflows({
+  const config = {
     workflows: () => [finish],
     tasks: () => [implementation],
-  })
-  expect(defineWorkflowsWorker(config, { layer, runtime })).toBeDefined()
+  }
+  expect(defineWorkflowsWorker({ ...config, layer, runtime })).toBeDefined()
 
   // The config holds no services, so it needs none to be declared.
-  const tasksOnly = defineWorkflows({
+  const tasksOnly = {
     workflows: () => [],
     tasks: () => [implementation],
-  })
-  const finishOnly = defineWorkflows({ workflows: () => [finish] })
+  }
+  const finishOnly = { workflows: () => [finish] }
   // @ts-expect-error No Layer supplies the task service.
-  defineWorkflowsWorker(tasksOnly, { runtime })
+  defineWorkflowsWorker({ ...tasksOnly, runtime })
   // @ts-expect-error No Layer supplies the finish service.
-  defineWorkflowsWorker(finishOnly, { runtime })
-  defineWorkflowsWorker(finishOnly, {
+  defineWorkflowsWorker({ ...finishOnly, runtime })
+  defineWorkflowsWorker({
+    ...finishOnly,
     runtime,
     // @ts-expect-error The empty Layer cannot provide Service.
     layer: Layer.empty,
   })
-  defineWorkflowsWorker(defineWorkflows({ workflows: () => [] }), {
+  defineWorkflowsWorker({
+    workflows: () => [],
     runtime,
     // @ts-expect-error Worker Layers cannot require services outside the worker.
     layer: Layer.effectDiscard(Missing),
@@ -87,7 +89,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel('parallel', (cases) => ({ a: cases.activity(io) }))
     .build()
-  const direct = implementWorkflow(declared)
+  const direct = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Service.pipe(Effect.map(({ value }) => value)))
     .branch({
       select: () => 'a',
@@ -95,7 +97,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Effect.succeed(1) })
     .finish(() => Effect.succeed(1))
-  const branch = implementWorkflow(declared)
+  const branch = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Effect.succeed(1))
     .branch({
       select: () => 'a',
@@ -105,7 +107,7 @@ it('retains services from direct, branch and parallel activities', () => {
     })
     .parallel({ a: () => Effect.succeed(1) })
     .finish(() => Effect.succeed(1))
-  const parallel = implementWorkflow(declared)
+  const parallel = implementWorkflow(declared, { pool: 'test' })
     .direct(() => Effect.succeed(1))
     .branch({
       select: () => 'a',
@@ -117,22 +119,17 @@ it('retains services from direct, branch and parallel activities', () => {
   expectTypeOf<Requirements<typeof branch>>().toEqualTypeOf<Service>()
   expectTypeOf<Requirements<typeof parallel>>().toEqualTypeOf<Service>()
   // @ts-expect-error Direct activity requirements reach the worker boundary.
-  defineWorkflowsWorker(defineWorkflows({ workflows: () => [direct] }), {
-    runtime,
-  })
+  defineWorkflowsWorker({ workflows: () => [direct], runtime })
   // @ts-expect-error Branch activity requirements reach the worker boundary.
-  defineWorkflowsWorker(defineWorkflows({ workflows: () => [branch] }), {
-    runtime,
-  })
+  defineWorkflowsWorker({ workflows: () => [branch], runtime })
   // @ts-expect-error Parallel activity requirements reach the worker boundary.
-  defineWorkflowsWorker(defineWorkflows({ workflows: () => [parallel] }), {
-    runtime,
-  })
+  defineWorkflowsWorker({ workflows: () => [parallel], runtime })
   expect(
-    defineWorkflowsWorker(
-      defineWorkflows({ workflows: () => [direct, branch, parallel] }),
-      { layer, runtime },
-    ),
+    defineWorkflowsWorker({
+      workflows: () => [direct, branch, parallel],
+      layer,
+      runtime,
+    }),
   ).toBeDefined()
 })
 
@@ -171,35 +168,39 @@ it('requires a standalone worker context to cover its handlers', () => {
 
 it('supports scoped handlers and adapter factories with services', () => {
   const scoped = implementTask(task, {
+    pool: 'test',
     handler: () => Effect.acquireRelease(Effect.succeed(1), () => Effect.void),
   })
-  const scopedOnly = defineWorkflows({
+  const scopedOnly = {
     workflows: () => [],
     tasks: () => [scoped],
-  })
+  }
   // Scope comes from the worker, not from the Layer.
-  expect(defineWorkflowsWorker(scopedOnly, { runtime })).toBeDefined()
+  expect(defineWorkflowsWorker({ ...scopedOnly, runtime })).toBeDefined()
   const factory = Service.pipe(Effect.andThen(runtime))
-  const empty = defineWorkflows({ workflows: () => [] })
+  const empty = { workflows: () => [] }
   expect(
-    defineWorkflowsWorker(empty, { layer, runtime: factory }),
+    defineWorkflowsWorker({ ...empty, layer, runtime: factory }),
   ).toBeDefined()
   // @ts-expect-error Adapter factories also require their Layer services.
-  defineWorkflowsWorker(empty, { runtime: factory })
+  defineWorkflowsWorker({ ...empty, runtime: factory })
 })
 
 it('accepts decoded values and Effect handlers without an async compatibility API', () => {
   implementTask(task, {
+    pool: 'test',
     handler: (input) => {
       expectTypeOf(input).toEqualTypeOf<number>()
       return Effect.succeed(input)
     },
   })
   implementTask(task, {
+    pool: 'test',
     // @ts-expect-error Handlers return decoded Type, not authored Encoded.
     handler: () => Effect.succeed('1'),
   })
   implementTask(task, {
+    pool: 'test',
     // @ts-expect-error Only native Effects cross the execution boundary.
     handler: async () => 1,
   })

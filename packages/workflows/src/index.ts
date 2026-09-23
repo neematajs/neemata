@@ -9,6 +9,7 @@ export type {
   WorkflowImplementer,
   WorkflowImplementationChain,
   WorkflowImplementation,
+  WorkflowImplementationOptions,
 } from './implement/index.ts'
 export type { WorkflowBuilder } from './contract/index.ts'
 export type {
