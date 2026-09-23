@@ -12,7 +12,7 @@ import type { BuildGraph, BuildTarget } from '../build/graph.ts'
 import type {
   WatcherEvent,
   WatcherManifestIdentity,
-  WatcherResult,
+  WatcherStartResult,
 } from './protocol.ts'
 import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { watchGraph } from '../build/compiler.ts'
@@ -45,7 +45,7 @@ export class WatcherService {
 
   constructor(private readonly options: WatcherServiceOptions) {}
 
-  async start(): Promise<WatcherResult> {
+  async start(): Promise<WatcherStartResult> {
     const graph = await this.createGraph()
     const manifest = await this.startWatchers(graph)
     this.logger?.info('Neem watcher ready')

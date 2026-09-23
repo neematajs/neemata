@@ -75,10 +75,13 @@ describe('ThreadController', () => {
       import { parentPort } from 'node:worker_threads'
 
       setInterval(() => {}, 1_000)
-      parentPort.postMessage({ type: 'ready', data: { upstreams: [] } })
+      parentPort.postMessage({
+        type: 'event',
+        event: { type: 'ready', data: { upstreams: [] } },
+      })
       parentPort.on('message', (message) => {
         if (message.type === 'stop') {
-          parentPort.postMessage({ type: 'stopped' })
+          parentPort.postMessage({ id: message.id, type: 'result' })
           parentPort.close()
           setImmediate(() => process.exit(0))
         }
@@ -113,7 +116,10 @@ describe('ThreadController', () => {
     const fixture = await createThreadFixture(`
       import { parentPort } from 'node:worker_threads'
 
-      parentPort.postMessage({ type: 'ready', data: { upstreams: [] } })
+      parentPort.postMessage({
+        type: 'event',
+        event: { type: 'ready', data: { upstreams: [] } },
+      })
       setImmediate(() => process.exit(1))
     `)
     const hooks = createHostHooks()
@@ -297,7 +303,7 @@ async function createThreadFixture(
     outDir,
   }
   const manifest: Manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runtime: {
       entry: 'start.js',
       start: {
@@ -312,6 +318,13 @@ async function createThreadFixture(
         kind: 'worker',
         owner: { type: 'runtime', name: 'worker' },
         file: 'worker-entry.mjs',
+        outDir: '.',
+      },
+      runner: {
+        id: 'host-runner-entry',
+        kind: 'worker',
+        owner: { type: 'runtime', name: 'host-runner' },
+        file: 'runner-entry.mjs',
         outDir: '.',
       },
     },

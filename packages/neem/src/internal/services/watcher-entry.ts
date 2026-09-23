@@ -1,72 +1,43 @@
 import { existsSync, unlinkSync } from 'node:fs'
 import { parentPort } from 'node:worker_threads'
 
-import type { WatcherRequest, WatcherResponse } from './protocol.ts'
-import { serializeError } from '../utils.ts'
+import type { WatcherCommands, WatcherEvent } from './protocol.ts'
+import { serveRpc } from '../rpc.ts'
+import { WATCHER_SERIAL_COMMANDS } from './protocol.ts'
 import { WatcherService } from './watcher.ts'
 
-if (!parentPort) {
-  throw new Error('Neem watcher service requires a parent port')
-}
-
-const port = parentPort
 let service: WatcherService | undefined
 
-function post(message: WatcherResponse): void {
-  port.postMessage(message)
-}
-
-async function handle(request: WatcherRequest): Promise<void> {
-  try {
-    switch (request.type) {
-      case 'start': {
-        service = new WatcherService({
-          configFile: request.configFile,
-          outDir: request.outDir,
-          runtimes: request.runtimes,
-          emit: (event) => post({ type: 'event', event }),
-        })
-        const result = await service.start()
-        post({ id: request.id, type: 'result', data: result })
-        return
-      }
-      case 'patch-client-started':
-        await service?.addPatchClient(request.runtimeName, request.clientId)
-        post({ id: request.id, type: 'result' })
-        return
-      case 'patch-client-stopped':
-        await service?.removePatchClient(request.runtimeName, request.clientId)
-        post({ id: request.id, type: 'result' })
-        return
-      case 'patch-delivered':
-        await service?.notifyPatchDelivered(
-          request.runtimeName,
-          request.filenames,
-        )
-        post({ id: request.id, type: 'result' })
-        return
-      case 'ensure-worker-output': {
-        const manifest = await service?.ensureWorkerOutput(request.runtimeName)
-        post({ id: request.id, type: 'result', data: { manifest } })
-        return
-      }
-      case 'stop':
-        await service?.stop()
-        service = undefined
-        post({ id: request.id, type: 'result' })
-        port.close()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        process.exit(0)
-        return
-    }
-  } catch (error) {
-    post({ id: request.id, type: 'error', error: serializeError(error) })
-  }
-}
-
-port.on('message', (message: WatcherRequest) => {
-  void handle(message)
-})
+const server = serveRpc<WatcherCommands, WatcherEvent>(
+  parentPort,
+  'Neem watcher service',
+  {
+    start: (params) => {
+      service = new WatcherService({
+        ...params,
+        emit: (event) => server.post(event),
+      })
+      return service.start()
+    },
+    'patch-client-started': async ({ runtimeName, clientId }) => {
+      await service?.addPatchClient(runtimeName, clientId)
+    },
+    'patch-client-stopped': async ({ runtimeName, clientId }) => {
+      await service?.removePatchClient(runtimeName, clientId)
+    },
+    'patch-delivered': async ({ runtimeName, filenames }) => {
+      await service?.notifyPatchDelivered(runtimeName, filenames)
+    },
+    'ensure-worker-output': ({ runtimeName }) =>
+      service?.ensureWorkerOutput(runtimeName),
+    stop: async (_params, { exitAfterReply }) => {
+      await service?.stop()
+      service = undefined
+      exitAfterReply(0)
+    },
+  },
+  { serial: WATCHER_SERIAL_COMMANDS },
+)
 
 // Test-only: e2e tests crash the watcher once by creating this file, to cover
 // the dev session restarting it.

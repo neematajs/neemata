@@ -1,14 +1,14 @@
 import type { MessagePort } from 'node:worker_threads'
 
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
-
 import type { NeemWorkerErrorOrigin } from '../../shared/errors.ts'
 import type {
   NeemMode,
   NeemResolvedArtifact,
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
+import type { WorkerUpdate } from '../build/updates.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
+import type { NoParams } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type RuntimeWorkerData = {
@@ -23,14 +23,22 @@ export type RuntimeWorkerData = {
   port: MessagePort
 }
 
-export type ParentMessage =
-  | { type: 'stop' }
-  | {
-      id: number
-      type: 'patch-update'
-      update: BindingClientHmrUpdate['update']
-      url?: string
-    }
+/**
+ * Commands a runtime worker thread serves. `patch-update` requests run one at
+ * a time in arrival order, since each patch builds on the previous one; `stop`
+ * may overlap anything, and its reply precedes the thread's exit.
+ */
+export type WorkerCommands = {
+  'patch-update': {
+    params: { update: WorkerUpdate; url?: string }
+    result: WorkerPatchResult
+  }
+  stop: { params: NoParams; result: void }
+}
+
+export const WORKER_SERIAL_COMMANDS = [
+  'patch-update',
+] as const satisfies readonly (keyof WorkerCommands)[]
 
 /**
  * What a patch did to the running worker generation. `rejected` leaves the
@@ -52,20 +60,6 @@ export type WorkerPatchResult = PatchClientResult & { patches: number }
 
 export type WorkerErrorOrigin = NeemWorkerErrorOrigin
 
-export type ReadyMessage = {
-  type: 'ready'
-  data: { upstreams?: readonly NeemRuntimeUpstream[] }
-}
-
-export type ErrorMessage = {
-  type: 'error'
-  data: SerializedError & { origin: WorkerErrorOrigin }
-}
-
-export type StoppedMessage = { type: 'stopped' }
-
-export type WorkerMessage =
-  | ReadyMessage
-  | ErrorMessage
-  | StoppedMessage
-  | { id: number; type: 'result'; data: WorkerPatchResult }
+export type WorkerEvent =
+  | { type: 'ready'; data: { upstreams?: readonly NeemRuntimeUpstream[] } }
+  | { type: 'error'; data: SerializedError & { origin: WorkerErrorOrigin } }

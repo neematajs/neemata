@@ -5,10 +5,10 @@ import { Worker } from 'node:worker_threads'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import type {
-  HostRunnerCommand,
+  HostRunnerCommands,
   HostRunnerData,
-  HostRunnerResponse,
 } from '../../src/internal/host/runner-protocol.ts'
+import { isRpcEvent, RpcChannel } from '../../src/internal/rpc.ts'
 import { createTempDir } from '../support/temp.ts'
 
 const RUNNER_ENTRY = new URL(
@@ -37,24 +37,34 @@ describe('host runner entry', () => {
     `)
     await runner.ready
 
-    const start = runner.request({ type: 'start', threads: [] })
+    const start = runner.rpc.request('start', { threads: [] })
+    start.catch(() => {})
     await vi.waitFor(async () =>
       expect(await runner.events()).toContain('create'),
     )
-    const stop = runner.request({ type: 'stop' })
+    const stop = runner.rpc.request('stop', {})
 
-    expect(await stop).toMatchObject({ type: 'result' })
-    expect(await start).toMatchObject({
-      type: 'error',
-      error: { message: 'Neem runtime host stopped before start' },
-    })
+    await expect(stop).resolves.toBeUndefined()
+    await expect(start).rejects.toThrow(
+      'Neem runtime host stopped before start',
+    )
     expect(await runner.events()).toEqual(['create', 'created', 'stop'])
 
     // A second stop request is the same stop, not another one.
-    expect(await runner.request({ type: 'stop' })).toMatchObject({
-      type: 'result',
-    })
+    await expect(runner.rpc.request('stop', {})).resolves.toBeUndefined()
     expect(await runner.events()).toEqual(['create', 'created', 'stop'])
+  })
+
+  it('replies with an error to a command it does not serve', async () => {
+    const runner = await createRunner(`export default {}`)
+    await runner.ready
+
+    const unknown = runner.rpc as unknown as RpcChannel<{
+      reload: { params: Record<string, never>; result: void }
+    }>
+    await expect(unknown.request('reload', {})).rejects.toThrow(
+      'Neem host runner received unknown command [reload]',
+    )
   })
 
   it('stops a host still being created when shut down without a stop', async () => {
@@ -73,13 +83,13 @@ describe('host runner entry', () => {
     `)
     await runner.ready
 
-    void runner.request({ type: 'start', threads: [] })
+    runner.rpc.request('start', { threads: [] }).catch(() => {})
     await vi.waitFor(async () =>
       expect(await runner.events()).toContain('create'),
     )
-    const shutdown = runner.request({ type: 'shutdown' })
+    const shutdown = runner.rpc.request('shutdown', {})
 
-    expect(await shutdown).toMatchObject({ type: 'result' })
+    await expect(shutdown).resolves.toBeUndefined()
     expect(await runner.events()).toEqual(['create', 'stop'])
   })
 })
@@ -112,24 +122,22 @@ async function createRunner(hostSource: string) {
     await worker.terminate()
   })
 
-  const pending = new Map<number, (response: HostRunnerResponse) => void>()
+  const rpc = new RpcChannel<HostRunnerCommands>({
+    post: (message, transfer) => worker.postMessage(message, transfer),
+    timeoutMs: () => 5_000,
+    timeoutMessage: (type) => `host runner request [${type}] timed out`,
+  })
   let ready!: () => void
   const readyPromise = new Promise<void>((resolve) => (ready = resolve))
-  worker.on('message', (message: HostRunnerResponse) => {
-    if (message.type === 'ready') ready()
-    if ('id' in message) pending.get(message.id)?.(message)
+  worker.on('message', (message: unknown) => {
+    if (rpc.settle(message)) return
+    if (isRpcEvent<{ type: string }>(message) && message.event.type === 'ready')
+      ready()
   })
-  let nextId = 1
 
   return {
     ready: readyPromise,
-    request(command: HostRunnerCommand) {
-      const id = nextId++
-      return new Promise<HostRunnerResponse>((resolve) => {
-        pending.set(id, resolve)
-        worker.postMessage({ ...command, id })
-      })
-    },
+    rpc,
     async events() {
       return (await readFile(eventsFile, 'utf8')).split('\n').filter(Boolean)
     },

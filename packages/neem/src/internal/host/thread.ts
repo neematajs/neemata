@@ -5,7 +5,6 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from 'pino'
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { createFuture } from '@nmtjs/common'
 
 import type {
@@ -16,17 +15,20 @@ import type {
   NeemStartedRuntimeThreadHealth,
   NeemWorkerState,
 } from '../../shared/types.ts'
+import type { WorkerUpdate } from '../build/updates.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
+import type { RpcMessage } from '../rpc.ts'
 import type {
   RuntimeWorkerData,
+  WorkerCommands,
+  WorkerEvent,
   WorkerPatchResult,
-  WorkerMessage,
 } from '../worker/protocol.ts'
 import { NeemWorkerError } from '../../shared/errors.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { RpcChannel } from '../rpc.ts'
+import { isRpcEvent, RpcChannel } from '../rpc.ts'
 import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 import {
@@ -58,7 +60,7 @@ export type ThreadControllerOptions = {
   onFailure?: (error: Error, thread: ThreadController) => MaybePromise<void>
 }
 
-const PATCH_TIMEOUT_MS = 30_000
+const REQUEST_TIMEOUT_MS = 30_000
 
 export class ThreadController {
   readonly id: string
@@ -84,7 +86,7 @@ export class ThreadController {
     | { scope: OperationScope; settled: Promise<void> }
     | undefined
   private readonly logger: Logger
-  private readonly patch: RpcChannel<WorkerPatchResult>
+  private readonly rpc: RpcChannel<WorkerCommands>
 
   constructor(private readonly options: ThreadControllerOptions) {
     const channel = new MessageChannel()
@@ -110,16 +112,16 @@ export class ThreadController {
       patchClientId: this.id,
     }
     this.transferPort = channel.port2
-    this.patch = new RpcChannel({
+    this.rpc = new RpcChannel({
       post: (message) => {
         if (!this.worker) {
           throw new Error(`Worker [${this.name}] is not running`)
         }
         this.worker.postMessage(message)
       },
-      timeoutMs: () => PATCH_TIMEOUT_MS,
-      timeoutMessage: (_type, timeoutMs) =>
-        `Worker [${this.name}] patch timed out after ${timeoutMs}ms`,
+      timeoutMs: () => REQUEST_TIMEOUT_MS,
+      timeoutMessage: (type, timeoutMs) =>
+        `Worker [${this.name}] ${type === 'patch-update' ? 'patch' : type} timed out after ${timeoutMs}ms`,
     })
   }
 
@@ -147,9 +149,7 @@ export class ThreadController {
     return this.upstreams
   }
 
-  async applyPatch(
-    update: BindingClientHmrUpdate['update'],
-  ): Promise<WorkerPatchResult> {
+  async applyPatch(update: WorkerUpdate): Promise<WorkerPatchResult> {
     if (this.state !== 'ready') {
       return {
         outcome: 'rejected',
@@ -162,20 +162,9 @@ export class ThreadController {
       update.type === 'Patch'
         ? pathToFileURL(resolve(this.artifact.outDir, update.filename)).href
         : undefined
-    const result = await this.patch.request({
-      type: 'patch-update',
-      update,
-      url,
-    })
-    if (result) this.patches = result.patches
-    return (
-      result ?? {
-        outcome: 'rejected',
-        delivered: false,
-        patches: this.patches,
-        reason: `Worker [${this.name}] returned no patch result`,
-      }
-    )
+    const result = await this.rpc.request('patch-update', { update, url })
+    this.patches = result.patches
+    return result
   }
 
   /**
@@ -289,11 +278,10 @@ export class ThreadController {
 
     this.state = 'stopping'
     this.logger.trace('Neem worker stopping')
-    try {
-      worker.postMessage({ type: 'stop' })
-    } catch {}
-
     const budget = scope.remaining()
+    // The exit acknowledges the stop; the reply only races it.
+    this.rpc.request('stop', {}).catch(() => undefined)
+
     const exit = this.exited
       ? await raceWithTimeout(this.exited.promise, budget)
       : { timedOut: false as const }
@@ -309,7 +297,7 @@ export class ThreadController {
     }
 
     this.worker = undefined
-    this.patch.settleAll(new Error(`Worker [${this.name}] stopped`))
+    this.rpc.settleAll(new Error(`Worker [${this.name}] stopped`))
     this.exited = undefined
     this.port.close()
     this.upstreams = []
@@ -321,26 +309,26 @@ export class ThreadController {
     if (error) throw error
   }
 
-  private handleMessage(message: WorkerMessage): void {
-    if (this.patch.settle(message)) return
-    if (message.type === 'ready') {
-      this.markReady(message.data.upstreams ?? [])
+  private handleMessage(message: RpcMessage<WorkerEvent>): void {
+    if (this.rpc.settle(message)) return
+    if (!isRpcEvent<WorkerEvent>(message)) return
+    const { event } = message
+    if (event.type === 'ready') {
+      this.markReady(event.data.upstreams ?? [])
       return
     }
 
-    if (message.type === 'error') {
-      this.fail(
-        new NeemWorkerError({
-          worker: this.name,
-          origin: message.data.origin,
-          cause: deserializeError(message.data),
-        }),
-      )
-    }
+    this.fail(
+      new NeemWorkerError({
+        worker: this.name,
+        origin: event.data.origin,
+        cause: deserializeError(event.data),
+      }),
+    )
   }
 
   private handleExit(code: number): void {
-    this.patch.settleAll(new Error(`Worker [${this.name}] exited`))
+    this.rpc.settleAll(new Error(`Worker [${this.name}] exited`))
     this.exited?.resolve()
     // Only a worker that announced itself as a patch client leaves as one.
     if (this.readyAt !== undefined) {
@@ -377,7 +365,7 @@ export class ThreadController {
   private fail(error: Error): void {
     if (this.state === 'failed' || this.state === 'stopped') return
 
-    this.patch.settleAll(error)
+    this.rpc.settleAll(error)
     const previous = this.state
     this.markFailed(error)
     // stop() owns a stopping worker; the error fails that stop instead.

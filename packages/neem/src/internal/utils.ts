@@ -1,4 +1,5 @@
 import type { TimerOptions } from 'node:timers'
+import { Buffer } from 'node:buffer'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -89,6 +90,18 @@ export function toFilePath(entry: string | URL, cwd = process.cwd()): string {
   if (entry instanceof URL) return fileURLToPath(entry)
   if (entry.startsWith('file:')) return fileURLToPath(entry)
   return resolve(cwd, entry)
+}
+
+const SAFE_DIR_NAME = /^[A-Za-z0-9_-]+$/
+
+/**
+ * A directory name for an arbitrary name, such as a runtime's. Safe names stay
+ * as they are; any other is base64url-encoded behind a `~`, which no safe name
+ * contains, so two names never share a directory and none can traverse.
+ */
+export function toSafeDirName(name: string): string {
+  if (SAFE_DIR_NAME.test(name)) return name
+  return `~${Buffer.from(name, 'utf8').toString('base64url')}`
 }
 
 export function sanitizePathPart(value: string): string {

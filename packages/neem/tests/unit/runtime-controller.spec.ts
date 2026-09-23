@@ -528,7 +528,7 @@ async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
   )
   const owner = { type: 'runtime' as const, name: 'api' }
   const manifest: Manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runtime: {
       entry: 'start.js',
       start: {
@@ -543,6 +543,13 @@ async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
         kind: 'worker',
         owner,
         file: 'worker-entry.mjs',
+        outDir: '.',
+      },
+      runner: {
+        id: 'host-runner-entry',
+        kind: 'worker',
+        owner,
+        file: 'runner-entry.mjs',
         outDir: '.',
       },
     },

@@ -34,6 +34,12 @@ describe('Neem manifest', () => {
           'runtime/worker-entry.js',
           'worker',
         ),
+        runner: artifact(
+          'host-runner-entry',
+          'host-runner',
+          'runtime/runner-entry.js',
+          'worker',
+        ),
       },
     })
 
@@ -81,7 +87,7 @@ describe('Neem manifest', () => {
     )
 
     await expect(readManifest(manifestFile)).rejects.toThrow(
-      /schema version \[1\], expected \[2\]; rebuild it with `neem build`/,
+      /schema version \[1\], expected \[3\]; rebuild it with `neem build`/,
     )
   })
 
@@ -132,6 +138,12 @@ describe('Neem manifest', () => {
       sni: 'scheduler.localhost',
       maxRequestBodySize: null,
     })
+    expect(manifest.runtime).toMatchObject({
+      entry: 'start.js',
+      start: { file: 'runtime/start.js' },
+      worker: { file: 'runtime/worker-entry.js' },
+      runner: { file: 'runtime/runner-entry.js' },
+    })
     expect(manifest.runtimes.scheduler).toMatchObject({
       name: 'scheduler',
       env: { RUNTIME_ENV: 'scheduler' },
@@ -144,7 +156,7 @@ describe('Neem manifest', () => {
   it('writes root and per-runtime production start entries', async () => {
     const outDir = await createTempDir('neem-manifest-')
 
-    await writeStartEntries(outDir, ['api', 'jobs'])
+    await writeStartEntries(outDir, startLayout(['api', 'jobs']))
 
     await expect(readFile(resolve(outDir, 'start.js'), 'utf8')).resolves.toBe(
       rootStartEntry(),
@@ -160,7 +172,7 @@ describe('Neem manifest', () => {
   it('writes scoped runtime start entries in a single safe directory', async () => {
     const outDir = await createTempDir('neem-manifest-')
 
-    await writeStartEntries(outDir, ['@scope/api'])
+    await writeStartEntries(outDir, startLayout(['@scope/api']))
 
     const runtimeDirs = await readdir(resolve(outDir, 'runtimes'))
     expect(runtimeDirs).toHaveLength(1)
@@ -175,7 +187,7 @@ describe('Neem manifest', () => {
   it('encodes traversal runtime names without escaping the output directory', async () => {
     const outDir = await createTempDir('neem-manifest-')
 
-    await writeStartEntries(outDir, ['..'])
+    await writeStartEntries(outDir, startLayout(['..']))
 
     await expect(readFile(resolve(outDir, 'start.js'), 'utf8')).resolves.toBe(
       rootStartEntry(),
@@ -189,6 +201,28 @@ describe('Neem manifest', () => {
         'utf8',
       ),
     ).resolves.toBe(runtimeStartEntry('..'))
+  })
+
+  it('points start entries at the start module the manifest records', async () => {
+    const outDir = await createTempDir('neem-manifest-')
+    const layout = startLayout(['api'])
+    layout.runtime.start = artifact(
+      'start',
+      'start',
+      'runtime/standalone/start.js',
+      'module',
+    )
+
+    await writeStartEntries(outDir, layout)
+
+    await expect(readFile(resolve(outDir, 'start.js'), 'utf8')).resolves.toBe(
+      rootStartEntry('./runtime/standalone/start.js'),
+    )
+    await expect(
+      readFile(resolve(outDir, 'runtimes/api/start.js'), 'utf8'),
+    ).resolves.toBe(
+      runtimeStartEntry('api', '../../runtime/standalone/start.js'),
+    )
   })
 
   it('converts filesystem paths to slash-separated manifest paths', () => {
@@ -263,20 +297,35 @@ describe('Neem manifest', () => {
   })
 })
 
-function rootStartEntry(): string {
+function rootStartEntry(specifier = './runtime/start.js'): string {
   return [
-    'import { startStandalone } from "./runtime/start.js"',
+    `import { startStandalone } from ${JSON.stringify(specifier)}`,
     'await startStandalone()',
     '',
   ].join('\n')
 }
 
-function runtimeStartEntry(name: string): string {
+function runtimeStartEntry(
+  name: string,
+  specifier = '../../runtime/start.js',
+): string {
   return [
-    'import { startStandalone } from "../../runtime/start.js"',
+    `import { startStandalone } from ${JSON.stringify(specifier)}`,
     `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
     '',
   ].join('\n')
+}
+
+function startLayout(
+  names: readonly string[],
+): Pick<Manifest, 'runtime' | 'runtimes'> {
+  const { runtime, runtimes } = createManifest()
+  return {
+    runtime: { ...runtime, entry: 'start.js' },
+    runtimes: Object.fromEntries(
+      names.map((name) => [name, { ...runtimes.api!, name }]),
+    ),
+  }
 }
 
 function createManifest(overrides: Partial<Manifest> = {}): Manifest {
@@ -289,6 +338,12 @@ function createManifest(overrides: Partial<Manifest> = {}): Manifest {
         'worker-entry',
         'worker',
         'runtime/worker-entry.js',
+        'worker',
+      ),
+      runner: artifact(
+        'host-runner-entry',
+        'host-runner',
+        'runtime/runner-entry.js',
         'worker',
       ),
     },
@@ -345,6 +400,11 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
     'worker',
     `${outDir}/runtime/worker-entry.js`,
   )
+  const runner = resolvedArtifact(
+    'host-runner-entry',
+    'host-runner',
+    `${outDir}/runtime/runner-entry.js`,
+  )
   const host = resolvedArtifact(
     'host',
     'scheduler',
@@ -370,6 +430,7 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
     targets: [
       compiledTarget('start-entry', start),
       compiledTarget('worker-entry', worker),
+      compiledTarget('host-runner-entry', runner),
     ],
     runtimes: [
       {

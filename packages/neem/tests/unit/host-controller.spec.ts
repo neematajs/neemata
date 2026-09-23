@@ -87,11 +87,12 @@ const artifact = (id: string, kind: 'module' | 'worker') => ({
   outDir: '.',
 })
 const manifest: Manifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   runtime: {
     entry: 'start.js',
     start: artifact('start', 'module'),
     worker: artifact('worker-entry', 'worker'),
+    runner: artifact('runner-entry', 'worker'),
   },
   config: { runtimes: { api: {} } },
   runtimes: {

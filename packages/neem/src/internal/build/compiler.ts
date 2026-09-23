@@ -30,6 +30,7 @@ import type {
   PluginBuildNode,
   RuntimeBuildNode,
 } from './graph.ts'
+import type { WorkerUpdate, WorkerUpdateBatch } from './updates.ts'
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { normalizeError, toFilePath } from '../utils.ts'
 import { NEEM_DEV_RUNTIME } from './dev-runtime.ts'
@@ -148,7 +149,7 @@ export async function watchGraph(
     onError?: (error: Error) => MaybePromise<void>
     onUpdates?: (
       runtimeName: string,
-      updates: BindingClientHmrUpdate[],
+      updates: WorkerUpdateBatch,
     ) => MaybePromise<void>
     onUpdateError?: (runtimeName: string, error: Error) => MaybePromise<void>
   } = {},
@@ -241,7 +242,29 @@ async function watchBuildGroup(
     }
   }
 
-  return watchTargetGroup(group.targets, handlers, watchConfig)
+  const { targets } = group
+  const metadata: ArtifactBuildMetadata = {
+    entryFileNames: new Map(),
+    watch: true,
+  }
+  await mkdirTargetDirs(targets)
+  return watchBundle(
+    {
+      ...createGroupedRolldownOptions(targets, metadata),
+      watch: createWatchOptions(watchConfig),
+    },
+    () => createResolvedTargets(targets, undefined, metadata),
+    {
+      onRebuild: (compiledTargets) =>
+        handlers.onRebuild?.({
+          target: targets[0]!,
+          compiled: compiledTargets[0]!,
+          compiledTargets,
+          initial: false,
+        }),
+      onError: handlers.onError,
+    },
+  )
 }
 
 export async function watchTarget(
@@ -251,14 +274,41 @@ export async function watchTarget(
 ): Promise<TargetWatcher> {
   const metadata: ArtifactBuildMetadata = { watch: true }
   await mkdir(target.outDir, { recursive: true })
-  const watcher = rolldown.watch({
-    ...createRolldownOptions(target, metadata),
-    watch: createWatchOptions(watchConfig),
-  })
+  const watcher = watchBundle(
+    {
+      ...createRolldownOptions(target, metadata),
+      watch: createWatchOptions(watchConfig),
+    },
+    () => ({
+      target,
+      artifact: createResolvedArtifact(target, undefined, metadata),
+    }),
+    {
+      onRebuild: (compiled) =>
+        handlers.onRebuild?.({ target, compiled, initial: false }),
+      onError: handlers.onError,
+    },
+  )
+  return { target, ...watcher }
+}
 
+/**
+ * Runs one Rolldown watcher. The first build resolves `ready`; each later
+ * bundle is a rebuild. `resolve` reads the artifacts once a bundle is written,
+ * which is all that differs between a single target and a grouped one.
+ */
+function watchBundle<TCompiled>(
+  options: rolldown.WatchOptions,
+  resolveCompiled: () => TCompiled,
+  handlers: {
+    onRebuild: (compiled: TCompiled) => MaybePromise<void>
+    onError?: (error: Error) => MaybePromise<void>
+  },
+): { ready: Promise<TCompiled>; close: () => Promise<void> } {
+  const watcher = rolldown.watch(options)
   let initialWatchBuild = true
-  let initialCompiled: CompiledTarget | undefined
-  const ready = createFuture<CompiledTarget>()
+  let initialCompiled: TCompiled | undefined
+  const ready = createFuture<TCompiled>()
 
   watcher.on('event', async (event) => {
     const code = event?.code
@@ -266,92 +316,13 @@ export async function watchTarget(
 
     if (code === 'BUNDLE_END') {
       try {
-        const compiled = {
-          target,
-          artifact: createResolvedArtifact(target, undefined, metadata),
-        }
+        const compiled = resolveCompiled()
         if (initialWatchBuild) {
           initialCompiled = compiled
           return
         }
 
-        await handlers.onRebuild?.({ target, compiled, initial: false })
-      } finally {
-        if ('result' in event) await event.result?.close?.()
-      }
-      return
-    }
-
-    if (code === 'END') {
-      if (initialWatchBuild) {
-        initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ?? {
-            target,
-            artifact: createResolvedArtifact(target, undefined, metadata),
-          },
-        )
-      }
-      return
-    }
-
-    if (code === 'ERROR') {
-      ready.reject(event.error)
-      await handlers.onError?.(event.error)
-      if ('result' in event) await event.result?.close?.()
-    }
-  })
-
-  return {
-    target,
-    ready: ready.promise,
-    async close() {
-      await watcher.close()
-    },
-  }
-}
-
-async function watchTargetGroup(
-  targets: readonly BuildTarget[],
-  handlers: WatchHandlers = {},
-  watchConfig?: NeemBuildWatchConfig,
-): Promise<BuildGroupWatcher> {
-  const metadata: ArtifactBuildMetadata = {
-    entryFileNames: new Map(),
-    watch: true,
-  }
-  await mkdirTargetDirs(targets)
-  const watcher = rolldown.watch({
-    ...createGroupedRolldownOptions(targets, metadata),
-    watch: createWatchOptions(watchConfig),
-  })
-
-  let initialWatchBuild = true
-  let initialCompiled: readonly CompiledTarget[] | undefined
-  const ready = createFuture<readonly CompiledTarget[]>()
-
-  watcher.on('event', async (event) => {
-    const code = event?.code
-    if (code === 'START' || code === 'BUNDLE_START') return
-
-    if (code === 'BUNDLE_END') {
-      try {
-        const compiledTargets = createResolvedTargets(
-          targets,
-          undefined,
-          metadata,
-        )
-        if (initialWatchBuild) {
-          initialCompiled = compiledTargets
-          return
-        }
-
-        await handlers.onRebuild?.({
-          target: targets[0]!,
-          compiled: compiledTargets[0]!,
-          compiledTargets,
-          initial: false,
-        })
+        await handlers.onRebuild(compiled)
       } finally {
         if ('result' in event) await event.result?.close?.()
         // Rolldown rebuilds retain sizeable allocations between watch builds;
@@ -365,10 +336,7 @@ async function watchTargetGroup(
     if (code === 'END') {
       if (initialWatchBuild) {
         initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ??
-            createResolvedTargets(targets, undefined, metadata),
-        )
+        ready.resolve(initialCompiled ?? resolveCompiled())
       }
       return
     }
@@ -403,7 +371,7 @@ function createWatchOptions(
 async function watchWorkerTarget(
   target: BuildTarget,
   handlers: WatchHandlers & {
-    onUpdates: (updates: BindingClientHmrUpdate[]) => MaybePromise<void>
+    onUpdates: (updates: WorkerUpdateBatch) => MaybePromise<void>
     onUpdateError: (error: Error) => MaybePromise<void>
   },
   watchConfig?: NeemBuildWatchConfig,
@@ -538,7 +506,7 @@ async function watchWorkerTarget(
         )
       }
     }
-    await handlers.onUpdates(result.updates)
+    await handlers.onUpdates(result.updates.map(toWorkerUpdate))
   }
 
   async function applyOutput(result: Error | RolldownOutput): Promise<void> {
@@ -557,6 +525,29 @@ async function watchWorkerTarget(
       return
     }
     await handlers.onRebuild?.({ target, compiled, initial: false })
+  }
+}
+
+// The only place a DevEngine update crosses into Neem's own types.
+function toWorkerUpdate({ clientId, update }: BindingClientHmrUpdate): {
+  clientId: string
+  update: WorkerUpdate
+} {
+  switch (update.type) {
+    case 'Patch':
+      return {
+        clientId,
+        update: {
+          type: 'Patch',
+          filename: update.filename,
+          seq: update.seq,
+          changedIds: update.changedIds,
+        },
+      }
+    case 'FullReload':
+      return { clientId, update: { type: 'FullReload', reason: update.reason } }
+    case 'Noop':
+      return { clientId, update: { type: 'Noop' } }
   }
 }
 

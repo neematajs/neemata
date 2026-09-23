@@ -1,13 +1,14 @@
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import pino from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { WorkerUpdate } from '../../src/internal/build/updates.ts'
 import type { HostControllerOptions } from '../../src/internal/host/controller.ts'
 import type { RuntimePatchResult } from '../../src/internal/host/runtime.ts'
 import type { WorkerServiceClientOptions } from '../../src/internal/services/client.ts'
 import type {
   WatcherEvent,
-  WatcherResult,
+  WatcherManifestIdentity,
+  WatcherStartResult,
 } from '../../src/internal/services/protocol.ts'
 import { DevFreshness } from '../../src/internal/dev/freshness.ts'
 import { DevSession } from '../../src/internal/dev/session.ts'
@@ -57,16 +58,19 @@ vi.mock('../../src/internal/services/client.ts', () => ({
     emit(event: WatcherEvent) {
       this.options.onEvent?.(event)
     }
-    async request(command: Request): Promise<WatcherResult | undefined> {
-      this.requests.push(command)
-      switch (command.type) {
+    async request(
+      type: string,
+      params: Omit<Request, 'type'>,
+    ): Promise<WatcherStartResult | WatcherManifestIdentity | undefined> {
+      this.requests.push({ type, ...params })
+      switch (type) {
         case 'start':
           // The real watcher announces its first build before it answers.
           this.emit({ type: 'ready', ...manifest })
           return { manifestFile: manifest.manifestFile, configSignalFiles: [] }
         case 'ensure-worker-output':
           if (!state.outputBuilds) throw new Error('source has build errors')
-          return { manifest }
+          return manifest
       }
       return undefined
     }
@@ -290,10 +294,12 @@ async function startSession() {
 }
 
 function workerPatch(clientId: string): WatcherEvent {
-  const update = {
+  const update: WorkerUpdate = {
     type: 'Patch',
     filename: 'patch.js',
-  } as unknown as BindingClientHmrUpdate['update']
+    seq: 1,
+    changedIds: [],
+  }
   return {
     type: 'worker-patch',
     runtimeName: 'api',

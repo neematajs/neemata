@@ -1,6 +1,5 @@
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from 'pino'
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type {
   NeemResolvedArtifact,
@@ -12,6 +11,7 @@ import type {
   NeemWorkerPoolState,
   NeemWorkerState,
 } from '../../shared/types.ts'
+import type { WorkerUpdateBatch } from '../build/updates.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { WorkerPatchResult } from '../worker/protocol.ts'
@@ -116,9 +116,7 @@ export class RuntimeController {
    * the patch retired without a replacement fails as if it had crashed, so
    * recovery restarts the runtime from the output on disk.
    */
-  async applyPatch(
-    updates: readonly BindingClientHmrUpdate[],
-  ): Promise<RuntimePatchResult> {
+  async applyPatch(updates: WorkerUpdateBatch): Promise<RuntimePatchResult> {
     if (this.state !== 'ready') {
       return {
         outcome: 'rejected',
@@ -493,6 +491,7 @@ export class RuntimeController {
 
   private createHostRunner(generationId: number): HostRunner {
     return new HostRunner({
+      entry: this.options.snapshot.runnerEntry,
       data: this.createHostRunnerData(),
       env: this.createRuntimeEnv(),
       onFailure: (error) => this.handleFailure(error, generationId, 'host'),

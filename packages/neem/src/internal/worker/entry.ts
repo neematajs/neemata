@@ -7,36 +7,26 @@ import type {
   NeemRuntimeWorker,
   NeemRuntimeWorkerContext,
 } from '../../shared/types.ts'
+import type { WorkerUpdate } from '../build/updates.ts'
+import type { PatchGlobal } from './patch-globals.ts'
 import type {
-  ParentMessage,
   PatchClientResult,
   RuntimeWorkerData,
+  WorkerCommands,
   WorkerErrorOrigin,
-  WorkerMessage,
+  WorkerEvent,
+  WorkerPatchResult,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import { serveRpc } from '../rpc.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
+import { markGenerationIntact } from './patch-globals.ts'
+import { WORKER_SERIAL_COMMANDS } from './protocol.ts'
 import { ReloadableRuntime } from './reloadable-runtime.ts'
 
-if (!parentPort) {
-  throw new Error('Neem runtime worker entry requires a parent port')
-}
-
-const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
-
-type PatchGlobal = typeof globalThis & {
-  __neem_patch_client_id__?: string
-  __neem_accept_worker__?: (worker: unknown) => Promise<void>
-  __neem_patches__?: {
-    apply: (
-      update: Extract<ParentMessage, { type: 'patch-update' }>['update'],
-      url?: string,
-    ) => Promise<PatchClientResult>
-  }
-}
 
 const patchGlobal = globalThis as PatchGlobal
 let currentWorker: NeemRuntimeWorker | undefined
@@ -46,24 +36,23 @@ let logger: Logger | undefined
 // stopping memoizes runtime cleanup, which a failed start also needs;
 // stopRequested records that the host asked for it, so exits are not failures.
 let stopping: Promise<void> | undefined
-let stopRequested = false
-let exiting: Promise<void> | undefined
+let stopRequested: Promise<void> | undefined
 
-function postMessage(message: WorkerMessage): void {
-  port.postMessage(message)
-}
-
-// Every exit path closes the ports and yields once after its last message so
-// the parent receives that message before the exit event.
-function exitAfterFlush(code: number, message?: WorkerMessage): Promise<void> {
-  return (exiting ??= (async () => {
-    if (message) postMessage(message)
-    workerData.port.close()
-    port.close()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    process.exit(code)
-  })())
-}
+const server = serveRpc<WorkerCommands, WorkerEvent>(
+  parentPort,
+  'Neem runtime worker entry',
+  {
+    'patch-update': ({ update, url }) => applyUpdate(update, url),
+    stop: async (_params, { exitAfterReply }) => {
+      await stopOnRequest()
+      exitAfterReply(0)
+    },
+  },
+  {
+    serial: WORKER_SERIAL_COMMANDS,
+    onClose: () => workerData.port.close(),
+  },
+)
 
 function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   // This thread is the only place the real value still exists, so it is
@@ -73,7 +62,7 @@ function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   } else {
     logger?.error({ err: value }, `Neem runtime ${origin} error`)
   }
-  postMessage({ type: 'error', data: { ...serializeError(value), origin } })
+  server.post({ type: 'error', data: { ...serializeError(value), origin } })
 }
 
 async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
@@ -114,47 +103,47 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   return created
 }
 
-// The injected patch client reports an accept failure as an unavailable
-// generation unless the error carries this mark: the running generation was
-// never touched and keeps serving, so the patch is only rejected.
-function generationIntact(error: Error): Error {
-  return Object.assign(error, { neemGenerationIntact: true })
-}
-
 async function acceptWorker(next: unknown): Promise<void> {
   if (!isNeemRuntimeWorker(next)) {
-    throw generationIntact(
+    throw markGenerationIntact(
       new Error('Updated worker default export is not a marked runtime worker'),
     )
   }
   if (currentWorker?.reload === 'thread' || next.reload === 'thread') {
-    throw generationIntact(new Error("Worker requires reload: 'thread'"))
+    throw markGenerationIntact(new Error("Worker requires reload: 'thread'"))
   }
   if (!(runtime instanceof ReloadableRuntime)) {
-    throw generationIntact(
+    throw markGenerationIntact(
       new Error('Worker generation reload is only available in development'),
     )
   }
   const reload = await runtime.apply(next)
-  if (reload.outcome === 'rejected') throw generationIntact(reload.error)
+  if (reload.outcome === 'rejected') throw markGenerationIntact(reload.error)
   if (reload.outcome === 'unavailable') throw reload.error
   currentWorker = next
 }
 
 async function applyUpdate(
-  message: Extract<ParentMessage, { type: 'patch-update' }>,
-): Promise<void> {
+  update: WorkerUpdate,
+  url: string | undefined,
+): Promise<WorkerPatchResult> {
   const client = patchGlobal.__neem_patches__
+  // The client decides whether the patch file loads at all; a skipped import
+  // leaves the patch undelivered.
+  const load = () =>
+    url
+      ? import(url)
+      : Promise.reject(new Error('Patch update carries no file URL'))
   let result: PatchClientResult
   try {
     result = client
-      ? await client.apply(message.update, message.url)
+      ? await client.apply(update, load)
       : {
           outcome: 'rejected',
           delivered: false,
           reason: 'Worker artifact was not built with Rolldown DevEngine',
         }
-    if (result.outcome === 'applied' && message.update.type === 'Patch') {
+    if (result.outcome === 'applied' && update.type === 'Patch') {
       patches++
     }
   } catch (error) {
@@ -166,7 +155,7 @@ async function applyUpdate(
       reason: normalizeError(error).message,
     }
   }
-  postMessage({ id: message.id, type: 'result', data: { ...result, patches } })
+  return { ...result, patches }
 }
 
 async function resolveWorkerLogger(
@@ -193,17 +182,17 @@ function stopRuntime(): Promise<void> {
   })())
 }
 
-async function stopAndExit(): Promise<void> {
-  if (stopRequested) return
-  stopRequested = true
-  try {
-    await stopRuntime()
-  } catch (error) {
-    reportError(error, 'runtime')
-    await exitAfterFlush(1)
-    return
-  }
-  await exitAfterFlush(0, { type: 'stopped' })
+// Resolves once the runtime stopped; a failed stop is reported and exits the
+// thread instead, so the stop reply never claims a clean stop.
+function stopOnRequest(): Promise<void> {
+  return (stopRequested ??= (async () => {
+    try {
+      await stopRuntime()
+    } catch (error) {
+      reportError(error, 'runtime')
+      await server.exit(1)
+    }
+  })())
 }
 
 async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
@@ -220,22 +209,17 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
     if (stopRequested) return
     reportError(error, 'runtime')
   }
-  await exitAfterFlush(1)
+  await server.exit(1)
 }
-
-port.on('message', (message: ParentMessage) => {
-  if (message?.type === 'stop') void stopAndExit()
-  if (message?.type === 'patch-update') void applyUpdate(message)
-})
 
 process.on('uncaughtException', (error) => {
   reportError(error, 'runtime')
-  void exitAfterFlush(1)
+  void server.exit(1)
 })
 
 process.on('unhandledRejection', (error) => {
   reportError(error, 'runtime')
-  void exitAfterFlush(1)
+  void server.exit(1)
 })
 
 // Started before main so a stop that arrives during bootstrap can await it.
@@ -247,7 +231,7 @@ async function main(): Promise<void> {
   } catch (error) {
     if (stopRequested) return
     reportError(error, 'bootstrap')
-    await exitAfterFlush(1)
+    await server.exit(1)
     return
   }
 
@@ -258,7 +242,7 @@ async function main(): Promise<void> {
     if (stopRequested) return
     const upstreams = parseRuntimeStartResult(result)
     logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
-    postMessage({ type: 'ready', data: { upstreams } })
+    server.post({ type: 'ready', data: { upstreams } })
     void watchRuntimeFinished(runtime)
   } catch (error) {
     if (stopRequested) return
@@ -271,7 +255,7 @@ async function main(): Promise<void> {
     })
     if (stopRequested) return
     reportError(error, 'start')
-    await exitAfterFlush(1)
+    await server.exit(1)
   }
 }
 

@@ -1,6 +1,5 @@
 import { performance } from 'node:perf_hooks'
 
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
@@ -10,6 +9,7 @@ import type {
   NeemRuntimeServerState,
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
+import type { WorkerUpdateBatch } from '../build/updates.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeUpstreams } from './proxy.ts'
@@ -298,7 +298,7 @@ export class HostController {
   /** Rejects with OperationAbortedError when a stop interrupts it. */
   applyPatch(
     runtimeName: string,
-    updates: readonly BindingClientHmrUpdate[],
+    updates: WorkerUpdateBatch,
   ): Promise<RuntimePatchResult> {
     return this.runOperation(async (scope) => {
       const runtime = this.runtimes.get(runtimeName)

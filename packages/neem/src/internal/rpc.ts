@@ -1,78 +1,108 @@
-import type { TransferListItem } from 'node:worker_threads'
+import type { MessagePort, TransferListItem } from 'node:worker_threads'
 
+import type { Future, MaybePromise } from '@nmtjs/common'
 import { createFuture } from '@nmtjs/common'
 
 import type { SerializedError } from './utils.ts'
-import { deserializeError } from './utils.ts'
+import { deserializeError, normalizeError, serializeError } from './utils.ts'
 
-export type RpcCommand = { type: string } & Record<string, unknown>
+/**
+ * A protocol's commands: what each request carries and what its reply
+ * resolves to. Declared once per protocol; both ends derive from it.
+ */
+export type RpcCommandMap = Record<string, { params: object; result: unknown }>
 
-export type RpcResponse<TResult> =
-  | { id: number; type: 'result'; data?: TResult }
+export type NoParams = Record<string, never>
+
+export type RpcRequest<TMap extends RpcCommandMap> = {
+  [K in keyof TMap & string]: {
+    id: number
+    type: K
+    params: TMap[K]['params']
+  }
+}[keyof TMap & string]
+
+export type RpcResponse =
+  | { id: number; type: 'result'; data?: unknown }
   | { id: number; type: 'error'; error: SerializedError }
+
+// One-way messages from the serving side, e.g. readiness or failures.
+export type RpcEvent<TEvent> = { type: 'event'; event: TEvent }
+
+// Everything a served port posts back to its owner.
+export type RpcMessage<TEvent> = RpcResponse | RpcEvent<TEvent>
 
 export type RpcChannelOptions = {
   post: (
-    message: Record<string, unknown>,
+    message: RpcRequest<RpcCommandMap>,
     transfer: readonly TransferListItem[],
   ) => void
   timeoutMs: () => number
   timeoutMessage: (type: string, timeoutMs: number) => string
 }
 
+export type RpcRequestOptions = {
+  timeoutMs?: number
+  transfer?: readonly TransferListItem[]
+}
+
 // One request/response channel over a worker message port. Owners must call
 // settleAll() on every worker exit or failure so callers never wait out a
 // request timeout for a reply that can no longer arrive.
-export class RpcChannel<TResult> {
+export class RpcChannel<TMap extends RpcCommandMap> {
   private nextId = 1
   private readonly pending = new Map<
     number,
-    {
-      future: ReturnType<typeof createFuture<TResult | undefined>>
-      timeout: NodeJS.Timeout
-    }
+    { future: Future<unknown>; timeout: NodeJS.Timeout }
   >()
 
-  constructor(private readonly options: RpcChannelOptions) {}
+  // No parameter property: worker entries load this module with Node's
+  // type stripping, which rejects them.
+  private readonly options: RpcChannelOptions
 
-  request(
-    command: RpcCommand,
-    options: {
-      timeoutMs?: number
-      transfer?: readonly TransferListItem[]
-    } = {},
-  ): Promise<TResult | undefined> {
+  constructor(options: RpcChannelOptions) {
+    this.options = options
+  }
+
+  request<K extends keyof TMap & string>(
+    type: K,
+    params: TMap[K]['params'],
+    options: RpcRequestOptions = {},
+  ): Promise<TMap[K]['result']> {
     const id = this.nextId++
-    const message = { ...command, id }
-    const future = createFuture<TResult | undefined>()
+    const future = createFuture<unknown>()
     const timeoutMs = options.timeoutMs ?? this.options.timeoutMs()
     const timeout = setTimeout(() => {
       this.pending.delete(id)
-      future.reject(
-        new Error(this.options.timeoutMessage(command.type, timeoutMs)),
-      )
+      future.reject(new Error(this.options.timeoutMessage(type, timeoutMs)))
     }, timeoutMs)
     timeout.unref()
 
     this.pending.set(id, { future, timeout })
-    this.options.post(message, options.transfer ?? [])
-    return future.promise
+    try {
+      this.options.post({ id, type, params }, options.transfer ?? [])
+    } catch (error) {
+      // Nothing was sent, so no reply can settle this request.
+      this.pending.delete(id)
+      clearTimeout(timeout)
+      future.reject(normalizeError(error))
+    }
+    return future.promise as Promise<TMap[K]['result']>
   }
 
-  // Settles the matching pending request; returns false for non-response
-  // messages so owners can route them elsewhere.
-  settle(message: { id?: unknown; type?: unknown }): boolean {
-    if (typeof message.id !== 'number') return false
+  // Settles the matching pending request; returns false for anything that is
+  // not a reply to one, so owners can route events elsewhere.
+  settle(message: unknown): boolean {
+    if (!isRpcResponse(message)) return false
     const pending = this.pending.get(message.id)
     if (!pending) return false
-    const response = message as RpcResponse<TResult>
-    this.pending.delete(response.id)
+    this.pending.delete(message.id)
     clearTimeout(pending.timeout)
 
-    if (response.type === 'error') {
-      pending.future.reject(deserializeError(response.error))
+    if (message.type === 'error') {
+      pending.future.reject(deserializeError(message.error))
     } else {
-      pending.future.resolve(response.data)
+      pending.future.resolve(message.data)
     }
     return true
   }
@@ -84,4 +114,119 @@ export class RpcChannel<TResult> {
     }
     this.pending.clear()
   }
+}
+
+export function isRpcEvent<TEvent>(
+  message: unknown,
+): message is RpcEvent<TEvent> {
+  return isRecord(message) && message.type === 'event' && 'event' in message
+}
+
+function isRpcResponse(message: unknown): message is RpcResponse {
+  if (!isRecord(message) || typeof message.id !== 'number') return false
+  if (message.type === 'result') return true
+  return message.type === 'error' && isRecord(message.error)
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+export type RpcHandlerContext = {
+  /** Exits the process with `code` once this request's reply is posted. */
+  exitAfterReply: (code: number) => void
+}
+
+export type RpcHandlers<TMap extends RpcCommandMap> = {
+  [K in keyof TMap]: (
+    params: TMap[K]['params'],
+    context: RpcHandlerContext,
+  ) => MaybePromise<TMap[K]['result']>
+}
+
+export type RpcServerOptions<TMap extends RpcCommandMap> = {
+  /**
+   * Commands that must not overlap an earlier request of the same type; each
+   * is queued behind the previous one. Every other command runs on arrival.
+   */
+  serial?: readonly (keyof TMap & string)[]
+  // Runs once on exit before the parent port closes, e.g. to close ports the
+  // entry owns.
+  onClose?: () => void
+}
+
+export type RpcServer<TEvent> = {
+  post: (event: TEvent) => void
+  /**
+   * Posts `event` as the last message, closes the ports and yields once so the
+   * parent receives it before the exit event. The first exit wins.
+   */
+  exit: (code: number, event?: TEvent) => Promise<void>
+}
+
+/**
+ * Serves a protocol on a worker's parent port. Every request gets exactly one
+ * reply: its result, or its error, including for a command this entry does
+ * not know, so a caller never waits out its timeout for a missing handler.
+ */
+export function serveRpc<TMap extends RpcCommandMap, TEvent>(
+  port: MessagePort | null,
+  name: string,
+  handlers: RpcHandlers<TMap>,
+  options: RpcServerOptions<TMap> = {},
+): RpcServer<TEvent> {
+  if (!port) throw new Error(`${name} requires a parent port`)
+  const serial = new Set<string>(options.serial)
+  const queues = new Map<string, Promise<void>>()
+  let exiting: Promise<void> | undefined
+
+  const post = (message: RpcMessage<TEvent>) => port.postMessage(message)
+
+  const exit = (code: number, event?: TEvent): Promise<void> =>
+    (exiting ??= (async () => {
+      if (event !== undefined) post({ type: 'event', event })
+      options.onClose?.()
+      port.close()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      process.exit(code)
+    })())
+
+  const run = async (id: number, type: string, params: unknown) => {
+    let exitCode = undefined as number | undefined
+    const context: RpcHandlerContext = {
+      exitAfterReply: (code) => {
+        exitCode = code
+      },
+    }
+    try {
+      if (!Object.hasOwn(handlers, type)) {
+        throw new Error(`${name} received unknown command [${type}]`)
+      }
+      const handler = handlers[type] as (
+        params: unknown,
+        context: RpcHandlerContext,
+      ) => unknown
+      const data = await handler(params, context)
+      post({ id, type: 'result', data })
+    } catch (error) {
+      post({ id, type: 'error', error: serializeError(error) })
+    }
+    if (exitCode !== undefined) await exit(exitCode)
+  }
+
+  port.on('message', (message: unknown) => {
+    if (!isRecord(message) || typeof message.id !== 'number') return
+    const { id, params } = message
+    const type = String(message.type)
+    if (!serial.has(type)) {
+      void run(id, type, params)
+      return
+    }
+    const next = (queues.get(type) ?? Promise.resolve()).then(() =>
+      run(id, type, params),
+    )
+    queues.set(type, next)
+  })
+
+  return { post: (event) => post({ type: 'event', event }), exit }
 }

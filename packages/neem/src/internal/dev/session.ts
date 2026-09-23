@@ -8,9 +8,9 @@ import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { WorkerServiceStopProgressEvent } from '../services/client.ts'
 import type { ConfigSignalWatcher } from '../services/config-signal.ts'
 import type {
+  WatcherCommands,
   WatcherEvent,
   WatcherManifestIdentity,
-  WatcherResult,
 } from '../services/protocol.ts'
 import type { NeemTestProbe } from '../test-probe.ts'
 import { loadRuntimeSnapshot } from '../host/bootstrap.ts'
@@ -37,7 +37,7 @@ import {
 } from '../utils.ts'
 import { DevFreshness } from './freshness.ts'
 
-type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
+type WatcherClient = WorkerServiceClient<WatcherCommands, WatcherEvent>
 
 export type DevSessionOptions = {
   configFile: string
@@ -122,7 +122,7 @@ export class DevSession {
       this.configSignalWatcher = undefined
       const results = await Promise.allSettled([
         configSignalWatcher?.close(),
-        watcher?.stop(undefined, scope),
+        watcher?.stop(scope),
       ])
       for (const result of results) {
         if (result.status === 'rejected') collect(result.reason)
@@ -163,18 +163,15 @@ export class DevSession {
     this.watcher = watcher
     this.patchClients.clear()
     try {
-      const result = await watcher.request({
-        type: 'start',
+      const result = await watcher.request('start', {
         configFile: this.options.configFile,
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
       })
       started = true
       if (this.stopped) return
-      if (result?.manifestFile) this.manifestFile = result.manifestFile
-      if (result?.configSignalFiles) {
-        await this.startConfigSignalWatcher(result.configSignalFiles)
-      }
+      this.manifestFile = result.manifestFile
+      await this.startConfigSignalWatcher(result.configSignalFiles)
     } catch (error) {
       if (this.watcher === watcher) this.watcher = undefined
       await watcher.stop().catch(() => undefined)
@@ -502,11 +499,10 @@ export class DevSession {
     // Only the watcher a thread registered with can unregister it.
     if (!started && !this.patchClients.delete(threadId)) return
     try {
-      await watcher.request({
-        type: started ? 'patch-client-started' : 'patch-client-stopped',
-        runtimeName,
-        clientId: threadId,
-      })
+      await watcher.request(
+        started ? 'patch-client-started' : 'patch-client-stopped',
+        { runtimeName, clientId: threadId },
+      )
     } catch (error) {
       // A watcher that died meanwhile is restarting with the runtime.
       if (this.watcher !== watcher) return
@@ -527,8 +523,7 @@ export class DevSession {
     try {
       patch = await this.controller?.applyPatch(runtimeName, updates)
       if (patch?.deliveredFiles.length) {
-        await this.watcher?.request({
-          type: 'patch-delivered',
+        await this.watcher?.request('patch-delivered', {
           runtimeName,
           filenames: patch.deliveredFiles,
         })
@@ -610,12 +605,11 @@ export class DevSession {
   // restart retries once the worker builds again.
   private async refreshWorkerOutput(runtimeName: string): Promise<boolean> {
     try {
-      const result = await this.watcher?.request({
-        type: 'ensure-worker-output',
+      const manifest = await this.watcher?.request('ensure-worker-output', {
         runtimeName,
       })
-      if (!result?.manifest) return false
-      this.acceptManifest(result.manifest)
+      if (!manifest) return false
+      this.acceptManifest(manifest)
       this.freshness.outputRefreshed(runtimeName)
       return true
     } catch (error) {
@@ -663,7 +657,7 @@ function createWatcherClient(options: {
   onEvent: (event: WatcherEvent) => void
   onFailure: (error: Error) => void
 }): WatcherClient {
-  return new WorkerServiceClient<WatcherEvent, WatcherResult>({
+  return new WorkerServiceClient<WatcherCommands, WatcherEvent>({
     entry: resolveServiceEntry('watcher-entry'),
     serviceName: 'watcher',
     onStopProgress: (event) => reportServiceStopProgress(options.probe, event),

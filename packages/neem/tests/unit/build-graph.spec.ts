@@ -238,6 +238,31 @@ describe('createBuildGraph', () => {
     })
   })
 
+  it('gives every runtime its own output directory', () => {
+    const graph = createBuildGraph({
+      configFile,
+      outDir,
+      config: resolvedConfig({
+        runtimes: Object.fromEntries(
+          ['api', 'a/b', 'a-b'].map((name) => [
+            name,
+            runtimeDeclaration(name, {
+              worker: { entry: './worker.ts' },
+              planner: './neem.planner.ts',
+            }),
+          ]),
+        ),
+      }),
+    })
+
+    const dirs = graph.runtimes.map((runtime) => runtime.host.outDir)
+    expect(dirs[0]).toBe(`${outDir}/runtime/api/host`)
+    expect(new Set(dirs).size).toBe(3)
+    for (const runtime of graph.runtimes) {
+      expect(runtime.worker?.outDir.startsWith(`${outDir}/runtime/`)).toBe(true)
+    }
+  })
+
   it('fails before building when selected runtimes are unknown', () => {
     expect(() =>
       createBuildGraph({
