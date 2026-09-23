@@ -28,6 +28,7 @@ import type { InspectQueueItem, QueueItem } from './commands.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { inspectQueueItem } from './commands.ts'
 import { createAttemptExecutor } from './executor.ts'
+import { fenceDeleteUnclaimed, fenceStoreWrites } from './fence.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import { createScheduler } from './schedules.ts'
 import { createState } from './state.ts'
@@ -61,9 +62,12 @@ export function createInMemoryWorkflowRuntime(
 ): InMemoryWorkflowRuntime {
   // Each adapter owns its context; only this instance's components share it.
   const state = createState(options.maxDeliveries)
-  const store = createStore(state)
+  const store = fenceStoreWrites(state, createStore(state))
   const runCoordinationExecutor = createRunCoordinationExecutor(state)
-  const attemptExecutor = createAttemptExecutor(state)
+  const attemptExecutor = fenceDeleteUnclaimed(
+    state,
+    createAttemptExecutor(state),
+  )
   const scheduler = createScheduler(state, {
     store,
     runCoordinationExecutor,
@@ -117,7 +121,7 @@ export function createInMemoryWorkflowRuntime(
         completeCurrentAttempt,
         failCurrentAttempt,
         timeoutCurrentAttempt,
-      } = createNodeStore(state, claimed)
+      } = fenceStoreWrites(state, createNodeStore(state, claimed))
       return handler({
         ...context,
         store: {

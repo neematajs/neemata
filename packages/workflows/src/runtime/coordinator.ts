@@ -1,7 +1,5 @@
-export {
-  continueWorkflowRun,
-  createRunLeaseFencedStore,
-} from './coordinator/continuation.ts'
+export { continueWorkflowRun } from './coordinator/continuation.ts'
+export { createRunLeaseScope } from './coordinator/lease.ts'
 export type {
   ContinueWorkflowRunInput,
   ContinueWorkflowRunResult,

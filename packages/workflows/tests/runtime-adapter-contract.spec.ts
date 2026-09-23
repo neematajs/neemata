@@ -22,7 +22,10 @@ import {
 } from '../src/effect/index.ts'
 import {
   createWorkflowRuntimeClient,
+  StaleWriteFenceError,
   type WorkflowRuntimeAdapter,
+  type WorkflowStore,
+  type WriteFence,
 } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
@@ -3928,6 +3931,252 @@ function workflowRuntimeAdapterContract(
       expect(firstPage.nextCursor).toBeDefined()
       expect(secondPage.runs.map((run) => run.id)).toStrictEqual([first.id])
       expect(secondPage.nextCursor).toBeUndefined()
+    })
+
+    describe('write fencing', () => {
+      const LEASE_MS = 50
+      const expireLease = () => wait(150)
+
+      async function fixture(runtime: WorkflowRuntimeAdapter) {
+        const { store } = runtime
+        const run = await store.createRun({
+          workflowName: 'write-fencing',
+          input: {},
+        })
+        const self = (name: string, kind: 'activity' | 'workflow') =>
+          store.ensureNodeChildren({
+            runId: run.id,
+            nodeName: name,
+            children: [{ childKey: '$self', kind }],
+          })
+        await store.createNode({
+          runId: run.id,
+          name: 'step',
+          kind: 'activity',
+        })
+        await self('step', 'activity')
+        const { attempt } = await store.ensureChildAttempt({
+          runId: run.id,
+          nodeName: 'step',
+          childKey: '$self',
+          input: { step: true },
+        })
+        await store.createNode({
+          runId: run.id,
+          name: 'next',
+          kind: 'activity',
+        })
+        await self('next', 'activity')
+        await store.createNode({ runId: run.id, name: 'fan', kind: 'parallel' })
+        await store.createNode({ runId: run.id, name: 'pick', kind: 'branch' })
+        await store.createNode({ runId: run.id, name: 'sub', kind: 'workflow' })
+        await self('sub', 'workflow')
+        const step = { runId: run.id, nodeName: 'step', childKey: '$self' }
+        const writes: readonly (readonly [
+          keyof WorkflowStore,
+          Record<string, unknown>,
+        ])[] = [
+          ['createNode', { runId: run.id, name: 'extra', kind: 'activity' }],
+          ['setNodeInput', { runId: run.id, nodeName: 'step', input: 1 }],
+          ['selectNodeCase', { runId: run.id, nodeName: 'pick', caseKey: 'a' }],
+          [
+            'ensureNodeChildren',
+            {
+              runId: run.id,
+              nodeName: 'fan',
+              children: [{ childKey: 'member:a', kind: 'activity' }],
+            },
+          ],
+          [
+            'ensureChildRun',
+            {
+              runId: run.id,
+              nodeName: 'sub',
+              childKey: '$self',
+              childKind: 'workflow',
+              childName: 'write-fencing-child',
+              input: {},
+              rootRunId: run.rootRunId,
+            },
+          ],
+          [
+            'ensureChildAttempt',
+            { runId: run.id, nodeName: 'next', childKey: '$self', input: {} },
+          ],
+          ['createAttempt', { ...step, input: {}, after: attempt.id }],
+          [
+            'completeCurrentAttempt',
+            {
+              attemptId: attempt.id,
+              leaseToken: attempt.leaseToken,
+              output: 1,
+            },
+          ],
+          [
+            'failCurrentAttempt',
+            { attemptId: attempt.id, leaseToken: attempt.leaseToken, error: 1 },
+          ],
+          [
+            'timeoutCurrentAttempt',
+            { attemptId: attempt.id, leaseToken: attempt.leaseToken, error: 1 },
+          ],
+          ['completeNodeChild', { ...step, output: 1 }],
+          ['failNodeChild', { ...step, error: new Error('fenced') }],
+          ['completeNode', { runId: run.id, nodeName: 'step', output: 1 }],
+          ['failNode', { runId: run.id, nodeName: 'step', error: 1 }],
+          ['waitNode', { runId: run.id, nodeName: 'step' }],
+          ['markRunRunning', { runId: run.id }],
+          ['markRunWaiting', { runId: run.id }],
+          ['completeRun', { runId: run.id, output: 1 }],
+          ['failRun', { runId: run.id, error: new Error('fenced') }],
+          ['requestRunCancellation', { runId: run.id }],
+          ['cancelRun', { runId: run.id }],
+          ['cancelNode', { runId: run.id, nodeName: 'step' }],
+          ['cancelNonTerminalRunNodes', { runId: run.id }],
+        ]
+        const write = (
+          [method, params]: (typeof writes)[number],
+          fence: WriteFence,
+        ) =>
+          (store[method] as (params: unknown) => Promise<unknown>)({
+            ...params,
+            fence,
+          })
+        const state = async () => ({
+          snapshot: await store.loadRunSnapshot(run.id),
+          runs: (await store.listRuns()).runs.length,
+        })
+        return { run, attempt, step, writes, write, state }
+      }
+
+      it('refuses every fenced write once another holder took the run lease', async () => {
+        const runtime = await createRuntime()
+        const { run, writes, write, state } = await fixture(runtime)
+        const stale = await runtime.store.acquireRunLease({
+          runId: run.id,
+          leaseMs: LEASE_MS,
+        })
+        await expireLease()
+        await expect(
+          runtime.store.acquireRunLease({ runId: run.id, leaseMs: 30_000 }),
+        ).resolves.toBeDefined()
+        const before = await state()
+
+        for (const call of writes) {
+          await expect(
+            write(call, { runLease: stale! }),
+            call[0],
+          ).rejects.toBeInstanceOf(StaleWriteFenceError)
+        }
+        expect(await state()).toStrictEqual(before)
+      })
+
+      it('refuses a fenced write once its run lease expired, even untaken', async () => {
+        const runtime = await createRuntime()
+        const { run, writes, write, state } = await fixture(runtime)
+        const lease = await runtime.store.acquireRunLease({
+          runId: run.id,
+          leaseMs: LEASE_MS,
+        })
+        await expireLease()
+        const before = await state()
+
+        await expect(
+          write(writes.find(([method]) => method === 'failRun')!, {
+            runLease: lease!,
+          }),
+        ).rejects.toBeInstanceOf(StaleWriteFenceError)
+        expect(await state()).toStrictEqual(before)
+      })
+
+      it('refuses every fenced write for an attempt that is no longer current', async () => {
+        const runtime = await createRuntime()
+        const { attempt, step, writes, write, state } = await fixture(runtime)
+        await runtime.store.failCurrentAttempt({
+          attemptId: attempt.id,
+          leaseToken: attempt.leaseToken!,
+          error: new Error('retried'),
+        })
+        await runtime.store.createAttempt({
+          ...step,
+          input: attempt.input,
+          after: attempt.id,
+        })
+        const before = await state()
+
+        for (const call of writes) {
+          await expect(
+            write(call, { attempt: { ...step, attemptId: attempt.id } }),
+            call[0],
+          ).rejects.toBeInstanceOf(StaleWriteFenceError)
+        }
+        expect(await state()).toStrictEqual(before)
+      })
+
+      it('applies every fenced write while its fence holds', async () => {
+        const probe = await fixture(await createRuntime())
+        for (const [index] of probe.writes.entries()) {
+          const runtime = await createRuntime()
+          const { run, attempt, step, writes, write } = await fixture(runtime)
+          const lease = await runtime.store.acquireRunLease({
+            runId: run.id,
+            leaseMs: 30_000,
+          })
+          await expect(
+            write(writes[index]!, {
+              runLease: lease!,
+              attempt: { ...step, attemptId: attempt.id },
+            }),
+            writes[index]![0],
+          ).resolves.not.toBeInstanceOf(Error)
+        }
+      })
+
+      it('fences the deletion of unclaimed attempt commands', async () => {
+        const runtime = await createRuntime()
+        const { run, attempt, step } = await fixture(runtime)
+        await runtime.attemptExecutor.dispatchActivity({
+          kind: 'activityAttempt',
+          workflowName: 'write-fencing',
+          activityName: 'step',
+          ...step,
+          attemptId: attempt.id,
+          leaseToken: attempt.leaseToken!,
+          input: {},
+        })
+        const stale = await runtime.store.acquireRunLease({
+          runId: run.id,
+          leaseMs: LEASE_MS,
+        })
+        await expireLease()
+
+        await expect(
+          runtime.attemptExecutor.deleteUnclaimed({
+            runId: run.id,
+            fence: { runLease: stale! },
+          }),
+        ).rejects.toBeInstanceOf(StaleWriteFenceError)
+        await expect(
+          runtime.attemptExecutor.deleteUnclaimed({
+            runId: run.id,
+            fence: { attempt: { ...step, attemptId: 'superseded' } },
+          }),
+        ).rejects.toBeInstanceOf(StaleWriteFenceError)
+
+        const lease = await runtime.store.acquireRunLease({
+          runId: run.id,
+          leaseMs: 30_000,
+        })
+        await expect(
+          runtime.attemptExecutor.deleteUnclaimed({
+            runId: run.id,
+            fence: {
+              runLease: lease!,
+              attempt: { ...step, attemptId: attempt.id },
+            },
+          }),
+        ).resolves.toBe(1)
+      })
     })
   })
 }

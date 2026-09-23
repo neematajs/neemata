@@ -8,6 +8,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredAttempt, StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { parseChildKey } from '../child-key.ts'
+import { withAttemptExecutorFence, withWriteFence } from '../fence.ts'
 import { isTerminalNodeStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { runAtomicCompletion } from './atomic.ts'
@@ -36,6 +37,35 @@ type AttemptRecovery = {
   readonly currentAttempt: StoredAttempt | undefined
   /** Lazy: resolving the policy needs the registry, which most redeliveries never touch. */
   readonly resolveRetry: () => RetryPolicy | undefined
+}
+
+/**
+ * Writes made for an attempt's outcome hold only while it is still its child's
+ * current attempt. Replays by a new claimant or the reaper keep holding it; a
+ * worker that stalled past a manual retry reopening the child does not.
+ */
+export function scopeToAttempt<Input extends ReplayAttemptInput>(
+  input: Input,
+  command: Pick<
+    EnqueueContinueRunCommand,
+    'runId' | 'nodeName' | 'childKey' | 'attemptId'
+  >,
+): Input {
+  const scope = {
+    fence: {
+      attempt: {
+        runId: command.runId,
+        nodeName: command.nodeName,
+        childKey: command.childKey,
+        attemptId: command.attemptId,
+      },
+    },
+  }
+  return {
+    ...input,
+    store: withWriteFence(input.store, scope),
+    attemptExecutor: withAttemptExecutorFence(input.attemptExecutor, scope),
+  }
 }
 
 export function isFreshAttempt(

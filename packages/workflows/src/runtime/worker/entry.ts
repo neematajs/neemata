@@ -16,6 +16,7 @@ import type {
   WorkflowWakeEvents,
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
+import { StaleWriteFenceError } from '../errors.ts'
 import {
   createHandlerRunner,
   type HandlerRunner,
@@ -345,6 +346,9 @@ function executionDriver(
       } catch (error) {
         if (
           isStaleWorkflowCommandAck(error) ||
+          // The attempt moved on without this worker; its outcome is not
+          // this worker's to record.
+          error instanceof StaleWriteFenceError ||
           isAttemptHeartbeatLeaseLost(error) ||
           isAttemptShutdown(error)
         ) {

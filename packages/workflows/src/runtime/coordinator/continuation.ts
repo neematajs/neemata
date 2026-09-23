@@ -11,21 +11,13 @@ import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
 import { cancelRunDescendants } from './cancel.ts'
 import { getWorkflowNodeDeclaration } from './codec.ts'
+import {
+  CancelledRunError,
+  createRunLeaseScope,
+  isRunLeaseLost,
+  StaleRunLeaseError,
+} from './lease.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
-
-class StaleRunLeaseError extends Error {
-  constructor() {
-    super('Stale workflow run lease')
-    this.name = 'StaleRunLeaseError'
-  }
-}
-
-class CancelledRunError extends Error {
-  constructor() {
-    super('Workflow run cancellation observed during coordination')
-    this.name = 'CancelledRunError'
-  }
-}
 
 export type ContinueWorkflowRunInput = {
   readonly signal?: AbortSignal
@@ -72,8 +64,8 @@ export async function continueWorkflowRun(
       leaseMs,
       input.signal,
       async (signal): Promise<ContinueWorkflowRunResult> => {
-        const store = createRunLeaseFencedStore(
-          input.store,
+        const { store, attemptExecutor } = createRunLeaseScope(
+          input,
           lease,
           leaseMs,
           signal,
@@ -86,7 +78,7 @@ export async function continueWorkflowRun(
         if (snapshot.run.status === 'cancelling') {
           await cancelRunAndWakeParent({
             store,
-            attemptExecutor: input.attemptExecutor,
+            attemptExecutor,
             runCoordinationExecutor: input.runCoordinationExecutor,
             runId: snapshot.run.id,
           })
@@ -98,7 +90,7 @@ export async function continueWorkflowRun(
           if (snapshot.run.status === 'failed') {
             await cancelRunDescendants({
               store,
-              attemptExecutor: input.attemptExecutor,
+              attemptExecutor,
               runCoordinationExecutor: input.runCoordinationExecutor,
               snapshot,
             })
@@ -129,7 +121,7 @@ export async function continueWorkflowRun(
         if (snapshot.nodes.some((node) => node.status === 'cancelled')) {
           await cancelRunAndWakeParent({
             store,
-            attemptExecutor: input.attemptExecutor,
+            attemptExecutor,
             runCoordinationExecutor: input.runCoordinationExecutor,
             runId: snapshot.run.id,
           })
@@ -168,7 +160,7 @@ export async function continueWorkflowRun(
 
         const outcome = await advanceWorkflowRun({
           store,
-          attemptExecutor: input.attemptExecutor,
+          attemptExecutor,
           runCoordinationExecutor: input.runCoordinationExecutor,
           workflow: implementation,
           signal,
@@ -186,10 +178,7 @@ export async function continueWorkflowRun(
       },
     ).catch((error: unknown) => {
       if (error instanceof WorkflowCleanupTimeoutError) throw error
-      if (
-        error instanceof StaleRunLeaseError ||
-        error instanceof CancelledRunError
-      ) {
+      if (isRunLeaseLost(error)) {
         return { status: 'busy' } satisfies ContinueWorkflowRunResult
       }
       if (!input.signal?.aborted) throw error
@@ -200,66 +189,6 @@ export async function continueWorkflowRun(
     })
   } finally {
     await input.store.releaseRunLease(lease)
-  }
-}
-
-export function createRunLeaseFencedStore(
-  store: WorkflowStore,
-  lease: RunLease,
-  leaseMs: number,
-  signal?: AbortSignal,
-): WorkflowStore {
-  const fence = async <T>(operation: () => Promise<T>): Promise<T> => {
-    signal?.throwIfAborted()
-    const renewedLease = await store.renewRunLease(lease, leaseMs)
-    if (!renewedLease) throw new StaleRunLeaseError()
-    signal?.throwIfAborted()
-    return operation()
-  }
-
-  return {
-    ...store,
-    createRun: (params) => fence(() => store.createRun(params)),
-    createNode: (params) => fence(() => store.createNode(params)),
-    setNodeInput: (params) => fence(() => store.setNodeInput(params)),
-    createAttempt: (params) => fence(() => store.createAttempt(params)),
-    completeCurrentAttempt: (params) =>
-      fence(() => store.completeCurrentAttempt(params)),
-    failCurrentAttempt: (params) =>
-      fence(() => store.failCurrentAttempt(params)),
-    completeNode: (params) => fence(() => store.completeNode(params)),
-    failNode: (params) => fence(() => store.failNode(params)),
-    markRunRunning: (params) => fence(() => store.markRunRunning(params)),
-    markRunWaiting: (params) => fence(() => store.markRunWaiting(params)),
-    completeRun: (params) => fence(() => store.completeRun(params)),
-    failRun: (params) => fence(() => store.failRun(params)),
-    requestRunCancellation: (params) =>
-      fence(() => store.requestRunCancellation(params)),
-    cancelRun: (params) => fence(() => store.cancelRun(params)),
-    cancelNode: (params) => fence(() => store.cancelNode(params)),
-    cancelNonTerminalRunNodes: (params) =>
-      fence(() => store.cancelNonTerminalRunNodes(params)),
-    ensureNodeChildren: (params) =>
-      fence(() => store.ensureNodeChildren(params)),
-    ensureChildRun: (params) =>
-      fence(async () => {
-        // Renewal only observes a cancellation on its next tick; a child run
-        // started in between would execute until the cancelling pass finds it.
-        const [run] = await store.loadRuns([lease.runId])
-        if (
-          run &&
-          (run.status === 'cancelling' || isTerminalRunStatus(run.status))
-        ) {
-          throw new CancelledRunError()
-        }
-        return store.ensureChildRun(params)
-      }),
-    ensureChildAttempt: (params) =>
-      fence(() => store.ensureChildAttempt(params)),
-    selectNodeCase: (params) => fence(() => store.selectNodeCase(params)),
-    completeNodeChild: (params) => fence(() => store.completeNodeChild(params)),
-    failNodeChild: (params) => fence(() => store.failNodeChild(params)),
-    waitNode: (params) => fence(() => store.waitNode(params)),
   }
 }
 

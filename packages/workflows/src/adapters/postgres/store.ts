@@ -4,6 +4,7 @@ import type { WorkflowPostgresConnection } from './connection.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import { validateFailedRunRetry } from '../../runtime/store.ts'
 import { createAttemptExecutor } from './executor.ts'
+import { fenceStoreWrites } from './fence.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import {
   DEFAULT_MAX_DELIVERIES,
@@ -20,6 +21,7 @@ import {
   emitStatusChangeNotifySql,
   notifyRunStatusEventColumnsSql,
   isUniqueViolation,
+  isLockNotAvailable,
 } from './sql.ts'
 import { createPostgresWorkflowChildStore } from './store-children.ts'
 import { createPostgresWorkflowNodeStore } from './store-nodes.ts'
@@ -40,6 +42,13 @@ type PostgresWorkflowStoreContext = {
 }
 
 export const createPostgresWorkflowStore = (
+  ctx: PostgresWorkflowStoreContext,
+): WorkflowStore =>
+  fenceStoreWrites(ctx.db, createUnfencedStore(ctx), (tx) =>
+    createUnfencedStore({ db: tx, ready: ctx.ready }),
+  )
+
+const createUnfencedStore = (
   ctx: PostgresWorkflowStoreContext,
 ): WorkflowStore => {
   const { db, ready } = ctx
@@ -83,6 +92,21 @@ export const createPostgresWorkflowStore = (
           })
           const reopening = validateFailedRunRetry(snapshots, params)
           const runIds = reopening.map(({ run }) => run.id)
+          // A fenced write locks its lease row before writing run rows, the
+          // reverse of the order here, so waiting for a lease row could
+          // deadlock with a writer whose lease just expired. A locked lease
+          // row means a write under it is still in flight: the run is busy.
+          try {
+            await tx.query(
+              'SELECT 1 FROM workflow_run_leases WHERE run_id = ANY($1::uuid[]) FOR UPDATE NOWAIT',
+              [runIds],
+            )
+          } catch (error) {
+            if (isLockNotAvailable(error)) {
+              throw new Error(`Run [${params.runId}] is busy`)
+            }
+            throw error
+          }
           const guards = await many<{
             id: string
             busy: boolean
@@ -92,7 +116,7 @@ export const createPostgresWorkflowStore = (
             tx,
             `
             SELECT r.id,
-              EXISTS (SELECT 1 FROM workflow_run_leases l WHERE l.run_id = r.id AND l.expires_at > now()) AS busy,
+              EXISTS (SELECT 1 FROM workflow_run_leases l WHERE l.run_id = r.id AND l.expires_at > clock_timestamp()) AS busy,
               EXISTS (SELECT 1 FROM workflow_commands c WHERE c.run_id = r.id AND c.lease_expires_at > now() AND c.dead_at IS NULL) AS claimed,
               (
                 SELECT ${payloadRowJsonSql('holder')} FROM workflow_runs holder

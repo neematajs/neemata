@@ -27,6 +27,24 @@ export type RunLease = {
   readonly version: number
 }
 
+/**
+ * Makes a write conditional on its issuer still holding the right to make it.
+ * The adapter checks the fence atomically with the write and throws
+ * `StaleWriteFenceError`, writing nothing, when it no longer holds. A separate
+ * check before the write would let a stalled caller commit after losing it.
+ */
+export type WriteFence = {
+  /** The run lease is still this one and has not expired. */
+  readonly runLease?: Pick<RunLease, 'runId' | 'leaseToken'>
+  /**
+   * The attempt is still its child's current attempt: a manual retry that
+   * reopened the child, or a successor attempt, invalidates it.
+   */
+  readonly attempt?: NodeChildRef & { readonly attemptId: string }
+}
+
+export type Fenced<Params> = Params & { readonly fence?: WriteFence }
+
 export type CreateRunInput = {
   readonly kind?: RunKind
   readonly name?: string
@@ -297,93 +315,117 @@ export type WorkflowStore = {
    * omitted.
    */
   loadRuns(runIds: readonly string[]): Promise<readonly StoredRun[]>
-  createNode(input: CreateNodeInput): Promise<StoredNode>
-  setNodeInput(params: {
-    runId: string
-    nodeName: string
-    input: unknown
-  }): Promise<StoredNode>
-  selectNodeCase(params: SelectNodeCaseParams): Promise<StoredNode | undefined>
+  createNode(input: Fenced<CreateNodeInput>): Promise<StoredNode>
+  setNodeInput(
+    params: Fenced<{
+      runId: string
+      nodeName: string
+      input: unknown
+    }>,
+  ): Promise<StoredNode>
+  selectNodeCase(
+    params: Fenced<SelectNodeCaseParams>,
+  ): Promise<StoredNode | undefined>
   /**
    * Idempotently creates the node's child set. Re-entry with an equal set
    * returns the stored records; a differing set is a definition conflict and
    * throws.
    */
   ensureNodeChildren(
-    params: EnsureNodeChildrenParams,
+    params: Fenced<EnsureNodeChildrenParams>,
   ): Promise<EnsureNodeChildrenResult>
   /**
    * Creates the child run and links it to the child record in one atomic
    * step. The child record must already exist via ensureNodeChildren.
    */
-  ensureChildRun(params: EnsureChildRunParams): Promise<EnsureChildRunResult>
+  ensureChildRun(
+    params: Fenced<EnsureChildRunParams>,
+  ): Promise<EnsureChildRunResult>
   /**
    * Idempotently creates the first attempt or returns the current one. A
    * manually reopened child has no current pointer; its next attempt copies
    * the previous attempt's immutable input and idempotency key.
    */
   ensureChildAttempt(
-    params: EnsureChildAttemptParams,
+    params: Fenced<EnsureChildAttemptParams>,
   ): Promise<EnsureChildAttemptResult>
   /**
    * Creates the child's next attempt (a retry): per-child attempt_number,
    * child current-attempt fencing, child status back to running.
    */
-  createAttempt(input: CreateAttemptInput): Promise<StoredAttempt>
+  createAttempt(input: Fenced<CreateAttemptInput>): Promise<StoredAttempt>
   /**
    * Completes the attempt AND its child record atomically, fenced by the
    * child's current attempt and the attempt lease.
    */
-  completeCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    output: unknown
-  }): Promise<StoredAttempt | undefined>
-  failCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    error: unknown
-  }): Promise<StoredAttempt | undefined>
-  timeoutCurrentAttempt(params: {
-    attemptId: string
-    leaseToken: string
-    error: unknown
-  }): Promise<StoredAttempt | undefined>
+  completeCurrentAttempt(
+    params: Fenced<{
+      attemptId: string
+      leaseToken: string
+      output: unknown
+    }>,
+  ): Promise<StoredAttempt | undefined>
+  failCurrentAttempt(
+    params: Fenced<{
+      attemptId: string
+      leaseToken: string
+      error: unknown
+    }>,
+  ): Promise<StoredAttempt | undefined>
+  timeoutCurrentAttempt(
+    params: Fenced<{
+      attemptId: string
+      leaseToken: string
+      error: unknown
+    }>,
+  ): Promise<StoredAttempt | undefined>
   completeNodeChild(
-    params: NodeChildRef & { output: unknown },
+    params: Fenced<NodeChildRef & { output: unknown }>,
   ): Promise<StoredNodeChild | undefined>
   failNodeChild(
-    params: NodeChildRef & { error: unknown },
+    params: Fenced<NodeChildRef & { error: unknown }>,
   ): Promise<StoredNodeChild | undefined>
   loadNodeChildren(
     params: LoadNodeChildrenParams,
   ): Promise<NodeChildrenSnapshot>
-  completeNode(params: {
-    runId: string
-    nodeName: string
-    output: unknown
-  }): Promise<StoredNode | undefined>
-  failNode(params: {
-    runId: string
-    nodeName: string
-    error: unknown
-  }): Promise<StoredNode | undefined>
-  waitNode(params: WaitNodeParams): Promise<StoredNode | undefined>
-  markRunRunning(params: { runId: string }): Promise<StoredRun | undefined>
-  markRunWaiting(params: { runId: string }): Promise<StoredRun | undefined>
-  completeRun(params: {
-    runId: string
-    output: unknown
-  }): Promise<StoredRun | undefined>
-  failRun(params: {
-    runId: string
-    error: unknown
-  }): Promise<StoredRun | undefined>
-  requestRunCancellation(
-    params: RequestRunCancellationParams,
+  completeNode(
+    params: Fenced<{
+      runId: string
+      nodeName: string
+      output: unknown
+    }>,
+  ): Promise<StoredNode | undefined>
+  failNode(
+    params: Fenced<{
+      runId: string
+      nodeName: string
+      error: unknown
+    }>,
+  ): Promise<StoredNode | undefined>
+  waitNode(params: Fenced<WaitNodeParams>): Promise<StoredNode | undefined>
+  markRunRunning(
+    params: Fenced<{ runId: string }>,
   ): Promise<StoredRun | undefined>
-  cancelRun(params: { runId: string }): Promise<StoredRun | undefined>
-  cancelNode(params: CancelNodeParams): Promise<StoredNode | undefined>
+  markRunWaiting(
+    params: Fenced<{ runId: string }>,
+  ): Promise<StoredRun | undefined>
+  completeRun(
+    params: Fenced<{
+      runId: string
+      output: unknown
+    }>,
+  ): Promise<StoredRun | undefined>
+  failRun(
+    params: Fenced<{
+      runId: string
+      error: unknown
+    }>,
+  ): Promise<StoredRun | undefined>
+  requestRunCancellation(
+    params: Fenced<RequestRunCancellationParams>,
+  ): Promise<StoredRun | undefined>
+  cancelRun(params: Fenced<{ runId: string }>): Promise<StoredRun | undefined>
+  cancelNode(params: Fenced<CancelNodeParams>): Promise<StoredNode | undefined>
   /**
    * Cancels every non-terminal node, child record AND started attempt of the
    * run in one sweep. A worker still executing a swept attempt observes the
@@ -391,7 +433,7 @@ export type WorkflowStore = {
    * records `cancelled` rather than lingering as `started`.
    */
   cancelNonTerminalRunNodes(
-    params: CancelNonTerminalRunNodesParams,
+    params: Fenced<CancelNonTerminalRunNodesParams>,
   ): Promise<readonly StoredNode[]>
 }
 

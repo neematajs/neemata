@@ -8,6 +8,7 @@ import type { AttemptExecutor } from '../../runtime/executors.ts'
 import type { StoredRun } from '../../runtime/state.ts'
 import type { PostgresWorkflowCommandContext } from './queue.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
+import { withWriteFenceCheck } from './fence.ts'
 import { createPostgresWorkflowCommandHelpers } from './queue.ts'
 import {
   WORKFLOW_COMMANDS_CHANNEL,
@@ -181,18 +182,20 @@ export const createAttemptExecutor = (
       await ready
       await releaseCommand(attempt.id, attempt.leaseToken, options)
     },
-    async deleteUnclaimed({ runId }) {
+    async deleteUnclaimed({ runId, fence }) {
       await ready
-      const deleted = await many<{ id: string }>(
-        db,
-        `
-	          DELETE FROM workflow_commands
-	          WHERE run_id = $1
-	            AND kind IN ('activity', 'task')
-	            AND lease_token IS NULL
-	          RETURNING id
-	        `,
-        [runId],
+      const deleted = await withWriteFenceCheck(db, fence, (tx) =>
+        many<{ id: string }>(
+          tx,
+          `
+            DELETE FROM workflow_commands
+            WHERE run_id = $1
+              AND kind IN ('activity', 'task')
+              AND lease_token IS NULL
+            RETURNING id
+          `,
+          [runId],
+        ),
       )
       return deleted.length
     },

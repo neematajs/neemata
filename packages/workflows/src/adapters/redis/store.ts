@@ -21,7 +21,9 @@ import type {
   EnsureChildAttemptParams,
   EnsureChildRunParams,
   EnsureNodeChildrenParams,
+  Fenced,
   ListRunsFilter,
+  NodeChildRef,
   NodeChildSummary,
   NodeSummary,
   PruneTerminalRunsParams,
@@ -31,9 +33,11 @@ import type {
   RunSummary,
   TerminalRunStatus,
   WorkflowStore,
+  WriteFence,
 } from '../../runtime/store.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
+import type { FenceCall } from './fence.ts'
 import type { Keys } from './keys.ts'
 import {
   WorkflowRunConflictError,
@@ -45,6 +49,7 @@ import {
   RUN_TRANSITIONS,
   transitionSources,
 } from '../../runtime/transitions.ts'
+import { assertNotFenced, resolveWriteFence } from './fence.ts'
 import {
   decode,
   encode,
@@ -55,7 +60,7 @@ import {
   type Family,
   type StoredLease,
 } from './state.ts'
-import { StoreScripts } from './store-scripts.ts'
+import { StoreScripts, type ScriptName } from './store-scripts.ts'
 
 const READ_BATCH_SIZE = 128
 const DEFAULT_PRUNE_BATCH_SIZE = 100
@@ -423,22 +428,30 @@ export class StoreRuntime {
       createNode: (input) => this.#createNode(input),
       setNodeInput: (params) => this.#setNodeInput(params),
       selectNodeCase: (params) =>
-        this.#selectNodeCase(params.runId, params.nodeName, params.caseKey),
+        this.#updateNode(
+          params.runId,
+          params.nodeName,
+          'nodeCase',
+          { selectedCase: params.caseKey },
+          params.fence,
+        ),
       ensureNodeChildren: (params) => this.#ensureNodeChildren(params),
       ensureChildRun: (params) => this.#ensureChildRun(params),
       ensureChildAttempt: (params) => this.#ensureChildAttempt(params),
       createAttempt: (input) => this.#createAttempt(input),
       ...this.#attemptSettlement(),
       completeNodeChild: (params) =>
-        this.#updateChild(params.runId, params.nodeName, params.childKey, {
-          status: 'completed',
-          output: params.output,
-        }),
+        this.#updateChild(
+          params,
+          { status: 'completed', output: params.output },
+          params.fence,
+        ),
       failNodeChild: (params) =>
-        this.#updateChild(params.runId, params.nodeName, params.childKey, {
-          status: 'failed',
-          error: toStoredError(params.error),
-        }),
+        this.#updateChild(
+          params,
+          { status: 'failed', error: toStoredError(params.error) },
+          params.fence,
+        ),
       loadNodeChildren: async (params) => {
         const family = await this.#loadFamilyByRun(params.runId)
         if (!family) return { children: [], attempts: [] }
@@ -459,37 +472,55 @@ export class StoreRuntime {
         }
       },
       completeNode: (params) =>
-        this.#updateNode(params.runId, params.nodeName, 'nodeTransition', {
-          status: 'completed',
-          output: params.output,
-        }),
+        this.#updateNode(
+          params.runId,
+          params.nodeName,
+          'nodeTransition',
+          { status: 'completed', output: params.output },
+          params.fence,
+        ),
       failNode: (params) =>
-        this.#updateNode(params.runId, params.nodeName, 'nodeTransition', {
-          status: 'failed',
-          error: toStoredError(params.error),
-        }),
+        this.#updateNode(
+          params.runId,
+          params.nodeName,
+          'nodeTransition',
+          { status: 'failed', error: toStoredError(params.error) },
+          params.fence,
+        ),
       waitNode: (params) =>
-        this.#updateNode(params.runId, params.nodeName, 'nodeWait', {
-          status: 'waiting',
-        }),
-      markRunRunning: ({ runId }) => this.#transitionRun(runId, 'running'),
-      markRunWaiting: ({ runId }) => this.#transitionRun(runId, 'waiting'),
-      completeRun: ({ runId, output }) =>
-        this.#terminalRun(runId, { status: 'completed', output }),
-      failRun: ({ runId, error }) =>
-        this.#terminalRun(runId, {
-          status: 'failed',
-          error: toStoredError(error),
-        }),
-      requestRunCancellation: ({ runId }) => this.#requestCancellation(runId),
-      cancelRun: ({ runId }) =>
-        this.#terminalRun(runId, { status: 'cancelled' }),
-      cancelNode: ({ runId, nodeName }) =>
-        this.#updateNode(runId, nodeName, 'nodeTransition', {
-          status: 'cancelled',
-        }),
-      cancelNonTerminalRunNodes: ({ runId }) =>
-        this.#cancelNonTerminalRunNodes(runId),
+        this.#updateNode(
+          params.runId,
+          params.nodeName,
+          'nodeWait',
+          { status: 'waiting' },
+          params.fence,
+        ),
+      markRunRunning: ({ runId, fence }) =>
+        this.#transitionRun(runId, 'running', fence),
+      markRunWaiting: ({ runId, fence }) =>
+        this.#transitionRun(runId, 'waiting', fence),
+      completeRun: ({ runId, output, fence }) =>
+        this.#terminalRun(runId, { status: 'completed', output }, fence),
+      failRun: ({ runId, error, fence }) =>
+        this.#terminalRun(
+          runId,
+          { status: 'failed', error: toStoredError(error) },
+          fence,
+        ),
+      requestRunCancellation: ({ runId, fence }) =>
+        this.#requestCancellation(runId, fence),
+      cancelRun: ({ runId, fence }) =>
+        this.#terminalRun(runId, { status: 'cancelled' }, fence),
+      cancelNode: ({ runId, nodeName, fence }) =>
+        this.#updateNode(
+          runId,
+          nodeName,
+          'nodeTransition',
+          { status: 'cancelled' },
+          fence,
+        ),
+      cancelNonTerminalRunNodes: ({ runId, fence }) =>
+        this.#cancelNonTerminalRunNodes(runId, fence),
     }
   }
 
@@ -719,8 +750,9 @@ export class StoreRuntime {
     })
   }
 
-  async #createNode(input: CreateNodeInput) {
-    const rootRunId = await this.#requireRootRunId(input.runId)
+  async #createNode(input: Fenced<CreateNodeInput>) {
+    const rootRunId = await this.#requireRootRunId(input.runId, input.fence)
+    const fence = await this.#resolveFence(input.fence, input.runId, rootRunId)
     const date = Date.now()
     const node: StoredNode = {
       runId: input.runId,
@@ -732,8 +764,9 @@ export class StoreRuntime {
       updatedAt: date,
     }
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'createNode',
+        fence,
         [
           this.#keys.familyNodes(rootRunId),
           this.#keys.familyIndexes(rootRunId),
@@ -754,10 +787,12 @@ export class StoreRuntime {
     nodeName: string,
     mode: string,
     changes: Partial<StoredNode>,
+    fence: WriteFence | undefined,
   ) {
     const rootRunId = await this.#rootRunId(runId)
-    if (!rootRunId) return undefined
+    if (!rootRunId) return this.#assertFence(fence)
     const result = await this.#updateRecord<StoredNode>(
+      await this.#resolveFence(fence, runId, rootRunId),
       this.#keys.familyNodes(rootRunId),
       this.#keys.runWake(rootRunId),
       nodeKey(runId, nodeName),
@@ -770,29 +805,31 @@ export class StoreRuntime {
     return result.value
   }
 
-  async #setNodeInput(params: {
-    readonly runId: string
-    readonly nodeName: string
-    readonly input: unknown
-  }) {
+  async #setNodeInput(
+    params: Fenced<{
+      readonly runId: string
+      readonly nodeName: string
+      readonly input: unknown
+    }>,
+  ) {
     const node = await this.#updateNode(
       params.runId,
       params.nodeName,
       'nodeInput',
       { input: params.input },
+      params.fence,
     )
     if (node) return node
     throw new Error(`Missing node [${params.runId}.${params.nodeName}]`)
   }
 
-  #selectNodeCase(runId: string, nodeName: string, caseKey: string) {
-    return this.#updateNode(runId, nodeName, 'nodeCase', {
-      selectedCase: caseKey,
-    })
-  }
-
-  async #ensureNodeChildren(params: EnsureNodeChildrenParams) {
-    const rootRunId = await this.#requireRootRunId(params.runId)
+  async #ensureNodeChildren(params: Fenced<EnsureNodeChildrenParams>) {
+    const rootRunId = await this.#requireRootRunId(params.runId, params.fence)
+    const fence = await this.#resolveFence(
+      params.fence,
+      params.runId,
+      rootRunId,
+    )
     const nodeField = nodeKey(params.runId, params.nodeName)
     const indexField = `children:${nodeField}`
     const date = Date.now()
@@ -820,8 +857,9 @@ export class StoreRuntime {
       })
     }
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'ensureChildren',
+        fence,
         [
           this.#keys.familyNodes(rootRunId),
           this.#keys.familyChildren(rootRunId),
@@ -858,8 +896,13 @@ export class StoreRuntime {
     return { children: existing, created: false }
   }
 
-  async #ensureChildRun(params: EnsureChildRunParams) {
-    const rootRunId = await this.#requireRootRunId(params.runId)
+  async #ensureChildRun(params: Fenced<EnsureChildRunParams>) {
+    const rootRunId = await this.#requireRootRunId(params.runId, params.fence)
+    const fence = await this.#resolveFence(
+      params.fence,
+      params.runId,
+      rootRunId,
+    )
     const input: Mutable<CreateRunInput> = {
       kind: params.childKind,
       name: params.childName,
@@ -880,8 +923,9 @@ export class StoreRuntime {
       idempotencyKey = this.#keys.idempotency(params.idempotencyKey)
     }
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'createChildRun',
+        fence,
         [
           this.#keys.family(rootRunId),
           this.#keys.familyRuns(rootRunId),
@@ -928,20 +972,21 @@ export class StoreRuntime {
     }
   }
 
-  #ensureChildAttempt(params: EnsureChildAttemptParams) {
+  #ensureChildAttempt(params: Fenced<EnsureChildAttemptParams>) {
     return this.#createChildAttempt(params, true)
   }
 
-  async #createAttempt(input: CreateAttemptInput) {
+  async #createAttempt(input: Fenced<CreateAttemptInput>) {
     const result = await this.#createChildAttempt(input, false)
     return result.attempt
   }
 
   async #createChildAttempt(
-    input: CreateAttemptInput | EnsureChildAttemptParams,
+    input: Fenced<CreateAttemptInput | EnsureChildAttemptParams>,
     ensure: boolean,
   ) {
-    const rootRunId = await this.#requireRootRunId(input.runId)
+    const rootRunId = await this.#requireRootRunId(input.runId, input.fence)
+    const fence = await this.#resolveFence(input.fence, input.runId, rootRunId)
     const childField = encodeChildKey(
       input.runId,
       input.nodeName,
@@ -964,8 +1009,9 @@ export class StoreRuntime {
       attempt.idempotencyKey = input.idempotencyKey
     }
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'createAttempt',
+        fence,
         [
           this.#keys.family(rootRunId),
           this.#keys.familyChildren(rootRunId),
@@ -1029,6 +1075,7 @@ export class StoreRuntime {
           { status: 'completed', output: params.output },
           true,
           claim,
+          params.fence,
         ),
       failCurrentAttempt: (params) =>
         this.#settleAttempt(
@@ -1037,6 +1084,7 @@ export class StoreRuntime {
           { status: 'failed', error: toStoredError(params.error) },
           false,
           claim,
+          params.fence,
         ),
       timeoutCurrentAttempt: (params) =>
         this.#settleAttempt(
@@ -1045,6 +1093,7 @@ export class StoreRuntime {
           { status: 'timedOut', error: toStoredError(params.error) },
           false,
           claim,
+          params.fence,
         ),
     }
   }
@@ -1054,24 +1103,27 @@ export class StoreRuntime {
     leaseToken: string,
     settled: Pick<StoredAttempt, 'status'> & Partial<StoredAttempt>,
     completeChild: boolean,
-    claim?: ClaimedAttempt,
+    claim: ClaimedAttempt | undefined,
+    writeFence: WriteFence | undefined,
   ) {
     const rootRunId = await this.#client.get(this.#keys.attemptRoot(attemptId))
-    if (!rootRunId) return undefined
+    if (!rootRunId) return this.#assertFence(writeFence)
     const raw = await this.#client.hget(
       this.#keys.familyAttempts(rootRunId),
       attemptId,
     )
-    if (!raw) return undefined
+    if (!raw) return this.#assertFence(writeFence)
     const attempt = decode<StoredAttempt>(raw)
+    const fence = await this.#resolveFence(writeFence, attempt.runId, rootRunId)
     const childField = encodeChildKey(
       attempt.runId,
       attempt.nodeName,
       attempt.childKey,
     )
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'settleAttempt',
+        fence,
         [
           this.#keys.familyAttempts(rootRunId),
           this.#keys.familyChildren(rootRunId),
@@ -1095,14 +1147,14 @@ export class StoreRuntime {
   }
 
   async #updateChild(
-    runId: string,
-    nodeName: string,
-    childKey: string,
+    { runId, nodeName, childKey }: NodeChildRef,
     changes: Partial<StoredNodeChild>,
+    fence: WriteFence | undefined,
   ) {
     const rootRunId = await this.#rootRunId(runId)
-    if (!rootRunId) return undefined
+    if (!rootRunId) return this.#assertFence(fence)
     const result = await this.#updateRecord<StoredNodeChild>(
+      await this.#resolveFence(fence, runId, rootRunId),
       this.#keys.familyChildren(rootRunId),
       this.#keys.runWake(rootRunId),
       encodeChildKey(runId, nodeName, childKey),
@@ -1112,10 +1164,15 @@ export class StoreRuntime {
     return result.value
   }
 
-  async #transitionRun(runId: string, status: 'running' | 'waiting') {
+  async #transitionRun(
+    runId: string,
+    status: 'running' | 'waiting',
+    fence: WriteFence | undefined,
+  ) {
     const rootRunId = await this.#rootRunId(runId)
-    if (!rootRunId) return undefined
+    if (!rootRunId) return this.#assertFence(fence)
     const result = await this.#updateRecord<StoredRun>(
+      await this.#resolveFence(fence, runId, rootRunId),
       this.#keys.familyRuns(rootRunId),
       this.#keys.runWake(rootRunId),
       runId,
@@ -1129,17 +1186,20 @@ export class StoreRuntime {
   async #terminalRun(
     runId: string,
     terminal: Pick<StoredRun, 'status'> & Partial<StoredRun>,
+    writeFence: WriteFence | undefined,
   ) {
     const run = await this.loadRun(runId)
-    if (!run) return undefined
+    if (!run) return this.#assertFence(writeFence)
+    const fence = await this.#resolveFence(writeFence, runId, run.rootRunId)
     let uniqueKey = ''
     if (run.unique?.scope === 'active') {
       uniqueKey = this.#keys.unique('active', run.unique.key)
     }
     const stateKeys = this.#keys.familyStateKeys(run.rootRunId)
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'terminalRun',
+        fence,
         [
           this.#keys.family(run.rootRunId),
           this.#keys.familyRuns(run.rootRunId),
@@ -1163,10 +1223,11 @@ export class StoreRuntime {
     return decodeScriptValue<StoredRun>(result[1])
   }
 
-  async #requestCancellation(runId: string) {
+  async #requestCancellation(runId: string, fence: WriteFence | undefined) {
     const rootRunId = await this.#rootRunId(runId)
-    if (!rootRunId) return undefined
+    if (!rootRunId) return this.#assertFence(fence)
     const result = await this.#updateRecord<StoredRun>(
+      await this.#resolveFence(fence, runId, rootRunId),
       this.#keys.familyRuns(rootRunId),
       this.#keys.runWake(rootRunId),
       runId,
@@ -1179,10 +1240,15 @@ export class StoreRuntime {
     return result.value
   }
 
-  async #cancelNonTerminalRunNodes(runId: string) {
-    const rootRunId = await this.#requireRootRunId(runId)
-    const result = await this.#scripts.run(
+  async #cancelNonTerminalRunNodes(
+    runId: string,
+    writeFence: WriteFence | undefined,
+  ) {
+    const rootRunId = await this.#requireRootRunId(runId, writeFence)
+    const fence = await this.#resolveFence(writeFence, runId, rootRunId)
+    const result = await this.#runFenced(
       'cancelNodes',
+      fence,
       [
         this.#keys.familyNodes(rootRunId),
         this.#keys.familyChildren(rootRunId),
@@ -1252,6 +1318,7 @@ export class StoreRuntime {
   }
 
   async #updateRecord<T>(
+    fence: FenceCall,
     hash: string,
     wake: string,
     field: string,
@@ -1260,8 +1327,9 @@ export class StoreRuntime {
     allowedSources: readonly string[] = [],
   ): Promise<{ code: string; value: T | undefined }> {
     const result = scriptResult(
-      await this.#scripts.run(
+      await this.#runFenced(
         'updateRecord',
+        fence,
         [hash, wake],
         [
           field,
@@ -1282,10 +1350,50 @@ export class StoreRuntime {
     return this.#client.get(this.#keys.runRoot(runId))
   }
 
-  async #requireRootRunId(runId: string) {
+  async #requireRootRunId(runId: string, fence?: WriteFence) {
     const rootRunId = await this.#rootRunId(runId)
-    if (!rootRunId) throw new Error(`Missing workflow run [${runId}]`)
-    return rootRunId
+    if (rootRunId) return rootRunId
+    await this.#assertFence(fence)
+    throw new Error(`Missing workflow run [${runId}]`)
+  }
+
+  #resolveFence(
+    fence: WriteFence | undefined,
+    runId: string,
+    rootRunId: string,
+  ) {
+    return resolveWriteFence(this.#client, this.#keys, fence, {
+      runId,
+      rootRunId,
+    })
+  }
+
+  async #runFenced(
+    name: ScriptName,
+    fence: FenceCall,
+    keys: readonly string[],
+    arguments_: readonly string[],
+  ) {
+    const result = await this.#scripts.run(
+      name,
+      [...fence.keys, ...keys],
+      [fence.argument, ...arguments_],
+    )
+    assertNotFenced(result)
+    return result
+  }
+
+  /**
+   * A fenced write that finds nothing to change still answers with the
+   * fence's verdict, so a stale writer learns it lost its right either way.
+   */
+  async #assertFence(fence: WriteFence | undefined): Promise<undefined> {
+    if (!fence?.runLease && !fence?.attempt) return undefined
+    const call = await resolveWriteFence(this.#client, this.#keys, fence)
+    assertNotFenced(
+      await this.#scripts.run('checkFence', call.keys, [call.argument]),
+    )
+    return undefined
   }
 
   async #pruneTerminalRuns(params: PruneTerminalRunsParams) {

@@ -2,6 +2,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunSnapshot, StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import { isTerminalRunStatus } from '../status.ts'
+import { createRunLeaseScope } from './lease.ts'
 
 const CHILD_CANCELLATION_LEASE_MS = 30_000
 
@@ -69,7 +70,11 @@ async function cancelChildRun(input: {
   })
   if (!lease) return
   try {
-    await cancelRunTree(input)
+    // The child's coordinator is the competitor here, so its lease, not the
+    // parent's, is what these writes must still hold.
+    await cancelRunTree(
+      createRunLeaseScope(input, lease, CHILD_CANCELLATION_LEASE_MS),
+    )
   } finally {
     await input.store.releaseRunLease(lease)
   }

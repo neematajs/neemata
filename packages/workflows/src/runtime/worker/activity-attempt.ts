@@ -41,6 +41,7 @@ import {
   enqueueContinueRun,
   isFreshAttempt,
   reconcileStaleAttempt,
+  scopeToAttempt,
   shouldCompleteNodeFromAttempt,
   type WorkerCommandResult,
 } from './reconcile.ts'
@@ -100,16 +101,22 @@ export async function runActivityAttempt(
 
   if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt, {
-        currentAttempt: snapshot?.attempts.find(
-          (attempt) => attempt.id === storedChild?.currentAttemptId,
-        ),
-        resolveRetry: () =>
-          resolveActivityAttemptRetry(
-            createWorkflowRuntimeRegistry({ workflows: input.workflows }),
-            command,
+      reconcileStaleAttempt(
+        scopeToAttempt(scoped, command),
+        command,
+        storedChild,
+        storedAttempt,
+        {
+          currentAttempt: snapshot?.attempts.find(
+            (attempt) => attempt.id === storedChild?.currentAttemptId,
           ),
-      }),
+          resolveRetry: () =>
+            resolveActivityAttemptRetry(
+              createWorkflowRuntimeRegistry({ workflows: input.workflows }),
+              command,
+            ),
+        },
+      ),
     )
   }
 
@@ -203,7 +210,8 @@ export async function runActivityAttempt(
     if (isAttemptCancellationObserved(error)) {
       return await ackTerminalAttempt(input)
     }
-    return await runAtomicCompletion(input, async (scoped) => {
+    return await runAtomicCompletion(input, async (claimScoped) => {
+      const scoped = scopeToAttempt(claimScoped, command)
       const attempt =
         error instanceof WorkflowAttemptTimeoutError
           ? await scoped.store.timeoutCurrentAttempt({
@@ -262,7 +270,8 @@ export async function runActivityAttempt(
     })
   }
 
-  return await runAtomicCompletion(input, async (scoped) => {
+  return await runAtomicCompletion(input, async (claimScoped) => {
+    const scoped = scopeToAttempt(claimScoped, command)
     const attempt = await scoped.store.completeCurrentAttempt({
       attemptId: command.attemptId,
       leaseToken: command.leaseToken,

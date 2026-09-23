@@ -7,6 +7,7 @@ import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
+import { StaleWriteFenceError } from '../errors.ts'
 import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -27,6 +28,7 @@ import {
   enqueueContinueRun,
   isFreshAttempt,
   reconcileStaleAttempt,
+  scopeToAttempt,
   shouldCompleteNodeFromAttempt,
   type WorkerCommandResult,
 } from './reconcile.ts'
@@ -79,16 +81,22 @@ export async function runTaskAttempt(
 
   if (!isFreshAttempt(command, storedChild, storedAttempt)) {
     return await runAtomicCompletion(input, (scoped) =>
-      reconcileStaleAttempt(scoped, command, storedChild, storedAttempt, {
-        currentAttempt: snapshot?.attempts.find(
-          (attempt) => attempt.id === storedChild?.currentAttemptId,
-        ),
-        resolveRetry: () =>
-          command.retry ??
-          createWorkflowRuntimeRegistry({ tasks: input.tasks }).getTask(
-            command.taskName,
-          )?.task.retry,
-      }),
+      reconcileStaleAttempt(
+        scopeToAttempt(scoped, command),
+        command,
+        storedChild,
+        storedAttempt,
+        {
+          currentAttempt: snapshot?.attempts.find(
+            (attempt) => attempt.id === storedChild?.currentAttemptId,
+          ),
+          resolveRetry: () =>
+            command.retry ??
+            createWorkflowRuntimeRegistry({ tasks: input.tasks }).getTask(
+              command.taskName,
+            )?.task.retry,
+        },
+      ),
     )
   }
 
@@ -172,7 +180,8 @@ export async function runTaskAttempt(
         ? await settleCancelledTaskRun(input)
         : await ackTerminalAttempt(input)
     }
-    return await runAtomicCompletion(input, async (scoped) => {
+    return await runAtomicCompletion(input, async (claimScoped) => {
+      const scoped = scopeToAttempt(claimScoped, command)
       const attempt =
         error instanceof WorkflowAttemptTimeoutError
           ? await scoped.store.timeoutCurrentAttempt({
@@ -231,7 +240,8 @@ export async function runTaskAttempt(
     })
   }
 
-  return await runAtomicCompletion(input, async (scoped) => {
+  return await runAtomicCompletion(input, async (claimScoped) => {
+    const scoped = scopeToAttempt(claimScoped, command)
     const attempt = await scoped.store.completeCurrentAttempt({
       attemptId: command.attemptId,
       leaseToken: command.leaseToken,
@@ -278,21 +288,29 @@ export async function runTaskAttempt(
  * Task runs have no coordinator to finish a requested cancellation, so the
  * worker that observes `cancelling` settles the run itself before dropping
  * the attempt. Idempotent against the client having already settled it: an
- * already-terminal run is left untouched.
+ * already-terminal run is left untouched. It acts for its attempt: once that
+ * is no longer current, such as after a manual retry, the cancellation it
+ * observed is not its to finish.
  */
 async function settleCancelledTaskRun(
   input: RunTaskAttemptInput,
 ): Promise<WorkerCommandResult> {
-  const runId = input.claimed.command.runId
-  return await runAtomicCompletion(input, async (scoped) => {
+  const command = input.claimed.command
+  const runId = command.runId
+  return await runAtomicCompletion(input, async (claimScoped) => {
+    const scoped = scopeToAttempt(claimScoped, command)
     const [run] = await scoped.store.loadRuns([runId])
     if (run?.status === 'cancelling') {
-      await cancelRunAndWakeParent({
-        store: scoped.store,
-        attemptExecutor: scoped.attemptExecutor,
-        runCoordinationExecutor: scoped.runCoordinationExecutor,
-        runId,
-      })
+      try {
+        await cancelRunAndWakeParent({
+          store: scoped.store,
+          attemptExecutor: scoped.attemptExecutor,
+          runCoordinationExecutor: scoped.runCoordinationExecutor,
+          runId,
+        })
+      } catch (error) {
+        if (!(error instanceof StaleWriteFenceError)) throw error
+      }
     }
     await scoped.attemptExecutor.ack(scoped.claimed)
     return { status: 'processed' }

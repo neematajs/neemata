@@ -140,6 +140,11 @@ export const isUniqueViolation = (error: unknown) => {
     )
   )
 }
+export const isLockNotAvailable = (error: unknown) =>
+  typeof error === 'object' &&
+  error !== null &&
+  'code' in error &&
+  error.code === '55P03'
 
 // Statuses are static enum literals, so inlining them into SQL is safe.
 export const runStatusSourcesSql = (to: RuntimeRunStatus) =>

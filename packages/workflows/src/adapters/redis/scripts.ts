@@ -1,4 +1,5 @@
 import type { WorkflowRedisClient } from './client.ts'
+import { WRITE_FENCE } from './fence.ts'
 
 // Every queue mutation maintains these indexes in the same Lua execution.
 // Length prefixes keep arbitrary workflow/activity names collision-free.
@@ -451,6 +452,7 @@ end
 return result
 `,
   deleteForRuns: `
+${WRITE_FENCE}
 ${QUEUE_CLEANUP}
 local position = tonumber(ARGV[1])
 local cursor = ARGV[2]

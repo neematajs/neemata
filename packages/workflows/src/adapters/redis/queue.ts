@@ -8,15 +8,17 @@ import type {
 } from '../../runtime/commands.ts'
 import type { CommandReleaseOptions } from '../../runtime/executors.ts'
 import type { StoredError, StoredRun } from '../../runtime/state.ts'
-import type { DeadWorkflowCommand } from '../../runtime/store.ts'
+import type { DeadWorkflowCommand, WriteFence } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
+import type { FenceCall } from './fence.ts'
 import type { Keys } from './keys.ts'
 import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
+import { UNFENCED, assertNotFenced, resolveWriteFence } from './fence.ts'
 import { QueueScripts } from './scripts.ts'
 import { decode, encode } from './state.ts'
 
@@ -333,15 +335,25 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
     return true
   }
 
-  deleteUnclaimed(runIds: ReadonlySet<string>): Promise<number> {
-    return this.#deleteForRuns(runIds, true)
+  async deleteUnclaimed(
+    runIds: ReadonlySet<string>,
+    fence?: WriteFence,
+  ): Promise<number> {
+    const call = await resolveWriteFence(this.#client, this.#keys, fence)
+    return this.#deleteForRuns(runIds, true, call)
   }
 
   async deleteForRuns(runIds: ReadonlySet<string>): Promise<void> {
-    await this.#deleteForRuns(runIds, false)
+    await this.#deleteForRuns(runIds, false, UNFENCED)
   }
 
-  async #deleteForRuns(runIds: ReadonlySet<string>, unclaimedOnly: boolean) {
+  // Deletion spans several script calls; each checks the fence itself, so no
+  // batch lands after the fence broke, though earlier batches stay deleted.
+  async #deleteForRuns(
+    runIds: ReadonlySet<string>,
+    unclaimedOnly: boolean,
+    fence: FenceCall,
+  ) {
     const queue = this.#keys.queue(this.#kind)
     let deleted = 0
     const ids = Array.from(runIds)
@@ -351,21 +363,29 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
       let cursor = '0'
       let changed = '0'
       do {
-        const result = scriptResult(
-          await this.#scripts.runRaw(
-            'deleteForRuns',
-            [queue.items, queue.ready, queue.claimed, queue.dead, queue.dedup],
-            [
-              position,
-              cursor,
-              String(QUEUE_BATCH_SIZE),
-              this.#keys.prefix,
-              unclaimedOnly ? '1' : '0',
-              batch,
-              changed,
-            ],
-          ),
+        const raw = await this.#scripts.runRaw(
+          'deleteForRuns',
+          [
+            ...fence.keys,
+            queue.items,
+            queue.ready,
+            queue.claimed,
+            queue.dead,
+            queue.dedup,
+          ],
+          [
+            fence.argument,
+            position,
+            cursor,
+            String(QUEUE_BATCH_SIZE),
+            this.#keys.prefix,
+            unclaimedOnly ? '1' : '0',
+            batch,
+            changed,
+          ],
         )
+        assertNotFenced(raw)
+        const result = scriptResult(raw)
         position = result[0]!
         cursor = result[1]!
         deleted += Number(result[2])

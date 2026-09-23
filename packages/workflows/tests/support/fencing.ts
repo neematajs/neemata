@@ -254,6 +254,85 @@ export function defineClaimFencingTests(
     expect((await client.get(run.id))!.run.status).toBe('failed')
   })
 
+  it('a worker that stalled after failing its attempt leaves a manually retried run alone', async () => {
+    const runtime = createRuntime({ maxDeliveries: 1 })
+    const task = defineTask({
+      name: 'fencing.claim',
+      input: text,
+      output: text,
+    })
+    let fail = true
+    const implementation = implementTask(task, {
+      pool: 'test',
+      handler: async (input) => {
+        if (fail) throw new Error('boom')
+        return `${input}:retried`
+      },
+    })
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, 'hi')
+
+    const errors: unknown[] = []
+    let stalled = false
+    const workerA = runExecutionWorker({
+      ...runtime,
+      workflows: [],
+      tasks: [implementation],
+      workerId: 'A',
+      leaseMs: LEASE_MS,
+      reaping: false,
+      onError: (error) => errors.push(error),
+      atomicCompletion: {
+        run: (handler, claimed, context) =>
+          runtime.atomicCompletion.run(
+            (scoped) =>
+              handler({
+                ...scoped,
+                store: {
+                  ...scoped.store,
+                  // A stalls between failing its attempt and failing the child
+                  // while the claim dead-letters, the reaper fails the run
+                  // and a manual retry reopens it.
+                  failCurrentAttempt: async (params) => {
+                    const failed = await scoped.store.failCurrentAttempt(params)
+                    if (stalled) return failed
+                    stalled = true
+                    expect(failed).toMatchObject({ status: 'failed' })
+                    await wait(LEASE_EXPIRED_MS)
+                    await expect(
+                      claim(runtime, 'B', 30_000),
+                    ).resolves.toBeNull()
+                    await reapDeadWorkflowCommands(runtime)
+                    expect((await client.get(run.id))!.run.status).toBe(
+                      'failed',
+                    )
+                    fail = false
+                    await client.retry(run.id)
+                    return failed
+                  },
+                },
+              }),
+            claimed,
+            context,
+          ),
+      },
+    })
+    await expect(workerA).resolves.toBeDefined()
+    expect(errors).toStrictEqual([])
+
+    await runExecutionWorker({
+      ...runtime,
+      workflows: [],
+      tasks: [implementation],
+      workerId: 'C',
+      reaping: false,
+    })
+    expect((await client.get(run.id))!.run).toMatchObject({
+      status: 'completed',
+      output: 'hi:retried',
+    })
+  })
+
   it('completes normally under a live claim', async () => {
     const runtime = createRuntime()
     const { task, implementation } = createTask()

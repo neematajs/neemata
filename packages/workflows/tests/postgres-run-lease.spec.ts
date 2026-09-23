@@ -8,8 +8,38 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
+import { StaleWriteFenceError } from '../src/runtime/index.ts'
 
 describe('postgres run leases', () => {
+  it('refuses a fenced write whose transaction began before its lease expired', async () => {
+    const connection = createPostgresWorkflowConnection(new PGlite())
+    await installPostgresWorkflowSchemaForTesting(connection)
+    const runtime = createPostgresWorkflowRuntime({ connection })
+    const run = await runtime.store.createRun({
+      workflowName: 'postgres-old-transaction-fence',
+      input: {},
+    })
+    const lease = await runtime.store.acquireRunLease({
+      runId: run.id,
+      leaseMs: 50,
+    })
+
+    await connection.transaction(async (tx) => {
+      await tx.query('SELECT 1')
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      await expect(
+        createPostgresWorkflowRuntime({ connection: tx }).store.failRun({
+          runId: run.id,
+          error: new Error('late'),
+          fence: { runLease: lease! },
+        }),
+      ).rejects.toBeInstanceOf(StaleWriteFenceError)
+    })
+    expect((await runtime.store.loadRunSnapshot(run.id))?.run.status).toBe(
+      'queued',
+    )
+  })
+
   it('keeps same-transaction lease reacquire semantics under PGlite', async () => {
     const connection = createPostgresWorkflowConnection(new PGlite())
     await installPostgresWorkflowSchemaForTesting(connection)
