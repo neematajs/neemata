@@ -1,8 +1,0 @@
-{
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "rootDir": ".",
-    "types": ["pino"]
-  },
-  "include": ["src/**/*", "tests/**/*", "bench/**/*.bench.ts"]
-}

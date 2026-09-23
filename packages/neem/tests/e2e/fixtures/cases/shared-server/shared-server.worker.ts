@@ -1,99 +1,70 @@
-import type {
-  GatewayApi,
-  GatewayResolvedProcedure,
-  GatewayStaticMetaView,
-} from '@nmtjs/gateway'
+import type { AddressInfo } from 'node:net'
+import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+
 import type { NeemRuntimeUpstream, NeemRuntimeWorkerContext } from '@nmtjs/neem'
-import { Container, createLogger, Hooks } from '@nmtjs/core'
-import { Gateway } from '@nmtjs/gateway'
 import { defineRuntimeWorker } from '@nmtjs/neem'
-import { JsonCodec } from '@nmtjs/protocol/json/server'
-import { ProtocolCodecRegistry } from '@nmtjs/protocol/server'
-import { createServerTransport } from '@nmtjs/transports/http-server'
-import { createServerHost } from '@nmtjs/transports/http-server/node'
-import { neemataHttp } from '@nmtjs/transports/neemata/http'
-import { neemataWebSocket } from '@nmtjs/transports/neemata/ws'
 
 import { record } from '../../shared/support/_events.ts'
 
-// resolved procedures carry an empty meta view: the HTTP transport reads the
-// allowed-methods meta from it and falls back to its POST-only default
-type ResolvedProcedure = GatewayResolvedProcedure & {
-  meta: Pick<GatewayStaticMetaView, 'get'>
-}
+// RFC 6455 handshake by hand: the fixture only has to prove that an upgrade
+// reaches the shared socket, so a WebSocket library would add nothing.
+const accept = (key: string) =>
+  createHash('sha1')
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest('base64')
 
 export default defineRuntimeWorker({
   definition: { fixture: 'shared-server' },
   createRuntime(ctx: NeemRuntimeWorkerContext) {
-    let gateway: Gateway<ResolvedProcedure> | undefined
+    const server = createServer((request, response) => {
+      const chunks: Buffer[] = []
+      request.on('data', (chunk: Buffer) => chunks.push(chunk))
+      request.on('end', () => {
+        const body = Buffer.concat(chunks).toString()
+        response.setHeader('content-type', 'application/json')
+        response.end(
+          JSON.stringify({
+            procedure: request.url?.slice(1),
+            payload: body ? JSON.parse(body) : null,
+            runtime: ctx.name,
+          }),
+        )
+      })
+    })
+    server.on('upgrade', (request, socket) => {
+      socket.write(
+        [
+          'HTTP/1.1 101 Switching Protocols',
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          `Sec-WebSocket-Accept: ${accept(request.headers['sec-websocket-key']!)}`,
+          '',
+          '',
+        ].join('\r\n'),
+      )
+      socket.on('error', () => {})
+      socket.on('data', () => socket.destroy())
+    })
 
     return {
       async start(): Promise<NeemRuntimeUpstream[]> {
-        const logger = createLogger(
-          { pinoOptions: { enabled: false } },
-          'shared-server',
+        await new Promise<void>((resolve) =>
+          server.listen(0, '127.0.0.1', resolve),
         )
-        const container = new Container({ logger })
-
-        // both handlers mount onto one socket: the gateway then reports
-        // the same bound URL under both proxyable types
-        const ServerTransport = createServerTransport({
-          host: createServerHost,
-          handlers: {
-            http: neemataHttp({
-              codecs: new ProtocolCodecRegistry([new JsonCodec()]),
-            }),
-            ws: neemataWebSocket({
-              codecs: new ProtocolCodecRegistry([new JsonCodec()]),
-            }),
-          },
-        })
-        const server = await ServerTransport.factory({
-          listen: { port: 0, hostname: '127.0.0.1' },
-          handlers: {
-            http: { path: '/' },
-            ws: { path: '/' },
-          },
-        })
-
-        const api: GatewayApi<ResolvedProcedure> = {
-          resolve: async ({ procedure }) => ({
-            name: procedure,
-            stream: false,
-            meta: { get: () => undefined },
-          }),
-          call: async ({ procedure, payload }) => ({
-            procedure,
-            payload: payload ?? null,
-            runtime: ctx.name,
-          }),
-        }
-
-        gateway = new Gateway({
-          logger,
-          container,
-          hooks: new Hooks(),
-          transports: {
-            server: {
-              transport: server,
-              proxyable: ServerTransport.proxyable,
-            },
-          },
-          api,
-        })
-
-        const hosts = await gateway.start()
+        const { port } = server.address() as AddressInfo
+        // One socket serves both protocols, so the same bound URL is reported
+        // under both proxyable types.
+        const hosts: NeemRuntimeUpstream[] = [
+          { type: 'http', url: `http://127.0.0.1:${port}` },
+          { type: 'ws', url: `http://127.0.0.1:${port}` },
+        ]
         record({ event: 'shared-server-hosts', name: ctx.name, hosts })
-
-        return hosts.map((entry) => ({
-          type: entry.type as NeemRuntimeUpstream['type'],
-          url: entry.url,
-        }))
+        return hosts
       },
       async stop() {
-        const current = gateway
-        gateway = undefined
-        await current?.stop()
+        server.closeAllConnections()
+        await new Promise((resolve) => server.close(resolve))
       },
     }
   },

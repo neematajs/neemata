@@ -75,18 +75,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - name: Install Playwright browser (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          pnpm exec playwright install --with-deps chromium firefox webkit
-      - name: Install Playwright browser (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          pnpm exec playwright install chromium firefox webkit
       - run: |
           pnpm run test --reporter=agent --reporter=github-actions
           pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
-          pnpm run test:browser:client --reporter=agent --reporter=github-actions
 
   tests-bun:
     needs: [lint]

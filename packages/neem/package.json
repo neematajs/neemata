@@ -63,14 +63,9 @@
     }
   },
   "devDependencies": {
-    "@nmtjs/core": "workspace:*",
-    "@nmtjs/gateway": "workspace:*",
     "@nmtjs/metrics": "workspace:*",
-    "@nmtjs/protocol": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.7",
-    "@nmtjs/transports": "workspace:*",
-    "@types/node": "^24.13.2",
-    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v20.67.0"
+    "@types/node": "^24.13.2"
   },
   "files": [
     "bin",

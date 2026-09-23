@@ -1,44 +1,23 @@
 ---
 name: use-neemata
-description: 'Use when answering questions or writing code for Neemata RPC applications: contracts, procedures, routers, applications, DI, env config, metadata, guards, middleware, filters, clients, workflows, pubsub, metrics, streaming, blobs, and Neemata runtime integration.'
+description: 'Use when answering questions or writing code for Neemata durable workflows: task and workflow contracts, implementations, execution pools, the PostgreSQL runtime, the runtime client, and Neem workflow workers, with or without Effect.'
 ---
 
 # Use Neemata
 
-End-user Neemata application code should prefer `nmtjs` umbrella imports for
-application, contract, type, DI, pubsub, and metrics APIs when
-the needed symbol is exported there.
+Neemata is Neem hosting plus durable workflows. It has no RPC framework, transports,
+client, dependency container, or pubsub: applications own those (Effect applications
+use Effect's `HttpApi` and `Rpc` with their derived clients).
 
-Exceptions:
-
-- Client code imports from `@nmtjs/client`, its transport subpaths, and protocol
-  codec subpaths.
-- Server handlers import from `@nmtjs/transports/neemata/http` and
-  `@nmtjs/transports/neemata/ws`; runtime hosts import from
-  `@nmtjs/transports/http-server/node`, `/bun`, or `/deno`.
-- Neem runtime helpers import from package `/neem` subpaths.
-- Adapters import from package adapter subpaths such as `@nmtjs/pubsub/redis`.
+- Workflows without Effect import from `@nmtjs/workflows`; Effect applications
+  import the same functions from `@nmtjs/workflows/effect`.
+- Neem workers import from `@nmtjs/workflows/neem` or
+  `@nmtjs/workflows/effect/neem`.
+- Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
+  running Neem itself is covered by the `use-neem` skill.
 
 ## References
 
-- [API Reference](references/api-reference.md) - umbrella exports and import rules.
-- [Application Setup](references/server-setup.md) - app, host, transports,
-  Neemata runtime files.
-- [Transports](references/transports.md) - server host, native HTTP/WS
-  handlers, codecs, JSON-RPC and MCP projections.
-- [Contracts](references/contracts.md) - RPC, event, subscription, and blob
-  public API shapes.
-- [RPC](references/rpc.md) - procedures, routers, execution pipeline,
-  streaming, blobs, metadata, filters.
-- [Implementations](references/implementations.md) - contract-backed handlers,
-  routers, and `implementRouter(...)`.
-- [Injectables](references/injectables.md) - values, lazy tokens, factories,
-  scopes, built-ins, env config.
-- [Subscriptions](references/subscriptions.md) - typed event/channel contracts.
-- [PubSub](references/pubsub.md) - ephemeral fanout, publish/subscribe.
 - [Workflows](references/workflows.md) - durable orchestration: task/workflow
-  contracts, implementations, postgres runtime, client (read models, watch,
+  contracts, implementations, pools, postgres runtime, client (read models, watch,
   retry/delete), inspector serialization, Neem integration.
-- [Type System](references/type-system.md) - `t.*` schemas and encode/decode.
-- [Client Usage](references/client-usage.md) - typed clients, transports,
-  streams, blobs, flow control, cancellation.

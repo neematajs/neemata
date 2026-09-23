@@ -1,28 +1,10 @@
 {
   "references": [
     {
-      "path": "./packages/application/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/client/tsconfig.build.json"
-    },
-    {
       "path": "./packages/common/tsconfig.build.json"
     },
     {
-      "path": "./packages/config/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/contract/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/core/tsconfig.build.json"
-    },
-    {
       "path": "./packages/effect/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/gateway/tsconfig.build.json"
     },
     {
       "path": "./packages/metrics/tsconfig.build.json"
@@ -31,22 +13,7 @@
       "path": "./packages/neem/tsconfig.build.json"
     },
     {
-      "path": "./packages/nmtjs/tsconfig.build.json"
-    },
-    {
       "path": "./packages/nuxt/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/protocol/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/pubsub/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/transports/tsconfig.build.json"
-    },
-    {
-      "path": "./packages/type/tsconfig.build.json"
     },
     {
       "path": "./packages/vite/tsconfig.build.json"
