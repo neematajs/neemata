@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite'
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import {
@@ -98,8 +98,8 @@ test('rolls back empty workflow completion when command ack fails', async () => 
   })
   const workflow = defineWorkflow({
     name: 'atomic-continuation-empty-workflow',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   }).build()
   const workflowImpl = implementWorkflow(workflow).finish(
     (_ctx, _outputs, input) => ({ value: input.value }),
@@ -135,8 +135,8 @@ test('rolls back workflow continuation when command ack lease is stale', async (
   })
   const workflow = defineWorkflow({
     name: 'stale-continuation-empty-workflow',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   }).build()
   const workflowImpl = implementWorkflow(workflow).finish(
     (_ctx, _outputs, input) => ({ value: input.value }),
@@ -169,12 +169,12 @@ test('rolls back activity dispatch when command ack fails', async () => {
   })
   const workflow = defineWorkflow({
     name: 'atomic-continuation-activity-workflow',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   })
     .activity('content', {
-      input: t.object({ value: t.string() }),
-      output: t.object({ value: t.string() }),
+      input: Schema.Struct({ value: Schema.String }),
+      output: Schema.Struct({ value: Schema.String }),
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)
@@ -217,8 +217,8 @@ test('rolls back standalone task completion when command ack fails', async () =>
   })
   const task = defineTask({
     name: 'atomic-completion-task',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
     handler: async (_ctx, input) => ({ id: input.text }),
@@ -256,8 +256,8 @@ test('rolls back standalone task failure when command ack fails', async () => {
   })
   const task = defineTask({
     name: 'atomic-failure-task',
-    input: t.object({ text: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   })
   const taskImpl = implementTask(task, {
     handler: async () => {
@@ -300,12 +300,12 @@ test('rolls back activity completion when command ack fails', async () => {
   })
   const workflow = defineWorkflow({
     name: 'atomic-completion-workflow',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   })
     .activity('content', {
-      input: t.object({ value: t.string() }),
-      output: t.object({ value: t.string() }),
+      input: Schema.Struct({ value: Schema.String }),
+      output: Schema.Struct({ value: Schema.String }),
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)
@@ -362,12 +362,12 @@ test('rolls back activity completion when command ack lease is stale', async () 
   })
   const workflow = defineWorkflow({
     name: 'stale-completion-workflow',
-    input: t.object({ value: t.string() }),
-    output: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
+    output: Schema.Struct({ value: Schema.String }),
   })
     .activity('content', {
-      input: t.object({ value: t.string() }),
-      output: t.object({ value: t.string() }),
+      input: Schema.Struct({ value: Schema.String }),
+      output: Schema.Struct({ value: Schema.String }),
     })
     .build()
   const workflowImpl = implementWorkflow(workflow)

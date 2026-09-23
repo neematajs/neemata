@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { bench, describe } from 'vitest'
 
 import type { WorkflowPostgresConnection } from '../src/adapters/postgres.ts'
@@ -26,8 +26,8 @@ const benchmarkOptions = {
 }
 const workflow = defineWorkflow({
   name: createTestName('postgres-benchmark'),
-  input: t.object({ sequence: t.number(), text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ sequence: Schema.Number, text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 }).build()
 
 requireServiceEnv(postgresTarget)

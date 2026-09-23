@@ -27,6 +27,76 @@ import {
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
 ```
 
+## Schema codecs
+
+Workflow contracts use `effect/Schema`, pinned to `4.0.0-rc.116`. Applications and
+`@nmtjs/workflows` must use this exact version during the release-candidate period.
+The package imports only stable Effect modules. Async handler execution and the
+existing dependency container remain in place until the next migration slice.
+
+```ts
+import * as Schema from 'effect/Schema'
+
+const normalizeDate = defineTask({
+  name: 'normalize-date',
+  input: Schema.DateFromString,
+  output: Schema.DateFromString,
+})
+
+const implementation = implementTask(normalizeDate, {
+  handler: async (_ctx, date) => date.toISOString(),
+})
+```
+
+Submissions, input-mapping callbacks, map `items` callbacks, handler returns, and
+`finish` returns use the schema's **Encoded** type. Handlers and workflow callbacks
+receive its decoded **Type**, including prior node outputs and individual map
+items. An omitted input mapper forwards the decoded workflow input. `client.start`
+returns decoded input (and output when joining a completed run).
+
+For the upcoming Effect handler migration, task/activity handlers and `finish`
+will return decoded Type, and the boundary will encode once. The Encoded return
+convention above describes the current async implementation during slice 4.
+
+Durable payloads use `Schema.toCodecJson`: inputs, outputs, map items, schedules,
+and attempt commands are encoded before storage and decoded before execution or
+resumption. History APIs expose that stored representation; they do not require
+registered definitions. Restart reconstructs the submission value with the current
+definition's codec and returns a decoded `RunnableRun`, like `start`. Retry and
+restart eligibility are unchanged.
+
+| Schema                    | Authored Encoded | Decoded Type | Stored JSON |
+| ------------------------- | ---------------- | ------------ | ----------- |
+| `Schema.DateFromString`   | string           | `Date`       | ISO string  |
+| `Schema.Date`             | `Date`           | `Date`       | ISO string  |
+| `Schema.NumberFromString` | string           | number       | string      |
+| `Schema.Undefined`        | undefined        | undefined    | null        |
+
+The undefined-to-null encoding also applies inside structs. For example,
+`Schema.optional(Schema.String)` stores an explicitly supplied `a: undefined` as
+`"a": null`; an absent `a` key remains absent. Decoding restores the supplied
+undefined value, while SQL/history readers see null.
+
+Codecs must be synchronous, require no Effect services, and support JSON encoding.
+Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
+JSON derivation support is checked when actual values are encoded, not at definition
+or worker registration. For example, `Schema.instanceOf(URL)` alone accepts a URL
+at the authored boundary but cannot persist it. Test custom codecs with representative
+values before deployment; node-level encoding failures can otherwise occur mid-run.
+`Schema.Unknown` accepts only JSON-compatible values at persistence boundaries;
+use `Schema.Undefined` for an explicit void value. A workflow without an output
+schema may return JSON or finish without a value; rich outputs require a schema.
+Encoding and decoding failures use the existing workflow failure/retry paths.
+
+Plain JSON contracts retain their payload representation. Transformed contracts
+can differ from the old decoded-value-then-`JSON.stringify` representation: for
+example, `NumberFromString` persists a string rather than a number. Stored-data
+compatibility must therefore be assessed before deployment. At cutover, pause new
+starts and schedule firing, drain old runs and their children, and stop old workers
+before enabling new writers. Re-entry decode failures are terminal. Retained history
+needs a separate compatibility check before resubmission; draining does not convert
+it. This slice adds no format marker, history restriction, or retry/restart ban.
+
 ## Runtime Connection
 
 Runtime code consumes a small `WorkflowPostgresConnection` interface. For

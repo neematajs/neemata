@@ -4,7 +4,7 @@ import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchActivityAttempt } from '../attempt.ts'
 import {
-  decodeWorkflowUserSchemaValue,
+  encodeWorkflowInput,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   resolveIdempotency,
@@ -37,10 +37,11 @@ export async function dispatchActivityNode(
           input.node.input!(input.workflowCtx, input.outputs, input.run.input),
         )
       : input.run.input
-    nodeInput = decodeWorkflowUserSchemaValue(
+    nodeInput = encodeWorkflowInput(
       declaration.input,
       rawInput,
       `activity input [${input.workflow.workflow.name}.${input.node.name}]`,
+      !input.node.input,
     )
     await input.store.setNodeInput({
       runId: input.run.id,

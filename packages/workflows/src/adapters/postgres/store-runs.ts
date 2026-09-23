@@ -18,6 +18,8 @@ import {
   jsonRecordArrayColumn,
   jsonRecordColumn,
   many,
+  payloadColumnsSql,
+  payloadRowJsonSql,
   mapAttempt,
   mapAttemptSummary,
   mapDeadCommand,
@@ -78,7 +80,7 @@ export const createStoredRunWithState = async (
     if (!input.idempotencyKey) return undefined
     const existing = await one(
       connection,
-      'SELECT * FROM workflow_runs WHERE idempotency_key = $1::jsonb',
+      `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE idempotency_key = $1::jsonb`,
       [json(input.idempotencyKey)],
     )
     if (existing) {
@@ -110,7 +112,7 @@ export const createStoredRunWithState = async (
     const existing = await one(
       connection,
       `
-        SELECT * FROM workflow_runs
+        SELECT *, ${payloadColumnsSql()} FROM workflow_runs
         WHERE unique_key = $1::jsonb AND unique_scope = $2 ${statusFilter}
       `,
       [json(input.unique.key), input.unique.scope],
@@ -158,7 +160,7 @@ export const createStoredRunWithState = async (
           1, $15, $15, $15
         )
         ON CONFLICT DO NOTHING
-        RETURNING *, NULL::text AS old_status
+        RETURNING *, ${payloadColumnsSql()}, NULL::text AS old_status
       ),
       ${emitStatusChangeNotifySql('inserted', 'run_created')}
       SELECT inserted.*${notifyRunStatusEventColumnsSql('run_created')}
@@ -286,7 +288,7 @@ export const deleteRunInTransaction = async (
 
   const target = await one(
     connection,
-    'SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE',
+    `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1 FOR UPDATE`,
     [runId],
   )
   if (!target) return { deleted: false }
@@ -490,7 +492,7 @@ export const createPostgresWorkflowRunStore = (
       const rows = await many(
         db,
         `
-        SELECT r.*
+        SELECT r.*, ${payloadColumnsSql('r')}
         FROM workflow_runs r
         ${query.whereSql}
         ORDER BY r.created_at DESC, r.id DESC
@@ -761,7 +763,7 @@ export const createPostgresWorkflowRunStore = (
       if (ids.length === 0) return []
       const rows = await many(
         db,
-        'SELECT * FROM workflow_runs WHERE id = ANY($1::uuid[])',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = ANY($1::uuid[])`,
         [ids],
       )
       // ANY() returns rows in unspecified order; reorder to keep the
@@ -792,21 +794,21 @@ export const createPostgresWorkflowRunStore = (
         db,
         `
         SELECT
-          (SELECT to_jsonb(r) FROM workflow_runs r WHERE r.id = $1) AS run,
+          (SELECT ${payloadRowJsonSql('r')} FROM workflow_runs r WHERE r.id = $1) AS run,
           COALESCE(
-            (SELECT jsonb_agg(to_jsonb(n)) FROM workflow_nodes n WHERE n.run_id = $1),
+            (SELECT jsonb_agg(${payloadRowJsonSql('n')}) FROM workflow_nodes n WHERE n.run_id = $1),
             '[]'::jsonb
           ) AS nodes,
           COALESCE(
             (
-              SELECT jsonb_agg(to_jsonb(c) ORDER BY c.node_name, c.ordinal, c.child_key)
+              SELECT jsonb_agg(${payloadRowJsonSql('c')} ORDER BY c.node_name, c.ordinal, c.child_key)
               FROM workflow_node_children c
               WHERE c.run_id = $1
             ),
             '[]'::jsonb
           ) AS children,
           COALESCE(
-            (SELECT jsonb_agg(to_jsonb(a)) FROM workflow_attempts a WHERE a.run_id = $1),
+            (SELECT jsonb_agg(${payloadRowJsonSql('a')}) FROM workflow_attempts a WHERE a.run_id = $1),
             '[]'::jsonb
           ) AS attempts
       `,

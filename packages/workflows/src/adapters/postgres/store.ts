@@ -8,6 +8,8 @@ import { createRunCoordinationExecutor } from './queue.ts'
 import {
   DEFAULT_MAX_DELIVERIES,
   many,
+  payloadColumnsSql,
+  payloadRowJsonSql,
   one,
   mapRun,
   mapNode,
@@ -57,13 +59,13 @@ export const createPostgresWorkflowStore = (
           const rows = await many(
             tx,
             `
-              SELECT r.*,
-                COALESCE((SELECT jsonb_agg(n) FROM workflow_nodes n WHERE n.run_id = r.id), '[]'::jsonb) AS nodes,
+              SELECT r.*, ${payloadColumnsSql('r')},
+                COALESCE((SELECT jsonb_agg(${payloadRowJsonSql('n')}) FROM workflow_nodes n WHERE n.run_id = r.id), '[]'::jsonb) AS nodes,
                 COALESCE((
-                  SELECT jsonb_agg(c ORDER BY c.node_name, c.ordinal, c.child_key)
+                  SELECT jsonb_agg(${payloadRowJsonSql('c')} ORDER BY c.node_name, c.ordinal, c.child_key)
                   FROM workflow_node_children c WHERE c.run_id = r.id
                 ), '[]'::jsonb) AS children,
-                COALESCE((SELECT jsonb_agg(a) FROM workflow_attempts a WHERE a.run_id = r.id), '[]'::jsonb) AS attempts
+                COALESCE((SELECT jsonb_agg(${payloadRowJsonSql('a')}) FROM workflow_attempts a WHERE a.run_id = r.id), '[]'::jsonb) AS attempts
               FROM workflow_runs r
               WHERE r.id = $1 OR r.root_run_id = $1
               ORDER BY r.created_at, r.id
@@ -112,7 +114,7 @@ export const createPostgresWorkflowStore = (
               EXISTS (SELECT 1 FROM workflow_run_leases l WHERE l.run_id = r.id AND l.expires_at > now()) AS busy,
               EXISTS (SELECT 1 FROM workflow_commands c WHERE c.run_id = r.id AND c.lease_expires_at > now() AND c.dead_at IS NULL) AS claimed,
               (
-                SELECT to_jsonb(holder) FROM workflow_runs holder
+                SELECT ${payloadRowJsonSql('holder')} FROM workflow_runs holder
                 WHERE holder.id <> r.id AND holder.unique_key = r.unique_key AND holder.unique_scope = r.unique_scope
                   AND (r.unique_scope = 'all' OR holder.status NOT IN ('completed', 'cancelled', 'failed'))
                 LIMIT 1
@@ -154,7 +156,7 @@ export const createPostgresWorkflowStore = (
               UPDATE workflow_runs r SET status = 'queued', error = NULL, output = NULL,
                 active_since = now(), updated_at = now(), version = r.version + 1
               FROM candidates WHERE r.id = candidates.id
-              RETURNING r.*, candidates.old_status
+              RETURNING r.*, ${payloadColumnsSql('r')}, candidates.old_status
             ), deleted_leases AS (
               DELETE FROM workflow_run_leases WHERE run_id = ANY($1::uuid[])
             ), deleted_commands AS (
@@ -223,7 +225,7 @@ export const createPostgresWorkflowStore = (
             const conflict = await one(
               db,
               `
-            SELECT holder.* FROM workflow_runs retried
+            SELECT holder.*, ${payloadColumnsSql('holder')} FROM workflow_runs retried
             JOIN workflow_runs holder ON holder.unique_key = retried.unique_key
               AND holder.unique_scope = retried.unique_scope AND holder.id <> retried.id
             WHERE retried.root_run_id = $1

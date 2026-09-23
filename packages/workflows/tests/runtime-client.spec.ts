@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -17,8 +17,8 @@ describe('workflow runtime client', () => {
   it('starts workflows and reads their snapshots', async () => {
     const workflow = defineWorkflow({
       name: 'client-started-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
       tags: (input) => ({
         prefix: 'wf',
         scenario: input.scenario,
@@ -59,8 +59,8 @@ describe('workflow runtime client', () => {
   it('starts workflows at a delayed time while exposing the run immediately', async () => {
     const workflow = defineWorkflow({
       name: 'client-delayed-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -86,8 +86,8 @@ describe('workflow runtime client', () => {
   it('starts workflows with definition-level metadata without registering an implementation', async () => {
     const workflow = defineWorkflow({
       name: 'client-definition-metadata-workflow',
-      input: t.object({ curriculumId: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ curriculumId: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
       tags: (input) => ({ curriculumId: input.curriculumId }),
       idempotency: (input) => ['workflow', input.curriculumId],
     }).build()
@@ -121,8 +121,8 @@ describe('workflow runtime client', () => {
   it('wraps workflow tags builder errors as user callback errors', async () => {
     const workflow = defineWorkflow({
       name: 'client-throwing-tags-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
       tags: () => {
         throw new Error('bad workflow tags')
       },
@@ -142,8 +142,8 @@ describe('workflow runtime client', () => {
   it('rejects invalid workflow start input before creating a run', async () => {
     const workflow = defineWorkflow({
       name: 'client-invalid-workflow-input',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -159,8 +159,8 @@ describe('workflow runtime client', () => {
   it('starts tasks and dispatches the task attempt', async () => {
     const task = defineTask({
       name: 'client-started-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       idempotency: (input) => ['task', input.text],
     })
     const implementation = implementTask(task, {
@@ -198,8 +198,8 @@ describe('workflow runtime client', () => {
   it('starts tasks at a delayed time while exposing the run immediately', async () => {
     const task = defineTask({
       name: 'client-delayed-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -226,8 +226,8 @@ describe('workflow runtime client', () => {
   it('starts tasks with definition-level idempotency without registering an implementation', async () => {
     const task = defineTask({
       name: 'client-definition-metadata-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       idempotency: (input) => ['task', input.text],
     })
     const runtime = createInMemoryWorkflowRuntime()
@@ -249,8 +249,8 @@ describe('workflow runtime client', () => {
   it('wraps task tags builder errors as user callback errors', async () => {
     const task = defineTask({
       name: 'client-throwing-tags-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       tags: () => {
         throw new Error('bad task tags')
       },
@@ -268,8 +268,8 @@ describe('workflow runtime client', () => {
   it('rejects invalid task start input before creating a run', async () => {
     const task = defineTask({
       name: 'client-invalid-task-input',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -285,8 +285,8 @@ describe('workflow runtime client', () => {
   it('lists runs through the store-backed client', async () => {
     const workflow = defineWorkflow({
       name: 'client-listed-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -320,8 +320,8 @@ describe('workflow runtime client', () => {
   it('deletes terminal root runs through the client', async () => {
     const workflow = defineWorkflow({
       name: 'client-delete-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -340,8 +340,8 @@ describe('workflow runtime client', () => {
   it('retries terminal workflow runs with original input and tags', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -385,8 +385,8 @@ describe('workflow runtime client', () => {
   it('retries workflow runs using the canonical workflow name', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-canonical-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -419,8 +419,8 @@ describe('workflow runtime client', () => {
   it('lets retry options override copied workflow tags', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-workflow-tag-override',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -450,8 +450,8 @@ describe('workflow runtime client', () => {
   it('lets retry options set a workflow idempotency key', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-workflow-idempotency-override',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -481,8 +481,8 @@ describe('workflow runtime client', () => {
   it('retries terminal task runs with original input and tags', async () => {
     const task = defineTask({
       name: 'client-retry-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
       handler: async (_ctx, input) => ({ id: input.text }),
@@ -527,8 +527,8 @@ describe('workflow runtime client', () => {
   it('refuses to retry non-terminal runs', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-live-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -578,8 +578,8 @@ describe('workflow runtime client', () => {
   it('refuses to retry runs whose definition is unknown to the client', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-unregistered-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -597,8 +597,8 @@ describe('workflow runtime client', () => {
   it('retries workflow runs resolved from definitions without implementations', async () => {
     const workflow = defineWorkflow({
       name: 'client-retry-definition-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -630,8 +630,8 @@ describe('workflow runtime client', () => {
   it('retries task runs resolved from definitions without implementations', async () => {
     const task = defineTask({
       name: 'client-retry-definition-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient({
@@ -655,13 +655,13 @@ describe('workflow runtime client', () => {
   it('rejects conflicting definitions under one name at construction', async () => {
     const workflow = defineWorkflow({
       name: 'client-conflicting-definition',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const shadow = defineWorkflow({
       name: 'client-conflicting-definition',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ caseId: input.scenario }),
@@ -680,8 +680,8 @@ describe('workflow runtime client', () => {
   it('manages schedules through the adapter scheduler', async () => {
     const workflow = defineWorkflow({
       name: 'client-scheduled-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -737,8 +737,8 @@ describe('workflow runtime client', () => {
   it('requests cancellation and enqueues a continuation', async () => {
     const workflow = defineWorkflow({
       name: 'client-cancelled-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -764,8 +764,8 @@ describe('workflow runtime client', () => {
   it('settles standalone task runs on cancel instead of enqueueing a continuation', async () => {
     const task = defineTask({
       name: 'client-cancelled-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -789,8 +789,8 @@ describe('workflow runtime client', () => {
   it('returns terminal runs unchanged when cancellation is requested', async () => {
     const workflow = defineWorkflow({
       name: 'client-terminal-cancel-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -809,8 +809,8 @@ describe('workflow runtime client', () => {
   it('watches run status changes until the watched run terminates', async () => {
     const workflow = defineWorkflow({
       name: 'client-watch-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
@@ -850,8 +850,8 @@ describe('workflow runtime client', () => {
   it('yields the terminal status once and ends when watching a terminal run', async () => {
     const workflow = defineWorkflow({
       name: 'client-watch-terminal-workflow',
-      input: t.object({ scenario: t.string() }),
-      output: t.object({ caseId: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
+      output: Schema.Struct({ caseId: Schema.String }),
     }).build()
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)

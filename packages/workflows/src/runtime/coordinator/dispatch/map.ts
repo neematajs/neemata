@@ -3,12 +3,14 @@ import type { MapNodeOutput, WorkflowNode } from '../../../types/index.ts'
 import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { itemChildKey } from '../../child-key.ts'
+import { decodeStoredValue } from '../../codec.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt } from '../attempt.ts'
 import { loadChildRuns } from '../children.ts'
 import {
-  decodeMapItems,
-  decodeWorkflowUserSchemaValue,
+  encodeMapItems,
+  encodeWorkflowInput,
+  decodeWorkflowNodeOutput,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   mapConcurrencyLimit,
@@ -73,7 +75,7 @@ export async function dispatchMapTaskNode(
         runCoordinationExecutor: input.runCoordinationExecutor,
         taskName: input.node.target.name,
         taskRunId: childRun.id,
-        taskInput: childRun.input ?? input.run.input,
+        taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: declaration.timeout ?? declaration.task.timeout,
       })
@@ -166,7 +168,7 @@ async function dispatchMap<T extends MapDeclaration>(
   }
   const typedDeclaration = declaration as T
 
-  // The node input records the decoded item list, marking the (possibly
+  // The node input records the encoded item list, marking the (possibly
   // empty) item set as ensured so the user's items callback runs only once.
   let children: readonly StoredNodeChild[]
   if (hasStoredNodeInput(existing)) {
@@ -177,7 +179,7 @@ async function dispatchMap<T extends MapDeclaration>(
       })
     ).children
   } else {
-    const items = decodeMapItems(
+    const items = encodeMapItems(
       typedDeclaration.item,
       runWorkflowUserCallback(() =>
         input.node.items(input.workflowCtx, input.outputs, input.run.input),
@@ -306,13 +308,20 @@ async function dispatchMap<T extends MapDeclaration>(
     if (activeChildren >= concurrency) continue
 
     try {
-      const nodeInput = decodeWorkflowUserSchemaValue(
+      const item = runWorkflowUserCallback(() =>
+        decodeStoredValue(
+          typedDeclaration.item,
+          child.item,
+          `map item [${input.node.name}.${child.ordinal}]`,
+        ),
+      )
+      const nodeInput = encodeWorkflowInput(
         input.node.target.input,
         runWorkflowUserCallback(() =>
           input.node.input(
             input.workflowCtx,
             input.outputs,
-            child.item,
+            item,
             input.run.input,
             child.ordinal,
           ),
@@ -323,7 +332,7 @@ async function dispatchMap<T extends MapDeclaration>(
         input.node.idempotency,
         input.workflowCtx,
         input.outputs,
-        child.item,
+        item,
         input.run.input,
         child.ordinal,
       )
@@ -367,7 +376,14 @@ async function dispatchMap<T extends MapDeclaration>(
     })
     return await input.advance({
       ...input,
-      outputs: { ...input.outputs, [input.node.name]: output },
+      outputs: {
+        ...input.outputs,
+        [input.node.name]: decodeWorkflowNodeOutput(
+          input.workflow,
+          input.node.name,
+          output,
+        ),
+      },
     })
   }
 

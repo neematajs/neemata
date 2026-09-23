@@ -14,7 +14,7 @@ import {
   isNeemRuntimeHostFactory,
   isNeemRuntimeWorker,
 } from '@nmtjs/neem'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -44,8 +44,8 @@ describe('workflows Neem integration', () => {
 
   const workflow = defineWorkflow({
     name: 'neem.integration.empty',
-    input: t.object({ id: t.string() }),
-    output: t.object({ id: t.string() }),
+    input: Schema.Struct({ id: Schema.String }),
+    output: Schema.Struct({ id: Schema.String }),
   }).build()
   const workflowImpl = implementWorkflow(workflow).finish(
     (_ctx, _outputs, input) => ({ id: input.id }),
@@ -94,12 +94,12 @@ describe('workflows Neem integration', () => {
   it('plans one worker group per named execution pool', async () => {
     const pooledWorkflow = defineWorkflow({
       name: 'neem.integration.pooled',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
       .activity('handleUserRequest', {
-        input: t.object({}),
-        output: t.object({}),
+        input: Schema.Struct({}),
+        output: Schema.Struct({}),
       })
       .build()
     const pooledImpl = implementWorkflow(pooledWorkflow)
@@ -228,11 +228,11 @@ describe('workflows Neem integration', () => {
   it('rejects named pools that leave a registered activity uncovered', async () => {
     const workflowWithActivities = defineWorkflow({
       name: 'neem.integration.pool-coverage',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
-      .activity('fast', { input: t.object({}), output: t.object({}) })
-      .activity('slow', { input: t.object({}), output: t.object({}) })
+      .activity('fast', { input: Schema.Struct({}), output: Schema.Struct({}) })
+      .activity('slow', { input: Schema.Struct({}), output: Schema.Struct({}) })
       .build()
     const impl = implementWorkflow(workflowWithActivities)
       .fast(async () => ({}))
@@ -296,12 +296,12 @@ describe('workflows Neem integration', () => {
   it('resolves catch-all selectors as the complement of named pools', async () => {
     const workflowWithActivities = defineWorkflow({
       name: 'neem.integration.pool-complement',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
-      .activity('fast', { input: t.object({}), output: t.object({}) })
-      .activity('slow', { input: t.object({}), output: t.object({}) })
-      .activity('bulk', { input: t.object({}), output: t.object({}) })
+      .activity('fast', { input: Schema.Struct({}), output: Schema.Struct({}) })
+      .activity('slow', { input: Schema.Struct({}), output: Schema.Struct({}) })
+      .activity('bulk', { input: Schema.Struct({}), output: Schema.Struct({}) })
       .build()
     const impl = implementWorkflow(workflowWithActivities)
       .fast(async () => ({}))
@@ -342,13 +342,13 @@ describe('workflows Neem integration', () => {
   it('rejects child workflows without a registered implementation', async () => {
     const child = defineWorkflow({
       name: 'neem.integration.unregistered-child',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     }).build()
     const parent = defineWorkflow({
       name: 'neem.integration.parent-with-unregistered-child',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
       .workflow('child', child)
       .build()
@@ -371,14 +371,14 @@ describe('workflows Neem integration', () => {
   it('validates and resolves task selectors independently from activities', async () => {
     const task = defineTask({
       name: 'neem.integration.routed-task',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
     const taskImpl = implementTask(task, { handler: async () => ({}) })
     const workflowWithTask = defineWorkflow({
       name: 'neem.integration.workflow-with-routed-task',
-      input: t.object({}),
-      output: t.object({}),
+      input: Schema.Struct({}),
+      output: Schema.Struct({}),
     })
       .task('run', task)
       .build()
@@ -444,8 +444,8 @@ describe('workflows Neem integration', () => {
     const prefix = createValueInjectable('typed')
     const task = defineTask({
       name: 'neem.integration.typed-task-dependencies',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const taskImpl = implementTask(task, {
       dependencies: { prefix },
@@ -516,8 +516,8 @@ describe('workflows Neem integration', () => {
   it('stops promptly by delivering shutdown to an in-flight task handler', async () => {
     const task = defineTask({
       name: 'neem.integration.shutdown-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     let shutdownReason: unknown
     let handlerStarted!: () => void
@@ -638,17 +638,17 @@ describe('workflows Neem integration', () => {
     })
     const task = defineTask({
       name: 'neem.integration.task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
     const fullWorkflow = defineWorkflow({
       name: 'neem.integration.full',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('activity', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .task('task', task)
       .build()

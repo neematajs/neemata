@@ -5,10 +5,12 @@ import type { AnyWorkflowDefinition } from '../../types/index.ts'
 import type { ContinueRunCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
+import { decodeStoredValue, decodeNodeOutput } from '../codec.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
+import { getWorkflowNodeDeclaration } from './codec.ts'
 import { cancelRunAndWakeParent, failRunAndWakeParent } from './sinks.ts'
 
 class StaleRunLeaseError extends Error {
@@ -112,11 +114,31 @@ export async function continueWorkflowRun(
         const workflowCtx = await input.container.createContext(
           implementation.dependencies,
         )
-        const outputs = Object.fromEntries(
-          snapshot.nodes
-            .filter((node) => node.status === 'completed')
-            .map((node) => [node.name, node.output]),
-        )
+        const outputs: Record<string, unknown> = {}
+        let workflowInput: unknown
+        try {
+          workflowInput = decodeStoredValue(
+            implementation.workflow.input,
+            snapshot.run.input,
+            `workflow input [${implementation.workflow.name}]`,
+          )
+          for (const node of snapshot.nodes) {
+            if (node.status !== 'completed') continue
+            outputs[node.name] = decodeNodeOutput(
+              getWorkflowNodeDeclaration(implementation, node.name),
+              node.output,
+              node.selectedCase,
+            )
+          }
+        } catch (error) {
+          await failRunAndWakeParent({
+            store,
+            runCoordinationExecutor: input.runCoordinationExecutor,
+            runId: snapshot.run.id,
+            error,
+          })
+          return { status: 'processed' }
+        }
 
         // The run has coordination work from here on; queued/waiting → running
         // before dispatching so status filters see live runs as such.
@@ -128,7 +150,7 @@ export async function continueWorkflowRun(
           runCoordinationExecutor: input.runCoordinationExecutor,
           workflow: implementation,
           workflowCtx: workflowCtx as DependencyContext<any>,
-          run: snapshot.run,
+          run: { ...snapshot.run, input: workflowInput },
           outputs,
           advance: advanceWorkflowRun,
         })

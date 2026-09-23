@@ -61,6 +61,22 @@ export const now = () => {
 export const json = (value: unknown) => JSON.stringify(value)
 export const fromOptional = (value: unknown) =>
   value === null ? undefined : value
+
+// Drivers represent both SQL NULL and JSON null as JS null. Carry presence
+// through projections (including JSON aggregates) so codecs see JSON null,
+// while an unset node input still means its binding has not run yet.
+export function payloadColumnsSql(alias?: string) {
+  const prefix = alias ? `${alias}.` : ''
+  return `${prefix}input IS NOT NULL AS input_present, ${prefix}output IS NOT NULL AS output_present`
+}
+
+export function payloadRowJsonSql(alias: string) {
+  return `(to_jsonb(${alias}) || jsonb_build_object('input_present', ${alias}.input IS NOT NULL, 'output_present', ${alias}.output IS NOT NULL))`
+}
+
+function optionalPayload(row: JsonRecord, key: 'input' | 'output') {
+  return row[`${key}_present`] === true ? { [key]: row[key] } : {}
+}
 export const isRecord = (value: unknown): value is JsonRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 export const sameValue = (left: unknown, right: unknown): boolean => {
@@ -154,7 +170,7 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
   ...optional('taskName', row.task_name as string | undefined),
   status: row.status as StoredRun['status'],
   input: row.input,
-  ...optional('output', fromOptional(row.output)),
+  ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('parentRunId', row.parent_run_id as string | undefined),
   ...optional('parentNodeName', row.parent_node_name as string | undefined),
@@ -208,8 +224,8 @@ export const mapNode = (row: JsonRecord): StoredNode => ({
   name: row.name as string,
   kind: row.kind as StoredNode['kind'],
   status: row.status as StoredNode['status'],
-  ...optional('input', fromOptional(row.input)),
-  ...optional('output', fromOptional(row.output)),
+  ...optionalPayload(row, 'input'),
+  ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('selectedCase', row.selected_case as string | undefined),
   version: row.version as number,
@@ -244,7 +260,7 @@ export const mapAttempt = (row: JsonRecord): StoredAttempt => ({
     'idempotencyKey',
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
-  ...optional('output', fromOptional(row.output)),
+  ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   dispatchedAt: row.dispatched_at as Date,
   ...optional('heartbeatAt', row.heartbeat_at as Date | undefined),
@@ -285,8 +301,8 @@ export const mapNodeChild = (row: JsonRecord): StoredNodeChild => ({
   ...((row.child_key as string).startsWith('item:')
     ? { item: row.item }
     : optional('item', fromOptional(row.item))),
-  ...optional('input', fromOptional(row.input)),
-  ...optional('output', fromOptional(row.output)),
+  ...optionalPayload(row, 'input'),
+  ...optionalPayload(row, 'output'),
   ...optional('error', fromOptional(row.error) as StoredError | undefined),
   ...optional('childRunId', row.child_run_id as string | undefined),
   ...optional('currentAttemptId', row.current_attempt_id as string | undefined),

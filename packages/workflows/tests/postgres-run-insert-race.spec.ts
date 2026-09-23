@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import {
@@ -41,7 +41,7 @@ test('idempotent start racing a concurrent duplicate returns the existing run', 
   await installPostgresWorkflowSchemaForTesting(connection)
   const workflow = defineWorkflow({
     name: 'insert-race-idempotent-start',
-    input: t.object({ value: t.string() }),
+    input: Schema.Struct({ value: Schema.String }),
   }).build()
 
   const client = createWorkflowRuntimeClient(

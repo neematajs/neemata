@@ -12,10 +12,11 @@ import { isTerminalNodeStatus } from '../../status.ts'
 import { dispatchActivityAttempt } from '../attempt.ts'
 import { dispatchChildTaskRun, dispatchChildWorkflow } from '../children.ts'
 import {
+  decodeWorkflowNodeOutput,
   getWorkflowNodeDeclaration,
   hasStoredNodeInput,
   resolveIdempotency,
-  decodeWorkflowUserSchemaValue,
+  encodeWorkflowInput,
 } from '../codec.ts'
 import { runWorkflowUserCallback } from '../context.ts'
 import { cancelNodeAndRun, failNodeAndRun } from '../sinks.ts'
@@ -102,7 +103,15 @@ export async function dispatchBranchNode(
     })
     return await input.advance({
       ...input,
-      outputs: { ...input.outputs, [input.node.name]: child.output },
+      outputs: {
+        ...input.outputs,
+        [input.node.name]: decodeWorkflowNodeOutput(
+          input.workflow,
+          input.node.name,
+          child.output,
+          caseKey,
+        ),
+      },
     })
   }
   if (child.status === 'failed') {
@@ -134,8 +143,6 @@ export async function dispatchBranchNode(
       nodeName: input.node.name,
       childKey,
       workflowName: selected.target.name,
-      inputSchema: selected.target.input,
-      inputLabel: `workflow input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
@@ -145,10 +152,19 @@ export async function dispatchBranchNode(
         ),
       resolveNodeInput: () => {
         if (hasStoredNodeInput(existing)) return existing.input
-        if (!selected.input) return input.run.input
-
-        return runWorkflowUserCallback(() =>
-          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        return encodeWorkflowInput(
+          selected.target.input,
+          selected.input
+            ? runWorkflowUserCallback(() =>
+                selected.input!(
+                  input.workflowCtx,
+                  input.outputs,
+                  input.run.input,
+                ),
+              )
+            : input.run.input,
+          `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          !selected.input,
         )
       },
     })
@@ -169,13 +185,10 @@ export async function dispatchBranchNode(
     const taskTarget = selected.target as AnyTaskDefinition
     return await dispatchChildTaskRun({
       ...input,
-      parentNode: existing,
       nodeName: input.node.name,
       childKey,
       taskName: taskTarget.name,
       timeout: taskDeclaration.timeout ?? taskTarget.timeout,
-      inputSchema: taskTarget.input,
-      inputLabel: `task input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
       resolveIdempotencyKey: () =>
         resolveIdempotency(
           selected.idempotency,
@@ -185,10 +198,19 @@ export async function dispatchBranchNode(
         ),
       resolveNodeInput: () => {
         if (hasStoredNodeInput(existing)) return existing.input
-        if (!selected.input) return input.run.input
-
-        return runWorkflowUserCallback(() =>
-          selected.input!(input.workflowCtx, input.outputs, input.run.input),
+        return encodeWorkflowInput(
+          selected.target.input,
+          selected.input
+            ? runWorkflowUserCallback(() =>
+                selected.input!(
+                  input.workflowCtx,
+                  input.outputs,
+                  input.run.input,
+                ),
+              )
+            : input.run.input,
+          `${selected.kind} input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+          !selected.input,
         )
       },
     })
@@ -216,10 +238,11 @@ export async function dispatchBranchNode(
           selected.input!(input.workflowCtx, input.outputs, input.run.input),
         )
       : input.run.input
-    nodeInput = decodeWorkflowUserSchemaValue(
+    nodeInput = encodeWorkflowInput(
       selectedActivityDeclaration.input,
       rawInput,
       `activity input [${input.workflow.workflow.name}.${input.node.name}.${caseKey}]`,
+      !selected.input,
     )
     await input.store.setNodeInput({
       runId: input.run.id,

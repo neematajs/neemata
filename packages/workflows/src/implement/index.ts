@@ -288,20 +288,18 @@ type ActivityCaseDescriptor<
   Input,
   Output,
   Deps extends Dependencies = Dependencies,
+  EncodedInput = Input,
 > = {
   readonly kind: 'activityCase'
   readonly value: ActivityImplementationValue<Input, Output, Deps>
-  readonly options?: WorkflowInputMapper<any, any, any, Input>
+  readonly options?: WorkflowInputMapper<any, any, any, EncodedInput>
 }
 
 type AnyActivityImplementationValue<Input, Output> =
   ActivityImplementationValue<Input, Output, any>
 
-type AnyActivityCaseDescriptor<Input, Output> = ActivityCaseDescriptor<
-  Input,
-  Output,
-  any
->
+type AnyActivityCaseDescriptor<Input, Output, EncodedInput> =
+  ActivityCaseDescriptor<Input, Output, any, EncodedInput>
 
 type RunnableCaseDescriptor<
   Target extends AnyTaskDefinition | AnyWorkflowDefinition,
@@ -321,7 +319,8 @@ type CaseImplementationValue<Case> =
           >
         | AnyActivityCaseDescriptor<
             BoundaryOutput<Input>,
-            BoundaryInput<Output>
+            BoundaryInput<Output>,
+            BoundaryInput<Input>
           >
     : Case extends BranchCaseDefinition<'task', any, any, infer Task>
       ? Task extends AnyTaskDefinition
@@ -350,10 +349,11 @@ type CaseImplementers<
     NodeInput,
     Output,
     Deps extends Dependencies = Dependencies,
+    EncodedInput = NodeInput,
   >(
     value: ActivityImplementationValue<NodeInput, Output, Deps>,
-    options?: WorkflowInputMapper<WorkflowDeps, Outputs, Input, NodeInput>,
-  ) => ActivityCaseDescriptor<NodeInput, Output, Deps>
+    options?: WorkflowInputMapper<WorkflowDeps, Outputs, Input, EncodedInput>,
+  ) => ActivityCaseDescriptor<NodeInput, Output, Deps, EncodedInput>
   readonly task: <Task extends AnyTaskDefinition>(
     task: Task,
     options?: WorkflowInputMapper<
@@ -821,15 +821,20 @@ function nextChain(
 
 function createCaseImplementers(): CaseImplementers<any, any, any> {
   const helpers: CaseImplementers<any, any, any> = {
-    activity: <NodeInput, Output, Deps extends Dependencies = Dependencies>(
+    activity: <
+      NodeInput,
+      Output,
+      Deps extends Dependencies = Dependencies,
+      EncodedInput = NodeInput,
+    >(
       value: ActivityImplementationValue<NodeInput, Output, Deps>,
-      options?: WorkflowInputMapper<any, any, any, NodeInput>,
+      options?: WorkflowInputMapper<any, any, any, EncodedInput>,
     ) =>
       Object.freeze({
         kind: 'activityCase',
         value,
         options,
-      }) as ActivityCaseDescriptor<NodeInput, Output, Deps>,
+      }) as ActivityCaseDescriptor<NodeInput, Output, Deps, EncodedInput>,
     task: <Task extends AnyTaskDefinition>(
       task: Task,
       options?: WorkflowInputMapper<any, any, any, any>,

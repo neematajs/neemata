@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { expect, test } from 'vitest'
 
 import {
@@ -19,7 +19,7 @@ const createPgliteConnection = () =>
 
 const workflow = defineWorkflow({
   name: 'unique-start-workflow',
-  input: t.object({ value: t.string() }),
+  input: Schema.Struct({ value: Schema.String }),
 }).build()
 
 async function createHarness() {
@@ -162,7 +162,7 @@ test('definition-level unique builder applies without start options', async () =
   await installPostgresWorkflowSchemaForTesting(connection)
   const uniqueWorkflow = defineWorkflow({
     name: 'unique-definition-workflow',
-    input: t.object({ entityId: t.string() }),
+    input: Schema.Struct({ entityId: Schema.String }),
     unique: {
       key: (input) => ['entity', input.entityId],
       behavior: 'join',

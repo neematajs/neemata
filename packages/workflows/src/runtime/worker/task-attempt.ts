@@ -6,12 +6,12 @@ import type { ClaimedAttempt } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
+import { decodeStoredValue, normalizeStoredValue } from '../codec.ts'
 import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
-import { decodeSchemaValue } from './activity-attempt.ts'
 import {
   runAtomicCompletion,
   type WorkflowRuntimeAtomicCompletion,
@@ -118,7 +118,11 @@ export async function runTaskAttempt(
         const ctx = await input.container.createContext(task.dependencies)
         return await task.handler(
           ctx as DependencyContext<any>,
-          command.input,
+          decodeStoredValue(
+            task.task.input,
+            command.input,
+            `task input [${task.task.name}]`,
+          ),
           lifecycle,
         )
       },
@@ -135,7 +139,7 @@ export async function runTaskAttempt(
               }),
           },
     )
-    output = decodeSchemaValue(
+    output = normalizeStoredValue(
       task.task.output,
       output,
       `task output [${task.task.name}]`,

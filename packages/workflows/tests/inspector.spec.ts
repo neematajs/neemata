@@ -1,4 +1,4 @@
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import type {
@@ -31,33 +31,33 @@ import {
 
 const scoreTask = defineTask({
   name: 'score',
-  input: t.object({ text: t.string() }),
-  output: t.object({ score: t.number() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ score: Schema.Number }),
 })
 
 const childWorkflow = defineWorkflow({
   name: 'child',
-  input: t.object({ text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 }).build()
 
 const workflow = defineWorkflow({
   name: 'everything',
-  input: t.object({ text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 })
   .activity('extract', {
-    input: t.object({ text: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   })
   .task('scoring', scoreTask)
   .workflow('enrich', childWorkflow)
   .branch('route', {
-    output: t.object({ text: t.string() }),
+    output: Schema.Struct({ text: Schema.String }),
     cases: (helpers) => ({
       inline: helpers.activity({
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }),
       delegated: helpers.workflow(childWorkflow),
     }),
@@ -67,10 +67,10 @@ const workflow = defineWorkflow({
     enriched: helpers.workflow(childWorkflow),
   }))
   .mapTask('scoreAll', scoreTask, {
-    item: t.object({ text: t.string() }),
+    item: Schema.Struct({ text: Schema.String }),
   })
   .mapWorkflow('enrichAll', childWorkflow, {
-    item: t.object({ text: t.string() }),
+    item: Schema.Struct({ text: Schema.String }),
   })
   .build()
 
@@ -78,30 +78,30 @@ const metadataTask = defineTask({
   name: 'metadata-score',
   title: 'Metadata score task',
   description: 'Scores text for metadata graph',
-  input: t.object({ text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 })
 
 const metadataChildWorkflow = defineWorkflow({
   name: 'metadata-child',
   title: 'Metadata child workflow',
   description: 'Enriches text for metadata graph',
-  input: t.object({ text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 }).build()
 
 const metadataWorkflow = defineWorkflow({
   name: 'metadata-everything',
   title: 'Metadata workflow',
   description: 'Workflow graph with presentation metadata',
-  input: t.object({ text: t.string() }),
-  output: t.object({ text: t.string() }),
+  input: Schema.Struct({ text: Schema.String }),
+  output: Schema.Struct({ text: Schema.String }),
 })
   .activity('extract', {
     title: 'Extract text',
     description: 'Extracts text from input',
-    input: t.object({ text: t.string() }),
-    output: t.object({ text: t.string() }),
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
   })
   .task('scoring', metadataTask, {
     title: 'Score text',
@@ -114,13 +114,13 @@ const metadataWorkflow = defineWorkflow({
   .branch('route', {
     title: 'Route text',
     description: 'Chooses inline or delegated work',
-    output: t.object({ text: t.string() }),
+    output: Schema.Struct({ text: Schema.String }),
     cases: (helpers) => ({
       inline: helpers.activity({
         title: 'Inline route',
         description: 'Runs inline route',
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       }),
       scored: helpers.task(metadataTask, {
         title: 'Task route',
@@ -152,12 +152,12 @@ const metadataWorkflow = defineWorkflow({
   .mapTask('scoreAll', metadataTask, {
     title: 'Score all',
     description: 'Scores every item',
-    item: t.object({ text: t.string() }),
+    item: Schema.Struct({ text: Schema.String }),
   })
   .mapWorkflow('enrichAll', metadataChildWorkflow, {
     title: 'Enrich all',
     description: 'Enriches every item',
-    item: t.object({ text: t.string() }),
+    item: Schema.Struct({ text: Schema.String }),
   })
   .build()
 

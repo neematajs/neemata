@@ -8,6 +8,11 @@ import type {
   Schema,
   WorkflowNode,
 } from '../../types/index.ts'
+import {
+  decodeNodeOutput,
+  encodeStoredValue,
+  normalizeStoredValue,
+} from '../codec.ts'
 import { runWorkflowUserCallback } from './context.ts'
 
 export function hasStoredNodeInput(node: {
@@ -16,34 +21,43 @@ export function hasStoredNodeInput(node: {
   return Object.prototype.hasOwnProperty.call(node, 'input')
 }
 
-export function decodeSchemaValue(
+/** Binding callbacks return Encoded; an omitted binding forwards the decoded root input. */
+export function encodeWorkflowInput(
   schema: Schema,
   value: unknown,
   label: string,
+  decoded = false,
 ): unknown {
-  try {
-    return schema.decode(value as never)
-  } catch (error) {
-    throw new Error(`Invalid ${label}`, { cause: error })
-  }
+  return runWorkflowUserCallback(() =>
+    decoded
+      ? encodeStoredValue(schema, value, label)
+      : normalizeStoredValue(schema, value, label),
+  )
 }
 
-export function decodeWorkflowUserSchemaValue(
-  schema: Schema,
-  value: unknown,
-  label: string,
-): unknown {
-  return runWorkflowUserCallback(() => decodeSchemaValue(schema, value, label))
+export function decodeWorkflowNodeOutput(
+  workflow: WorkflowImplementation,
+  nodeName: string,
+  output: unknown,
+  selectedCase?: string,
+) {
+  return runWorkflowUserCallback(() =>
+    decodeNodeOutput(
+      getWorkflowNodeDeclaration(workflow, nodeName),
+      output,
+      selectedCase,
+    ),
+  )
 }
 
-export function decodeMapItems(
+export function encodeMapItems(
   itemSchema: Schema,
   items: readonly unknown[],
   label: string,
 ): readonly unknown[] {
   return runWorkflowUserCallback(() =>
     items.map((item, index) =>
-      decodeSchemaValue(itemSchema, item, `${label}.${index}`),
+      normalizeStoredValue(itemSchema, item, `${label}.${index}`),
     ),
   )
 }

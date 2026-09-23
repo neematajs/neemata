@@ -1,10 +1,11 @@
-import type { DurationString, Schema } from '../../types/index.ts'
+import type { DurationString } from '../../types/index.ts'
 import type { StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
+import { parseChildKey } from '../child-key.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
-import { decodeWorkflowUserSchemaValue } from './codec.ts'
+import { decodeWorkflowNodeOutput } from './codec.ts'
 import {
   cancelNodeAndRun,
   failMissingChildRun,
@@ -27,13 +28,10 @@ export async function loadChildRuns(
 
 export async function dispatchChildTaskRun(
   input: AdvanceCtx & {
-    readonly parentNode: { readonly input?: unknown }
     readonly nodeName: string
     readonly childKey: string
     readonly taskName: string
     readonly timeout?: DurationString
-    readonly inputSchema: Schema
-    readonly inputLabel: string
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -66,7 +64,7 @@ export async function dispatchChildTaskRun(
         runCoordinationExecutor: input.runCoordinationExecutor,
         taskName: input.taskName,
         taskRunId: child.childRunId,
-        taskInput: childRun.input ?? input.parentNode.input,
+        taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
         timeout: input.timeout,
       })
@@ -89,9 +87,16 @@ export async function dispatchChildTaskRun(
         nodeName: input.nodeName,
         output: childRun.output,
       })
+      const key = parseChildKey(input.childKey)
+      const output = decodeWorkflowNodeOutput(
+        input.workflow,
+        input.nodeName,
+        childRun.output,
+        key?.kind === 'case' ? key.caseKey : undefined,
+      )
       return await input.advance({
         ...input,
-        outputs: { ...input.outputs, [input.nodeName]: childRun.output },
+        outputs: { ...input.outputs, [input.nodeName]: output },
       })
     }
 
@@ -124,11 +129,7 @@ export async function dispatchChildTaskRun(
     return 'terminal'
   }
 
-  const nodeInput = decodeWorkflowUserSchemaValue(
-    input.inputSchema,
-    input.resolveNodeInput(),
-    input.inputLabel,
-  )
+  const nodeInput = input.resolveNodeInput()
   const idempotencyKey = input.resolveIdempotencyKey?.()
   await input.store.setNodeInput({
     runId: input.run.id,
@@ -167,8 +168,6 @@ export async function dispatchChildWorkflow(
     readonly nodeName: string
     readonly childKey: string
     readonly workflowName: string
-    readonly inputSchema: Schema
-    readonly inputLabel: string
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
   },
@@ -219,9 +218,16 @@ export async function dispatchChildWorkflow(
         nodeName: input.nodeName,
         output: childRun.output,
       })
+      const key = parseChildKey(input.childKey)
+      const output = decodeWorkflowNodeOutput(
+        input.workflow,
+        input.nodeName,
+        childRun.output,
+        key?.kind === 'case' ? key.caseKey : undefined,
+      )
       return await input.advance({
         ...input,
-        outputs: { ...input.outputs, [input.nodeName]: childRun.output },
+        outputs: { ...input.outputs, [input.nodeName]: output },
       })
     }
 
@@ -255,11 +261,7 @@ export async function dispatchChildWorkflow(
     return 'terminal'
   }
 
-  const nodeInput = decodeWorkflowUserSchemaValue(
-    input.inputSchema,
-    input.resolveNodeInput(),
-    input.inputLabel,
-  )
+  const nodeInput = input.resolveNodeInput()
   const idempotencyKey = input.resolveIdempotencyKey?.()
   await input.store.setNodeInput({
     runId: input.run.id,

@@ -15,6 +15,7 @@ export type ActivityAttemptCommand = {
   readonly childKey: string
   readonly attemptId: string
   readonly leaseToken: string
+  /** Canonical JSON encoding; the worker decodes it before calling the handler. */
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
 }
@@ -28,6 +29,7 @@ export type TaskAttemptCommand = {
   readonly childKey: string
   readonly attemptId: string
   readonly leaseToken: string
+  /** Canonical JSON encoding; retries copy it without decoding/re-encoding. */
   readonly input: unknown
   readonly idempotencyKey?: readonly unknown[]
   readonly timeout?: DurationString

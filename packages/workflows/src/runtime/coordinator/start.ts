@@ -17,9 +17,9 @@ import type {
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
 import type { CreateRunInput, WorkflowStore } from '../store.ts'
+import { decodeSchemaValue, encodeStoredValue } from '../codec.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import {
-  decodeSchemaValue,
   normalizeRunUnique,
   resolveIdempotency,
   resolveTags,
@@ -114,7 +114,11 @@ export async function startWorkflowRun<
     kind: 'workflow',
     name: input.workflow.name,
     workflowName: input.workflow.name,
-    input: workflowInput,
+    input: encodeStoredValue(
+      input.workflow.input,
+      workflowInput,
+      `workflow input [${input.workflow.name}]`,
+    ),
     tags: metadata.tags,
     idempotencyKey: metadata.idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
@@ -177,12 +181,17 @@ export async function startTaskRun<
     input.unique ?? resolveUnique(input.task.unique, taskInput),
   )
 
+  const storedInput = encodeStoredValue(
+    input.task.input,
+    taskInput,
+    `task input [${input.task.name}]`,
+  )
   const runInput: CreateRunInput = {
     kind: 'task',
     name: input.task.name,
     workflowName: input.task.name,
     taskName: input.task.name,
-    input: taskInput,
+    input: storedInput,
     tags: input.tags ?? resolveTags(input.task.tags, taskInput),
     idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
@@ -192,7 +201,7 @@ export async function startTaskRun<
     return await input.atomicStart.startTaskRun({
       run: runInput,
       taskName: input.task.name,
-      taskInput,
+      taskInput: storedInput,
       ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
       startAt: input.startAt,
       ...(input.connection === undefined
@@ -210,7 +219,7 @@ export async function startTaskRun<
     runCoordinationExecutor: input.runCoordinationExecutor,
     taskName: input.task.name,
     taskRunId: run.id,
-    taskInput,
+    taskInput: storedInput,
     idempotencyKey,
     timeout: input.task.timeout,
     startAt: input.startAt,

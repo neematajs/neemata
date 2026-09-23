@@ -17,6 +17,7 @@ import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
+import { decodeStoredValue, normalizeStoredValue } from '../codec.ts'
 import { parseDurationMs } from '../duration.ts'
 import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -63,18 +64,6 @@ export type RunActivityAttemptInput = {
   readonly signal?: AbortSignal
   readonly wakeEvents?: WorkflowWakeEvents
   readonly container: Pick<Container, 'createContext'>
-}
-
-export function decodeSchemaValue(
-  schema: Schema,
-  value: unknown,
-  label: string,
-): unknown {
-  try {
-    return schema.decode(value as never)
-  } catch (error) {
-    throw new Error(`Invalid ${label}`, { cause: error })
-  }
 }
 
 export async function runActivityAttempt(
@@ -143,6 +132,11 @@ export async function runActivityAttempt(
 
   let output: unknown
   try {
+    const schemas = resolveActivityAttemptSchemas(workflow, command)
+    if (!schemas)
+      throw new Error(
+        `Missing activity codecs [${command.workflowName}.${command.nodeName}.${command.childKey}]`,
+      )
     const timeoutMs = resolveActivityAttemptTimeoutMs(workflow, command)
     output = await runWithAttemptHeartbeat(
       input,
@@ -152,7 +146,11 @@ export async function runActivityAttempt(
         )
         return await node.activity.handler(
           ctx as DependencyContext<any>,
-          command.input,
+          decodeStoredValue(
+            schemas.input,
+            command.input,
+            `activity input [${schemas.label}]`,
+          ),
           lifecycle,
         )
       },
@@ -169,14 +167,11 @@ export async function runActivityAttempt(
               }),
           },
     )
-    const outputSchema = resolveActivityAttemptOutputSchema(workflow, command)
-    if (outputSchema) {
-      output = decodeSchemaValue(
-        outputSchema.schema,
-        output,
-        outputSchema.label,
-      )
-    }
+    output = normalizeStoredValue(
+      schemas.output,
+      output,
+      `activity output [${schemas.label}]`,
+    )
   } catch (error) {
     if (isAttemptHeartbeatLeaseLost(error) || isAttemptShutdown(error)) {
       throw error
@@ -349,18 +344,21 @@ function resolveActivityAttemptTimeoutMs(
   return caseDeclaration ? parseDurationMs(caseDeclaration.timeout) : undefined
 }
 
-function resolveActivityAttemptOutputSchema(
+function resolveActivityAttemptSchemas(
   workflow: WorkflowImplementation,
   command: ActivityAttemptCommand,
-): { readonly schema: Schema; readonly label: string } | undefined {
+):
+  | { readonly input: Schema; readonly output: Schema; readonly label: string }
+  | undefined {
   const declaration = workflow.workflow.nodes.find(
     (candidate) => candidate.name === command.nodeName,
   )
   if (!declaration) return undefined
   if (declaration.kind === 'activity') {
     return {
-      schema: declaration.output,
-      label: `activity output [${workflow.workflow.name}.${command.nodeName}]`,
+      input: declaration.input,
+      output: declaration.output,
+      label: `${workflow.workflow.name}.${command.nodeName}`,
     }
   }
   const caseDeclaration = resolveActivityAttemptCaseDeclaration(
@@ -369,7 +367,8 @@ function resolveActivityAttemptOutputSchema(
   )
   if (!caseDeclaration) return undefined
   return {
-    schema: caseDeclaration.output,
-    label: `activity output [${workflow.workflow.name}.${command.nodeName}.${command.childKey}]`,
+    input: caseDeclaration.input,
+    output: caseDeclaration.output,
+    label: `${workflow.workflow.name}.${command.nodeName}.${command.childKey}`,
   }
 }

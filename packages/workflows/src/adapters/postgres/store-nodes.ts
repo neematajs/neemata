@@ -20,6 +20,8 @@ import {
   jsonRecordColumn,
   json,
   many,
+  payloadColumnsSql,
+  payloadRowJsonSql,
   mapAttempt,
   mapNode,
   mapNodeChild,
@@ -75,7 +77,7 @@ export const createPostgresWorkflowNodeStore = (
   const loadFencedAttempt = async (attemptId: string, leaseToken: string) => {
     const attempt = await one<AttemptRow>(
       db,
-      'SELECT * FROM workflow_attempts WHERE id = $1',
+      `SELECT *, ${payloadColumnsSql()} FROM workflow_attempts WHERE id = $1`,
       [attemptId],
     )
     if (
@@ -89,7 +91,7 @@ export const createPostgresWorkflowNodeStore = (
     const child = await one(
       db,
       `
-      SELECT *
+      SELECT *, ${payloadColumnsSql()}
       FROM workflow_node_children
       WHERE run_id = $1 AND node_name = $2 AND child_key = $3
     `,
@@ -117,7 +119,7 @@ export const createPostgresWorkflowNodeStore = (
         )
         VALUES ($1, $2, $3, 'pending', 1, $4, $4)
         ON CONFLICT (run_id, name) DO UPDATE SET name = workflow_nodes.name
-        RETURNING *
+        RETURNING *, ${payloadColumnsSql()}
       `,
         [input.runId, input.name, input.kind, date],
       )
@@ -135,14 +137,14 @@ export const createPostgresWorkflowNodeStore = (
         WHERE run_id = $1
           AND name = $2
           AND status NOT IN ('completed', 'failed', 'cancelled')
-        RETURNING *
+        RETURNING *, ${payloadColumnsSql()}
       `,
         [runId, nodeName, json(input)],
       )
       if (row) return mapNode(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       if (!current) throw new Error(`Missing node [${runId}.${nodeName}]`)
@@ -162,13 +164,13 @@ export const createPostgresWorkflowNodeStore = (
         `
         SELECT
           (
-            SELECT to_jsonb(n)
+            SELECT ${payloadRowJsonSql('n')}
             FROM workflow_nodes n
             WHERE n.run_id = $1 AND n.name = $2
           ) AS node,
           COALESCE(
             (
-              SELECT jsonb_agg(to_jsonb(c) ORDER BY c.ordinal, c.child_key)
+              SELECT jsonb_agg(${payloadRowJsonSql('c')} ORDER BY c.ordinal, c.child_key)
               FROM workflow_node_children c
               WHERE c.run_id = $1 AND c.node_name = $2
             ),
@@ -176,7 +178,7 @@ export const createPostgresWorkflowNodeStore = (
           ) AS children,
           COALESCE(
             (
-              SELECT jsonb_agg(to_jsonb(a) ORDER BY a.dispatched_at, a.id)
+              SELECT jsonb_agg(${payloadRowJsonSql('a')} ORDER BY a.dispatched_at, a.id)
               FROM workflow_attempts a
               WHERE a.run_id = $1 AND a.node_name = $2
             ),
@@ -228,7 +230,7 @@ export const createPostgresWorkflowNodeStore = (
             attempt_count + 1, next_retry_attempt_number, $6::jsonb, $7::jsonb, now()
           FROM child
           WHERE status IN (${nodeStatusSourcesSql('running', { self: true })})
-          RETURNING *, NULL::text AS old_status
+          RETURNING *, ${payloadColumnsSql()}, NULL::text AS old_status
         ), attempt_event_source AS (
           SELECT inserted.*, child.root_run_id FROM inserted CROSS JOIN child
         ), updated_child AS (
@@ -239,7 +241,7 @@ export const createPostgresWorkflowNodeStore = (
           FROM inserted, child
           WHERE c.run_id = inserted.run_id AND c.node_name = inserted.node_name
             AND c.child_key = inserted.child_key
-          RETURNING c.*, child.status::text AS old_status, child.root_run_id
+          RETURNING c.*, ${payloadColumnsSql('c')}, child.status::text AS old_status, child.root_run_id
         ), node AS (
           SELECT n.run_id, n.name, n.status::text AS old_status, c.root_run_id
           FROM workflow_nodes n JOIN updated_child c
@@ -250,7 +252,7 @@ export const createPostgresWorkflowNodeStore = (
           FROM node
           WHERE n.run_id = node.run_id AND n.name = node.name
             AND n.status IN (${nodeStatusSourcesSql('running', { self: true })})
-          RETURNING n.*, node.old_status, node.root_run_id
+          RETURNING n.*, ${payloadColumnsSql('n')}, node.old_status, node.root_run_id
         ), ${emitStatusChangeNotifySql('attempt_event_source', 'attempt_started')},
         ${emitStatusChangeNotifySql('updated_child', 'child_running')},
         ${emitStatusChangeNotifySql('updated_node', 'node_running')}
@@ -306,7 +308,7 @@ export const createPostgresWorkflowNodeStore = (
             SET status = 'completed', output = $3::jsonb, completed_at = now()
             FROM candidate
             WHERE workflow_attempts.id = candidate.id
-            RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+            RETURNING workflow_attempts.*, ${payloadColumnsSql('workflow_attempts')}, candidate.old_status, candidate.root_run_id
             ),
             ${emitStatusChangeNotifySql('updated', 'attempt_completed')}
             SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_completed')}
@@ -337,7 +339,7 @@ export const createPostgresWorkflowNodeStore = (
               AND workflow_node_children.node_name = candidate.node_name
               AND workflow_node_children.child_key = candidate.child_key
               AND workflow_node_children.status IN (${nodeStatusSourcesSql('completed')})
-            RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+            RETURNING workflow_node_children.*, ${payloadColumnsSql('workflow_node_children')}, candidate.old_status, candidate.root_run_id
             ),
             ${emitStatusChangeNotifySql('updated', 'child_completed')}
             SELECT updated.*${notifyRunStatusEventColumnsSql('child_completed')}
@@ -373,7 +375,7 @@ export const createPostgresWorkflowNodeStore = (
         SET status = 'failed', error = $3::jsonb, completed_at = now()
         FROM candidate
         WHERE workflow_attempts.id = candidate.id
-        RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+        RETURNING workflow_attempts.*, ${payloadColumnsSql('workflow_attempts')}, candidate.old_status, candidate.root_run_id
         ),
         ${emitStatusChangeNotifySql('updated', 'attempt_failed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_failed')}
@@ -402,7 +404,7 @@ export const createPostgresWorkflowNodeStore = (
         SET status = 'timedOut', error = $3::jsonb, completed_at = now()
         FROM candidate
         WHERE workflow_attempts.id = candidate.id
-        RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+        RETURNING workflow_attempts.*, ${payloadColumnsSql('workflow_attempts')}, candidate.old_status, candidate.root_run_id
         ),
         ${emitStatusChangeNotifySql('updated', 'attempt_timed_out')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('attempt_timed_out')}
@@ -416,7 +418,7 @@ export const createPostgresWorkflowNodeStore = (
       await ready
       const node = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       if (!node) return undefined
@@ -442,7 +444,7 @@ export const createPostgresWorkflowNodeStore = (
         WHERE workflow_nodes.run_id = candidate.run_id
           AND workflow_nodes.name = candidate.name
           AND workflow_nodes.status IN (${nodeStatusSourcesSql('completed')})
-        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        RETURNING workflow_nodes.*, ${payloadColumnsSql('workflow_nodes')}, candidate.old_status, candidate.root_run_id
         ),
         ${emitStatusChangeNotifySql('updated', 'node_completed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('node_completed')}
@@ -453,7 +455,7 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapNode(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       return current ? mapNode(current) : undefined
@@ -462,7 +464,7 @@ export const createPostgresWorkflowNodeStore = (
       await ready
       const node = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       if (!node) return undefined
@@ -488,7 +490,7 @@ export const createPostgresWorkflowNodeStore = (
         WHERE workflow_nodes.run_id = candidate.run_id
           AND workflow_nodes.name = candidate.name
           AND workflow_nodes.status IN (${nodeStatusSourcesSql('failed')})
-        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        RETURNING workflow_nodes.*, ${payloadColumnsSql('workflow_nodes')}, candidate.old_status, candidate.root_run_id
         ),
         ${emitStatusChangeNotifySql('updated', 'node_failed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('node_failed')}
@@ -499,7 +501,7 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapNode(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       return current ? mapNode(current) : undefined
@@ -522,7 +524,7 @@ export const createPostgresWorkflowNodeStore = (
         FROM candidate
         WHERE workflow_runs.id = candidate.id
           AND workflow_runs.status IN (${runStatusSourcesSql('running')})
-        RETURNING workflow_runs.*, candidate.old_status
+        RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_running')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('run_running')}
@@ -533,7 +535,7 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
@@ -556,7 +558,7 @@ export const createPostgresWorkflowNodeStore = (
         FROM candidate
         WHERE workflow_runs.id = candidate.id
           AND workflow_runs.status IN (${runStatusSourcesSql('waiting')})
-        RETURNING workflow_runs.*, candidate.old_status
+        RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_waiting')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('run_waiting')}
@@ -567,16 +569,18 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
     },
     async completeRun({ runId, output }) {
       await ready
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
+      const run = await one(
+        db,
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
+        [runId],
+      )
       if (!run) return undefined
       if (isTerminalRunStatus(run.status as StoredRun['status'])) {
         return mapRun(run)
@@ -598,7 +602,7 @@ export const createPostgresWorkflowNodeStore = (
         FROM candidate
         WHERE workflow_runs.id = candidate.id
           AND workflow_runs.status IN (${runStatusSourcesSql('completed')})
-        RETURNING workflow_runs.*, candidate.old_status
+        RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_completed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('run_completed')}
@@ -609,16 +613,18 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
     },
     async failRun({ runId, error }) {
       await ready
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
+      const run = await one(
+        db,
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
+        [runId],
+      )
       if (!run) return undefined
       if (isTerminalRunStatus(run.status as StoredRun['status'])) {
         return mapRun(run)
@@ -640,7 +646,7 @@ export const createPostgresWorkflowNodeStore = (
         FROM candidate
         WHERE workflow_runs.id = candidate.id
           AND workflow_runs.status IN (${runStatusSourcesSql('failed')})
-        RETURNING workflow_runs.*, candidate.old_status
+        RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_failed')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('run_failed')}
@@ -651,16 +657,18 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
     },
     async requestRunCancellation({ runId }) {
       await ready
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
+      const run = await one(
+        db,
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
+        [runId],
+      )
       if (!run) return undefined
       if (
         isTerminalRunStatus(run.status as StoredRun['status']) ||
@@ -686,7 +694,7 @@ export const createPostgresWorkflowNodeStore = (
           FROM candidate
           WHERE workflow_runs.id = candidate.id
             AND workflow_runs.status IN (${runStatusSourcesSql('cancelling')})
-          RETURNING workflow_runs.*, candidate.old_status
+          RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_cancelling')},
         cancellation_notified AS (
@@ -702,16 +710,18 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
     },
     async cancelRun({ runId }) {
       await ready
-      const run = await one(db, 'SELECT * FROM workflow_runs WHERE id = $1', [
-        runId,
-      ])
+      const run = await one(
+        db,
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
+        [runId],
+      )
       if (!run) return undefined
       if (isTerminalRunStatus(run.status as StoredRun['status'])) {
         return mapRun(run)
@@ -732,7 +742,7 @@ export const createPostgresWorkflowNodeStore = (
         FROM candidate
         WHERE workflow_runs.id = candidate.id
           AND workflow_runs.status IN (${runStatusSourcesSql('cancelled')})
-        RETURNING workflow_runs.*, candidate.old_status
+        RETURNING workflow_runs.*, ${payloadColumnsSql('workflow_runs')}, candidate.old_status
         ),
         ${emitStatusChangeNotifySql('updated', 'run_cancelled')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('run_cancelled')}
@@ -743,7 +753,7 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapRun(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_runs WHERE id = $1',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE id = $1`,
         [runId],
       )
       return current ? mapRun(current) : undefined
@@ -752,7 +762,7 @@ export const createPostgresWorkflowNodeStore = (
       await ready
       const node = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       if (!node) return undefined
@@ -777,7 +787,7 @@ export const createPostgresWorkflowNodeStore = (
         WHERE workflow_nodes.run_id = candidate.run_id
           AND workflow_nodes.name = candidate.name
           AND workflow_nodes.status IN (${nodeStatusSourcesSql('cancelled')})
-        RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+        RETURNING workflow_nodes.*, ${payloadColumnsSql('workflow_nodes')}, candidate.old_status, candidate.root_run_id
         ),
         ${emitStatusChangeNotifySql('updated', 'node_cancelled')}
         SELECT updated.*${notifyRunStatusEventColumnsSql('node_cancelled')}
@@ -788,7 +798,7 @@ export const createPostgresWorkflowNodeStore = (
       if (row) return mapNode(row)
       const current = await one(
         db,
-        'SELECT * FROM workflow_nodes WHERE run_id = $1 AND name = $2',
+        `SELECT *, ${payloadColumnsSql()} FROM workflow_nodes WHERE run_id = $1 AND name = $2`,
         [runId, nodeName],
       )
       return current ? mapNode(current) : undefined
@@ -814,7 +824,7 @@ export const createPostgresWorkflowNodeStore = (
           WHERE workflow_nodes.run_id = candidate.run_id
             AND workflow_nodes.name = candidate.name
             AND workflow_nodes.status IN (${nodeStatusSourcesSql('cancelled')})
-          RETURNING workflow_nodes.*, candidate.old_status, candidate.root_run_id
+          RETURNING workflow_nodes.*, ${payloadColumnsSql('workflow_nodes')}, candidate.old_status, candidate.root_run_id
           ),
           ${emitStatusChangeNotifySql('updated', 'nodes_cancelled')}
           SELECT updated.*${notifyRunStatusEventColumnsSql('nodes_cancelled')}
@@ -841,7 +851,7 @@ export const createPostgresWorkflowNodeStore = (
             AND workflow_node_children.node_name = candidate.node_name
             AND workflow_node_children.child_key = candidate.child_key
             AND workflow_node_children.status IN (${nodeStatusSourcesSql('cancelled')})
-          RETURNING workflow_node_children.*, candidate.old_status, candidate.root_run_id
+          RETURNING workflow_node_children.*, ${payloadColumnsSql('workflow_node_children')}, candidate.old_status, candidate.root_run_id
           ),
           ${emitStatusChangeNotifySql('updated', 'children_cancelled')}
           SELECT count(*)${notifyRunStatusEventColumnsSql('children_cancelled')}
@@ -862,7 +872,7 @@ export const createPostgresWorkflowNodeStore = (
           SET status = 'cancelled', completed_at = now()
           FROM candidate
           WHERE workflow_attempts.id = candidate.id
-          RETURNING workflow_attempts.*, candidate.old_status, candidate.root_run_id
+          RETURNING workflow_attempts.*, ${payloadColumnsSql('workflow_attempts')}, candidate.old_status, candidate.root_run_id
           ),
           ${emitStatusChangeNotifySql('updated', 'attempts_cancelled')}
           SELECT count(*)${notifyRunStatusEventColumnsSql('attempts_cancelled')}

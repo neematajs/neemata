@@ -1,5 +1,5 @@
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import { defineWorkflow, implementWorkflow } from '../src/index.ts'
@@ -28,13 +28,13 @@ describe('workflow fan-out retry state model', () => {
     return new Container({ logger })
   }
 
-  const memberInput = t.object({ scenario: t.string() })
-  const memberOutput = t.object({ text: t.string() })
+  const memberInput = Schema.Struct({ scenario: Schema.String })
+  const memberOutput = Schema.Struct({ text: Schema.String })
 
   const defineParallelWorkflow = (name: string) =>
     defineWorkflow({
       name,
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .parallel('members', (helpers) => ({
         a: helpers.activity({
@@ -195,7 +195,7 @@ describe('workflow fan-out retry state model', () => {
   it('reports truthful run statuses across the lifecycle (issue #241 / 1)', async () => {
     const workflow = defineWorkflow({
       name: 'fanout.status-truth',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .activity('step', {
         input: memberInput,
@@ -250,13 +250,13 @@ describe('workflow fan-out retry state model', () => {
   it('marks a run waiting while it is parked on a child workflow', async () => {
     const childWorkflow = defineWorkflow({
       name: 'fanout.waiting-child',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .activity('inner', { input: memberInput, output: memberOutput })
       .build()
     const parentWorkflow = defineWorkflow({
       name: 'fanout.waiting-parent',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .workflow('child', childWorkflow)
       .build()
@@ -289,7 +289,7 @@ describe('workflow fan-out retry state model', () => {
   it('dead-letters unroutable attempts and the reaper fails the run (issue #241 / 3)', async () => {
     const declaredWorkflow = defineWorkflow({
       name: 'fanout.unroutable',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .activity('step', {
         input: memberInput,
@@ -304,7 +304,7 @@ describe('workflow fan-out retry state model', () => {
     // in the deployed worker, so the dispatched command can never resolve.
     const driftedWorkflow = defineWorkflow({
       name: 'fanout.unroutable',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
     })
       .activity('stepRenamed', {
         input: memberInput,
@@ -388,7 +388,7 @@ describe('workflow fan-out retry state model', () => {
   it('fails runs that exceed their definition timeout', async () => {
     const workflow = defineWorkflow({
       name: 'fanout.run-timeout',
-      input: t.object({ scenario: t.string() }),
+      input: Schema.Struct({ scenario: Schema.String }),
       timeout: '30ms',
     })
       .activity('step', {

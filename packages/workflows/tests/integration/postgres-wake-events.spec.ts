@@ -1,5 +1,5 @@
 import type { Pool as PgPool } from 'pg'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import pg from 'pg'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -116,12 +116,12 @@ describe.skipIf(!postgresTarget.url)(
 
       const workflow = defineWorkflow({
         name: createTestName('postgres-wake-dispatch'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('echo', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       const implementation = implementWorkflow(workflow)
@@ -273,12 +273,12 @@ describe.skipIf(!postgresTarget.url)(
 
       const workflow = defineWorkflow({
         name: createTestName('postgres-wake-cancel'),
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
         .activity('hold', {
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         })
         .build()
       let activityStarted: () => void = () => {}

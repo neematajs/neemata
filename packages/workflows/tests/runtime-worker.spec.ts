@@ -1,5 +1,5 @@
 import { Container, createLogger } from '@nmtjs/core'
-import { t } from '@nmtjs/type'
+import * as Schema from 'effect/Schema'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -32,8 +32,8 @@ describe('workflow worker runtime', () => {
   it('starts and completes a standalone task run without parent continuation', async () => {
     const task = defineTask({
       name: 'standalone.embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
       handler: async (_ctx, input) => ({ id: `embedding:${input.text}` }),
@@ -208,8 +208,8 @@ describe('workflow worker runtime', () => {
     const container = createTestContainer()
     const completionTask = defineTask({
       name: 'atomic-marker-completion-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const completionImplementation = implementTask(completionTask, {
       handler: async (_ctx, input) => ({ id: input.text }),
@@ -252,8 +252,8 @@ describe('workflow worker runtime', () => {
 
     const retryTask = defineTask({
       name: 'atomic-marker-retry-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       retry: { attempts: 2 },
     })
     const retryImplementation = implementTask(retryTask, {
@@ -293,13 +293,13 @@ describe('workflow worker runtime', () => {
 
     const reconcileTask = defineTask({
       name: 'atomic-marker-reconcile-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const reconcileWorkflow = defineWorkflow({
       name: 'atomic-marker-reconcile-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('child', reconcileTask)
       .build()
@@ -361,13 +361,13 @@ describe('workflow worker runtime', () => {
   it('reconciles stale timed-out attempts like failed attempts', async () => {
     const task = defineTask({
       name: 'worker.reconcile-timeout-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const workflow = defineWorkflow({
       name: 'worker.reconcile-timeout-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
       .task('child', task)
       .build()
@@ -434,8 +434,8 @@ describe('workflow worker runtime', () => {
   it('runs workflow worker loop by claiming continue commands', async () => {
     const workflow = defineWorkflow({
       name: 'worker.empty-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ text: input.text }),
@@ -494,12 +494,12 @@ describe('workflow worker runtime', () => {
   it('releases continuation commands when attempt dispatch fails', async () => {
     const workflow = defineWorkflow({
       name: 'worker.dispatch-failure-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -547,8 +547,8 @@ describe('workflow worker runtime', () => {
   it('can poll after an idle claim without hot-looping', async () => {
     const workflow = defineWorkflow({
       name: 'worker.polling-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ text: input.text }),
@@ -593,8 +593,8 @@ describe('workflow worker runtime', () => {
   it('releases continue commands when the run lease is busy', async () => {
     const workflow = defineWorkflow({
       name: 'worker.busy-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ text: input.text }),
@@ -646,8 +646,8 @@ describe('workflow worker runtime', () => {
   it('releases ignored continue commands instead of acking them', async () => {
     const workflow = defineWorkflow({
       name: 'worker.ignored-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     const implementation = implementWorkflow(workflow).finish(
       (_ctx, _outputs, input) => ({ text: input.text }),
@@ -689,12 +689,12 @@ describe('workflow worker runtime', () => {
   it('runs activity worker loop by claiming activity attempts', async () => {
     const workflow = defineWorkflow({
       name: 'worker.activity-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -750,21 +750,21 @@ describe('workflow worker runtime', () => {
   it('coalesces continue commands produced by parallel activity fan-out', async () => {
     const workflow = defineWorkflow({
       name: 'worker.parallel-coalesced-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .parallel('sections', (helpers) => ({
         alpha: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         beta: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
         gamma: helpers.activity({
-          input: t.object({ text: t.string() }),
-          output: t.object({ text: t.string() }),
+          input: Schema.Struct({ text: Schema.String }),
+          output: Schema.Struct({ text: Schema.String }),
         }),
       }))
       .build()
@@ -837,12 +837,12 @@ describe('workflow worker runtime', () => {
   it('retries a failed direct activity attempt before failing the run', async () => {
     const workflow = defineWorkflow({
       name: 'worker.retry-activity-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
         retry: { attempts: 2 },
       })
       .build()
@@ -906,12 +906,12 @@ describe('workflow worker runtime', () => {
   it('records timed-out activity attempts and delivers a timeout signal', async () => {
     const workflow = defineWorkflow({
       name: 'worker.timeout-activity-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
         timeout: '5ms',
       })
       .build()
@@ -988,12 +988,12 @@ describe('workflow worker runtime', () => {
   it('does not hot-loop when a claimed activity is not routeable', async () => {
     const workflow = defineWorkflow({
       name: 'worker.route-miss-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     })
       .activity('content', {
-        input: t.object({ text: t.string() }),
-        output: t.object({ text: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ text: Schema.String }),
       })
       .build()
     const implementation = implementWorkflow(workflow)
@@ -1057,8 +1057,8 @@ describe('workflow worker runtime', () => {
   it('waits for active worker lanes when one run fails', async () => {
     const workflow = defineWorkflow({
       name: 'worker.reject-workflow',
-      input: t.object({ text: t.string() }),
-      output: t.object({ text: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ text: Schema.String }),
     }).build()
     let slowFinished = false
     const implementation = implementWorkflow(workflow).finish(
@@ -1107,8 +1107,8 @@ describe('workflow worker runtime', () => {
   it('runs task worker loop by claiming task attempts', async () => {
     const task = defineTask({
       name: 'worker.loop-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
       handler: async (_ctx, input) => ({ id: `embedding:${input.text}` }),
@@ -1142,8 +1142,8 @@ describe('workflow worker runtime', () => {
   it('retries a failed standalone task attempt before failing the run', async () => {
     const task = defineTask({
       name: 'worker.retry-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       retry: { attempts: 2 },
     })
     let calls = 0
@@ -1188,8 +1188,8 @@ describe('workflow worker runtime', () => {
   it('retries timed-out task attempts and ignores the late handler completion', async () => {
     const task = defineTask({
       name: 'worker.timeout-retry-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       retry: { attempts: 2 },
       timeout: '5ms',
     })
@@ -1262,8 +1262,8 @@ describe('workflow worker runtime', () => {
   it('does not time out task attempts without a declared timeout', async () => {
     const task = defineTask({
       name: 'worker.no-timeout-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
       handler: async (_ctx, input) => {
@@ -1303,8 +1303,8 @@ describe('workflow worker runtime', () => {
       vi.setSystemTime(base)
       const task = defineTask({
         name: 'worker.retry-backoff-task',
-        input: t.object({ text: t.string() }),
-        output: t.object({ id: t.string() }),
+        input: Schema.Struct({ text: Schema.String }),
+        output: Schema.Struct({ id: Schema.String }),
         retry: { attempts: 3, delay: '1s', backoff: 'exponential' },
       })
       const implementation = implementTask(task, {
@@ -1376,8 +1376,8 @@ describe('workflow worker runtime', () => {
     vi.useFakeTimers()
     const task = defineTask({
       name: 'worker.heartbeat-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     const implementation = implementTask(task, {
       handler: async (_ctx, input) => {
@@ -1432,8 +1432,8 @@ describe('workflow worker runtime', () => {
     vi.useFakeTimers()
     const task = defineTask({
       name: 'worker.heartbeat-lost-embedding',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     let leaseLostReason: unknown
     const implementation = implementTask(task, {
@@ -1505,8 +1505,8 @@ describe('workflow worker runtime', () => {
     vi.useFakeTimers()
     const task = defineTask({
       name: 'worker.cancel-observed-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
       retry: { attempts: 2 },
     })
     let cancelReason: unknown
@@ -1587,8 +1587,8 @@ describe('workflow worker runtime', () => {
   it('settles a standalone task run cancelled before any worker claims it', async () => {
     const task = defineTask({
       name: 'worker.cancel-unclaimed-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
@@ -1639,8 +1639,8 @@ describe('workflow worker runtime', () => {
   it('settles a standalone task run left in cancelling when the worker claims it', async () => {
     const task = defineTask({
       name: 'worker.cancel-requested-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     let handlerCalls = 0
     const implementation = implementTask(task, {
@@ -1683,8 +1683,8 @@ describe('workflow worker runtime', () => {
     vi.useFakeTimers()
     const task = defineTask({
       name: 'worker.shutdown-task',
-      input: t.object({ text: t.string() }),
-      output: t.object({ id: t.string() }),
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
     })
     let shutdownReason: unknown
     let handlerStarted!: () => void

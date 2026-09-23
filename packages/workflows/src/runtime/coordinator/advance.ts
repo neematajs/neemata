@@ -1,4 +1,4 @@
-import { decodeWorkflowUserSchemaValue } from './codec.ts'
+import { normalizeStoredValue } from '../codec.ts'
 import {
   isWorkflowUserCallbackError,
   type AdvanceCtx,
@@ -32,13 +32,11 @@ export async function advanceWorkflowRun(
         input.outputs,
         input.run.input,
       )
-      if (input.workflow.workflow.output) {
-        output = decodeWorkflowUserSchemaValue(
-          input.workflow.workflow.output,
-          output,
-          `workflow output [${input.workflow.workflow.name}]`,
-        )
-      }
+      output = normalizeStoredValue(
+        input.workflow.workflow.output,
+        output,
+        `workflow output [${input.workflow.workflow.name}]`,
+      )
     } catch (error) {
       await failRunAndWakeParent({
         store: input.store,
