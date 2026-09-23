@@ -8,6 +8,8 @@ import {
   expectFile,
   runNeem,
   spawnNeem,
+  updateFileAtomically,
+  waitFor,
 } from './support/e2e.ts'
 
 describe('Neem output directories', () => {
@@ -62,6 +64,25 @@ describe('Neem output directories', () => {
     await expectFile(resolve(configDir, 'dist/neem.manifest.json'))
     await expectFile(devManifest)
     await expectFile(resolve(configDir, '.neem/neem.config/runtime/start.js'))
+    expect(neem.child.exitCode).toBeNull()
+    expect(neem.child.signalCode).toBeNull()
+
+    // Surviving files alone would not show that dev outlived the build.
+    const threadStarts = () =>
+      neem.events().filter((event) => event.event === 'runtime:thread-started')
+        .length
+    const startsBeforeEdit = threadStarts()
+    await updateFileAtomically(
+      resolve(configDir, 'api.planner.ts'),
+      (content) => content.replace("label: 'one'", "label: 'changed'"),
+    )
+    await neem.waitForEvent(
+      (event) =>
+        event.event === 'watcher:runtime-changed' &&
+        event.runtimeName === 'api',
+      30_000,
+    )
+    await waitFor(() => threadStarts() >= startsBeforeEdit + 2, 30_000)
     await neem.stop()
   }, 60_000)
 })
