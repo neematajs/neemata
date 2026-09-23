@@ -1,5 +1,9 @@
 # NeemataJS
 
+The next major version will focus on Neem hosting and durable workflows for Effect
+applications. See the [migration plan](docs/effect-migration-plan.md) for scope and
+progress. The framework APIs documented below describe the current version.
+
 A TypeScript RPC application framework for real-time applications (proof of concept).
 Define a contract, implement it with typed dependencies, and expose it through
 independently configured transports. The same building blocks extend to streams,

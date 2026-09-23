@@ -1,7 +1,9 @@
 # Application Interfaces — Refactor Plan
 
-Status: direction approved (v2) — Slices A–D implemented; Slice E split out as
-a separate task (direction approved, surface provisional); Slice F remaining
+Status: historical — superseded by the [Effect migration plan](effect-migration-plan.md)
+for the next major version.
+Previous status: direction approved (v2) — Slices A–D implemented; Slice E split
+out as a separate task (direction approved, surface provisional); Slice F remaining
 Date: 2026-08-21
 Baseline: `784a1d77`
 
