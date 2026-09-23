@@ -48,20 +48,7 @@ jobs:
   test:
     needs: [version]
     if: inputs.run_tests
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-src-dir: packages/proxy
-      - run: pnpm install --frozen-lockfile
-      - name: Check and test proxy
-        run: pnpm --dir packages/proxy run check:rust && pnpm --dir packages/proxy run test
+    uses: ./.github/workflows/test-proxy.yml
 
   build:
     needs: [version]
