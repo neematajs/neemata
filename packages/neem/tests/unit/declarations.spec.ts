@@ -1,18 +1,10 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { resolveRuntimeProjectFiles } from '../../src/internal/build/declarations.ts'
-
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-})
+import { createTempDir } from '../support/temp.ts'
 
 describe('resolveRuntimeProjectFiles', () => {
   it('excludes negated globs without requiring declarations in matched folders', async () => {
@@ -52,8 +44,7 @@ describe('resolveRuntimeProjectFiles', () => {
 })
 
 async function createProject(files: readonly string[]): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), 'neem-declarations-'))
-  tempDirs.push(dir)
+  const dir = await createTempDir('neem-declarations-')
   for (const file of files) {
     await mkdir(resolve(dir, file, '..'), { recursive: true })
     await writeFile(resolve(dir, file), '')

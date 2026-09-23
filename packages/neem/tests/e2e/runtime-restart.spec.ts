@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
@@ -11,14 +11,6 @@ import {
   updateFileAtomically,
   waitFor,
 } from './support/e2e.ts'
-
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
 
 describe('Neem runtime restart', () => {
   it('patches both threads in place after a leaf edit', async () => {
@@ -351,7 +343,6 @@ describe('Neem runtime restart', () => {
 
 async function createFixture() {
   const fixture = await createNeemFixture({ config: 'runtime-restart' })
-  fixtures.push(fixture)
   const caseDir = resolve(fixture.fixtureDir, 'cases/runtime-restart')
   const valueFile = resolve(caseDir, 'definition.ts')
   const plannerFile = resolve(caseDir, 'api.planner.ts')
@@ -362,14 +353,12 @@ function start(
   fixture: Awaited<ReturnType<typeof createFixture>>,
   env: NodeJS.ProcessEnv = {},
 ) {
-  const neem = spawnNeem(
+  return spawnNeem(
     ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
     {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile, ...env },
     },
   )
-  spawned.push(neem)
-  return neem
 }
 
 function editMarker(
