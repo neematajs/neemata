@@ -100,7 +100,8 @@ async function waitForWsFailure(
       clearTimeout(timer)
       reject(new Error('unexpected open'))
     })
-    ws.once('error', () => {
+    // Bun treats a removed once listener as unhandled after dispatching the error.
+    ws.on('error', () => {
       clearTimeout(timer)
       resolve()
     })
