@@ -390,7 +390,6 @@ export class HostController {
 
   private async syncProxyUpstreams(): Promise<void> {
     await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-    await this.proxy?.waitForIdle()
   }
 
   private async syncHealthProbe(): Promise<void> {
@@ -450,10 +449,12 @@ export class HostController {
     })
   }
 
-  // Unlike syncProxyUpstreams, proxy mutation errors stay in proxy health instead of
-  // failing worker recovery.
+  // Worker failure and recovery must not fail on proxy mutations; the error is logged,
+  // kept in proxy health, and retried by the next reconcile.
   private async refreshProxyUpstreams(): Promise<void> {
-    await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
+    await this.proxy
+      ?.setUpstreams(this.collectRuntimeUpstreams())
+      .catch(() => undefined)
   }
 
   private replaceSnapshot(snapshot: RuntimeSnapshot): void {

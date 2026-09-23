@@ -1421,6 +1421,14 @@ describe('Proxy wiring', () => {
       try {
         expectNoUpstream(await httpGet(port, '/api/hello'))
 
+        const head = await httpRequest(port, {
+          method: 'HEAD',
+          path: '/api/hello',
+        })
+        expect(head.status).toBe(503)
+        expect(head.headers['retry-after']).toBe('1')
+        expect(head.body).toBe('')
+
         await proxy.addUpstream('api', u)
         await waitFor(
           async () => await httpGet(port, '/api/hello'),

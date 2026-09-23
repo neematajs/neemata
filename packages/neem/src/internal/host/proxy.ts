@@ -59,7 +59,6 @@ export class ProxyController {
   private desired = new Map<string, NeemProxyUpstreamSnapshot>()
   private applied = new Map<string, NeemProxyUpstreamSnapshot>()
   private failures = new Map<string, NeemProxyUpstreamFailure>()
-  private mutationError: Error | undefined
 
   constructor(private readonly snapshot: RuntimeSnapshot) {
     const config = snapshot.config.proxy
@@ -109,13 +108,7 @@ export class ProxyController {
     if (!proxy) return
 
     this.logger.info('Neem proxy stopping')
-    await this.waitForIdle().catch((error) => {
-      this.logger.warn(
-        new Error('Failed to drain proxy upstream mutations before stop', {
-          cause: error,
-        }),
-      )
-    })
+    await this.mutations.waitIdle()
     await proxy.stop()
     this.desired.clear()
     this.applied.clear()
@@ -123,18 +116,12 @@ export class ProxyController {
     this.logger.debug('Neem proxy stopped')
   }
 
+  /** Rejects with this call's own reconcile error; earlier failures are retried, not rethrown. */
   async setUpstreams(upstreams: readonly RuntimeUpstreams[]): Promise<void> {
     this.desired = createDesiredUpstreams(
       filterRuntimeUpstreams(upstreams, this.snapshot.config.runtimes),
     )
     await this.reconcile()
-  }
-
-  async waitForIdle(): Promise<void> {
-    await this.mutations.waitIdle()
-    const error = this.mutationError
-    this.mutationError = undefined
-    if (error) throw error
   }
 
   getHealth(): NeemProxyHealth {
@@ -183,26 +170,36 @@ export class ProxyController {
   private async reconcile(): Promise<void> {
     if (!this.proxy) return
 
-    const removals = [...this.applied.values()].filter(
-      (upstream) => !this.desired.has(upstreamKey(upstream)),
-    )
-    const additions = [...this.desired.values()].filter(
-      (upstream) => !this.applied.has(upstreamKey(upstream)),
-    )
-
     await this.mutations
       .run(async () => {
-        for (const upstream of removals) await this.removeUpstream(upstream)
-        for (const upstream of additions) await this.addUpstream(upstream)
+        // Diff when the mutation runs: reconciles queued earlier may already have
+        // applied part of this change, and native add/remove reject repeats.
+        const removals = [...this.applied.values()].filter(
+          (upstream) => !this.desired.has(upstreamKey(upstream)),
+        )
+        const additions = [...this.desired.values()].filter(
+          (upstream) => !this.applied.has(upstreamKey(upstream)),
+        )
+
+        // Upstreams are independent; one failure must not keep the rest stale.
+        const errors: unknown[] = []
+        const collect = (error: unknown) => {
+          errors.push(error)
+        }
+        for (const upstream of removals)
+          await this.removeUpstream(upstream).catch(collect)
+        for (const upstream of additions)
+          await this.addUpstream(upstream).catch(collect)
+        if (errors.length > 0) throw errors[0]
       })
       .catch((error) => {
         const normalized = normalizeError(error)
-        this.mutationError ??= normalized
         this.logger.warn(
           new Error('Failed to reconcile proxy upstreams', {
             cause: normalized,
           }),
         )
+        throw normalized
       })
   }
 

@@ -449,7 +449,8 @@ impl ProxyHttp for SharedRouter {
         let code = failure_status(ctx.failure_hint, e);
 
         if code > 0 {
-            let written = match upstream_failure_response(code) {
+            let is_head = session.req_header().method == http::Method::HEAD;
+            let written = match upstream_failure_response(code, is_head) {
                 Some((resp, body)) => {
                     session
                         .as_downstream_mut()
@@ -776,7 +777,7 @@ fn failure_status(hint: Option<FailureHint>, e: &Error) -> u16 {
 
 /// Proxy-generated 502/503 responses carry a body so clients can tell them apart from
 /// application errors; 503 also tells them when to retry.
-fn upstream_failure_response(code: u16) -> Option<(ResponseHeader, &'static str)> {
+fn upstream_failure_response(code: u16, is_head: bool) -> Option<(ResponseHeader, &'static str)> {
     let (body, retry_after) = match StatusCode::from_u16(code).ok()? {
         StatusCode::SERVICE_UNAVAILABLE => (
             "No upstream available\n",
@@ -794,7 +795,8 @@ fn upstream_failure_response(code: u16) -> Option<(ResponseHeader, &'static str)
         resp.insert_header(header::RETRY_AFTER, seconds).ok()?;
     }
 
-    Some((resp, body))
+    // Pingora's HTTP/2 writer does not drop bodies for HEAD like its HTTP/1 writer does.
+    Some((resp, if is_head { "" } else { body }))
 }
 
 async fn reject_request(session: &mut Session, status: StatusCode) -> Result<bool> {
@@ -1229,7 +1231,7 @@ mod tests {
 
     #[test]
     fn upstream_failure_responses_carry_body_and_retry_hint() {
-        let (resp, body) = upstream_failure_response(503).expect("503 has a response");
+        let (resp, body) = upstream_failure_response(503, false).expect("503 has a response");
         assert_eq!(resp.status.as_u16(), 503);
         assert_eq!(resp.headers.get("retry-after").unwrap(), "1");
         assert_eq!(
@@ -1241,7 +1243,7 @@ mod tests {
             body.len().to_string().as_str()
         );
 
-        let (resp, body) = upstream_failure_response(502).expect("502 has a response");
+        let (resp, body) = upstream_failure_response(502, false).expect("502 has a response");
         assert_eq!(resp.status.as_u16(), 502);
         assert!(resp.headers.get("retry-after").is_none());
         assert_eq!(
@@ -1249,8 +1251,22 @@ mod tests {
             body.len().to_string().as_str()
         );
 
-        assert!(upstream_failure_response(404).is_none());
-        assert!(upstream_failure_response(500).is_none());
+        assert!(upstream_failure_response(404, false).is_none());
+        assert!(upstream_failure_response(500, false).is_none());
+    }
+
+    #[test]
+    fn head_failure_responses_keep_headers_without_body() {
+        let (resp, body) = upstream_failure_response(503, true).expect("503 has a response");
+        assert_eq!(body, "");
+        assert_eq!(resp.headers.get("retry-after").unwrap(), "1");
+        assert_eq!(
+            resp.headers.get("content-length").unwrap(),
+            "No upstream available\n".len().to_string().as_str()
+        );
+
+        let (_, body) = upstream_failure_response(502, true).expect("502 has a response");
+        assert_eq!(body, "");
     }
 
     fn insert_entry(
