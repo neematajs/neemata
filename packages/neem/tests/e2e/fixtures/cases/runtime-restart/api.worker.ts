@@ -4,20 +4,20 @@ import { threadId } from 'node:worker_threads'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record } from '../../shared/support/_events.ts'
-import { hmrValue } from './hmr-value.ts'
+import { definition } from './definition.ts'
 import { nextGeneration } from './state.ts'
 
 export default defineRuntimeWorker({
-  definition: hmrValue,
+  definition,
   createRuntime(ctx) {
     const generation = nextGeneration()
     const { marker, upstream } = ctx.definition
-    const crashFile = process.env.NEEM_HMR_CRASH_FILE
+    const crashFile = process.env.NEEM_RESTART_CRASH_FILE
     let crashTimer: NodeJS.Timeout | undefined
     return {
       start() {
         record({
-          event: 'worker-hmr-start',
+          event: 'worker-generation-start',
           name: ctx.name,
           threadId,
           generation,
@@ -42,7 +42,7 @@ export default defineRuntimeWorker({
       stop() {
         clearInterval(crashTimer)
         record({
-          event: 'worker-hmr-stop',
+          event: 'worker-generation-stop',
           name: ctx.name,
           threadId,
           generation,

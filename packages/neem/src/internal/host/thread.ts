@@ -20,7 +20,7 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type {
   RuntimeWorkerData,
-  WorkerHmrResult,
+  WorkerPatchResult,
   WorkerMessage,
 } from '../worker/protocol.ts'
 import { NeemWorkerError } from '../../shared/errors.ts'
@@ -54,7 +54,7 @@ export type ThreadControllerOptions = {
 
 const STARTUP_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 5_000
-const HMR_TIMEOUT_MS = 30_000
+const PATCH_TIMEOUT_MS = 30_000
 
 export class ThreadController {
   readonly id: string
@@ -80,7 +80,7 @@ export class ThreadController {
   private exited: ReturnType<typeof createFuture<void>> | undefined
   private stopping = false
   private readonly logger: Logger
-  private readonly hmr: RpcChannel<WorkerHmrResult>
+  private readonly patch: RpcChannel<WorkerPatchResult>
 
   constructor(private readonly options: ThreadControllerOptions) {
     const channel = new MessageChannel()
@@ -103,19 +103,19 @@ export class ThreadController {
       outDir: options.snapshot.outDir,
       logger: options.snapshot.manifest.config.logger,
       port: channel.port2,
-      hmrClientId: this.id,
+      patchClientId: this.id,
     }
     this.transferPort = channel.port2
-    this.hmr = new RpcChannel({
+    this.patch = new RpcChannel({
       post: (message) => {
         if (!this.worker) {
           throw new Error(`Worker [${this.name}] is not running`)
         }
         this.worker.postMessage(message)
       },
-      timeoutMs: () => HMR_TIMEOUT_MS,
+      timeoutMs: () => PATCH_TIMEOUT_MS,
       timeoutMessage: (_type, timeoutMs) =>
-        `Worker [${this.name}] HMR update timed out after ${timeoutMs}ms`,
+        `Worker [${this.name}] patch timed out after ${timeoutMs}ms`,
     })
   }
 
@@ -143,9 +143,9 @@ export class ThreadController {
     return this.upstreams
   }
 
-  async applyHmr(
+  async applyPatch(
     update: BindingClientHmrUpdate['update'],
-  ): Promise<WorkerHmrResult> {
+  ): Promise<WorkerPatchResult> {
     if (this.state !== 'ready') {
       return {
         accepted: false,
@@ -158,14 +158,18 @@ export class ThreadController {
       update.type === 'Patch'
         ? pathToFileURL(resolve(this.artifact.outDir, update.filename)).href
         : undefined
-    const result = await this.hmr.request({ type: 'hmr-update', update, url })
+    const result = await this.patch.request({
+      type: 'patch-update',
+      update,
+      url,
+    })
     if (result) this.patches = result.patches
     return (
       result ?? {
         accepted: false,
         delivered: false,
         patches: this.patches,
-        reason: `Worker [${this.name}] returned no HMR result`,
+        reason: `Worker [${this.name}] returned no patch result`,
       }
     )
   }
@@ -269,7 +273,7 @@ export class ThreadController {
         await this.terminateWorker()
       }
       this.worker = undefined
-      this.hmr.settleAll(new Error(`Worker [${this.name}] stopped`))
+      this.patch.settleAll(new Error(`Worker [${this.name}] stopped`))
       this.exited = undefined
       this.port.close()
       this.upstreams = []
@@ -280,7 +284,7 @@ export class ThreadController {
   }
 
   private handleMessage(message: WorkerMessage): void {
-    if (this.hmr.settle(message)) return
+    if (this.patch.settle(message)) return
     if (message.type === 'ready') {
       if (this.stopping) return
       this.upstreams = message.data.upstreams ?? []
@@ -303,7 +307,7 @@ export class ThreadController {
   }
 
   private handleExit(code: number): void {
-    this.hmr.settleAll(new Error(`Worker [${this.name}] exited`))
+    this.patch.settleAll(new Error(`Worker [${this.name}] exited`))
     this.reportStopped()
     this.exited?.resolve()
     if (this.stopping || this.state === 'stopped') {
@@ -348,7 +352,7 @@ export class ThreadController {
   private fail(error: Error): void {
     if (this.state === 'failed' || this.state === 'stopped') return
 
-    this.hmr.settleAll(error)
+    this.patch.settleAll(error)
     this.markFailed(error)
 
     if (this.ready && !this.readySettled) {

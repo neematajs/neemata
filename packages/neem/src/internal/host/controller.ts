@@ -15,7 +15,7 @@ import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
 import type { RuntimeUpstreams } from './proxy.ts'
 import type { RecoveryOptions } from './recovery.ts'
-import type { RuntimeHmrResult } from './runtime.ts'
+import type { RuntimePatchResult } from './runtime.ts'
 import type { ThreadLifecycleEvent } from './thread.ts'
 import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
@@ -285,10 +285,10 @@ export class HostController {
     })
   }
 
-  applyHmr(
+  applyPatch(
     runtimeName: string,
     updates: readonly BindingClientHmrUpdate[],
-  ): Promise<RuntimeHmrResult> {
+  ): Promise<RuntimePatchResult> {
     return this.operations.run(async () => {
       const runtime = this.runtimes.get(runtimeName)
       if (!runtime || this.stopRequested) {
@@ -299,11 +299,11 @@ export class HostController {
           reason: `Runtime [${runtimeName}] is not running`,
         }
       }
-      // HMR can await replacement readiness just like a full reload. Expose
-      // that state so stop interrupts workers before joining the operation queue.
+      // Applying patches can await replacement readiness just like a full reload.
+      // Expose that state so stop interrupts workers before joining the queue.
       this.markState('reloading')
       try {
-        return await runtime.applyHmr(updates)
+        return await runtime.applyPatch(updates)
       } finally {
         if (!this.stopRequested) this.markState('running')
       }

@@ -87,8 +87,8 @@ uses the same manifest shape as `start`, restarts app workers after successful
 config/app rebuilds, reloads plugin hooks after plugin entry rebuilds, and keeps
 existing workers alive on rebuild errors.
 
-Worker edits replace runtime generations in place, with fresh-bundle thread
-restarts when needed; see [Worker HMR](packages/neem/README.md#worker-hmr).
+Worker edits restart runtimes within their existing threads, with fresh-bundle
+thread restarts when needed; see [Runtime restart](packages/neem/README.md#runtime-restart).
 
 Use `neem dev --env-files ../../.env` to load environment variables before config
 evaluation and worker startup. See [development environment files](packages/neem/README.md)

@@ -3,7 +3,7 @@
 Conventional runtime and planner lookup recognizes `.ts`, `.mts`, `.js` and
 `.mjs` files.
 
-## Worker HMR
+## Runtime restart
 
 `neem dev` builds runtime workers with Rolldown DevEngine. An edit to a worker
 or its bundled dependencies stops the current runtime generation and creates
@@ -22,7 +22,7 @@ the worker requires a fresh thread on every edit. The default is
 `reload: 'generation'`; `stop()` must release the generation's resources before
 its replacement can start.
 
-`build.hmr.maxPatches` limits accepted patches per thread (default `50`). After
+`build.updates.maxPatches` limits accepted patches per thread (default `50`). After
 that many patches, the next update restarts threads from fresh output. Set it
 to `0` to restart on every update. Production workers are created directly and
 their bundles contain no DevEngine instrumentation.

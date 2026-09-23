@@ -179,15 +179,13 @@ describe('Neem watcher dev reload', () => {
     ])
 
     const changeEvents = await waitForWatcherEventTypes(neem, [
-      'watcher:worker-hmr-update',
+      'watcher:worker-patch',
       'watcher:logger-changed',
       'watcher:plugin-changed',
     ])
     const manifestEvents = [
       ready,
-      ...changeEvents.filter(
-        (event) => event.event !== 'watcher:worker-hmr-update',
-      ),
+      ...changeEvents.filter((event) => event.event !== 'watcher:worker-patch'),
     ]
     for (const event of manifestEvents) expectManifestEventIdentity(event)
     expectStrictlyIncreasingManifestRevisions(manifestEvents)

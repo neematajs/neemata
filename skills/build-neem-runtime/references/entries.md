@@ -82,7 +82,7 @@ export default defineRuntimeWorker<WorkerData, Definition>({
   replaces the runtime generation in the same thread: Neem awaits `stop()`,
   creates the updated runtime, then calls `start()`. Module state in unchanged
   modules survives; runtime resources do not. Changed upstreams, rejected or
-  failed patches, and the `build.hmr.maxPatches` budget (default 50) restart
+  failed patches, and the `build.updates.maxPatches` budget (default 50) restart
   the thread instead. Declare `reload: 'thread'` on the worker when a fresh
   thread is required on every edit.
 

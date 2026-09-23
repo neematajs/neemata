@@ -332,11 +332,11 @@ class DevSupervisor {
         if (!this.acceptManifest(event)) return
         await this.restartRuntime()
         return
-      case 'worker-hmr-update':
-        await this.applyHmr(event)
+      case 'worker-patch':
+        await this.applyPatch(event)
         return
-      case 'worker-hmr-failed':
-        this.reportHmrFallback(event.runtimeName, event.reason)
+      case 'worker-patch-failed':
+        this.reportPatchFallback(event.runtimeName, event.reason)
         return
       case 'error':
         this.logger.error(
@@ -474,7 +474,9 @@ class DevSupervisor {
     const { runtimeName, threadId, type } = event
     await this.watcher?.request({
       type:
-        type === 'thread-started' ? 'hmr-client-started' : 'hmr-client-stopped',
+        type === 'thread-started'
+          ? 'patch-client-started'
+          : 'patch-client-stopped',
       runtimeName,
       clientId: threadId,
     })
@@ -486,39 +488,39 @@ class DevSupervisor {
     }
   }
 
-  private async applyHmr(
-    event: Extract<WatcherEvent, { type: 'worker-hmr-update' }>,
+  private async applyPatch(
+    event: Extract<WatcherEvent, { type: 'worker-patch' }>,
   ): Promise<void> {
     const { runtimeName, updates } = event
     if (!updates.length) {
-      await this.fallback(runtimeName, 'No active HMR clients')
+      await this.fallback(runtimeName, 'No active patch clients')
       return
     }
     try {
       const result = await this.runtime?.request({
-        type: 'apply-hmr',
+        type: 'apply-patch',
         runtimeName,
         updates,
       })
-      const hmr = result?.hmr
-      if (hmr?.deliveredFiles.length) {
+      const patch = result?.patch
+      if (patch?.deliveredFiles.length) {
         await this.watcher?.request({
-          type: 'hmr-delivered',
+          type: 'patch-delivered',
           runtimeName,
-          filenames: hmr.deliveredFiles,
+          filenames: patch.deliveredFiles,
         })
       }
-      if (hmr?.accepted) {
+      if (patch?.accepted) {
         this.staleWorkers.add(runtimeName)
-        this.options.probe?.emit('runtime:hmr-applied', {
+        this.options.probe?.emit('runtime:patch-applied', {
           runtimeName,
           reason: 'Worker generation updated',
         })
       }
-      if (!hmr?.accepted || hmr.reset) {
+      if (!patch?.accepted || patch.reset) {
         await this.fallback(
           runtimeName,
-          hmr?.reason ?? 'Runtime rejected the HMR update',
+          patch?.reason ?? 'Runtime rejected the patch',
         )
       }
     } catch (error) {
@@ -527,14 +529,14 @@ class DevSupervisor {
     }
   }
 
-  private reportHmrFallback(runtimeName: string, reason: string): void {
-    this.logger.warn({ runtimeName, reason }, 'Neem worker HMR fallback')
-    this.options.probe?.emit('runtime:hmr-fallback', { runtimeName, reason })
+  private reportPatchFallback(runtimeName: string, reason: string): void {
+    this.logger.warn({ runtimeName, reason }, 'Neem runtime restart fallback')
+    this.options.probe?.emit('runtime:patch-fallback', { runtimeName, reason })
   }
 
   private async fallback(runtimeName: string, reason: string): Promise<void> {
     if (this.stopped) return
-    this.reportHmrFallback(runtimeName, reason)
+    this.reportPatchFallback(runtimeName, reason)
     await this.ensureWorkerOutput(runtimeName)
     await this.reloadRuntime(runtimeName)
   }

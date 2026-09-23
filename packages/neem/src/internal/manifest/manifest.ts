@@ -44,7 +44,7 @@ export type ManifestRuntimeConfig = {
 }
 
 export type ManifestConfig = {
-  build?: Pick<NeemBuildConfig, 'hmr'>
+  build?: Pick<NeemBuildConfig, 'updates'>
   logger?: ManifestLogger
   env?: NeemEnv
   proxy?: NeemProxyConfig
@@ -282,8 +282,8 @@ function getRequiredArtifact(
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
   const { proxy, health } = compiled.graph.config
-  const hmr = compiled.graph.config.build?.hmr
-  const build = hmr ? { hmr: { ...hmr } } : undefined
+  const updates = compiled.graph.config.build?.updates
+  const build = updates ? { updates: { ...updates } } : undefined
   const logger = createLogger(compiled)
   const env = copyEnv(compiled.graph.config.env)
   const runtimes = new Map<string, ManifestRuntimeConfig>()

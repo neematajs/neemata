@@ -112,7 +112,7 @@ const manifestRuntimeConfigSchema = z.strictObject({
 const manifestConfigSchema = z.strictObject({
   build: z.optional(
     z.strictObject({
-      hmr: z.optional(
+      updates: z.optional(
         z.strictObject({
           maxPatches: z.optional(z.number().check(z.int(), z.gte(0))),
         }),

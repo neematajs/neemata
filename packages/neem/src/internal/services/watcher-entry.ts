@@ -29,16 +29,16 @@ async function handle(request: WatcherRequest): Promise<void> {
         post({ id: request.id, type: 'result', data: result })
         return
       }
-      case 'hmr-client-started':
-        await service?.addHmrClient(request.runtimeName, request.clientId)
+      case 'patch-client-started':
+        await service?.addPatchClient(request.runtimeName, request.clientId)
         post({ id: request.id, type: 'result' })
         return
-      case 'hmr-client-stopped':
-        await service?.removeHmrClient(request.runtimeName, request.clientId)
+      case 'patch-client-stopped':
+        await service?.removePatchClient(request.runtimeName, request.clientId)
         post({ id: request.id, type: 'result' })
         return
-      case 'hmr-delivered':
-        await service?.notifyHmrDelivered(
+      case 'patch-delivered':
+        await service?.notifyPatchDelivered(
           request.runtimeName,
           request.filenames,
         )

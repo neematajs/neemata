@@ -12,7 +12,7 @@ import type { ManifestLogger } from '../manifest/manifest.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type RuntimeWorkerData = {
-  hmrClientId: string
+  patchClientId: string
   mode: NeemMode
   runtimeName: string
   name: string
@@ -27,12 +27,12 @@ export type ParentMessage =
   | { type: 'stop' }
   | {
       id: number
-      type: 'hmr-update'
+      type: 'patch-update'
       update: BindingClientHmrUpdate['update']
       url?: string
     }
 
-export type WorkerHmrResult = {
+export type WorkerPatchResult = {
   accepted: boolean
   delivered: boolean
   reason?: string
@@ -57,4 +57,4 @@ export type WorkerMessage =
   | ReadyMessage
   | ErrorMessage
   | StoppedMessage
-  | { id: number; type: 'result'; data: WorkerHmrResult }
+  | { id: number; type: 'result'; data: WorkerPatchResult }

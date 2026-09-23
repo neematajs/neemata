@@ -463,7 +463,7 @@ describe('Neem v2 services', () => {
     )
 
     await neem.waitForEvent(
-      (event) => event.event === 'runtime:hmr-applied',
+      (event) => event.event === 'runtime:patch-applied',
       30_000,
     )
     await waitForEventCount(fixture.eventsFile, 'stop', 2)

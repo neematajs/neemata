@@ -1,7 +1,7 @@
 import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 
 import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { RuntimeHmrResult } from '../host/runtime.ts'
+import type { RuntimePatchResult } from '../host/runtime.ts'
 import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { SerializedError } from '../utils.ts'
 
@@ -25,13 +25,13 @@ export type WatcherRequest =
   | WatcherStopRequest
   | {
       id: number
-      type: 'hmr-client-started' | 'hmr-client-stopped'
+      type: 'patch-client-started' | 'patch-client-stopped'
       runtimeName: string
       clientId: string
     }
   | {
       id: number
-      type: 'hmr-delivered'
+      type: 'patch-delivered'
       runtimeName: string
       filenames: readonly string[]
     }
@@ -54,11 +54,11 @@ export type WatcherManifestChangeEvent =
 
 export type WatcherEvent =
   | {
-      type: 'worker-hmr-update'
+      type: 'worker-patch'
       runtimeName: string
       updates: BindingClientHmrUpdate[]
     }
-  | { type: 'worker-hmr-failed'; runtimeName: string; reason: string }
+  | { type: 'worker-patch-failed'; runtimeName: string; reason: string }
   | ({ type: 'ready' } & WatcherManifestIdentity)
   | { type: 'config-invalidated' }
   | WatcherManifestChangeEvent
@@ -104,7 +104,7 @@ export type RuntimeRequest =
   | RuntimeStopRequest
   | {
       id: number
-      type: 'apply-hmr'
+      type: 'apply-patch'
       runtimeName: string
       updates: readonly BindingClientHmrUpdate[]
     }
@@ -117,7 +117,7 @@ export type RuntimeEvent =
 
 export type RuntimeResult = {
   health?: NeemRuntimeServerHealth
-  hmr?: RuntimeHmrResult
+  patch?: RuntimePatchResult
 }
 
 export type RuntimeResponse = ServiceResponse<RuntimeEvent, RuntimeResult>

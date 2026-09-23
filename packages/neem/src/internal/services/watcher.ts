@@ -65,19 +65,22 @@ export class WatcherService {
     }
   }
 
-  async addHmrClient(runtimeName: string, clientId: string): Promise<void> {
-    await this.graphWatcher?.addHmrClient(runtimeName, clientId)
+  async addPatchClient(runtimeName: string, clientId: string): Promise<void> {
+    await this.graphWatcher?.addPatchClient(runtimeName, clientId)
   }
 
-  async removeHmrClient(runtimeName: string, clientId: string): Promise<void> {
-    await this.graphWatcher?.removeHmrClient(runtimeName, clientId)
+  async removePatchClient(
+    runtimeName: string,
+    clientId: string,
+  ): Promise<void> {
+    await this.graphWatcher?.removePatchClient(runtimeName, clientId)
   }
 
-  async notifyHmrDelivered(
+  async notifyPatchDelivered(
     runtimeName: string,
     filenames: readonly string[],
   ): Promise<void> {
-    await this.graphWatcher?.notifyHmrDelivered(runtimeName, filenames)
+    await this.graphWatcher?.notifyPatchDelivered(runtimeName, filenames)
   }
 
   async ensureWorkerOutput(
@@ -158,15 +161,15 @@ export class WatcherService {
     const graphWatcher = await watchGraph(graph, {
       onChange: (change) => this.handleChange(change),
       onError: (error) => this.reportError(error),
-      onHmrUpdates: (runtimeName, updates) =>
-        this.emit({ type: 'worker-hmr-update', runtimeName, updates }),
-      onHmrError: async (runtimeName, error) => {
+      onUpdates: (runtimeName, updates) =>
+        this.emit({ type: 'worker-patch', runtimeName, updates }),
+      onUpdateError: async (runtimeName, error) => {
         this.logger?.error(
           { err: error, runtimeName },
-          'Neem worker HMR build failed',
+          'Neem runtime restart build failed',
         )
         await this.emit({
-          type: 'worker-hmr-failed',
+          type: 'worker-patch-failed',
           runtimeName,
           reason: error.message,
         })

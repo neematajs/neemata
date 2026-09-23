@@ -10,7 +10,7 @@ import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 // Control runtime readiness; the controller's hooks and operation queue are real.
 const runtime = vi.hoisted(() => ({
   starts: [] as string[],
-  hmr: vi.fn(),
+  patch: vi.fn(),
   stopped: vi.fn(),
   ready: undefined as
     | undefined
@@ -27,7 +27,7 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
       runtime.ready!.reject(new Error('stopped before ready'))
       runtime.stopped()
     }
-    applyHmr = runtime.hmr
+    applyPatch = runtime.patch
     getUpstreams = () => []
     getHealth = () => ({ name: 'api', ready: false, workers: [] })
     setSnapshot() {}
@@ -37,7 +37,7 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
 afterEach(() => {
   runtime.starts.length = 0
   runtime.ready = undefined
-  runtime.hmr.mockReset()
+  runtime.patch.mockReset()
   runtime.stopped.mockReset()
 })
 
@@ -68,13 +68,13 @@ const manifest: Manifest = {
 }
 
 describe('HostController stop during startup', () => {
-  it('interrupts HMR before joining the operation queue', async () => {
+  it('interrupts patch application before joining the operation queue', async () => {
     const ready = createFuture<void>()
     runtime.ready = ready
     ready.resolve()
     const entered = createFuture<void>()
     const interrupted = createFuture<void>()
-    runtime.hmr.mockImplementation(async () => {
+    runtime.patch.mockImplementation(async () => {
       entered.resolve()
       await interrupted.promise
       return { accepted: false, deliveredFiles: [] }
@@ -90,7 +90,7 @@ describe('HostController stop during startup', () => {
       }),
     })
     await controller.start()
-    const applying = controller.applyHmr('api', [])
+    const applying = controller.applyPatch('api', [])
     await entered.promise
     const stopping = controller.stop()
     try {

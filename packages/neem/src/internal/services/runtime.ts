@@ -102,8 +102,8 @@ export class RuntimeService {
     return controller.getHealth()
   }
 
-  applyHmr(runtimeName: string, updates: readonly BindingClientHmrUpdate[]) {
-    return this.requireController().applyHmr(runtimeName, updates)
+  applyPatch(runtimeName: string, updates: readonly BindingClientHmrUpdate[]) {
+    return this.requireController().applyPatch(runtimeName, updates)
   }
 
   async stop(): Promise<void> {

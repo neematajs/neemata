@@ -43,9 +43,12 @@ async function handle(request: RuntimeRequest): Promise<void> {
         post({ id: request.id, type: 'result', data: { health } })
         return
       }
-      case 'apply-hmr': {
-        const hmr = await service.applyHmr(request.runtimeName, request.updates)
-        post({ id: request.id, type: 'result', data: { hmr } })
+      case 'apply-patch': {
+        const patch = await service.applyPatch(
+          request.runtimeName,
+          request.updates,
+        )
+        post({ id: request.id, type: 'result', data: { patch } })
         return
       }
       case 'stop':

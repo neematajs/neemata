@@ -236,7 +236,7 @@ describe('Neem recovery health and proxy behavior', () => {
 
     await writeFileAtomically(workerFile, badWorker)
     await neem.waitForEvent(
-      (event) => event.event === 'runtime:hmr-fallback',
+      (event) => event.event === 'runtime:patch-fallback',
       30_000,
     )
     await waitForMatchingEventCount(
@@ -278,7 +278,7 @@ describe('Neem recovery health and proxy behavior', () => {
     })
 
     await writeFileAtomically(workerFile, fixedWorker)
-    await waitForProbeEventCount(neem, 'runtime:hmr-fallback', 2)
+    await waitForProbeEventCount(neem, 'runtime:patch-fallback', 2)
     await waitForMatchingEventCount(
       fixture.eventsFile,
       (event) =>

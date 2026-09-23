@@ -26,7 +26,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
 })
 
-describe.each(['Promise', 'Effect'])('Neem %s workflows HMR', (mode) => {
+describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
   it('rotates worker generations without rebuilding planner topology', async () => {
     const fixture = await createFixture(mode)
     fixtures.push(fixture)
@@ -100,9 +100,9 @@ describe.each(['Promise', 'Effect'])('Neem %s workflows HMR', (mode) => {
 async function createFixture(mode: string) {
   const tempRoot = resolve(import.meta.dirname, '.tmp')
   await mkdir(tempRoot, { recursive: true })
-  const dir = await mkdtemp(resolve(tempRoot, 'hmr-'))
+  const dir = await mkdtemp(resolve(tempRoot, 'restart-'))
   const fixtureDir = resolve(dir, 'fixture')
-  await cp(resolve(import.meta.dirname, 'fixtures/hmr'), fixtureDir, {
+  await cp(resolve(import.meta.dirname, 'fixtures/restart'), fixtureDir, {
     recursive: true,
   })
 
@@ -184,7 +184,7 @@ function spawnNeem(args: readonly string[]) {
     diagnostics: () =>
       `stdout:\n${stdout}\nstderr:\n${stderr}\nprobes:\n${probes.join('\n')}`,
     updates: () =>
-      probes.filter((event) => event === 'runtime:hmr-applied').length,
+      probes.filter((event) => event === 'runtime:patch-applied').length,
     exited: () => exitState,
     stdout: () => stdout,
     waitForExit: () => exit,

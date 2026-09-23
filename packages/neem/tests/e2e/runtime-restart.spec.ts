@@ -20,7 +20,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
 })
 
-describe('Neem worker HMR', () => {
+describe('Neem runtime restart', () => {
   it('patches both threads in place after a leaf edit', async () => {
     const fixture = await createFixture()
     const neem = start(fixture)
@@ -40,7 +40,7 @@ describe('Neem worker HMR', () => {
     for (const next of updated) {
       const stopped = events.findIndex(
         (event) =>
-          event.event === 'worker-hmr-stop' &&
+          event.event === 'worker-generation-stop' &&
           event.threadId === next.threadId &&
           event.generation === 1,
       )
@@ -48,7 +48,7 @@ describe('Neem worker HMR', () => {
       expect(stopped).toBeLessThan(
         events.findIndex(
           (event) =>
-            event.event === 'worker-hmr-start' &&
+            event.event === 'worker-generation-start' &&
             event.threadId === next.threadId &&
             event.generation === 2,
         ),
@@ -67,7 +67,7 @@ describe('Neem worker HMR', () => {
       "marker: 'v2', upstream: true",
     )
     const fallback = await neem.waitForEvent(
-      (event) => event.event === 'runtime:hmr-fallback',
+      (event) => event.event === 'runtime:patch-fallback',
       30_000,
     )
     expect(fallback.reason).toContain('upstreams')
@@ -103,7 +103,7 @@ describe('Neem worker HMR', () => {
     await replaceInFile(
       fixture.configFile,
       'defineConfig({',
-      'defineConfig({ build: { hmr: { maxPatches: 2 } },',
+      'defineConfig({ build: { updates: { maxPatches: 2 } },',
     )
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
@@ -119,7 +119,7 @@ describe('Neem worker HMR', () => {
 
     await editMarker(fixture, 'v3', 'v4')
     const fallback = await neem.waitForEvent(
-      (event) => event.event === 'runtime:hmr-fallback',
+      (event) => event.event === 'runtime:patch-fallback',
       30_000,
     )
     expect(fallback.reason).toContain('patch budget')
@@ -132,7 +132,7 @@ describe('Neem worker HMR', () => {
   it('refreshes a stale bundle after host-internal crash recovery', async () => {
     const fixture = await createFixture()
     const crashFile = resolve(fixture.dir, 'crash')
-    const neem = start(fixture, { NEEM_HMR_CRASH_FILE: crashFile })
+    const neem = start(fixture, { NEEM_RESTART_CRASH_FILE: crashFile })
     await generations(fixture, neem, 'v1', 1)
     await editMarker(fixture, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
@@ -140,7 +140,7 @@ describe('Neem worker HMR', () => {
 
     await writeFile(crashFile, '')
     await generations(fixture, neem, 'v2', 1)
-    // Recovery-created threads must also be registered as HMR clients.
+    // Recovery-created threads must also be registered as patch clients.
     await editMarker(fixture, 'v2', 'v3')
     await generations(fixture, neem, 'v3', 2)
     await applied(neem, 2)
@@ -159,8 +159,8 @@ describe('Neem worker HMR', () => {
     await editMarker(fixture, 'v1', 'v2')
     await neem.waitForEvent(
       (event) =>
-        event.event === 'runtime:hmr-fallback' &&
-        event.reason === 'No active HMR clients',
+        event.event === 'runtime:patch-fallback' &&
+        event.reason === 'No active patch clients',
       30_000,
     )
     await replaceInFile(
@@ -177,7 +177,7 @@ describe('Neem worker HMR', () => {
     await generations(fixture, neem, 'v1', 1)
     await replaceInFile(fixture.valueFile, "marker: 'v1'", 'marker: !!!')
     await neem.waitForEvent(
-      (event) => event.event === 'watcher:worker-hmr-failed',
+      (event) => event.event === 'watcher:worker-patch-failed',
       30_000,
     )
     expect(
@@ -195,11 +195,11 @@ describe('Neem worker HMR', () => {
     await generations(fixture, neem, 'v1', 1)
     await replaceInFile(
       resolve(fixture.caseDir, 'api.worker.ts'),
-      '  definition: hmrValue,',
-      "  definition: hmrValue,\n  reload: 'thread',",
+      '  definition,',
+      "  definition,\n  reload: 'thread',",
     )
     const fallback = await neem.waitForEvent(
-      (event) => event.event === 'runtime:hmr-fallback',
+      (event) => event.event === 'runtime:patch-fallback',
       30_000,
     )
     expect(fallback.reason).toContain("reload: 'thread'")
@@ -215,10 +215,10 @@ describe('Neem worker HMR', () => {
 })
 
 async function createFixture() {
-  const fixture = await createNeemFixture({ config: 'worker-hmr' })
+  const fixture = await createNeemFixture({ config: 'runtime-restart' })
   fixtures.push(fixture)
-  const caseDir = resolve(fixture.fixtureDir, 'cases/worker-hmr')
-  const valueFile = resolve(caseDir, 'hmr-value.ts')
+  const caseDir = resolve(fixture.fixtureDir, 'cases/runtime-restart')
+  const valueFile = resolve(caseDir, 'definition.ts')
   const plannerFile = resolve(caseDir, 'api.planner.ts')
   return { ...fixture, caseDir, valueFile, plannerFile }
 }
@@ -271,7 +271,7 @@ async function generations(
     async () => {
       const events = (await readRuntimeEvents(fixture.eventsFile)).filter(
         (event) =>
-          event.event === 'worker-hmr-start' &&
+          event.event === 'worker-generation-start' &&
           event.marker === marker &&
           event.generation === generation,
       )
@@ -285,7 +285,7 @@ async function generations(
 async function applied(neem: SpawnedNeem, count: number) {
   await waitFor(
     () =>
-      neem.events().filter((event) => event.event === 'runtime:hmr-applied')
+      neem.events().filter((event) => event.event === 'runtime:patch-applied')
         .length >= count,
     30_000,
     () => JSON.stringify(neem.events()) + '\n' + neem.stderr(),

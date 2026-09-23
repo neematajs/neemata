@@ -1,6 +1,6 @@
 // Rolldown injects this source beside its DevRuntime prelude. Keeping the
 // client transport-free lets Neem deliver patches over worker parent ports.
-export const NEEM_HMR_IMPLEMENTATION = String.raw`
+export const NEEM_DEV_RUNTIME = String.raw`
 ;(() => {
   class NeemHotContext {
     constructor(moduleId) {
@@ -17,7 +17,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
 
     accept(callback) {
       if (Array.isArray(callback) || typeof callback === 'string') {
-        throw new Error('Neem HMR supports only self-accept; dependency accepts are not supported')
+        throw new Error('Neem patching supports only self-accept; dependency accepts are not supported')
       }
       this.callbacks.push({
         deps: [this.moduleId],
@@ -28,7 +28,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
     }
 
     invalidate() {
-      throw new Error('Neem HMR does not support import.meta.hot.invalidate()')
+      throw new Error('Neem patching does not support import.meta.hot.invalidate()')
     }
   }
 
@@ -42,7 +42,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
     }
   }
 
-  class NeemHmrClient {
+  class NeemPatchClient {
     constructor(runtime) {
       this.runtime = runtime
       this.lastSeq = 0
@@ -87,13 +87,13 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
         .getImporters(id)
         .filter((parent) => this.runtime.isExecuted(parent))
       if (parents.length === 0) {
-        return { type: 'reload', reason: 'no HMR boundary for ' + id }
+        return { type: 'reload', reason: 'no patch boundary for ' + id }
       }
       for (const parent of parents) {
         if (stack.includes(parent)) {
           return {
             type: 'reload',
-            reason: 'circular HMR path between ' + id + ' and ' + parent,
+            reason: 'circular patch path between ' + id + ' and ' + parent,
           }
         }
         const rejected = this.bubble(
@@ -122,7 +122,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
           accepted: false,
           delivered: false,
           reason:
-            'HMR sequence gap: expected ' +
+            'Patch sequence gap: expected ' +
             (this.lastSeq + 1) +
             ', received ' +
             update.seq,
@@ -144,7 +144,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
         return {
           accepted: false,
           delivered: false,
-          reason: 'failed to import HMR patch: ' + String(error),
+          reason: 'failed to import patch: ' + String(error),
         }
       }
 
@@ -153,7 +153,7 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
           return {
             accepted: false,
             delivered: true,
-            reason: 'HMR patch has no factory for ' + id,
+            reason: 'patch has no factory for ' + id,
           }
         }
       }
@@ -173,22 +173,22 @@ export const NEEM_HMR_IMPLEMENTATION = String.raw`
         return {
           accepted: false,
           delivered: true,
-          reason: 'failed to apply HMR patch: ' + String(error),
+          reason: 'failed to apply patch: ' + String(error),
         }
       }
       return { accepted: true, delivered: true }
     }
   }
 
-  const clientId = globalThis.__neem_hmr_client_id__ ?? crypto.randomUUID()
+  const clientId = globalThis.__neem_patch_client_id__ ?? crypto.randomUUID()
   const runtime = globalThis.__rolldown_runtime__ ??=
     new NeemDevRuntime(clientId)
-  const client = new NeemHmrClient(runtime)
+  const client = new NeemPatchClient(runtime)
   runtime.hooks = {
     createModuleHotContext: (id) => runtime.createModuleHotContext(id),
     onModuleCacheRemoval: (id) => runtime.hotContexts.delete(id),
   }
-  globalThis.__neem_hmr__ = {
+  globalThis.__neem_patches__ = {
     clientId,
     apply: (update, url) => client.apply(update, url),
   }

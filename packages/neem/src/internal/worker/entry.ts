@@ -12,7 +12,7 @@ import type {
   RuntimeWorkerData,
   WorkerErrorOrigin,
   WorkerMessage,
-  WorkerHmrResult,
+  WorkerPatchResult,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
@@ -27,18 +27,18 @@ if (!parentPort) {
 const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
 
-type HmrGlobal = typeof globalThis & {
-  __neem_hmr_client_id__?: string
+type PatchGlobal = typeof globalThis & {
+  __neem_patch_client_id__?: string
   __neem_accept_worker__?: (worker: unknown) => Promise<void>
-  __neem_hmr__?: {
+  __neem_patches__?: {
     apply: (
-      update: Extract<ParentMessage, { type: 'hmr-update' }>['update'],
+      update: Extract<ParentMessage, { type: 'patch-update' }>['update'],
       url?: string,
-    ) => Promise<Omit<WorkerHmrResult, 'patches'>>
+    ) => Promise<Omit<WorkerPatchResult, 'patches'>>
   }
 }
 
-const hmrGlobal = globalThis as HmrGlobal
+const patchGlobal = globalThis as PatchGlobal
 let currentWorker: NeemRuntimeWorker | undefined
 let patches = 0
 let runtime: NeemRuntime | undefined
@@ -73,8 +73,8 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     'Neem runtime worker initializing',
   )
   // The DevEngine prelude reads the client id during artifact evaluation.
-  hmrGlobal.__neem_hmr_client_id__ = data.hmrClientId
-  hmrGlobal.__neem_accept_worker__ = acceptWorker
+  patchGlobal.__neem_patch_client_id__ = data.patchClientId
+  patchGlobal.__neem_accept_worker__ = acceptWorker
   const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
     data.artifact.file,
   )
@@ -103,7 +103,9 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
 
 async function acceptWorker(next: unknown): Promise<void> {
   if (!isNeemRuntimeWorker(next)) {
-    throw new Error('HMR worker default export is not a marked runtime worker')
+    throw new Error(
+      'Updated worker default export is not a marked runtime worker',
+    )
   }
   if (currentWorker?.reload === 'thread' || next.reload === 'thread') {
     throw new Error("Worker requires reload: 'thread'")
@@ -115,11 +117,11 @@ async function acceptWorker(next: unknown): Promise<void> {
   currentWorker = next
 }
 
-async function applyHmrUpdate(
-  message: Extract<ParentMessage, { type: 'hmr-update' }>,
+async function applyUpdate(
+  message: Extract<ParentMessage, { type: 'patch-update' }>,
 ): Promise<void> {
-  const client = hmrGlobal.__neem_hmr__
-  let result: Omit<WorkerHmrResult, 'patches'>
+  const client = patchGlobal.__neem_patches__
+  let result: Omit<WorkerPatchResult, 'patches'>
   try {
     result = client
       ? await client.apply(message.update, message.url)
@@ -198,7 +200,7 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
 
 port.on('message', (message: ParentMessage) => {
   if (message?.type === 'stop') void stopAndExit()
-  if (message?.type === 'hmr-update') void applyHmrUpdate(message)
+  if (message?.type === 'patch-update') void applyUpdate(message)
 })
 
 process.on('uncaughtException', (error) => {

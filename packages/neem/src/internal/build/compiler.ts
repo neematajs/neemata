@@ -32,7 +32,7 @@ import type {
 } from './graph.ts'
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { normalizeError, toFilePath } from '../utils.ts'
-import { NEEM_HMR_IMPLEMENTATION } from './dev-runtime.ts'
+import { NEEM_DEV_RUNTIME } from './dev-runtime.ts'
 
 type ArtifactInput = { entry: string; input: string; targetKey?: string }
 
@@ -78,7 +78,7 @@ export type TargetWatcher = {
   close: () => Promise<void>
 }
 
-type HmrController = {
+type PatchController = {
   addClient: (clientId: string) => Promise<void>
   removeClient: (clientId: string) => Promise<void>
   delivered: (filenames: readonly string[]) => Promise<void>
@@ -91,9 +91,9 @@ type WatchHandlers = {
 }
 
 export type GraphWatcher = {
-  addHmrClient: (runtimeName: string, clientId: string) => Promise<void>
-  removeHmrClient: (runtimeName: string, clientId: string) => Promise<void>
-  notifyHmrDelivered: (
+  addPatchClient: (runtimeName: string, clientId: string) => Promise<void>
+  removePatchClient: (runtimeName: string, clientId: string) => Promise<void>
+  notifyPatchDelivered: (
     runtimeName: string,
     filenames: readonly string[],
   ) => Promise<void>
@@ -146,16 +146,16 @@ export async function watchGraph(
   handlers: {
     onChange?: (change: TargetChange) => MaybePromise<void>
     onError?: (error: Error) => MaybePromise<void>
-    onHmrUpdates?: (
+    onUpdates?: (
       runtimeName: string,
       updates: BindingClientHmrUpdate[],
     ) => MaybePromise<void>
-    onHmrError?: (runtimeName: string, error: Error) => MaybePromise<void>
+    onUpdateError?: (runtimeName: string, error: Error) => MaybePromise<void>
   } = {},
 ): Promise<GraphWatcher> {
   const compiled = new Map<string, CompiledTarget>()
   const watchConfig = graph.config.build?.watch
-  const hmr = new Map<string, HmrController>()
+  const controllers = new Map<string, PatchController>()
   const watchers = await Promise.all(
     graph.buildGroups.map(async (group): Promise<BuildGroupWatcher> => {
       async function onRebuild(change: TargetChange) {
@@ -179,13 +179,13 @@ export async function watchGraph(
         {
           onRebuild,
           onError: handlers.onError,
-          onHmrUpdates: (updates) =>
-            handlers.onHmrUpdates?.(runtimeName, updates),
-          onHmrError: (error) => handlers.onHmrError?.(runtimeName, error),
+          onUpdates: (updates) => handlers.onUpdates?.(runtimeName, updates),
+          onUpdateError: (error) =>
+            handlers.onUpdateError?.(runtimeName, error),
         },
         watchConfig,
       )
-      hmr.set(runtimeName, watcher.hmr)
+      controllers.set(runtimeName, watcher.patches)
       return {
         ready: watcher.ready.then((target) => [target]),
         close: watcher.close,
@@ -202,17 +202,17 @@ export async function watchGraph(
 
   return {
     ready,
-    async addHmrClient(runtimeName, clientId) {
-      await hmr.get(runtimeName)?.addClient(clientId)
+    async addPatchClient(runtimeName, clientId) {
+      await controllers.get(runtimeName)?.addClient(clientId)
     },
-    async removeHmrClient(runtimeName, clientId) {
-      await hmr.get(runtimeName)?.removeClient(clientId)
+    async removePatchClient(runtimeName, clientId) {
+      await controllers.get(runtimeName)?.removeClient(clientId)
     },
-    async notifyHmrDelivered(runtimeName, filenames) {
-      await hmr.get(runtimeName)?.delivered(filenames)
+    async notifyPatchDelivered(runtimeName, filenames) {
+      await controllers.get(runtimeName)?.delivered(filenames)
     },
     async ensureWorkerOutput(runtimeName) {
-      await hmr.get(runtimeName)?.ensureOutput()
+      await controllers.get(runtimeName)?.ensureOutput()
     },
     snapshot() {
       return createCompiledGraph(graph, [...compiled.values()])
@@ -403,11 +403,11 @@ function createWatchOptions(
 async function watchWorkerTarget(
   target: BuildTarget,
   handlers: WatchHandlers & {
-    onHmrUpdates: (updates: BindingClientHmrUpdate[]) => MaybePromise<void>
-    onHmrError: (error: Error) => MaybePromise<void>
+    onUpdates: (updates: BindingClientHmrUpdate[]) => MaybePromise<void>
+    onUpdateError: (error: Error) => MaybePromise<void>
   },
   watchConfig?: NeemBuildWatchConfig,
-): Promise<TargetWatcher & { hmr: HmrController }> {
+): Promise<TargetWatcher & { patches: PatchController }> {
   const metadata: ArtifactBuildMetadata = { watch: true }
   const ready = createFuture<CompiledTarget>()
   void ready.promise.catch(() => {})
@@ -421,12 +421,12 @@ async function watchWorkerTarget(
   const { output, ...input } = createRolldownOptions(target, metadata)
   input.experimental = {
     ...input.experimental,
-    devMode: { implement: NEEM_HMR_IMPLEMENTATION, lazy: false },
+    devMode: { implement: NEEM_DEV_RUNTIME, lazy: false },
   }
   input.plugins = [
     ...normalizePlugins(input.plugins),
     {
-      name: 'neem:worker-hmr-boundary',
+      name: 'neem:runtime-restart-boundary',
       transform: {
         filter: { id: toFilePath(target.artifact.entry) },
         handler(code) {
@@ -465,7 +465,7 @@ async function watchWorkerTarget(
       updatesApplied = updatesApplied
         .then(async () => {
           if (result instanceof Error) {
-            await handlers.onHmrError(result)
+            await handlers.onUpdateError(result)
             return
           }
           await assetsWritten
@@ -480,9 +480,9 @@ async function watchWorkerTarget(
               )
             }
           }
-          await handlers.onHmrUpdates(result.updates)
+          await handlers.onUpdates(result.updates)
         })
-        .catch((error) => handlers.onHmrError(normalizeError(error)))
+        .catch((error) => handlers.onUpdateError(normalizeError(error)))
     },
   })
 
@@ -497,7 +497,7 @@ async function watchWorkerTarget(
   return {
     target,
     ready: ready.promise,
-    hmr: {
+    patches: {
       async addClient(clientId) {
         await engine.registerClient(clientId)
         // A full bundle has already delivered every chunk to the new thread.

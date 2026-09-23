@@ -24,7 +24,7 @@ import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
 import { ThreadController } from './thread.ts'
 
-export type RuntimeHmrResult = {
+export type RuntimePatchResult = {
   accepted: boolean
   deliveredFiles: readonly string[]
   reason?: string
@@ -64,11 +64,11 @@ export class RuntimeController {
     return this.threads.flatMap((thread) => thread.getUpstreams())
   }
 
-  async applyHmr(
+  async applyPatch(
     updates: readonly BindingClientHmrUpdate[],
-  ): Promise<RuntimeHmrResult> {
+  ): Promise<RuntimePatchResult> {
     const maxPatches =
-      this.options.snapshot.manifest.config.build?.hmr?.maxPatches ?? 50
+      this.options.snapshot.manifest.config.build?.updates?.maxPatches ?? 50
     // The budget permits exactly maxPatches successful patches; recycle before
     // applying the following edit, so the fresh bundle includes that edit too.
     if (this.threads.some((thread) => thread.patches >= maxPatches)) {
@@ -76,7 +76,7 @@ export class RuntimeController {
         accepted: false,
         deliveredFiles: [],
         reset: true,
-        reason: `Worker HMR patch budget reached (${maxPatches})`,
+        reason: `Worker patch budget reached (${maxPatches})`,
       }
     }
     const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
@@ -89,13 +89,13 @@ export class RuntimeController {
             result: {
               accepted: false,
               delivered: false,
-              reason: `HMR client [${clientId}] is no longer running`,
+              reason: `Patch client [${clientId}] is no longer running`,
             },
           }
         }
 
         try {
-          return { update, result: await thread.applyHmr(update) }
+          return { update, result: await thread.applyPatch(update) }
         } catch (error) {
           return {
             update,
