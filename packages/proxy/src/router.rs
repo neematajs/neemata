@@ -1,0 +1,1444 @@
+use crate::{lb, options};
+use std::borrow::Cow;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use arc_swap::ArcSwap;
+use http::header;
+use http::{StatusCode, Uri};
+use pingora::http::RequestHeader;
+use pingora::http::ResponseHeader;
+use pingora::lb::{LoadBalancer, selection::RoundRobin};
+use pingora::proxy::{FailToProxy, ProxyHttp, Session};
+use pingora::upstreams::peer::HttpPeer;
+use pingora::{Error, ErrorType, Result};
+
+#[derive(Clone, Default)]
+pub struct RouterConfig {
+    pub subdomain_routes: HashMap<String, String>,
+    pub path_routes: HashMap<String, String>,
+    pub default_app: Option<String>,
+    pub apps: HashMap<String, AppPools>,
+}
+
+#[derive(Clone)]
+pub struct AppPools {
+    pub http1: Option<PoolConfig>,
+    pub ws: Option<PoolConfig>,
+    pub http2: Option<PoolConfig>,
+}
+
+#[derive(Clone)]
+pub struct PoolConfig {
+    pub lb: Arc<LoadBalancer<RoundRobin>>,
+    pub secure: bool,
+    pub verify_hostname: String,
+    pub backends: Arc<HashSet<String>>,
+}
+
+/// Pre-resolved pool information cached in context to avoid repeated lookups.
+#[derive(Clone)]
+pub struct ResolvedPool {
+    pub lb: Arc<LoadBalancer<RoundRobin>>,
+    pub secure: bool,
+    pub verify_hostname: String,
+    pub is_http2: bool,
+    pub transport: lb::TransportKind,
+    pub backends: Arc<HashSet<String>>,
+}
+
+#[derive(Clone)]
+pub struct StickySessionConfig {
+    pub enabled: bool,
+    pub cookie_name: String,
+    pub header_name: String,
+    pub ttl: Duration,
+    pub max_entries: usize,
+    pub cookie_secure: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AffinityMapKey {
+    app_name: String,
+    transport: lb::TransportKind,
+    affinity_key: String,
+}
+
+#[derive(Debug, Clone)]
+struct AffinityEntry {
+    backend: String,
+    expires_at: Instant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EvictionItem {
+    expires_at: Instant,
+    sequence: u64,
+    shard_index: usize,
+    key: AffinityMapKey,
+}
+
+impl PartialOrd for EvictionItem {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EvictionItem {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.expires_at
+            .cmp(&other.expires_at)
+            .then_with(|| self.sequence.cmp(&other.sequence))
+    }
+}
+
+struct StickyShard {
+    entries: Mutex<HashMap<AffinityMapKey, AffinityEntry>>,
+    op_counter: AtomicU64,
+}
+
+struct StickySessionState {
+    config: StickySessionConfig,
+    shards: Vec<StickyShard>,
+    key_counter: AtomicU64,
+}
+
+const STICKY_SHARD_COUNT: usize = 64;
+const MAX_AFFINITY_KEY_LEN: usize = 256;
+
+#[allow(dead_code)]
+pub struct Router {
+    config: ArcSwap<RouterConfig>,
+    sticky: Option<Arc<StickySessionState>>,
+    limits: options::ProxyLimitsOptionsParsed,
+    timeouts: options::ProxyTimeoutOptionsParsed,
+}
+
+impl Router {
+    #[allow(dead_code)]
+    pub fn new(
+        config: RouterConfig,
+        sticky_config: StickySessionConfig,
+        limits: options::ProxyLimitsOptionsParsed,
+        timeouts: options::ProxyTimeoutOptionsParsed,
+    ) -> Self {
+        let sticky = if sticky_config.enabled {
+            let mut shards = Vec::with_capacity(STICKY_SHARD_COUNT);
+            for _ in 0..STICKY_SHARD_COUNT {
+                shards.push(StickyShard {
+                    entries: Mutex::new(HashMap::new()),
+                    op_counter: AtomicU64::new(0),
+                });
+            }
+
+            Some(Arc::new(StickySessionState {
+                config: sticky_config,
+                shards,
+                key_counter: AtomicU64::new(1),
+            }))
+        } else {
+            None
+        };
+
+        Self {
+            config: ArcSwap::from_pointee(config),
+            sticky,
+            limits,
+            timeouts,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn update(&self, config: RouterConfig) {
+        self.config.store(Arc::new(config));
+    }
+}
+
+#[derive(Clone)]
+struct ResolvedRoute {
+    app_name: String,
+    path_rewrite_segment: Option<String>,
+}
+
+fn resolve_route(
+    config: &RouterConfig,
+    host: Option<&str>,
+    path_first_segment: Option<&str>,
+) -> Option<ResolvedRoute> {
+    if let Some(host) = host
+        && let Some(app_name) = config.subdomain_routes.get(host)
+    {
+        return Some(ResolvedRoute {
+            app_name: app_name.clone(),
+            path_rewrite_segment: None,
+        });
+    }
+
+    if let Some(seg) = path_first_segment
+        && let Some(app_name) = config.path_routes.get(seg)
+    {
+        return Some(ResolvedRoute {
+            app_name: app_name.clone(),
+            path_rewrite_segment: Some(seg.to_string()),
+        });
+    }
+
+    config.default_app.as_ref().map(|app_name| ResolvedRoute {
+        app_name: app_name.clone(),
+        path_rewrite_segment: None,
+    })
+}
+
+#[derive(Clone)]
+pub struct SharedRouter(pub Arc<Router>);
+
+#[derive(Clone, Default)]
+pub struct RouterCtx {
+    pub app_name: Option<String>,
+    pub path_rewrite_segment: Option<String>,
+    pub is_upgrade: bool,
+    /// Cached pool resolution from request_filter to avoid re-lookup in upstream_peer.
+    pub resolved_pool: Option<ResolvedPool>,
+    pub selected_transport: Option<lb::TransportKind>,
+    pub affinity_key: Option<String>,
+    pub should_set_cookie: bool,
+    pub sticky_retry_attempted: bool,
+    pub failure_hint: Option<FailureHint>,
+}
+
+#[derive(Clone, Copy)]
+pub enum FailureHint {
+    MissingApplication,
+    MissingWsPool,
+    MissingUpstreamPool,
+    UnhealthyUpstream,
+}
+
+impl SharedRouter {
+    pub fn new(router: Arc<Router>) -> Self {
+        Self(router)
+    }
+}
+
+#[async_trait::async_trait]
+impl ProxyHttp for SharedRouter {
+    type CTX = RouterCtx;
+
+    fn new_ctx(&self) -> Self::CTX {
+        RouterCtx::default()
+    }
+
+    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        let config = self.0.config.load();
+        let limits = &self.0.limits;
+        let timeouts = &self.0.timeouts;
+
+        // TODO(vNext): Deterministic downstream error mapping.
+        // Today, a number of routing/upstream-selection failures bubble up as Pingora internal errors,
+        // which typically become HTTP 500 responses but without a fully controlled body/headers.
+        // Decide and implement a single, explicit downstream error policy for at least:
+        // - no application matched (no subdomain/path/default)
+        // - matched app has no pools configured
+        // - no pools available for request type (e.g. upgrade requires http1)
+        // - no healthy upstreams available
+        // Acceptance: response status/body/headers are stable across versions and covered by tests.
+
+        if let Some(status) = request_limit_rejection_status(session, limits) {
+            return reject_request(session, status).await;
+        }
+
+        apply_downstream_timeouts(session, timeouts);
+
+        let host = extract_host(session);
+        let path_first_segment = extract_first_path_segment(session);
+        let is_upgrade = session.is_upgrade_req();
+
+        let Some(resolved_route) = resolve_route(&config, host.as_deref(), path_first_segment)
+        else {
+            ctx.failure_hint = Some(FailureHint::MissingApplication);
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(StatusCode::NOT_FOUND.as_u16()),
+                "no application matched",
+            ));
+        };
+
+        ctx.app_name = Some(resolved_route.app_name);
+        ctx.path_rewrite_segment = resolved_route.path_rewrite_segment;
+        ctx.is_upgrade = is_upgrade;
+
+        // Pre-resolve the pool to avoid repeated HashMap lookups in upstream_peer.
+        if let Some(ref app_name) = ctx.app_name
+            && let Some(pools) = config.apps.get(app_name)
+        {
+            let (pool, is_http2) = if is_upgrade {
+                (pools.ws.as_ref(), false)
+            } else if let Some(p) = pools.http2.as_ref() {
+                (Some(p), true)
+            } else {
+                (pools.http1.as_ref(), false)
+            };
+
+            if let Some(pool) = pool {
+                ctx.resolved_pool = Some(ResolvedPool {
+                    lb: Arc::clone(&pool.lb),
+                    secure: pool.secure,
+                    verify_hostname: pool.verify_hostname.clone(),
+                    is_http2,
+                    transport: if is_upgrade {
+                        lb::TransportKind::Ws
+                    } else if is_http2 {
+                        lb::TransportKind::Http2
+                    } else {
+                        lb::TransportKind::Http1
+                    },
+                    backends: Arc::clone(&pool.backends),
+                });
+            }
+        }
+
+        if let (Some(sticky), Some(_app_name), Some(_resolved)) = (
+            self.0.sticky.as_ref(),
+            ctx.app_name.as_ref(),
+            ctx.resolved_pool.as_ref(),
+        ) {
+            let cookie_key = extract_cookie_value(session, &sticky.config.cookie_name);
+            let header_key = extract_header_value(session, &sticky.config.header_name);
+
+            let affinity_key = if let Some(key) = cookie_key {
+                key
+            } else if let Some(key) = header_key {
+                key
+            } else {
+                sticky.generate_affinity_key()
+            };
+
+            ctx.affinity_key = Some(affinity_key);
+            // Always refresh cookie for sliding expiration.
+            ctx.should_set_cookie = true;
+        }
+
+        // Deterministic behavior: Upgrade/WebSocket must go to an HTTP/1 pool.
+        // If no HTTP/1 pool exists for the matched app, respond with a consistent error.
+        if ctx.is_upgrade
+            && let Some(app_name) = ctx.app_name.as_deref()
+            && let Some(pools) = config.apps.get(app_name)
+            && pools.ws.is_none()
+        {
+            ctx.failure_hint = Some(FailureHint::MissingWsPool);
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                "no ws pool available for upgrade request",
+            ));
+        }
+
+        if ctx.resolved_pool.is_none() {
+            ctx.failure_hint = Some(FailureHint::MissingUpstreamPool);
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                "no upstream pool resolved",
+            ));
+        }
+
+        if let Some(resolved) = ctx.resolved_pool.as_ref() {
+            ctx.selected_transport = Some(resolved.transport);
+        }
+
+        Ok(false)
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<Box<HttpPeer>> {
+        // Use pre-resolved pool from request_filter when available.
+        let Some(resolved) = ctx.resolved_pool.as_ref() else {
+            ctx.failure_hint = Some(FailureHint::MissingUpstreamPool);
+            // Fallback: no pool was resolved (no app matched or no pools configured)
+            return Err(Error::explain(
+                ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                "no upstream pool resolved",
+            ));
+        };
+
+        let selected_addr = if let (Some(sticky), Some(app_name), Some(affinity_key)) = (
+            self.0.sticky.as_ref(),
+            ctx.app_name.as_deref(),
+            ctx.affinity_key.as_deref(),
+        ) {
+            if let Some(mapped) = sticky.lookup(
+                app_name,
+                resolved.transport,
+                affinity_key,
+                &resolved.backends,
+            ) {
+                mapped
+            } else {
+                let Some(backend) = resolved.lb.select(affinity_key.as_bytes(), 8) else {
+                    ctx.failure_hint = Some(FailureHint::UnhealthyUpstream);
+                    return Err(Error::explain(
+                        ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                        "no healthy upstreams available",
+                    ));
+                };
+
+                let selected = backend.addr.to_string();
+                sticky.bind(app_name, resolved.transport, affinity_key, selected.clone());
+                selected
+            }
+        } else {
+            let Some(backend) = resolved.lb.select(b"", 8) else {
+                ctx.failure_hint = Some(FailureHint::UnhealthyUpstream);
+                return Err(Error::explain(
+                    ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
+                    "no healthy upstreams available",
+                ));
+            };
+            backend.addr.to_string()
+        };
+
+        let mut peer = HttpPeer::new(
+            selected_addr.as_str(),
+            resolved.secure,
+            resolved.verify_hostname.clone(),
+        );
+        apply_upstream_timeouts(&mut peer, &self.0.timeouts);
+        // For plaintext HTTP/2 upstreams (h2c), Pingora needs the peer's min HTTP version to be 2,
+        // otherwise it will assume HTTP/1.1 when no ALPN is present.
+        if resolved.is_http2 {
+            peer.options.set_http_version(2, 2);
+        } else {
+            peer.options.set_http_version(1, 1);
+        }
+
+        Ok(Box::new(peer))
+    }
+
+    async fn response_filter(
+        &self,
+        _session: &mut Session,
+        upstream_response: &mut ResponseHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        let (Some(sticky), Some(affinity_key)) =
+            (self.0.sticky.as_ref(), ctx.affinity_key.as_deref())
+        else {
+            return Ok(());
+        };
+
+        if !ctx.should_set_cookie {
+            return Ok(());
+        }
+
+        upstream_response
+            .append_header(header::SET_COOKIE, sticky.cookie_header_value(affinity_key))
+            .map_err(|e| {
+                Error::because(
+                    ErrorType::InternalError,
+                    "failed to append sticky session cookie",
+                    e,
+                )
+            })?;
+
+        Ok(())
+    }
+
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        e: &Error,
+        ctx: &mut Self::CTX,
+    ) -> FailToProxy {
+        let code = match ctx.failure_hint {
+            Some(FailureHint::MissingApplication) => 404,
+            Some(FailureHint::MissingWsPool)
+            | Some(FailureHint::MissingUpstreamPool)
+            | Some(FailureHint::UnhealthyUpstream) => 503,
+            None => match e.etype() {
+                ErrorType::HTTPStatus(status) => *status,
+                _ => 500,
+            },
+        };
+
+        if code > 0 {
+            session.respond_error(code).await.unwrap_or_else(|err| {
+                log::error!("failed to send error response to downstream: {err}");
+            });
+        }
+
+        FailToProxy {
+            error_code: code,
+            can_reuse_downstream: false,
+        }
+    }
+
+    fn fail_to_connect(
+        &self,
+        _session: &mut Session,
+        _peer: &HttpPeer,
+        ctx: &mut Self::CTX,
+        mut e: Box<Error>,
+    ) -> Box<Error> {
+        let (Some(sticky), Some(app_name), Some(transport), Some(affinity_key)) = (
+            self.0.sticky.as_ref(),
+            ctx.app_name.as_deref(),
+            ctx.selected_transport,
+            ctx.affinity_key.as_deref(),
+        ) else {
+            return e;
+        };
+
+        sticky.remove(app_name, transport, affinity_key);
+
+        if !ctx.sticky_retry_attempted {
+            ctx.sticky_retry_attempted = true;
+            e.set_retry(true);
+        }
+
+        e
+    }
+
+    async fn upstream_request_filter(
+        &self,
+        _session: &mut Session,
+        upstream_request: &mut RequestHeader,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        let Some(seg) = ctx.path_rewrite_segment.as_deref() else {
+            return Ok(());
+        };
+
+        let Some(path_and_query) = upstream_request.uri.path_and_query().map(|pq| pq.as_str())
+        else {
+            return Ok(());
+        };
+
+        let Some(new_path_and_query) = strip_first_path_segment(path_and_query, seg) else {
+            return Ok(());
+        };
+
+        let uri = Uri::builder()
+            .path_and_query(new_path_and_query.as_ref())
+            .build()
+            .map_err(|e| {
+                Error::because(
+                    ErrorType::InternalError,
+                    "failed to rewrite upstream uri",
+                    e,
+                )
+            })?;
+
+        upstream_request.set_uri(uri);
+        Ok(())
+    }
+}
+
+impl StickySessionState {
+    fn lookup(
+        &self,
+        app_name: &str,
+        transport: lb::TransportKind,
+        affinity_key: &str,
+        allowed_backends: &HashSet<String>,
+    ) -> Option<String> {
+        let now = Instant::now();
+        let key = AffinityMapKey {
+            app_name: app_name.to_string(),
+            transport,
+            affinity_key: affinity_key.to_string(),
+        };
+
+        let shard_index = self.shard_index_for_key(&key);
+        let shard = &self.shards[shard_index];
+        if self.should_cleanup(shard) {
+            self.cleanup_global(now);
+        }
+
+        let mut entries = shard.entries.lock().ok()?;
+
+        match entries.get_mut(&key) {
+            Some(entry) if entry.expires_at > now && allowed_backends.contains(&entry.backend) => {
+                entry.expires_at = now + self.config.ttl;
+                Some(entry.backend.clone())
+            }
+            Some(_) => {
+                entries.remove(&key);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn bind(
+        &self,
+        app_name: &str,
+        transport: lb::TransportKind,
+        affinity_key: &str,
+        backend: String,
+    ) {
+        let key = AffinityMapKey {
+            app_name: app_name.to_string(),
+            transport,
+            affinity_key: affinity_key.to_string(),
+        };
+        let now = Instant::now();
+        let shard_index = self.shard_index_for_key(&key);
+        let shard = &self.shards[shard_index];
+        let expires_at = now + self.config.ttl;
+
+        let Ok(mut entries) = shard.entries.lock() else {
+            return;
+        };
+
+        entries.insert(
+            key,
+            AffinityEntry {
+                backend,
+                expires_at,
+            },
+        );
+
+        if !self.should_cleanup(shard) {
+            return;
+        }
+
+        drop(entries);
+
+        self.cleanup_global(now);
+    }
+
+    fn remove(&self, app_name: &str, transport: lb::TransportKind, affinity_key: &str) {
+        let key = AffinityMapKey {
+            app_name: app_name.to_string(),
+            transport,
+            affinity_key: affinity_key.to_string(),
+        };
+        let shard_index = self.shard_index_for_key(&key);
+        let shard = &self.shards[shard_index];
+
+        let Ok(mut entries) = shard.entries.lock() else {
+            return;
+        };
+        entries.remove(&key);
+    }
+
+    fn generate_affinity_key(&self) -> String {
+        let tick = self.key_counter.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{:x}{:x}", now, tick)
+    }
+
+    fn cookie_header_value(&self, affinity_key: &str) -> String {
+        let max_age_seconds = (self.config.ttl.as_secs().max(1)).to_string();
+
+        if self.config.cookie_secure {
+            format!(
+                "{}={}; Max-Age={}; Path=/; HttpOnly; SameSite=Lax; Secure",
+                self.config.cookie_name, affinity_key, max_age_seconds
+            )
+        } else {
+            format!(
+                "{}={}; Max-Age={}; Path=/; HttpOnly; SameSite=Lax",
+                self.config.cookie_name, affinity_key, max_age_seconds
+            )
+        }
+    }
+
+    fn shard_index_for_key(&self, key: &AffinityMapKey) -> usize {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        (hasher.finish() as usize) % self.shards.len()
+    }
+
+    fn should_cleanup(&self, shard: &StickyShard) -> bool {
+        shard
+            .op_counter
+            .fetch_add(1, Ordering::Relaxed)
+            .is_multiple_of(128)
+    }
+
+    fn cleanup_global(&self, now: Instant) {
+        let mut shard_guards = self
+            .shards
+            .iter()
+            .filter_map(|shard| shard.entries.lock().ok())
+            .collect::<Vec<_>>();
+
+        for entries in &mut shard_guards {
+            entries.retain(|_, entry| entry.expires_at > now);
+        }
+
+        let current_entries = shard_guards
+            .iter()
+            .map(|entries| entries.len())
+            .sum::<usize>();
+
+        if current_entries <= self.config.max_entries {
+            return;
+        }
+
+        let overflow = current_entries - self.config.max_entries;
+        let mut removed = 0usize;
+
+        let mut eviction_candidates = BinaryHeap::new();
+        let mut sequence = 0u64;
+
+        for (shard_index, entries) in shard_guards.iter().enumerate() {
+            for (key, entry) in entries.iter() {
+                eviction_candidates.push(Reverse(EvictionItem {
+                    expires_at: entry.expires_at,
+                    sequence,
+                    shard_index,
+                    key: key.clone(),
+                }));
+                sequence += 1;
+            }
+        }
+
+        while removed < overflow {
+            let Some(Reverse(candidate)) = eviction_candidates.pop() else {
+                break;
+            };
+
+            let Some(entries) = shard_guards.get_mut(candidate.shard_index) else {
+                continue;
+            };
+
+            let is_current = entries
+                .get(&candidate.key)
+                .map(|entry| entry.expires_at == candidate.expires_at)
+                .unwrap_or(false);
+
+            if !is_current {
+                continue;
+            }
+
+            if entries.remove(&candidate.key).is_some() {
+                removed += 1;
+            }
+        }
+
+        if removed >= overflow {
+            return;
+        }
+
+        let mut remaining = overflow - removed;
+        for entries in &mut shard_guards {
+            while remaining > 0 {
+                let Some(key) = entries.keys().next().cloned() else {
+                    break;
+                };
+
+                entries.remove(&key);
+                remaining -= 1;
+            }
+
+            if remaining == 0 {
+                break;
+            }
+        }
+    }
+}
+
+fn extract_first_path_segment(session: &Session) -> Option<&str> {
+    let path = session.req_header().uri.path();
+    let mut parts = path.split('/').filter(|p| !p.is_empty());
+    parts.next()
+}
+
+async fn reject_request(session: &mut Session, status: StatusCode) -> Result<bool> {
+    session.downstream_session.set_keepalive(None);
+    session.respond_error(status.as_u16()).await?;
+    Ok(true)
+}
+
+fn request_header_count(session: &Session) -> usize {
+    session.req_header().headers.len()
+}
+
+fn request_single_header_size(session: &Session) -> usize {
+    session
+        .req_header()
+        .headers
+        .iter()
+        .map(|(name, value)| name.as_str().len() + value.as_bytes().len())
+        .max()
+        .unwrap_or(0)
+}
+
+fn request_header_size(session: &Session) -> usize {
+    session.downstream_session.to_h1_raw().len()
+}
+
+fn request_content_length(session: &Session) -> Option<u64> {
+    session
+        .req_header()
+        .headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+fn request_limit_rejection_status(
+    session: &Session,
+    limits: &options::ProxyLimitsOptionsParsed,
+) -> Option<StatusCode> {
+    let options::ProxyLimitsOptionsParsed::Enabled { checks } = limits else {
+        return None;
+    };
+
+    for check in checks {
+        match check {
+            options::ProxyLimitCheckParsed::UriBytes(limit) => {
+                if session.req_header().raw_path().len() > *limit {
+                    return Some(StatusCode::URI_TOO_LONG);
+                }
+            }
+            options::ProxyLimitCheckParsed::RequestHeaders(limit) => {
+                if request_header_count(session) > *limit {
+                    return Some(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
+            }
+            options::ProxyLimitCheckParsed::SingleHeaderBytes(limit) => {
+                if request_single_header_size(session) > *limit {
+                    return Some(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
+            }
+            options::ProxyLimitCheckParsed::RequestHeaderBytes(limit) => {
+                if request_header_size(session) > *limit {
+                    return Some(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
+            }
+            options::ProxyLimitCheckParsed::RequestBodyBytes(limit) => {
+                if request_content_length(session).is_some_and(|n| n > *limit) {
+                    return Some(StatusCode::PAYLOAD_TOO_LARGE);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn apply_downstream_timeouts(session: &mut Session, timeouts: &options::ProxyTimeoutOptionsParsed) {
+    session
+        .downstream_session
+        .set_read_timeout(Some(duration_ms(timeouts.downstream_body_idle_timeout_ms)));
+    session
+        .downstream_session
+        .set_keepalive(Some(timeouts.downstream_keep_alive_timeout_seconds as u64));
+}
+
+fn apply_upstream_timeouts(peer: &mut HttpPeer, timeouts: &options::ProxyTimeoutOptionsParsed) {
+    let upstream_connect = duration_ms(timeouts.upstream_connect_timeout_ms);
+    peer.options.connection_timeout = Some(upstream_connect);
+    peer.options.total_connection_timeout = Some(upstream_connect);
+    peer.options.read_timeout = Some(duration_ms(timeouts.upstream_read_timeout_ms));
+    peer.options.write_timeout = Some(duration_ms(timeouts.upstream_write_timeout_ms));
+}
+
+fn duration_ms(value: u32) -> Duration {
+    Duration::from_millis(value as u64)
+}
+
+fn extract_host(session: &Session) -> Option<Cow<'_, str>> {
+    let headers = &session.req_header().headers;
+
+    let host_str = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get(http::HeaderName::from_static(":authority"))
+                .and_then(|v| v.to_str().ok())
+        })?;
+
+    let host_without_port = strip_port_str(host_str);
+
+    // Only allocate if lowercase conversion is needed
+    if host_without_port.chars().any(|c| c.is_ascii_uppercase()) {
+        Some(Cow::Owned(host_without_port.to_ascii_lowercase()))
+    } else {
+        Some(Cow::Borrowed(host_without_port))
+    }
+}
+
+fn extract_cookie_value(session: &Session, cookie_name: &str) -> Option<String> {
+    let raw = session
+        .req_header()
+        .headers
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())?;
+
+    raw.split(';').find_map(|pair| {
+        let (name, value) = pair.trim().split_once('=')?;
+        if name == cookie_name {
+            let value = value.trim();
+            if is_cookie_safe_affinity_key(value) {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn extract_header_value(session: &Session, header_name: &str) -> Option<String> {
+    session
+        .req_header()
+        .headers
+        .get(header_name)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_string())
+        .filter(|v| is_cookie_safe_affinity_key(v))
+}
+
+fn is_cookie_safe_affinity_key(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_AFFINITY_KEY_LEN
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn strip_first_path_segment<'a>(path_and_query: &'a str, segment: &str) -> Option<Cow<'a, str>> {
+    let (path, query) = match path_and_query.split_once('?') {
+        Some((p, q)) => (p, Some(q)),
+        None => (path_and_query, None),
+    };
+
+    let prefix_len = segment.len() + 1; // "/{segment}".len()
+
+    // Check if path matches "/{segment}" exactly or starts with "/{segment}/"
+    if !path.starts_with('/') || path.len() < prefix_len {
+        return None;
+    }
+
+    let after_slash = &path[1..];
+    if !after_slash.starts_with(segment) {
+        return None;
+    }
+
+    // Check boundary: must be exact match or followed by '/'
+    let remainder = &path[prefix_len..];
+    let rewritten_path = if remainder.is_empty() {
+        // path == "/{segment}"
+        "/"
+    } else if remainder.starts_with('/') {
+        // path starts with "/{segment}/"
+        remainder
+    } else {
+        // path is like "/{segment}xyz" - not a boundary match
+        return None;
+    };
+
+    // If no query string, we can return a borrowed slice
+    match query {
+        None => Some(Cow::Borrowed(rewritten_path)),
+        Some(q) => {
+            // Must allocate to concatenate path + "?" + query
+            let mut out = String::with_capacity(rewritten_path.len() + 1 + q.len());
+            out.push_str(rewritten_path);
+            out.push('?');
+            out.push_str(q);
+            Some(Cow::Owned(out))
+        }
+    }
+}
+
+/// Strip port from host string, returning a slice (zero allocation).
+fn strip_port_str(host: &str) -> &str {
+    // "example.com:3000" => "example.com"
+    // "[::1]:3000" => "[::1]"
+    if let Some(stripped) = host.strip_prefix('[') {
+        // IPv6 address: find closing bracket
+        if let Some(end) = stripped.find(']') {
+            return &host[..end + 2]; // Include brackets: "[" + content + "]"
+        }
+        return host;
+    }
+
+    match host.rsplit_once(':') {
+        Some((h, port)) if !h.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => h,
+        _ => host,
+    }
+}
+
+#[doc(hidden)]
+pub mod bench {
+    use std::collections::HashSet;
+    use std::time::Duration;
+
+    pub use super::RouterConfig;
+    use super::{StickySessionConfig, StickySessionState, StickyShard, resolve_route};
+    use crate::lb;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicU64;
+
+    pub struct BenchStickySessions {
+        state: StickySessionState,
+        allowed_backends: HashSet<String>,
+    }
+
+    impl BenchStickySessions {
+        pub fn new(max_entries: usize) -> Self {
+            let backend = "127.0.0.1:3000".to_string();
+            let mut allowed_backends = HashSet::new();
+            allowed_backends.insert(backend);
+
+            Self {
+                state: StickySessionState {
+                    config: StickySessionConfig {
+                        enabled: true,
+                        cookie_name: "nmt_affinity".to_string(),
+                        header_name: "x-nmt-affinity-key".to_string(),
+                        ttl: Duration::from_secs(600),
+                        max_entries,
+                        cookie_secure: false,
+                    },
+                    shards: (0..super::STICKY_SHARD_COUNT)
+                        .map(|_| StickyShard {
+                            entries: Mutex::new(std::collections::HashMap::new()),
+                            op_counter: AtomicU64::new(0),
+                        })
+                        .collect(),
+                    key_counter: AtomicU64::new(1),
+                },
+                allowed_backends,
+            }
+        }
+
+        pub fn bind(&self, affinity_key: &str) {
+            self.state.bind(
+                "app",
+                lb::TransportKind::Http1,
+                affinity_key,
+                "127.0.0.1:3000".to_string(),
+            );
+        }
+
+        pub fn lookup(&self, affinity_key: &str) -> Option<String> {
+            self.state.lookup(
+                "app",
+                lb::TransportKind::Http1,
+                affinity_key,
+                &self.allowed_backends,
+            )
+        }
+
+        pub fn generate_affinity_key(&self) -> String {
+            self.state.generate_affinity_key()
+        }
+    }
+
+    pub fn resolve_route_for_bench(
+        config: &RouterConfig,
+        host: Option<&str>,
+        path_first_segment: Option<&str>,
+    ) -> Option<(String, Option<String>)> {
+        resolve_route(config, host, path_first_segment)
+            .map(|route| (route.app_name, route.path_rewrite_segment))
+    }
+
+    pub fn strip_first_path_segment_for_bench(
+        path_and_query: &str,
+        segment: &str,
+    ) -> Option<String> {
+        super::strip_first_path_segment(path_and_query, segment).map(|path| path.into_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AffinityEntry, AffinityMapKey, StickySessionConfig, StickySessionState, StickyShard,
+        apply_upstream_timeouts, is_cookie_safe_affinity_key, resolve_route,
+        strip_first_path_segment,
+    };
+    use crate::lb::TransportKind;
+    use crate::options::ProxyTimeoutOptionsParsed;
+    use pingora::upstreams::peer::HttpPeer;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::AtomicU64;
+    use std::time::{Duration, Instant};
+
+    fn sticky_state(max_entries: usize) -> StickySessionState {
+        let mut shards = Vec::with_capacity(super::STICKY_SHARD_COUNT);
+        for _ in 0..super::STICKY_SHARD_COUNT {
+            shards.push(StickyShard {
+                entries: Mutex::new(HashMap::new()),
+                op_counter: AtomicU64::new(0),
+            });
+        }
+
+        StickySessionState {
+            config: StickySessionConfig {
+                enabled: true,
+                cookie_name: "nmt_affinity".to_string(),
+                header_name: "x-nmt-affinity-key".to_string(),
+                ttl: Duration::from_secs(60),
+                max_entries,
+                cookie_secure: false,
+            },
+            shards,
+            key_counter: AtomicU64::new(1),
+        }
+    }
+
+    fn affinity_key(value: &str) -> AffinityMapKey {
+        AffinityMapKey {
+            app_name: "app".to_string(),
+            transport: TransportKind::Http1,
+            affinity_key: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn upstream_timeout_options_map_to_pingora_peer_options() {
+        let timeouts = ProxyTimeoutOptionsParsed {
+            downstream_header_timeout_ms: 10_000,
+            downstream_body_idle_timeout_ms: 60_000,
+            upstream_connect_timeout_ms: 1_234,
+            upstream_read_timeout_ms: 2_345,
+            upstream_write_timeout_ms: 3_456,
+            downstream_keep_alive_timeout_seconds: 75,
+        };
+        let mut peer = HttpPeer::new("127.0.0.1:8080", false, String::new());
+
+        apply_upstream_timeouts(&mut peer, &timeouts);
+
+        assert_eq!(
+            peer.options.connection_timeout,
+            Some(Duration::from_millis(1_234))
+        );
+        assert_eq!(
+            peer.options.total_connection_timeout,
+            Some(Duration::from_millis(1_234))
+        );
+        assert_eq!(
+            peer.options.read_timeout,
+            Some(Duration::from_millis(2_345))
+        );
+        assert_eq!(
+            peer.options.write_timeout,
+            Some(Duration::from_millis(3_456))
+        );
+    }
+
+    fn insert_entry(
+        state: &StickySessionState,
+        key: AffinityMapKey,
+        backend: &str,
+        expires_at: Instant,
+    ) {
+        let shard_index = state.shard_index_for_key(&key);
+        let mut entries = state.shards[shard_index]
+            .entries
+            .lock()
+            .expect("sticky shard mutex should not be poisoned");
+        entries.insert(
+            key,
+            AffinityEntry {
+                backend: backend.to_string(),
+                expires_at,
+            },
+        );
+    }
+
+    fn contains_entry(state: &StickySessionState, key: &AffinityMapKey) -> bool {
+        let shard_index = state.shard_index_for_key(key);
+        state.shards[shard_index]
+            .entries
+            .lock()
+            .expect("sticky shard mutex should not be poisoned")
+            .contains_key(key)
+    }
+
+    fn sticky_entry_count(state: &StickySessionState) -> usize {
+        state
+            .shards
+            .iter()
+            .map(|shard| {
+                shard
+                    .entries
+                    .lock()
+                    .expect("sticky shard mutex should not be poisoned")
+                    .len()
+            })
+            .sum()
+    }
+
+    #[test]
+    fn route_resolution_prefers_subdomain_then_path_then_default() {
+        let config = super::RouterConfig {
+            subdomain_routes: HashMap::from([("app.test".to_string(), "subdomain".to_string())]),
+            path_routes: HashMap::from([("app".to_string(), "path".to_string())]),
+            default_app: Some("default".to_string()),
+            apps: HashMap::new(),
+        };
+
+        let route =
+            resolve_route(&config, Some("app.test"), Some("app")).expect("subdomain should match");
+        assert_eq!(route.app_name, "subdomain");
+        assert_eq!(route.path_rewrite_segment, None);
+
+        let route =
+            resolve_route(&config, Some("missing.test"), Some("app")).expect("path should match");
+        assert_eq!(route.app_name, "path");
+        assert_eq!(route.path_rewrite_segment, Some("app".to_string()));
+
+        let route = resolve_route(&config, Some("missing.test"), Some("missing"))
+            .expect("default should match");
+        assert_eq!(route.app_name, "default");
+        assert_eq!(route.path_rewrite_segment, None);
+    }
+
+    #[test]
+    fn path_rewrite_strips_exact_segment() {
+        assert_eq!(
+            strip_first_path_segment("/auth", "auth").as_deref(),
+            Some("/")
+        );
+        assert_eq!(
+            strip_first_path_segment("/auth/", "auth").as_deref(),
+            Some("/")
+        );
+        assert_eq!(
+            strip_first_path_segment("/auth/login", "auth").as_deref(),
+            Some("/login")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_preserves_query_string() {
+        assert_eq!(
+            strip_first_path_segment("/auth/login?x=1", "auth").as_deref(),
+            Some("/login?x=1")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_is_boundary_aware() {
+        assert_eq!(strip_first_path_segment("/authz", "auth"), None);
+        assert_eq!(strip_first_path_segment("/authz/login", "auth"), None);
+        assert_eq!(strip_first_path_segment("/a", "auth"), None);
+    }
+
+    #[test]
+    fn strip_port_handles_ipv4() {
+        use super::strip_port_str;
+        assert_eq!(strip_port_str("example.com:3000"), "example.com");
+        assert_eq!(strip_port_str("example.com"), "example.com");
+        assert_eq!(strip_port_str("127.0.0.1:8080"), "127.0.0.1");
+    }
+
+    #[test]
+    fn strip_port_handles_ipv6() {
+        use super::strip_port_str;
+        assert_eq!(strip_port_str("[::1]:3000"), "[::1]");
+        assert_eq!(strip_port_str("[::1]"), "[::1]");
+        assert_eq!(strip_port_str("[2001:db8::1]:443"), "[2001:db8::1]");
+    }
+
+    #[test]
+    fn strip_port_edge_cases() {
+        use super::strip_port_str;
+        // Empty string
+        assert_eq!(strip_port_str(""), "");
+        // Trailing colon - empty "port" is all digits (vacuously true), so strips
+        assert_eq!(strip_port_str("host:"), "host");
+        // Non-numeric port (should not strip)
+        assert_eq!(strip_port_str("host:abc"), "host:abc");
+        // Multiple colons without brackets (last segment is port-like)
+        assert_eq!(strip_port_str("a:b:80"), "a:b");
+        // Only port number - empty host, does not strip
+        assert_eq!(strip_port_str(":8080"), ":8080");
+        // Malformed IPv6 (no closing bracket)
+        assert_eq!(strip_port_str("[::1"), "[::1");
+        // IPv6 with trailing content after bracket
+        assert_eq!(strip_port_str("[::1]abc"), "[::1]");
+    }
+
+    #[test]
+    fn path_rewrite_edge_cases() {
+        // Root path - no segment to strip
+        assert_eq!(strip_first_path_segment("/", "auth"), None);
+        // Empty segment name
+        assert_eq!(strip_first_path_segment("/auth", ""), None);
+        // Deeply nested paths
+        assert_eq!(
+            strip_first_path_segment("/auth/a/b/c/d", "auth").as_deref(),
+            Some("/a/b/c/d")
+        );
+        // Query string only on root segment
+        assert_eq!(
+            strip_first_path_segment("/auth?redirect=home", "auth").as_deref(),
+            Some("/?redirect=home")
+        );
+        // Multiple query parameters
+        assert_eq!(
+            strip_first_path_segment("/auth/login?a=1&b=2&c=3", "auth").as_deref(),
+            Some("/login?a=1&b=2&c=3")
+        );
+        // Path with encoded characters
+        assert_eq!(
+            strip_first_path_segment("/auth/path%20with%20spaces", "auth").as_deref(),
+            Some("/path%20with%20spaces")
+        );
+        // Segment with special chars (if segment itself has special chars)
+        assert_eq!(
+            strip_first_path_segment("/auth-service/login", "auth-service").as_deref(),
+            Some("/login")
+        );
+    }
+
+    #[test]
+    fn path_rewrite_returns_borrowed_when_no_query() {
+        use std::borrow::Cow;
+        // Without query string, should return Cow::Borrowed
+        let result = strip_first_path_segment("/auth/login", "auth");
+        assert!(matches!(result, Some(Cow::Borrowed(_))));
+
+        // With query string, must allocate (Cow::Owned)
+        let result = strip_first_path_segment("/auth/login?x=1", "auth");
+        assert!(matches!(result, Some(Cow::Owned(_))));
+    }
+
+    #[test]
+    fn path_rewrite_no_match_cases() {
+        // Completely different segment
+        assert_eq!(strip_first_path_segment("/users/login", "auth"), None);
+        // Segment is prefix but not at boundary
+        assert_eq!(strip_first_path_segment("/authorization", "auth"), None);
+        // Case sensitive - should not match
+        assert_eq!(strip_first_path_segment("/Auth/login", "auth"), None);
+        assert_eq!(strip_first_path_segment("/AUTH/login", "auth"), None);
+        // Missing leading slash
+        assert_eq!(strip_first_path_segment("auth/login", "auth"), None);
+    }
+
+    #[test]
+    fn lowercase_host_helper() {
+        use super::strip_port_str;
+        use std::borrow::Cow;
+
+        // Helper to test the lowercase Cow logic (extracted from extract_host)
+        fn normalize_host(host: &str) -> Cow<'_, str> {
+            let host_without_port = strip_port_str(host);
+            if host_without_port.chars().any(|c| c.is_ascii_uppercase()) {
+                Cow::Owned(host_without_port.to_ascii_lowercase())
+            } else {
+                Cow::Borrowed(host_without_port)
+            }
+        }
+
+        // Already lowercase - should borrow
+        let result = normalize_host("example.com");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "example.com");
+
+        // Uppercase - should allocate and lowercase
+        let result = normalize_host("Example.COM");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "example.com");
+
+        // Mixed case with port
+        let result = normalize_host("Example.com:8080");
+        assert!(matches!(result, Cow::Owned(_)));
+        assert_eq!(result, "example.com");
+
+        // Lowercase with port - should borrow
+        let result = normalize_host("example.com:8080");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "example.com");
+
+        // IPv6 uppercase (rare but possible)
+        let result = normalize_host("[::1]:8080");
+        assert!(matches!(result, Cow::Borrowed(_)));
+        assert_eq!(result, "[::1]");
+    }
+
+    #[test]
+    fn affinity_keys_must_be_cookie_safe() {
+        assert!(is_cookie_safe_affinity_key("client-A_1.alpha"));
+        assert!(is_cookie_safe_affinity_key("generated-123"));
+
+        assert!(!is_cookie_safe_affinity_key(""));
+        assert!(!is_cookie_safe_affinity_key("bad key"));
+        assert!(!is_cookie_safe_affinity_key("bad;Domain=evil.test"));
+        assert!(!is_cookie_safe_affinity_key("bad/value"));
+    }
+
+    #[test]
+    fn sticky_cleanup_removes_expired_entries_without_overflow() {
+        let state = sticky_state(8);
+        let now = Instant::now();
+        let expired = affinity_key("expired");
+        let live = affinity_key("live");
+
+        insert_entry(
+            &state,
+            expired.clone(),
+            "127.0.0.1:3001",
+            now - Duration::from_secs(1),
+        );
+        insert_entry(
+            &state,
+            live.clone(),
+            "127.0.0.1:3002",
+            now + Duration::from_secs(30),
+        );
+
+        state.cleanup_global(now);
+
+        assert!(!contains_entry(&state, &expired));
+        assert!(contains_entry(&state, &live));
+        assert_eq!(sticky_entry_count(&state), 1);
+    }
+
+    #[test]
+    fn sticky_cleanup_evicts_oldest_live_entries_when_over_capacity() {
+        let state = sticky_state(2);
+        let now = Instant::now();
+        let oldest = affinity_key("oldest");
+        let newer = affinity_key("newer");
+        let newest = affinity_key("newest");
+
+        insert_entry(
+            &state,
+            oldest.clone(),
+            "127.0.0.1:3001",
+            now + Duration::from_secs(5),
+        );
+        insert_entry(
+            &state,
+            newer.clone(),
+            "127.0.0.1:3002",
+            now + Duration::from_secs(10),
+        );
+        insert_entry(
+            &state,
+            newest.clone(),
+            "127.0.0.1:3003",
+            now + Duration::from_secs(15),
+        );
+
+        state.cleanup_global(now);
+
+        assert!(!contains_entry(&state, &oldest));
+        assert!(contains_entry(&state, &newer));
+        assert!(contains_entry(&state, &newest));
+        assert_eq!(sticky_entry_count(&state), 2);
+    }
+}

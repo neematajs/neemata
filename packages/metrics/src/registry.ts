@@ -18,14 +18,7 @@ export function createMetricsRegistry(): Registry {
 export function createMetricsWorkerRegistry(
   options: { primary?: boolean; contentType?: RegistryContentType } = {},
 ): WorkerRegistry<any> {
-  // @nmtjs/prom-client's typings declare no constructor for WorkerRegistry, so
-  // the inferred zero-arg signature rejects the (contentType, primary) arguments
-  // the runtime constructor actually accepts. Assert the real signature.
-  const Constructor = WorkerRegistry as new (
-    contentType?: RegistryContentType,
-    primary?: boolean,
-  ) => WorkerRegistry<RegistryContentType>
-  return new Constructor(options.contentType, options.primary)
+  return new WorkerRegistry(options.contentType, options.primary)
 }
 
 export function registerDefaultMetrics(

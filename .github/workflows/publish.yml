@@ -1,10 +1,16 @@
-name: Publish
+name: Publish Neem stack
 
 permissions:
   contents: write
   actions: write
   attestations: write
   id-token: write
+
+# Serialize releases across all publishing workflows and branches.
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+  queue: max
 
 on:
   workflow_dispatch:
@@ -46,6 +52,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERSION_TAG: v${{ inputs.version }}
+      RELEASE_VERSION: ${{ inputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,25 +61,30 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          registry-url: https://registry.npmjs.org
 
       - uses: pnpm/action-setup@v4
         name: Install pnpm
         with:
           run_install: false
 
-      - name: Install dependencies and build
-        run: pnpm install && pnpm build
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Set version
         run: |
-          pnpm -r exec npm pkg set version=${{ inputs.version }} repository.type=git repository.url=https://github.com/neematajs/neemata
-          pnpm -r exec cp "$GITHUB_WORKSPACE/README.md" ./
-          pnpm -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec npm pkg set version="$RELEASE_VERSION" repository.type=git repository.url=https://github.com/neematajs/neemata
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/README.md" ./
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
+
+      - name: Build TypeScript packages
+        run: pnpm run build:ts
 
       - name: Dry-run publish and publish
         run: |
-          pnpm publish --dry-run --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
-          pnpm publish --filter "*" --access public --no-git-checks --tag=$(node scripts/tag.js ${{ inputs.version }})
+          TAG=$(node scripts/tag.js "$RELEASE_VERSION")
+          pnpm publish --dry-run --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" --access public --no-git-checks --tag="$TAG"
+          pnpm publish --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" --access public --no-git-checks --tag="$TAG"
 
       - name: Publish Github Release
         if: ${{ inputs.release }}

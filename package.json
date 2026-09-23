@@ -5,10 +5,10 @@
   "license": "MIT",
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
-    "build": "pnpm tsc -b tsconfig.build.json",
-    "dev": "pnpm run clean-build && pnpm tsc -b tsconfig.build.json --watch",
+    "build": "pnpm run build:proxy && pnpm run build:ts",
+    "dev": "pnpm run clean-build && pnpm run build:proxy && pnpm tsc -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
-    "test": "pnpm build && vitest --run",
+    "test": "pnpm build && pnpm --filter @nmtjs/proxy run test:rust && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
     "test:integration:services": "pnpm --filter @nmtjs/pubsub --filter @nmtjs/workflows run test:integration",
     "test:unit": "vitest run",
@@ -17,11 +17,15 @@
     "bench": "vitest bench --run --config vitest.bench.config.ts",
     "bench:integration": "vitest bench --run --config vitest.bench.integration.config.ts",
     "bench:paired": "node scripts/benchmarks/paired.js",
-    "check:type": "pnpm tsc -b tsconfig.json --noEmit",
-    "check:lint": "oxlint --quiet .",
+    "check:type": "pnpm run build:proxy && pnpm tsc -b tsconfig.json --noEmit --pretty false",
+    "check:lint": "oxlint --quiet . --format=agent",
     "check:fmt": "oxfmt --check .",
-    "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
-    "fmt": "oxfmt --write ."
+    "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type && pnpm --filter @nmtjs/proxy run check:rust",
+    "fmt": "oxfmt --write .",
+    "build:proxy": "pnpm --filter @nmtjs/proxy run build:debug",
+    "build:ts": "pnpm tsc -b tsconfig.build.json --pretty false",
+    "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
+    "test:proxy": "pnpm --filter @nmtjs/proxy run test"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",
