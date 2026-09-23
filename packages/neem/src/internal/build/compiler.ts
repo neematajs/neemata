@@ -413,9 +413,13 @@ async function watchWorkerTarget(
   void ready.promise.catch(() => {})
   let initial = true
   let chunks: string[] = []
+  // Each link reports its own failure and resolves, so one failure never
+  // rejects every later link of a long dev session.
   let outputApplied = Promise.resolve()
   let assetsWritten = Promise.resolve()
   let updatesApplied = Promise.resolve()
+  // A failed asset write fails the next update, which needs those assets.
+  let assetFailure: Error | undefined
 
   await mkdir(target.outDir, { recursive: true })
   const { output, ...input } = createRolldownOptions(target, metadata)
@@ -448,41 +452,20 @@ async function watchWorkerTarget(
     onOutput(result) {
       // DevEngine does not await callbacks. Keep the application promise so a
       // fresh-output request also waits for the compiled snapshot to catch up.
-      outputApplied = applyOutput(result)
-      void outputApplied.catch((error) =>
-        handlers.onError?.(normalizeError(error)),
-      )
+      outputApplied = settle(applyOutput(result), handlers.onError)
     },
     onAdditionalAssets(result) {
       assetsWritten = assetsWritten.then(() =>
-        writeOutput(target.outDir, result),
-      )
-      void assetsWritten.catch((error) =>
-        handlers.onError?.(normalizeError(error)),
+        settle(writeOutput(target.outDir, result), (error) => {
+          assetFailure = error
+          return handlers.onError?.(error)
+        }),
       )
     },
     onHmrUpdates(result) {
-      updatesApplied = updatesApplied
-        .then(async () => {
-          if (result instanceof Error) {
-            await handlers.onUpdateError(result)
-            return
-          }
-          await assetsWritten
-          for (const { update } of result.updates) {
-            if (update.type !== 'Patch') continue
-            await writeOutputFile(target.outDir, update.filename, update.code)
-            if (update.sourcemap && update.sourcemapFilename) {
-              await writeOutputFile(
-                target.outDir,
-                update.sourcemapFilename,
-                update.sourcemap,
-              )
-            }
-          }
-          await handlers.onUpdates(result.updates)
-        })
-        .catch((error) => handlers.onUpdateError(normalizeError(error)))
+      updatesApplied = updatesApplied.then(() =>
+        settle(applyUpdates(result), handlers.onUpdateError),
+      )
     },
   })
 
@@ -513,7 +496,6 @@ async function watchWorkerTarget(
         await engine.ensureLatestBuildOutput()
         // While the latest source fails to build, DevEngine resolves without
         // writing output, so the files on disk may predate accepted patches.
-        // Checking first also skips a rejection left by an earlier failure.
         const state = await engine.getBundleState()
         if (state.lastBuildErrored || state.hasStaleOutput) {
           throw new Error(
@@ -527,6 +509,36 @@ async function watchWorkerTarget(
       await engine.close()
       await Promise.allSettled([outputApplied, assetsWritten, updatesApplied])
     },
+  }
+
+  async function applyUpdates(
+    result: Error | { updates: BindingClientHmrUpdate[] },
+  ): Promise<void> {
+    if (result instanceof Error) throw result
+    // DevEngine reports the assets a patch emitted right after the patch,
+    // from a later callback; yield so they join the chain awaited below.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await assetsWritten
+    const failure = assetFailure
+    assetFailure = undefined
+    if (failure) {
+      throw new Error(
+        `Worker [${target.key}] update assets were not written: ${failure.message}`,
+        { cause: failure },
+      )
+    }
+    for (const { update } of result.updates) {
+      if (update.type !== 'Patch') continue
+      await writeOutputFile(target.outDir, update.filename, update.code)
+      if (update.sourcemap && update.sourcemapFilename) {
+        await writeOutputFile(
+          target.outDir,
+          update.sourcemapFilename,
+          update.sourcemap,
+        )
+      }
+    }
+    await handlers.onUpdates(result.updates)
   }
 
   async function applyOutput(result: Error | RolldownOutput): Promise<void> {
@@ -545,6 +557,22 @@ async function watchWorkerTarget(
       return
     }
     await handlers.onRebuild?.({ target, compiled, initial: false })
+  }
+}
+
+// Reports a failed link of a callback chain and resolves, so the next runs.
+async function settle(
+  work: Promise<void>,
+  report: ((error: Error) => MaybePromise<void>) | undefined,
+): Promise<void> {
+  try {
+    await work
+  } catch (error) {
+    try {
+      await report?.(normalizeError(error))
+    } catch {
+      // Nothing is left to report a failing reporter to.
+    }
   }
 }
 

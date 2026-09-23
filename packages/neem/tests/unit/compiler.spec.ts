@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -255,6 +255,79 @@ describe('Neem compiler', () => {
       await expect(watcher.ensureWorkerOutput('api')).rejects.toThrow(
         'source has build errors',
       )
+    } finally {
+      await watcher.close()
+    }
+  })
+
+  it('fails only the update whose assets could not be written', async () => {
+    const root = await createTempDir('neem-compiler-')
+    const valueFile = resolve(root, 'api/value.ts')
+    await mkdir(resolve(root, 'api'), { recursive: true })
+    await writeFile(
+      resolve(root, 'api/worker.ts'),
+      "export { value as default } from './value.ts'\n",
+    )
+    await writeFile(valueFile, "export const value = 'v1'\n")
+    const graph = createCompilerGraph(root)
+    const workerGraph = {
+      ...graph,
+      runtimes: [],
+      buildGroups: graph.buildGroups.filter(
+        (group) =>
+          group.kind === 'target' && group.target.kind === 'runtime-worker',
+      ),
+    }
+    const worker = graph.targets.find(
+      (target) => target.kind === 'runtime-worker',
+    )!
+    // Stands for a module that brings a file along, as a native addon does.
+    worker.artifact.rolldown = {
+      plugins: [
+        {
+          name: 'test:value-asset',
+          transform(code, id) {
+            if (!id.endsWith('value.ts')) return null
+            this.emitFile({
+              type: 'asset',
+              fileName: 'value.txt',
+              source: code,
+            })
+            return null
+          },
+        },
+      ],
+    }
+    const assetFile = resolve(worker.outDir, 'value.txt')
+    let settled = createFuture<unknown>()
+    const errors: Error[] = []
+    const watcher = await watchGraph(workerGraph, {
+      onError: (error) => {
+        errors.push(error)
+      },
+      onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+      onUpdateError: (_runtimeName, error) => settled.resolve(error),
+    })
+    try {
+      await watcher.addPatchClient('api', 'client')
+      // A directory in its place makes the asset write fail.
+      await rm(assetFile, { force: true })
+      await mkdir(assetFile)
+      await writeFile(valueFile, "export const value = 'v2'\n")
+      const failed = await settled.promise
+      expect(failed).toBeInstanceOf(Error)
+      expect((failed as Error).message).toContain('assets were not written')
+      expect(errors).toHaveLength(1)
+
+      await rm(assetFile, { recursive: true })
+      settled = createFuture<unknown>()
+      await writeFile(valueFile, "export const value = 'v3'\n")
+      expect(await settled.promise).toEqual([
+        expect.objectContaining({
+          update: expect.objectContaining({ type: 'Patch' }),
+        }),
+      ])
+      expect(await readFile(assetFile, 'utf8')).toContain('v3')
     } finally {
       await watcher.close()
     }

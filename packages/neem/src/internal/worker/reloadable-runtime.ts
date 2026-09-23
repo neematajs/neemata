@@ -9,9 +9,17 @@ import type {
   NeemRuntimeUpstream,
 } from '../../shared/types.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
+import { normalizeError } from '../utils.ts'
 
 type Worker = NeemRuntimeWorker
 type WorkerContext = NeemRuntimeWorkerContext
+
+export type GenerationReload =
+  | { outcome: 'applied' }
+  // The current generation was not touched and keeps serving.
+  | { outcome: 'rejected'; error: Error }
+  // The current generation was retired and no replacement is running.
+  | { outcome: 'unavailable'; error: Error }
 
 export class ReloadableRuntime implements NeemRuntime {
   readonly finished: Promise<void>
@@ -48,12 +56,24 @@ export class ReloadableRuntime implements NeemRuntime {
     return this.upstreams
   }
 
-  async apply(next: Worker): Promise<void> {
-    if (this.stopped) throw new Error('Neem runtime stopped')
-    if (this.replacing) throw new Error('Neem runtime is already reloading')
+  async apply(next: Worker): Promise<GenerationReload> {
+    if (this.stopped) {
+      return { outcome: 'rejected', error: new Error('Neem runtime stopped') }
+    }
+    if (this.replacing) {
+      return {
+        outcome: 'rejected',
+        error: new Error('Neem runtime is already reloading'),
+      }
+    }
     this.replacing = this.replace(next)
     try {
       await this.replacing
+      return { outcome: 'applied' }
+    } catch (error) {
+      // replace() begins by retiring the current generation, so whatever
+      // failed after that left no generation serving.
+      return { outcome: 'unavailable', error: normalizeError(error) }
     } finally {
       this.replacing = undefined
     }

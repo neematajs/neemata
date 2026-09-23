@@ -37,7 +37,8 @@ export type HostControllerOptions = {
   hooks?: HostHooks
   failOnWorkerError?: boolean
   recovery?: RecoveryOptions
-  onFailure?: (error: Error) => void
+  // Reports a runtime whose failure recovery could not repair.
+  onFailure?: (error: Error, runtimeName: string) => void
 }
 
 /**
@@ -303,9 +304,8 @@ export class HostController {
       const runtime = this.runtimes.get(runtimeName)
       if (!runtime) {
         return {
-          accepted: false,
+          outcome: 'rejected',
           deliveredFiles: [],
-          reset: false,
           reason: `Runtime [${runtimeName}] is not running`,
         }
       }
@@ -494,7 +494,7 @@ export class HostController {
       onFailure: (error) => {
         if (!this.failOnWorkerError()) return
         this.markState('failed', error)
-        this.options.onFailure?.(error)
+        this.options.onFailure?.(error, runtimeName)
       },
     })
   }

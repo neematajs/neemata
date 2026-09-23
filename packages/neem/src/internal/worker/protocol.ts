@@ -32,12 +32,23 @@ export type ParentMessage =
       url?: string
     }
 
-export type WorkerPatchResult = {
-  accepted: boolean
+/**
+ * What a patch did to the running worker generation. `rejected` leaves the
+ * generation serving; `unavailable` means it was retired and no replacement
+ * came up, so the thread has nothing left to serve.
+ */
+export type PatchOutcome =
+  | { outcome: 'applied' }
+  | { outcome: 'rejected'; reason: string }
+  | { outcome: 'unavailable'; reason: string }
+
+// What the injected DevEngine patch client returns for one update.
+export type PatchClientResult = PatchOutcome & {
+  // Whether the patch file was imported; DevEngine counts it as delivered.
   delivered: boolean
-  reason?: string
-  patches: number
 }
+
+export type WorkerPatchResult = PatchClientResult & { patches: number }
 
 export type WorkerErrorOrigin = NeemWorkerErrorOrigin
 

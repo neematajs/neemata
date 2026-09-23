@@ -139,59 +139,46 @@ export const NEEM_DEV_RUNTIME = String.raw`
       return pending.filter((id) => !reached.has(id))
     }
 
+    // Every rejection leaves the running generation serving. Once disposers
+    // or re-executed modules have run, a failure is an unavailable generation
+    // unless the accept callback marks that it failed before retiring it.
     async apply(update, url) {
-      if (update.type === 'Noop') return { accepted: true, delivered: false }
+      if (update.type === 'Noop') return { outcome: 'applied', delivered: false }
       if (update.type === 'FullReload') {
-        return {
-          accepted: false,
-          delivered: false,
-          reason: update.reason ?? 'Rolldown requested a full reload',
-        }
+        return rejected(update.reason ?? 'Rolldown requested a full reload')
       }
       if (update.seq !== this.lastSeq + 1) {
-        return {
-          accepted: false,
-          delivered: false,
-          reason:
-            'Patch sequence gap: expected ' +
+        return rejected(
+          'Patch sequence gap: expected ' +
             (this.lastSeq + 1) +
             ', received ' +
             update.seq,
-        }
+        )
       }
       this.lastSeq = update.seq
 
       const computed = this.compute(update.changedIds)
-      if (computed.type === 'reload') {
-        return { accepted: false, delivered: false, reason: computed.reason }
-      }
+      if (computed.type === 'reload') return rejected(computed.reason)
       if (computed.type === 'noop') {
-        if (!update.changedIds.length) return { accepted: true, delivered: false }
-        return {
-          accepted: false,
-          delivered: false,
-          reason: 'update changes modules that have not run yet: ' +
-            update.changedIds.join(', '),
+        if (!update.changedIds.length) {
+          return { outcome: 'applied', delivered: false }
         }
+        return rejected(
+          'update changes modules that have not run yet: ' +
+            update.changedIds.join(', '),
+        )
       }
 
       try {
         await import(url)
       } catch (error) {
-        return {
-          accepted: false,
-          delivered: false,
-          reason: 'failed to import patch: ' + String(error),
-        }
+        return rejected('failed to import patch: ' + String(error))
       }
 
+      // The patch registered its factories, but no instance was replaced yet.
       for (const id of computed.updateSet) {
         if (!this.runtime.hasFactory(id)) {
-          return {
-            accepted: false,
-            delivered: true,
-            reason: 'patch has no factory for ' + id,
-          }
+          return rejected('patch has no factory for ' + id, true)
         }
       }
       const unreached = this.unreachedModules(
@@ -199,12 +186,11 @@ export const NEEM_DEV_RUNTIME = String.raw`
         computed.updateSet,
       )
       if (unreached.length) {
-        return {
-          accepted: false,
-          delivered: true,
-          reason: 'update changes modules that have not run yet: ' +
+        return rejected(
+          'update changes modules that have not run yet: ' +
             unreached.join(', '),
-        }
+          true,
+        )
       }
 
       const applies = computed.boundaries.map(([boundary, acceptedVia]) => ({
@@ -227,13 +213,18 @@ export const NEEM_DEV_RUNTIME = String.raw`
         }
       } catch (error) {
         return {
-          accepted: false,
+          outcome:
+            error?.neemGenerationIntact === true ? 'rejected' : 'unavailable',
           delivered: true,
           reason: 'failed to apply patch: ' + String(error),
         }
       }
-      return { accepted: true, delivered: true }
+      return { outcome: 'applied', delivered: true }
     }
+  }
+
+  function rejected(reason, delivered = false) {
+    return { outcome: 'rejected', delivered, reason }
   }
 
   const clientId = globalThis.__neem_patch_client_id__ ?? crypto.randomUUID()

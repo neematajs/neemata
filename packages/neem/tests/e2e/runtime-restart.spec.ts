@@ -63,6 +63,12 @@ describe('Neem runtime restart', () => {
       30_000,
     )
     expect(fallback.reason).toContain('upstreams')
+    // The old generation stopped before the replacement reported them.
+    expect(
+      neem
+        .events()
+        .some((event) => event.event === 'runtime:patch-unavailable'),
+    ).toBe(true)
     const restarted = await generations(fixture, neem, 'v2', 1)
     expect(
       restarted.every(
@@ -316,6 +322,71 @@ describe('Neem runtime restart', () => {
     expect(v1Starts).toHaveLength(2)
   }, 60_000)
 
+  it('restarts from current output when a patch retires the generation', async () => {
+    const fixture = await createFixture()
+    const neem = start(fixture)
+    await generations(fixture, neem, 'v1', 1)
+
+    await editDefinition(fixture, ['v1', 'v2'], ['never', 'patched'])
+    const unavailable = await neem.waitForEvent(
+      (event) => event.event === 'runtime:patch-unavailable',
+      30_000,
+    )
+    expect(unavailable.reason).toContain('Worker start failed for v2')
+    // Recovery starts fresh threads from output that includes the edit.
+    await generations(fixture, neem, 'v2', 1)
+    expect(
+      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
+    ).toHaveLength(2)
+
+    // The recovered threads are patch clients again.
+    await editDefinition(fixture, ['v2', 'v3'], ['patched', 'never'])
+    await generations(fixture, neem, 'v3', 2)
+    await applied(neem, 1)
+  }, 60_000)
+
+  it('waits for the next successful build when the restarted output also fails', async () => {
+    const fixture = await createFixture()
+    const neem = start(fixture)
+    await generations(fixture, neem, 'v1', 1)
+
+    await editDefinition(fixture, ['v1', 'v2'], ['never', 'always'])
+    await neem.waitForEvent(
+      (event) => event.event === 'runtime:patch-unavailable',
+      30_000,
+    )
+    // Recovery restarts from the same failing definition and gives up; the
+    // dev session keeps running with the runtime failed.
+    await neem.waitForEvent(
+      (event) => event.event === 'runtime:error' && event.runtimeName === 'api',
+      30_000,
+    )
+    await generations(fixture, neem, 'v2', 1)
+
+    await editDefinition(fixture, ['v2', 'v3'], ['always', 'never'])
+    await generations(fixture, neem, 'v3', 1)
+  }, 60_000)
+
+  it('restarts a crashed watcher and applies patches afterwards', async () => {
+    const fixture = await createFixture()
+    const crashFile = resolve(fixture.dir, 'watcher-crash')
+    const neem = start(fixture, { NEEM_TEST_WATCHER_CRASH_FILE: crashFile })
+    await generations(fixture, neem, 'v1', 1)
+
+    await writeFile(crashFile, '')
+    await neem.waitForEvent(
+      (event) => event.event === 'watcher:restarted',
+      30_000,
+    )
+    // The new watcher's build restarts the runtime, whose threads register
+    // with it as patch clients.
+    await generations(fixture, neem, 'v1', 1, 4)
+
+    await editMarker(fixture, 'v1', 'v2')
+    await generations(fixture, neem, 'v2', 2)
+    await applied(neem, 1)
+  }, 60_000)
+
   it('honors thread reload on the next worker definition', async () => {
     const fixture = await createFixture()
     const neem = start(fixture)
@@ -330,6 +401,12 @@ describe('Neem runtime restart', () => {
       30_000,
     )
     expect(fallback.reason).toContain("reload: 'thread'")
+    // Refused before retiring the generation, so it kept serving.
+    expect(
+      neem
+        .events()
+        .some((event) => event.event === 'runtime:patch-unavailable'),
+    ).toBe(false)
     await waitFor(
       () =>
         neem
@@ -371,6 +448,23 @@ function editMarker(
     `marker: '${previous}'`,
     `marker: '${next}'`,
   )
+}
+
+// One write, so DevEngine sees a single update.
+function editDefinition(
+  fixture: { valueFile: string },
+  [previousMarker, nextMarker]: [string, string],
+  [previousFailStart, nextFailStart]: [string, string],
+) {
+  return updateFileAtomically(fixture.valueFile, (content) => {
+    const marker = `marker: '${previousMarker}'`
+    const failStart = `failStart: string = '${previousFailStart}'`
+    expect(content).toContain(marker)
+    expect(content).toContain(failStart)
+    return content
+      .replace(marker, `marker: '${nextMarker}'`)
+      .replace(failStart, `failStart: string = '${nextFailStart}'`)
+  })
 }
 
 async function replaceInFile(

@@ -152,7 +152,7 @@ export class ThreadController {
   ): Promise<WorkerPatchResult> {
     if (this.state !== 'ready') {
       return {
-        accepted: false,
+        outcome: 'rejected',
         delivered: false,
         patches: this.patches,
         reason: `Worker [${this.name}] is not ready`,
@@ -170,12 +170,20 @@ export class ThreadController {
     if (result) this.patches = result.patches
     return (
       result ?? {
-        accepted: false,
+        outcome: 'rejected',
         delivered: false,
         patches: this.patches,
         reason: `Worker [${this.name}] returned no patch result`,
       }
     )
+  }
+
+  /**
+   * Fails a ready worker that can no longer serve although its thread still
+   * runs, exactly as if it had crashed: the runtime's recovery replaces it.
+   */
+  reportFailure(error: Error): void {
+    this.fail(error)
   }
 
   /**

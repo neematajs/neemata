@@ -4,7 +4,7 @@ import { threadId } from 'node:worker_threads'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record, wait } from '../../shared/support/_events.ts'
-import { definition } from './definition.ts'
+import { definition, failStart } from './definition.ts'
 import { nextGeneration } from './state.ts'
 
 export default defineRuntimeWorker({
@@ -29,6 +29,12 @@ export default defineRuntimeWorker({
         // Stands for a service the first definition used and that is gone now.
         if (retiredFile && marker === 'v1' && existsSync(retiredFile)) {
           throw new Error('The v1 dependency is retired')
+        }
+        if (
+          failStart === 'always' ||
+          (failStart === 'patched' && generation > 1)
+        ) {
+          throw new Error(`Worker start failed for ${marker}`)
         }
         if (startDelayMs) await wait(startDelayMs)
         // One thread consumes the signal; host recovery restarts the pool.

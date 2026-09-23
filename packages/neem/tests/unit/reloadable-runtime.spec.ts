@@ -26,7 +26,7 @@ describe('worker generation lifecycle', () => {
     const finished = vi.fn()
     void runtime.finished?.then(finished)
     await runtime.start()
-    await expect(runtime.apply(second)).resolves.toBeUndefined()
+    await expect(runtime.apply(second)).resolves.toEqual({ outcome: 'applied' })
     expect(events).toEqual(['start:first', 'stop:first', 'start:second'])
     expect(finished).not.toHaveBeenCalled()
     await runtime.stop()
@@ -69,10 +69,56 @@ describe('worker generation lifecycle', () => {
     })
     const runtime = await createRuntime(first)
     await runtime.start()
-    await expect(runtime.apply(next)).rejects.toThrow('setup failed')
+    await expect(runtime.apply(next)).resolves.toMatchObject({
+      error: { message: 'setup failed' },
+    })
     expect(stop).toHaveBeenCalledOnce()
     await runtime.stop()
     expect(stop).toHaveBeenCalledOnce()
+  })
+
+  it('replacement start failure is reported as unavailable, not as a rejection', async () => {
+    const firstStop = vi.fn()
+    const first = worker({ start() {}, stop: firstStop })
+    const next = worker({
+      start() {
+        throw new Error('setup failed')
+      },
+      stop() {},
+    })
+    const runtime = await createRuntime(first)
+    await runtime.start()
+
+    // The old generation was retired before the replacement failed.
+    await expect(runtime.apply(next)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      error: { message: 'setup failed' },
+    })
+    expect(firstStop).toHaveBeenCalledOnce()
+    await runtime.stop()
+  })
+
+  it('rejects an update without touching the generation while one is replacing', async () => {
+    const firstStop = vi.fn()
+    const first = worker({ start() {}, stop: firstStop })
+    const ready = Promise.withResolvers<undefined>()
+    const slow = worker({ start: () => ready.promise, stop() {} })
+    const runtime = await createRuntime(first)
+    await runtime.start()
+    const applying = runtime.apply(slow)
+
+    await expect(
+      runtime.apply(worker({ start() {}, stop() {} })),
+    ).resolves.toMatchObject({
+      outcome: 'rejected',
+      error: { message: 'Neem runtime is already reloading' },
+    })
+    ready.resolve(undefined)
+    await expect(applying).resolves.toEqual({ outcome: 'applied' })
+    await runtime.stop()
+    await expect(runtime.apply(first)).resolves.toMatchObject({
+      outcome: 'rejected',
+    })
   })
 
   it('allows unchanged upstreams and disposes a generation that changes them', async () => {
@@ -85,9 +131,10 @@ describe('worker generation lifecycle', () => {
     await runtime.start()
     await runtime.apply(same)
 
-    await expect(runtime.apply(changed)).rejects.toThrow(
-      'changed runtime upstreams',
-    )
+    await expect(runtime.apply(changed)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      error: { message: expect.stringContaining('changed runtime upstreams') },
+    })
     expect(stop).toHaveBeenCalledOnce()
     await runtime.stop()
     expect(stop).toHaveBeenCalledOnce()
@@ -121,9 +168,10 @@ describe('worker generation lifecycle', () => {
     })
     const runtime = await createRuntime(first)
     await runtime.start()
-    const applying = expect(runtime.apply(next)).rejects.toThrow(
-      'startup interrupted',
-    )
+    const applying = expect(runtime.apply(next)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      error: { message: 'startup interrupted' },
+    })
     await started.promise
     await runtime.stop()
     await applying
@@ -145,9 +193,10 @@ describe('worker generation lifecycle', () => {
     })
     const runtime = await createRuntime(first)
     await runtime.start()
-    const applying = expect(runtime.apply(next)).rejects.toThrow(
-      'Neem runtime stopped',
-    )
+    const applying = expect(runtime.apply(next)).resolves.toMatchObject({
+      outcome: 'unavailable',
+      error: { message: 'Neem runtime stopped' },
+    })
     await creating.promise
     const stopping = runtime.stop()
     acquired.resolve({ start, stop })
@@ -163,7 +212,7 @@ describe('worker generation lifecycle', () => {
     const next = worker({ start() {}, stop() {}, finished: finished.promise })
     const runtime = await createRuntime(first)
     await runtime.start()
-    await runtime.apply(next)
+    await expect(runtime.apply(next)).resolves.toEqual({ outcome: 'applied' })
     finished.reject(new Error('loop failed'))
     await expect(runtime.finished).rejects.toThrow('loop failed')
     await runtime.stop()

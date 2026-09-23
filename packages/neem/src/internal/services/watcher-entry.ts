@@ -1,3 +1,4 @@
+import { existsSync, unlinkSync } from 'node:fs'
 import { parentPort } from 'node:worker_threads'
 
 import type { WatcherRequest, WatcherResponse } from './protocol.ts'
@@ -66,3 +67,21 @@ async function handle(request: WatcherRequest): Promise<void> {
 port.on('message', (message: WatcherRequest) => {
   void handle(message)
 })
+
+// Test-only: e2e tests crash the watcher once by creating this file, to cover
+// the dev session restarting it.
+const crashFile =
+  process.env.NEEM_TEST_PROBE === '1'
+    ? process.env.NEEM_TEST_WATCHER_CRASH_FILE
+    : undefined
+if (crashFile) {
+  setInterval(() => {
+    if (!existsSync(crashFile)) return
+    try {
+      unlinkSync(crashFile)
+    } catch {
+      return
+    }
+    process.exit(1)
+  }, 25).unref()
+}

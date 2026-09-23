@@ -3,6 +3,7 @@ import type { Logger } from 'pino'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 
 import type { NeemLifecycleConfig } from '../../shared/types.ts'
+import type { RuntimePatchResult } from '../host/runtime.ts'
 import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { WorkerServiceStopProgressEvent } from '../services/client.ts'
 import type { ConfigSignalWatcher } from '../services/config-signal.ts'
@@ -34,6 +35,7 @@ import {
   raceWithTimeout,
   serializeError,
 } from '../utils.ts'
+import { DevFreshness } from './freshness.ts'
 
 type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
 
@@ -58,13 +60,11 @@ export class DevSession {
   // restart from includes every patch the crashed threads accepted.
   private readonly recoveries = new Map<string, Future<void>>()
   private manifestFile: string | undefined
-  // Runtimes whose worker output on disk predates their running generation.
-  private readonly staleWorkers = new Set<string>()
-  // Restarts that found a stale worker failing to build. They wait for its next
+  // Restarts that find a stale worker failing to build wait here for its next
   // successful build rather than load output older than the running generation.
-  private readonly deferredReloads = new Set<string>()
-  private readonly deferredRecoveries = new Set<string>()
-  private restartDeferred = false
+  private readonly freshness = new DevFreshness()
+  // Threads registered with the current watcher; a new watcher knows none.
+  private readonly patchClients = new Set<string>()
   // Resolved once per host generation; runtime reloads reuse it.
   private hostLogger: Logger | undefined
   // From the latest manifest; sizes the session's stop budget.
@@ -148,15 +148,20 @@ export class DevSession {
 
   private async startWatcher(): Promise<void> {
     if (this.stopped) return
-    const watcher = createWatcherClient({
+    // Until it has started, a failing watcher fails its start request instead.
+    let started = false
+    const watcher: WatcherClient = createWatcherClient({
       probe: this.options.probe,
       onEvent: (event) => {
         this.options.probe?.emit(`watcher:${event.type}`, normalizeEvent(event))
         this.enqueue(() => this.handleWatcherEvent(event))
       },
-      onFailure: (error) => this.closedFuture.reject(error),
+      onFailure: (error) => {
+        if (started) this.onWatcherFailure(watcher, error)
+      },
     })
     this.watcher = watcher
+    this.patchClients.clear()
     try {
       const result = await watcher.request({
         type: 'start',
@@ -164,6 +169,7 @@ export class DevSession {
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
       })
+      started = true
       if (this.stopped) return
       if (result?.manifestFile) this.manifestFile = result.manifestFile
       if (result?.configSignalFiles) {
@@ -215,26 +221,64 @@ export class DevSession {
 
   private async replaceWatcher(): Promise<void> {
     const previousWatcher = this.watcher
-    this.staleWorkers.clear()
-    this.deferredReloads.clear()
-    this.deferredRecoveries.clear()
-    this.restartDeferred = false
+    this.freshness.reset()
     const previousSignalFiles = this.configSignalFiles
     this.watcher = undefined
     await this.retireController()
     await this.stopConfigSignalWatcher()
     await previousWatcher?.stop().catch(() => undefined)
 
+    await this.startReplacementWatcher(previousSignalFiles)
+  }
+
+  // A failed replacement leaves only the config-signal watcher, so the next
+  // config fix can start a watcher again.
+  private async startReplacementWatcher(
+    signalFiles: readonly string[] | undefined,
+  ): Promise<boolean> {
     try {
       await this.startWatcher()
+      return true
     } catch (error) {
       this.reportWatcherError(error)
-      if (previousSignalFiles) {
-        await this.startConfigSignalWatcher(previousSignalFiles, {
+      if (signalFiles) {
+        await this.startConfigSignalWatcher(signalFiles, {
           tolerateInitialError: true,
         }).catch((signalError) => this.reportWatcherError(signalError))
       }
-      return
+      return false
+    }
+  }
+
+  private onWatcherFailure(watcher: WatcherClient, error: Error): void {
+    // A dead worker reports an error and then its exit; one restart covers both.
+    if (this.stopped || this.watcher !== watcher) return
+    // Work queued ahead of the restart must not wait on the dead watcher.
+    this.watcher = undefined
+    this.enqueue(() => this.handleWatcherFailure(watcher, error))
+  }
+
+  // Rolldown state lives in the watcher thread so that a crash can discard it:
+  // only the watcher restarts. Its replacement cleans the output directory and
+  // builds everything again, and its ready event restarts the host from that
+  // build, which also registers the new threads as its patch clients. Running
+  // threads are not re-registered: their patch sequence belongs to the dead
+  // watcher, and files may have changed while none was watching.
+  private async handleWatcherFailure(
+    watcher: WatcherClient,
+    error: Error,
+  ): Promise<void> {
+    this.reportWatcherError(error)
+    await watcher.stop().catch(() => undefined)
+    if (this.stopped) return
+    for (const runtimeName of this.controller?.getSnapshot().runtimeNames ??
+      []) {
+      this.freshness.markStale(runtimeName)
+    }
+    const signalFiles = this.configSignalFiles
+    await this.stopConfigSignalWatcher()
+    if (await this.startReplacementWatcher(signalFiles)) {
+      this.options.probe?.emit('watcher:restarted')
     }
   }
 
@@ -279,15 +323,13 @@ export class DevSession {
 
   private async restartRuntime(): Promise<boolean> {
     if (!this.manifestFile) return false
-    for (const runtimeName of this.staleWorkers) {
+    for (const runtimeName of this.freshness.staleRuntimes()) {
       if (await this.refreshWorkerOutput(runtimeName)) continue
-      this.restartDeferred = true
+      this.freshness.defer(runtimeName, 'restart')
       this.reportRestartDeferred(runtimeName)
       return false
     }
-    this.restartDeferred = false
-    this.deferredReloads.clear()
-    this.deferredRecoveries.clear()
+    this.freshness.restarted()
     const manifest = await readManifest(this.manifestFile)
     // The logger artifact keeps its file name across dev rebuilds, so only a
     // cache-busted import picks up a changed logger for the next generation.
@@ -323,13 +365,8 @@ export class DevSession {
       // before a crashed runtime restarts from it.
       prepareRecovery: (runtimeName) =>
         this.awaitRecoveryOutput(controller, runtimeName),
-      onFailure: (error) => {
-        this.options.probe?.emit('runtime:error', {
-          type: 'error',
-          error: serializeError(error),
-        })
-        this.closedFuture.reject(error)
-      },
+      onFailure: (error, runtimeName) =>
+        this.onRuntimeFailure(controller, error, runtimeName),
     })
     this.controller = controller
     try {
@@ -346,19 +383,42 @@ export class DevSession {
     })
   }
 
+  // Development never ends on a runtime failure: the runtime stays failed and
+  // unready until its next successful build restarts it.
+  private onRuntimeFailure(
+    controller: HostController,
+    error: Error,
+    runtimeName: string,
+  ): void {
+    this.options.probe?.emit('runtime:error', {
+      type: 'error',
+      runtimeName,
+      error: serializeError(error),
+    })
+    this.enqueue(async () => {
+      if (this.stopped || this.controller !== controller) return
+      this.logger.error(
+        { err: error, runtimeName },
+        'Neem runtime failed; it restarts after its next successful build',
+      )
+      // The source that failed is on disk; only a newer build can help.
+      this.freshness.markStale(runtimeName)
+      this.freshness.defer(runtimeName, 'reload')
+    })
+  }
+
   private async reloadRuntime(runtimeName: string): Promise<boolean> {
     const controller = this.controller
     if (!controller || !this.manifestFile) return false
     if (
-      this.staleWorkers.has(runtimeName) &&
+      this.freshness.isStale(runtimeName) &&
       !(await this.refreshWorkerOutput(runtimeName))
     ) {
-      this.deferredReloads.add(runtimeName)
+      this.freshness.defer(runtimeName, 'reload')
       this.reportRestartDeferred(runtimeName)
       return false
     }
-    this.deferredReloads.delete(runtimeName)
-    this.deferredRecoveries.delete(runtimeName)
+    this.freshness.resume(runtimeName, 'reload')
     // The reload replaces a recovering runtime, which must not keep waiting.
     this.releaseRecovery(runtimeName)
     const snapshot = await loadRuntimeSnapshot({
@@ -372,15 +432,19 @@ export class DevSession {
     return true
   }
 
-  // A worker patch means the worker builds again, so a restart deferred on its
-  // stale output can run now; fresh output already includes the patched code.
+  // Fresh output already includes the patched code, so a restart that ran
+  // replaces applying the patch.
   private async resumeDeferredRestart(runtimeName: string): Promise<boolean> {
-    if (!this.staleWorkers.has(runtimeName)) return false
-    if (this.restartDeferred) return this.restartRuntime()
-    if (this.deferredRecoveries.has(runtimeName))
-      return this.prepareRecovery(runtimeName)
-    if (!this.deferredReloads.has(runtimeName)) return false
-    return this.reloadRuntime(runtimeName)
+    switch (this.freshness.resumable(runtimeName)) {
+      case 'restart':
+        return this.restartRuntime()
+      case 'reload':
+        return this.reloadRuntime(runtimeName)
+      case 'recovery':
+        return this.prepareRecovery(runtimeName)
+      case undefined:
+        return false
+    }
   }
 
   private awaitRecoveryOutput(
@@ -408,14 +472,14 @@ export class DevSession {
   private async prepareRecovery(runtimeName: string): Promise<boolean> {
     if (this.stopped || !this.controller) return false
     if (
-      this.staleWorkers.has(runtimeName) &&
+      this.freshness.isStale(runtimeName) &&
       !(await this.refreshWorkerOutput(runtimeName))
     ) {
-      this.deferredRecoveries.add(runtimeName)
+      this.freshness.defer(runtimeName, 'recovery')
       this.reportRestartDeferred(runtimeName)
       return false
     }
-    this.deferredRecoveries.delete(runtimeName)
+    this.freshness.resume(runtimeName, 'recovery')
     this.releaseRecovery(runtimeName)
     return true
   }
@@ -431,16 +495,24 @@ export class DevSession {
   }
 
   private async handleThreadEvent(event: ThreadLifecycleEvent): Promise<void> {
-    if (this.stopped) return
+    const watcher = this.watcher
+    if (this.stopped || !watcher) return
     const { runtimeName, threadId, type } = event
-    await this.watcher?.request({
-      type:
-        type === 'thread-started'
-          ? 'patch-client-started'
-          : 'patch-client-stopped',
-      runtimeName,
-      clientId: threadId,
-    })
+    const started = type === 'thread-started'
+    // Only the watcher a thread registered with can unregister it.
+    if (!started && !this.patchClients.delete(threadId)) return
+    try {
+      await watcher.request({
+        type: started ? 'patch-client-started' : 'patch-client-stopped',
+        runtimeName,
+        clientId: threadId,
+      })
+    } catch (error) {
+      // A watcher that died meanwhile is restarting with the runtime.
+      if (this.watcher !== watcher) return
+      throw error
+    }
+    if (started && this.watcher === watcher) this.patchClients.add(threadId)
   }
 
   private async applyPatch(
@@ -451,8 +523,9 @@ export class DevSession {
       await this.fallback(runtimeName, 'No active patch clients')
       return
     }
+    let patch: RuntimePatchResult | undefined
     try {
-      const patch = await this.controller?.applyPatch(runtimeName, updates)
+      patch = await this.controller?.applyPatch(runtimeName, updates)
       if (patch?.deliveredFiles.length) {
         await this.watcher?.request({
           type: 'patch-delivered',
@@ -460,31 +533,62 @@ export class DevSession {
           filenames: patch.deliveredFiles,
         })
       }
-      if (patch?.accepted) {
+    } catch (error) {
+      if (isOperationAborted(error) || this.stopped) return
+      // An unavailable generation is already recovering; a reload on top of
+      // that recovery would restart the runtime twice.
+      if (patch?.outcome !== 'unavailable') {
+        await this.fallback(runtimeName, normalizeError(error).message)
+        return
+      }
+    }
+    switch (patch?.outcome) {
+      case 'applied':
         // Refreshing here would race later edits: a full DevEngine build can
         // absorb a pending change without emitting its patch. Restarts refresh.
-        this.staleWorkers.add(runtimeName)
+        this.freshness.markStale(runtimeName)
         this.options.probe?.emit('runtime:patch-applied', {
           runtimeName,
           reason: 'Worker generation updated',
         })
-      }
-      if (!patch?.accepted || patch.reset) {
+        return
+      case 'unavailable':
+        this.reportPatchUnavailable(runtimeName, patch.reason)
+        return
+      default:
         await this.fallback(
           runtimeName,
           patch?.reason ?? 'Runtime rejected the patch',
         )
-      }
-    } catch (error) {
-      if (isOperationAborted(error) || this.stopped) return
-      await this.fallback(runtimeName, normalizeError(error).message)
     }
   }
 
+  // The runtime has already failed the retired threads, and its recovery
+  // restarts them. That recovery waits in prepareRecovery for output that
+  // includes this update, which so far exists only as a patch chunk.
+  private reportPatchUnavailable(runtimeName: string, reason: string): void {
+    this.freshness.markStale(runtimeName)
+    this.logger.warn(
+      { runtimeName, reason },
+      'Neem worker generation retired by a failed patch; restarting the runtime from current output',
+    )
+    this.options.probe?.emit('runtime:patch-unavailable', {
+      runtimeName,
+      reason,
+    })
+    // Still a patch that ended in a restart, as every fallback does.
+    this.options.probe?.emit('runtime:patch-fallback', { runtimeName, reason })
+  }
+
   private reportRestartDeferred(runtimeName: string): void {
+    const serving = this.controller
+      ?.getHealth()
+      .runtimes.some((runtime) => runtime.name === runtimeName && runtime.ready)
     this.logger.warn(
       { runtimeName },
-      'Neem restart deferred until the runtime worker builds again; the running generation keeps serving',
+      serving
+        ? 'Neem restart deferred until the runtime worker builds again; the running generation keeps serving'
+        : 'Neem restart deferred until the runtime worker builds again; the runtime is not serving',
     )
     this.options.probe?.emit('runtime:restart-deferred', { runtimeName })
   }
@@ -498,7 +602,7 @@ export class DevSession {
     if (this.stopped) return
     this.reportPatchFallback(runtimeName, reason)
     // The rejected update exists only in source; the restart needs fresh output.
-    this.staleWorkers.add(runtimeName)
+    this.freshness.markStale(runtimeName)
     await this.reloadRuntime(runtimeName)
   }
 
@@ -512,7 +616,7 @@ export class DevSession {
       })
       if (!result?.manifest) return false
       this.acceptManifest(result.manifest)
-      this.staleWorkers.delete(runtimeName)
+      this.freshness.outputRefreshed(runtimeName)
       return true
     } catch (error) {
       this.logger.error(

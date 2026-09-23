@@ -9,10 +9,10 @@ import type {
 } from '../../shared/types.ts'
 import type {
   ParentMessage,
+  PatchClientResult,
   RuntimeWorkerData,
   WorkerErrorOrigin,
   WorkerMessage,
-  WorkerPatchResult,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
@@ -34,7 +34,7 @@ type PatchGlobal = typeof globalThis & {
     apply: (
       update: Extract<ParentMessage, { type: 'patch-update' }>['update'],
       url?: string,
-    ) => Promise<Omit<WorkerPatchResult, 'patches'>>
+    ) => Promise<PatchClientResult>
   }
 }
 
@@ -114,19 +114,30 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   return created
 }
 
+// The injected patch client reports an accept failure as an unavailable
+// generation unless the error carries this mark: the running generation was
+// never touched and keeps serving, so the patch is only rejected.
+function generationIntact(error: Error): Error {
+  return Object.assign(error, { neemGenerationIntact: true })
+}
+
 async function acceptWorker(next: unknown): Promise<void> {
   if (!isNeemRuntimeWorker(next)) {
-    throw new Error(
-      'Updated worker default export is not a marked runtime worker',
+    throw generationIntact(
+      new Error('Updated worker default export is not a marked runtime worker'),
     )
   }
   if (currentWorker?.reload === 'thread' || next.reload === 'thread') {
-    throw new Error("Worker requires reload: 'thread'")
+    throw generationIntact(new Error("Worker requires reload: 'thread'"))
   }
   if (!(runtime instanceof ReloadableRuntime)) {
-    throw new Error('Worker generation reload is only available in development')
+    throw generationIntact(
+      new Error('Worker generation reload is only available in development'),
+    )
   }
-  await runtime.apply(next)
+  const reload = await runtime.apply(next)
+  if (reload.outcome === 'rejected') throw generationIntact(reload.error)
+  if (reload.outcome === 'unavailable') throw reload.error
   currentWorker = next
 }
 
@@ -134,19 +145,23 @@ async function applyUpdate(
   message: Extract<ParentMessage, { type: 'patch-update' }>,
 ): Promise<void> {
   const client = patchGlobal.__neem_patches__
-  let result: Omit<WorkerPatchResult, 'patches'>
+  let result: PatchClientResult
   try {
     result = client
       ? await client.apply(message.update, message.url)
       : {
-          accepted: false,
+          outcome: 'rejected',
           delivered: false,
           reason: 'Worker artifact was not built with Rolldown DevEngine',
         }
-    if (result.accepted && message.update.type === 'Patch') patches++
+    if (result.outcome === 'applied' && message.update.type === 'Patch') {
+      patches++
+    }
   } catch (error) {
+    // The client classifies every failure after it starts touching modules;
+    // one escaping it happened before that.
     result = {
-      accepted: false,
+      outcome: 'rejected',
       delivered: false,
       reason: normalizeError(error).message,
     }

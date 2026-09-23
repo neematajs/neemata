@@ -14,6 +14,7 @@ import type {
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
+import type { WorkerPatchResult } from '../worker/protocol.ts'
 import type { RecoveryOptions, RecoveryPolicy } from './recovery.ts'
 import type { HostRunnerData } from './runner-protocol.ts'
 import type { ThreadPlan, ThreadLifecycleEvent } from './thread.ts'
@@ -31,12 +32,14 @@ import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
 import { ThreadController } from './thread.ts'
 
-export type RuntimePatchResult = {
-  accepted: boolean
-  deliveredFiles: readonly string[]
-  reason?: string
-  reset: boolean
-}
+export type RuntimePatchResult = (
+  | { outcome: 'applied' }
+  // `reset` marks the patch budget: the runtime restarts although nothing
+  // failed, so the next bundle carries every patch.
+  | { outcome: 'rejected'; reason: string; reset?: true }
+  // Recovery is already replacing the threads whose generation was retired.
+  | { outcome: 'unavailable'; reason: string }
+) & { deliveredFiles: readonly string[] }
 
 export type RuntimeControllerOptions = {
   onThreadEvent?: (event: ThreadLifecycleEvent) => void
@@ -108,9 +111,21 @@ export class RuntimeController {
     return this.listThreads().flatMap((thread) => thread.getUpstreams())
   }
 
+  /**
+   * Applies one DevEngine update to every thread. A thread whose generation
+   * the patch retired without a replacement fails as if it had crashed, so
+   * recovery restarts the runtime from the output on disk.
+   */
   async applyPatch(
     updates: readonly BindingClientHmrUpdate[],
   ): Promise<RuntimePatchResult> {
+    if (this.state !== 'ready') {
+      return {
+        outcome: 'rejected',
+        deliveredFiles: [],
+        reason: `Runtime [${this.name}] is not ready`,
+      }
+    }
     const threadList = this.listThreads()
     const maxPatches =
       this.options.snapshot.manifest.config.build?.updates?.maxPatches ?? 50
@@ -118,7 +133,7 @@ export class RuntimeController {
     // applying the following edit, so the fresh bundle includes that edit too.
     if (threadList.some((thread) => thread.patches >= maxPatches)) {
       return {
-        accepted: false,
+        outcome: 'rejected',
         deliveredFiles: [],
         reset: true,
         reason: `Worker patch budget reached (${maxPatches})`,
@@ -130,9 +145,8 @@ export class RuntimeController {
     const missed = threadList.find((thread) => !clients.has(thread.id))
     if (missed) {
       return {
-        accepted: false,
+        outcome: 'rejected',
         deliveredFiles: [],
-        reset: false,
         reason: `Worker [${missed.name}] started without this update`,
       }
     }
@@ -143,41 +157,46 @@ export class RuntimeController {
         if (!thread) {
           return {
             update,
-            result: {
-              accepted: false,
-              delivered: false,
-              reason: `Patch client [${clientId}] is no longer running`,
-            },
+            result: rejectedPatch(
+              `Patch client [${clientId}] is no longer running`,
+            ),
           }
         }
 
         try {
-          return { update, result: await thread.applyPatch(update) }
+          return { update, thread, result: await thread.applyPatch(update) }
         } catch (error) {
           return {
             update,
-            result: {
-              accepted: false,
-              delivered: false,
-              reason: normalizeError(error).message,
-            },
+            result: rejectedPatch(normalizeError(error).message),
           }
         }
       }),
     )
-    let reason: string | undefined
-    let accepted = true
+    let rejected: string | undefined
+    let unavailable: string | undefined
     const delivered = new Set<string>()
-    for (const { update, result } of results) {
-      if (!result.accepted && accepted) {
-        accepted = false
-        reason = result.reason
-      }
+    for (const { update, thread, result } of results) {
       if (result.delivered && update.type === 'Patch')
         delivered.add(update.filename)
+      if (result.outcome === 'rejected') rejected ??= result.reason
+      if (result.outcome === 'unavailable') {
+        unavailable ??= result.reason
+        thread?.reportFailure(
+          new Error(
+            `Worker [${thread.name}] has no running generation after a failed patch: ${result.reason}`,
+          ),
+        )
+      }
     }
     const deliveredFiles = Array.from(delivered)
-    return { accepted, deliveredFiles, reason, reset: false }
+    if (unavailable !== undefined) {
+      return { outcome: 'unavailable', reason: unavailable, deliveredFiles }
+    }
+    if (rejected !== undefined) {
+      return { outcome: 'rejected', reason: rejected, deliveredFiles }
+    }
+    return { outcome: 'applied', deliveredFiles }
   }
 
   getHealth(): NeemRuntimeServerRuntimeHealth {
@@ -680,6 +699,10 @@ function getPoolState(
   if (counts.ready > 0) return 'degraded'
   if (counts.failed > 0) return 'failed'
   return 'idle'
+}
+
+function rejectedPatch(reason: string): WorkerPatchResult {
+  return { outcome: 'rejected', delivered: false, patches: 0, reason }
 }
 
 function noop(): void {}

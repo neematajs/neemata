@@ -23,6 +23,15 @@ running until the source is fixed. A restart never loads output older than the
 running generation; when the latest worker output cannot be written, the
 restart is deferred until the worker builds again.
 
+Each thread reports one of three patch outcomes: `applied`; `rejected`, which
+retired nothing, so the old generation keeps serving and the runtime falls back
+to the restart above; or `unavailable`, when the old generation was already
+stopped and its replacement failed to start (including a changed upstream
+list), so recovery restarts the runtime from the current output at once. If
+that restart fails too, the runtime stays failed and unready without ending
+`neem dev` until its next successful build restarts it. A crashed watcher
+restarts on its own and restarts the runtimes from its fresh build.
+
 Modules re-executed by a patch can register `import.meta.hot.dispose(callback)`
 to release module-level timers or listeners; the callback receives
 `import.meta.hot.data`, which the next instance of the module sees. Only

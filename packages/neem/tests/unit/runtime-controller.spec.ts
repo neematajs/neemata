@@ -430,8 +430,66 @@ describe('RuntimeController patches', () => {
     ])
 
     expect(result).toMatchObject({
-      accepted: false,
+      outcome: 'rejected',
       reason: `Worker [${missed!.name}] started without this update`,
+    })
+  })
+
+  it('an unavailable patch outcome fails the thread and starts recovery', async () => {
+    const { runtime, onRecovered, onFailure } = await createFixture()
+    await runtime.start()
+    const threads = runtime.listThreads()
+    const [retired, intact] = threads
+    const update = { type: 'Noop' } as const
+    retired!.applyPatch = async () => ({
+      outcome: 'unavailable',
+      delivered: true,
+      patches: 0,
+      reason: 'failed to apply patch: Error: setup failed',
+    })
+    intact!.applyPatch = async () => ({
+      outcome: 'applied',
+      delivered: true,
+      patches: 1,
+    })
+
+    const result = await runtime.applyPatch(
+      threads.map((thread) => ({ clientId: thread.id, update })),
+    )
+
+    expect(result).toEqual({
+      outcome: 'unavailable',
+      reason: 'failed to apply patch: Error: setup failed',
+      deliveredFiles: [],
+    })
+    expect(retired!.getHealth()).toMatchObject({
+      state: expect.stringMatching(/failed|stopping|stopped/),
+      failureCount: 1,
+      lastError: {
+        message: expect.stringContaining(
+          'has no running generation after a failed patch',
+        ),
+      },
+    })
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(host.start).toHaveBeenCalledTimes(2)
+    expect(runtime.getHealth()).toMatchObject({
+      ready: true,
+      state: 'ready',
+      pool: { state: 'ready', ready: 2 },
+    })
+    expect(runtime.listThreads()).not.toContain(retired)
+  })
+
+  it('rejects patches while the runtime is not ready', async () => {
+    const { runtime } = await createFixture()
+
+    await expect(runtime.applyPatch([])).resolves.toMatchObject({
+      outcome: 'rejected',
+      reason: 'Runtime [api] is not ready',
     })
   })
 })

@@ -141,7 +141,7 @@ describe('HostController stop during startup', () => {
     runtime.patch.mockImplementation(async () => {
       entered.resolve()
       await interrupted.promise
-      return { accepted: false, deliveredFiles: [] }
+      return { outcome: 'rejected', reason: 'rejected', deliveredFiles: [] }
     })
     runtime.stop.mockImplementation(async () => interrupted.resolve())
     const controller = createController()
@@ -286,9 +286,8 @@ describe('HostController failures', () => {
   it('keeps an earlier failure after applying a patch', async () => {
     readyRuntime()
     runtime.patch.mockResolvedValue({
-      accepted: true,
+      outcome: 'applied',
       deliveredFiles: [],
-      reset: false,
     })
     const controller = createController({ failOnWorkerError: true })
     await controller.start()
@@ -312,7 +311,7 @@ describe('HostController failures', () => {
     runtime.patch.mockImplementation(async () => {
       entered.resolve()
       await release.promise
-      return { accepted: true, deliveredFiles: [], reset: false }
+      return { outcome: 'applied', deliveredFiles: [] }
     })
     const controller = createController({ failOnWorkerError: true })
     await controller.start()
