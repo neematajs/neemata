@@ -1,25 +1,71 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
+import * as fs from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
+import { createTempDir } from '../support/temp.ts'
 import {
+  createNeemFixture,
   getDistinctFreePorts,
   readRuntimeEvents,
   spawnNode,
   waitFor,
 } from './support/e2e.ts'
 
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...fs, cp: vi.fn(fs.cp) }
 })
 
 describe('Neem e2e process harness', () => {
+  it('stops children before removing their temporary files', async () => {
+    // These assertions run after the cleanup hooks registered below them.
+    onTestFinished(async () => {
+      await expect(fs.access(dir)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+    const dir = await createTempDir('neem-harness-')
+    const marker = resolve(dir, 'stopped')
+    onTestFinished(async () => {
+      expect(neem.child.exitCode).toBe(0)
+      await expect(fs.readFile(marker, 'utf8')).resolves.toBe('stopped')
+    })
+    const neem = spawnNode([
+      '--input-type=module',
+      '-e',
+      `
+        import { writeFileSync } from 'node:fs'
+        process.on('SIGTERM', () => {
+          writeFileSync(${JSON.stringify(marker)}, 'stopped')
+          process.exit(0)
+        })
+        process.stdout.write('ready')
+        setInterval(() => {}, 1000)
+      `,
+    ])
+
+    await waitFor(() => neem.stdout().includes('ready'), 1_000)
+    // Deliberately leave the process running to exercise test-owned shutdown.
+  })
+
+  it('removes a partially copied fixture when setup rejects', async () => {
+    let dir = ''
+    onTestFinished(async () => {
+      expect(dir).not.toBe('')
+      await expect(fs.access(dir)).rejects.toMatchObject({ code: 'ENOENT' })
+    })
+    const copy = vi.mocked(fs.cp).mockImplementationOnce(async (_, target) => {
+      dir = dirname(String(target))
+      await fs.writeFile(resolve(dir, 'partial-copy'), 'partial')
+      throw new Error('Fixture copy failed')
+    })
+
+    try {
+      await expect(createNeemFixture()).rejects.toThrow('Fixture copy failed')
+    } finally {
+      copy.mockRestore()
+    }
+  })
+
   it('force-kills a child that ignores SIGTERM', async () => {
     const neem = spawnNode([
       '-e',
@@ -70,9 +116,9 @@ describe('Neem e2e process harness', () => {
   })
 
   it('ignores an incomplete trailing runtime event line', async () => {
-    const dir = await useTempDir()
+    const dir = await createTempDir('neem-harness-')
     const eventsFile = resolve(dir, 'events.jsonl')
-    await writeFile(eventsFile, '{"event":"complete"}\n{"event":"partial"')
+    await fs.writeFile(eventsFile, '{"event":"complete"}\n{"event":"partial"')
 
     await expect(readRuntimeEvents(eventsFile)).resolves.toEqual([
       { event: 'complete' },
@@ -83,9 +129,3 @@ describe('Neem e2e process harness', () => {
     await expect(getDistinctFreePorts(3)).resolves.toHaveLength(3)
   })
 })
-
-async function useTempDir(): Promise<string> {
-  const dir = await mkdtemp(resolve(tmpdir(), 'neem-harness-'))
-  tempDirs.push(dir)
-  return dir
-}

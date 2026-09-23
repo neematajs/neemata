@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
   readRuntimeEvents,
@@ -12,17 +11,9 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem runtime declaration discovery', () => {
   it('discovers runtime folders by glob, applies negation, and infers package names', async () => {
-    const fixture = await useFixture({ config: 'discovery' })
+    const fixture = await createNeemFixture({ config: 'discovery' })
 
     await runNeem([
       'build',
@@ -43,7 +34,7 @@ describe('Neem runtime declaration discovery', () => {
     expect(Object.keys(manifest.config.runtimes)).toEqual(['@fixture/api'])
     expect(JSON.stringify(manifest)).not.toContain('legacy')
 
-    const neem = spawnTrackedNeem(['start', '--outDir', fixture.outDir], {
+    const neem = spawnNeem(['start', '--outDir', fixture.outDir], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
@@ -77,7 +68,7 @@ describe('Neem runtime declaration discovery', () => {
   }, 60_000)
 
   it('builds and starts worker, host, and planner entries from bare package specifiers', async () => {
-    const fixture = await useFixture({ config: 'bare-package-entry' })
+    const fixture = await createNeemFixture({ config: 'bare-package-entry' })
 
     await runNeem([
       'build',
@@ -90,7 +81,7 @@ describe('Neem runtime declaration discovery', () => {
     const manifest = await readManifest(fixture.outDir)
     expect(Object.keys(manifest.runtimes)).toEqual(['bare-package-entry'])
 
-    const neem = spawnTrackedNeem(['start', '--outDir', fixture.outDir], {
+    const neem = spawnNeem(['start', '--outDir', fixture.outDir], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
@@ -125,7 +116,7 @@ describe('Neem runtime declaration discovery', () => {
   }, 60_000)
 
   it('builds and starts runtime entries declared as file URLs', async () => {
-    const fixture = await useFixture({ config: 'file-url-entry' })
+    const fixture = await createNeemFixture({ config: 'file-url-entry' })
 
     await runNeem([
       'build',
@@ -138,7 +129,7 @@ describe('Neem runtime declaration discovery', () => {
     const manifest = await readManifest(fixture.outDir)
     expect(Object.keys(manifest.runtimes)).toEqual(['file-url-entry'])
 
-    const neem = spawnTrackedNeem(['start', '--outDir', fixture.outDir], {
+    const neem = spawnNeem(['start', '--outDir', fixture.outDir], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
@@ -173,8 +164,8 @@ describe('Neem runtime declaration discovery', () => {
   }, 60_000)
 
   it('fails build with a clear diagnostic for non-file URL entries', async () => {
-    const fixture = await useFixture({ config: 'non-file-url-entry' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'non-file-url-entry' })
+    const neem = spawnNeem(
       ['build', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {},
     )
@@ -193,12 +184,6 @@ type NeemManifest = {
   config: { runtimes: Record<string, unknown> }
 }
 
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
 async function readManifest(outDir: string): Promise<NeemManifest> {
   return JSON.parse(
     await readFile(resolve(outDir, 'neem.manifest.json'), 'utf8'),
@@ -215,13 +200,4 @@ async function waitForRuntimeEvents(
     async () => predicate(await readRuntimeEvents(file)),
     30_000,
   )
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
 }

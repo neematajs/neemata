@@ -1,9 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { createFuture } from '@nmtjs/common'
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
 import { ThreadController } from '../../src/internal/host/thread.ts'
@@ -11,14 +10,7 @@ import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 import { raceWithTimeout } from '../../src/internal/utils.ts'
 import { NeemWorkerError } from '../../src/shared/errors.ts'
-
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-})
+import { createTempDir } from '../support/temp.ts'
 
 describe('ThreadController', () => {
   it('lets requested-stop cleanup finish before terminating a starting worker', async () => {
@@ -60,6 +52,7 @@ describe('ThreadController', () => {
       index: 0,
       hooks,
     })
+    onTestFinished(() => thread.stop())
     thread.port.on('message', () => entered.resolve())
     const start = thread.start().catch((error: unknown) => error)
     try {
@@ -97,6 +90,7 @@ describe('ThreadController', () => {
       index: 0,
       hooks: createHostHooks(),
     })
+    onTestFinished(() => thread.stop())
 
     await thread.start()
 
@@ -149,6 +143,7 @@ describe('ThreadController', () => {
         failureObserved.resolve(error)
       },
     })
+    onTestFinished(() => thread.stop())
 
     const start = thread.start()
     await readyHookEntered.promise
@@ -201,6 +196,7 @@ describe('ThreadController', () => {
         onFailureCalls += 1
       },
     })
+    onTestFinished(() => thread.stop())
 
     await expect(thread.start()).rejects.toThrow('exited with code [1]')
 
@@ -252,6 +248,7 @@ describe('ThreadController', () => {
       hooks,
       onFailure: () => {},
     })
+    onTestFinished(() => thread.stop())
 
     await thread.start().catch(() => undefined)
     const observed = await raceWithTimeout(failHookObserved.promise, 5_000)
@@ -284,8 +281,7 @@ async function createThreadFixture(
   workerSource: string,
   runtimeWorkerSource = 'export default {}\n',
 ) {
-  const outDir = await mkdtemp(resolve(tmpdir(), 'neem-thread-controller-'))
-  tempDirs.push(outDir)
+  const outDir = await createTempDir('neem-thread-controller-')
 
   const workerEntry = resolve(outDir, 'worker-entry.mjs')
   const runtimeWorker = resolve(outDir, 'runtime-worker.mjs')

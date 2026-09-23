@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/metrics",
-  "version": "0.17.0-beta.17",
+  "version": "0.18.0-alpha.0",
   "description": "Neem metrics helpers and Prometheus-compatible observer.",
   "type": "module",
   "repository": {

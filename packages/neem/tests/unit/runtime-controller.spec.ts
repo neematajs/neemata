@@ -1,9 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { createFuture } from '@nmtjs/common'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import type {
   HostRunner,
@@ -15,6 +14,7 @@ import * as logging from '../../src/internal/logger.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 import { wait } from '../../src/internal/utils.ts'
+import { createTempDir } from '../support/temp.ts'
 
 // Keep real worker threads and their startup deadline; control only host planning.
 const host = vi.hoisted(() => ({
@@ -39,17 +39,13 @@ vi.mock('../../src/internal/host/runner.ts', () => ({
   },
 }))
 
-const runtimes: RuntimeController[] = []
-const tempDirs: string[] = []
-
-afterEach(async () => {
-  await Promise.all(runtimes.splice(0).map((runtime) => runtime.stop()))
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-  host.options.length = 0
-  vi.restoreAllMocks()
-  vi.resetAllMocks()
+beforeEach(() => {
+  // Restore mocks after resource hooks have finished stopping real workers.
+  onTestFinished(() => {
+    host.options.length = 0
+    vi.restoreAllMocks()
+    vi.resetAllMocks()
+  })
 })
 
 describe('RuntimeController recovery', () => {
@@ -284,8 +280,7 @@ describe('RuntimeController patches', () => {
 })
 
 async function createFixture() {
-  const outDir = await mkdtemp(resolve(tmpdir(), 'neem-runtime-controller-'))
-  tempDirs.push(outDir)
+  const outDir = await createTempDir('neem-runtime-controller-')
   const workerEntry = new URL(
     '../../src/internal/worker/entry.ts',
     import.meta.url,
@@ -387,6 +382,6 @@ async function createFixture() {
     onRecovered,
     onFailure,
   })
-  runtimes.push(runtime)
+  onTestFinished(() => runtime.stop())
   return { runtime, hooks, onRecovered, onFailure, warn, error }
 }

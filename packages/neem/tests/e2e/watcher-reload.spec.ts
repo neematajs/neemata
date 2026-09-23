@@ -1,7 +1,7 @@
 import { access, readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type {
   NeemProbeEvent,
@@ -18,21 +18,13 @@ import {
   writeFileAtomically,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem watcher dev reload', () => {
   it('reports broken config, stops runtime, then restarts after the config is fixed', async () => {
-    const fixture = await useFixture({ config: 'proxy' })
+    const fixture = await createNeemFixture({ config: 'proxy' })
     const proxyPort = await getFreePort()
     const upstreamPort = await getFreePort()
     const originalConfig = await readFile(fixture.configFile, 'utf8')
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -76,11 +68,11 @@ describe('Neem watcher dev reload', () => {
   }, 60_000)
 
   it('removes stale runtime artifacts when a runtime is removed from config', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
     const originalConfig = await readFile(fixture.configFile, 'utf8')
     const jobsStartFile = resolve(fixture.outDir, 'runtimes/jobs/start.js')
     const manifestFile = resolve(fixture.outDir, 'neem.manifest.json')
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -103,12 +95,12 @@ describe('Neem watcher dev reload', () => {
   }, 60_000)
 
   it('restarts watcher and runtime after a runtime declaration changes', async () => {
-    const fixture = await useFixture({ config: 'generic-runtime' })
+    const fixture = await createNeemFixture({ config: 'generic-runtime' })
     const runtimeFile = resolve(
       fixture.fixtureDir,
       'cases/generic-runtime/api.runtime.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -136,7 +128,7 @@ describe('Neem watcher dev reload', () => {
   }, 60_000)
 
   it('converges rapid worker, logger, and plugin edits to the latest manifest', async () => {
-    const fixture = await useFixture({ config: 'plugin' })
+    const fixture = await createNeemFixture({ config: 'plugin' })
     const manifestFile = resolve(fixture.outDir, 'neem.manifest.json')
     const workerFile = resolve(
       fixture.fixtureDir,
@@ -147,7 +139,7 @@ describe('Neem watcher dev reload', () => {
       fixture.fixtureDir,
       'shared/support/plugin-hooks.ts',
     )
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -208,21 +200,6 @@ describe('Neem watcher dev reload', () => {
     await neem.stop()
   }, 60_000)
 })
-
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
 
 async function waitForProbeEventCount(
   neem: SpawnedNeem,

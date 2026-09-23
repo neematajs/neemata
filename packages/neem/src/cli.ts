@@ -1,7 +1,8 @@
 import * as module from 'node:module'
 import { resolve } from 'node:path'
 
-import { config } from '@dotenvx/dotenvx'
+// dotenvx is CommonJS; since 2.30.0 Node no longer detects its named exports.
+import dotenvx from '@dotenvx/dotenvx'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 import { defineCommand } from 'citty'
 
@@ -177,7 +178,7 @@ export const devCommand = defineCommand({
         throw new Error('--env-files requires non-empty file paths')
       }
       // Load before spawning services so config evaluation and runtime workers inherit the values.
-      config({ path: paths, quiet: true, strict: true })
+      dotenvx.config({ path: paths, quiet: true, strict: true })
     }
     if (args.cache && 'enableCompileCache' in module) {
       const result = module.enableCompileCache({ directory: args.cacheDir })

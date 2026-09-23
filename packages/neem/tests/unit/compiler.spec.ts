@@ -1,12 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
 import { createFuture } from '@nmtjs/common'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BuildTarget } from '../../src/internal/build/graph.ts'
 import {
@@ -17,27 +16,20 @@ import {
 } from '../../src/internal/build/compiler.ts'
 import { createBuildGraph } from '../../src/internal/build/graph.ts'
 import { defineRuntime } from '../../src/public/config.ts'
+import { createTempDir } from '../support/temp.ts'
 
 const rolldownMock = vi.hoisted(() => ({ build: vi.fn(), watch: vi.fn() }))
 
 vi.mock('rolldown', () => rolldownMock)
-
-const tempDirs: string[] = []
 
 beforeEach(() => {
   rolldownMock.build.mockReset()
   rolldownMock.watch.mockReset()
 })
 
-afterEach(async () => {
-  await Promise.all(
-    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
-  )
-})
-
 describe('Neem compiler', () => {
   it('compiles infra targets with one multi-entry rolldown build', async () => {
-    const root = await useTempDir()
+    const root = await createTempDir('neem-compiler-')
     const graph = createCompilerGraph(root)
     rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
       const input = options.input
@@ -202,7 +194,7 @@ describe('Neem compiler', () => {
   })
 
   it('uses root watch config for build delay and debounce', async () => {
-    const root = await useTempDir()
+    const root = await createTempDir('neem-compiler-')
     const graph = createCompilerGraph(
       root,
       {
@@ -224,7 +216,7 @@ describe('Neem compiler', () => {
   })
 
   it('refuses to refresh worker output while the latest source fails to build', async () => {
-    const root = await useTempDir()
+    const root = await createTempDir('neem-compiler-')
     const valueFile = resolve(root, 'api/value.ts')
     await mkdir(resolve(root, 'api'), { recursive: true })
     await writeFile(
@@ -269,7 +261,7 @@ describe('Neem compiler', () => {
   })
 
   it('watches infra targets with one watcher and reports one rebuild for all infra metadata', async () => {
-    const root = await useTempDir()
+    const root = await createTempDir('neem-compiler-')
     const graph = createCompilerGraph(root, undefined, false)
     const watchers: Array<EventEmitter & { close: () => Promise<void> }> = []
     rolldownMock.watch.mockImplementation(() => {
@@ -362,7 +354,7 @@ describe('Neem compiler', () => {
 })
 
 async function createTarget(): Promise<BuildTarget> {
-  const root = await useTempDir()
+  const root = await createTempDir('neem-compiler-')
   return {
     key: 'runtime:api:worker',
     kind: 'runtime-worker',
@@ -374,12 +366,6 @@ async function createTarget(): Promise<BuildTarget> {
     owner: { type: 'runtime', name: 'api' },
     outDir: resolve(root, 'dist'),
   }
-}
-
-async function useTempDir(): Promise<string> {
-  const root = await mkdtemp(resolve(tmpdir(), 'neem-compiler-'))
-  tempDirs.push(root)
-  return root
 }
 
 function createCompilerGraph(

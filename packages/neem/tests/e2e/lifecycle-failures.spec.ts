@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
@@ -12,18 +12,10 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem runtime lifecycle failures', () => {
   it('awaits async runtime worker factories before starting workers', async () => {
-    const fixture = await useFixture({ config: 'async-worker-factory' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'async-worker-factory' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -52,8 +44,8 @@ describe('Neem runtime lifecycle failures', () => {
   }, 60_000)
 
   it('fails startup with a clear error when a worker returns an invalid upstream', async () => {
-    const fixture = await useFixture({ config: 'bad-upstream' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'bad-upstream' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -65,8 +57,8 @@ describe('Neem runtime lifecycle failures', () => {
   }, 60_000)
 
   it('stops already-started workers when a later worker fails startup', async () => {
-    const fixture = await useFixture({ config: 'start-failure-cleanup' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'start-failure-cleanup' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       { env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile } },
     )
@@ -102,8 +94,8 @@ describe('Neem runtime lifecycle failures', () => {
   }, 60_000)
 
   it('fails startup when runtime host start exceeds the request timeout', async () => {
-    const fixture = await useFixture({ config: 'host-start-hang' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'host-start-hang' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -122,8 +114,8 @@ describe('Neem runtime lifecycle failures', () => {
   }, 60_000)
 
   it('fails startup when runtime planner exceeds the request timeout', async () => {
-    const fixture = await useFixture({ config: 'planner-hang' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'planner-hang' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -142,8 +134,8 @@ describe('Neem runtime lifecycle failures', () => {
   }, 60_000)
 
   it('fails shutdown when runtime host stop exceeds the request timeout', async () => {
-    const fixture = await useFixture({ config: 'host-stop-hang' })
-    const neem = spawnTrackedNeem(
+    const fixture = await createNeemFixture({ config: 'host-stop-hang' })
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -176,7 +168,7 @@ describe('Neem runtime lifecycle failures', () => {
   ])(
     'stops during $phase in $mode and awaits cleanup',
     async ({ mode, phase }) => {
-      const fixture = await useFixture({ config: 'stop-during-start' })
+      const fixture = await createNeemFixture({ config: 'stop-during-start' })
       const env = {
         NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         NEEM_STARTUP_PHASE: phase,
@@ -192,8 +184,8 @@ describe('Neem runtime lifecycle failures', () => {
       }
       const node =
         mode === 'production'
-          ? spawnTrackedNode([resolve(fixture.outDir, 'start.js')], { env })
-          : spawnTrackedNeem(
+          ? spawnNode([resolve(fixture.outDir, 'start.js')], { env })
+          : spawnNeem(
               [
                 'dev',
                 '--config',
@@ -231,7 +223,7 @@ describe('Neem runtime lifecycle failures', () => {
   )
 
   it('runs production SIGTERM shutdown exactly once', async () => {
-    const fixture = await useFixture({ config: 'sigterm-exactly-once' })
+    const fixture = await createNeemFixture({ config: 'sigterm-exactly-once' })
 
     await runNeem([
       'build',
@@ -241,7 +233,7 @@ describe('Neem runtime lifecycle failures', () => {
       fixture.outDir,
     ])
 
-    const node = spawnTrackedNode([resolve(fixture.outDir, 'start.js')], {
+    const node = spawnNode([resolve(fixture.outDir, 'start.js')], {
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
     })
 
@@ -286,30 +278,6 @@ describe('Neem runtime lifecycle failures', () => {
     )
   }, 60_000)
 })
-
-async function useFixture(options: { config?: string } = {}) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
-
-function spawnTrackedNode(
-  args: readonly string[],
-  options: Parameters<typeof spawnNode>[1],
-): SpawnedNeem {
-  const node = spawnNode(args, options)
-  spawned.push(node)
-  return node
-}
 
 function countEvents(
   events: readonly { event: string; name?: string }[],

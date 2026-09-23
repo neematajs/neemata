@@ -1,7 +1,7 @@
 import { readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
@@ -13,22 +13,14 @@ import {
   writeFileAtomically,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem recovery health and proxy behavior', () => {
   it('refreshes proxy routing after a recovered worker binds a new upstream port', async () => {
-    const fixture = await useFixture({ config: 'recovery-proxy' })
+    const fixture = await createNeemFixture({ config: 'recovery-proxy' })
     const [proxyPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-proxy-marker')
     await rm(markerFile, { force: true })
 
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -105,12 +97,12 @@ describe('Neem recovery health and proxy behavior', () => {
   }, 60_000)
 
   it('reports /ready as unavailable during worker recovery and ready after recovery', async () => {
-    const fixture = await useFixture({ config: 'recovery-health' })
+    const fixture = await createNeemFixture({ config: 'recovery-health' })
     const [healthPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-health-marker')
     await rm(markerFile, { force: true })
 
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -187,7 +179,7 @@ describe('Neem recovery health and proxy behavior', () => {
   }, 60_000)
 
   it('keeps health and proxy safe when a worker reload fails during start and recovers after a fix', async () => {
-    const fixture = await useFixture({ config: 'reload-start-failure' })
+    const fixture = await createNeemFixture({ config: 'reload-start-failure' })
     const [proxyPort, healthPort, upstreamPort] = await getDistinctFreePorts(3)
     const workerFile = resolve(
       fixture.fixtureDir,
@@ -207,7 +199,7 @@ describe('Neem recovery health and proxy behavior', () => {
     expect(badWorker).not.toBe(originalWorker)
     expect(fixedWorker).not.toBe(originalWorker)
 
-    const neem = spawnTrackedNeem(
+    const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
@@ -315,21 +307,6 @@ describe('Neem recovery health and proxy behavior', () => {
     await neem.stop()
   }, 90_000)
 })
-
-async function useFixture(options: { config: string }) {
-  const fixture = await createNeemFixture(options)
-  fixtures.push(fixture)
-  return fixture
-}
-
-function spawnTrackedNeem(
-  args: readonly string[],
-  options: Parameters<typeof spawnNeem>[1],
-): SpawnedNeem {
-  const neem = spawnNeem(args, options)
-  spawned.push(neem)
-  return neem
-}
 
 async function waitForMatchingEventCount(
   file: string,

@@ -1,6 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
   getDistinctFreePorts,
@@ -9,18 +8,9 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
-
 describe('Neem proxy with a shared server', () => {
   it('routes HTTP and WS traffic to one upstream registered under both types', async () => {
     const fixture = await createNeemFixture({ config: 'shared-server' })
-    fixtures.push(fixture)
     const [proxyPort] = await getDistinctFreePorts(1)
 
     const neem = spawnNeem(
@@ -32,7 +22,6 @@ describe('Neem proxy with a shared server', () => {
         },
       },
     )
-    spawned.push(neem)
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
 

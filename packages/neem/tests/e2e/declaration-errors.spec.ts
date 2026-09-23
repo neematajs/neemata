@@ -1,15 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-import type { SpawnedNeem } from './support/e2e.ts'
 import { createNeemFixture, spawnNeem } from './support/e2e.ts'
-
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
 
 describe('Neem runtime declaration error diagnostics', () => {
   it('fails duplicate runtime names with a duplicate name diagnostic', async () => {
@@ -44,7 +35,6 @@ async function buildExpectingFailure(config: string): Promise<{
   output: string
 }> {
   const fixture = await createNeemFixture({ config })
-  fixtures.push(fixture)
   const neem = spawnNeem([
     'build',
     '--config',
@@ -52,7 +42,6 @@ async function buildExpectingFailure(config: string): Promise<{
     '--outDir',
     fixture.outDir,
   ])
-  spawned.push(neem)
   const exit = await neem.waitForExit()
   return { exit, output: [neem.stdout(), neem.stderr()].join('\n') }
 }

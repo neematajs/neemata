@@ -1,17 +1,12 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import {
-  access,
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { access, cp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { basename, dirname, resolve } from 'node:path'
+
+import { onTestFinished } from 'vitest'
+
+import { createTempDir } from '../../support/temp.ts'
 
 export type NeemProbeEvent = {
   source: 'neem:test-probe'
@@ -106,7 +101,7 @@ export function spawnNode(
     },
   )
 
-  return {
+  const neem: SpawnedNeem = {
     child,
     stdout: () => stdout,
     stderr: () => stderr,
@@ -143,21 +138,30 @@ export function spawnNode(
     },
     waitForExit: () => exit,
     async stop(options = {}) {
+      if (!isChildRunning(child, exitState)) return await exit
+
       const killAfterMs = options.killAfterMs ?? defaultKillAfterMs
-      if (isChildRunning(child, exitState)) {
-        child.kill('SIGTERM')
-      }
-      const stoppedGracefully = await Promise.race([
-        exit.then(() => true),
-        wait(killAfterMs).then(() => false),
-      ])
-      if (!stoppedGracefully && isChildRunning(child, exitState)) {
+      child.kill('SIGTERM')
+      const timeout = setTimeout(() => {
+        if (!isChildRunning(child, exitState)) return
         forceKillDetails = { killAfterMs, pid: child.pid }
         child.kill('SIGKILL')
+      }, killAfterMs)
+
+      try {
+        return await exit
+      } finally {
+        clearTimeout(timeout)
       }
-      return await exit
     },
   }
+
+  // Own cleanup here so failed assertions and timed-out runNeem calls cannot
+  // leave a child running merely because a caller forgot to track it.
+  onTestFinished(async () => {
+    await neem.stop()
+  })
+  return neem
 }
 
 export async function runNeem(
@@ -186,11 +190,11 @@ export async function createNeemFixture(
   appFile: string
   outDir: string
   eventsFile: string
-  cleanup: () => Promise<void>
 }> {
   const tempRoot = resolve(import.meta.dirname, '../.tmp')
-  await mkdir(tempRoot, { recursive: true })
-  const dir = await mkdtemp(resolve(tempRoot, 'case-'))
+  // Keep fixtures inside the package so native ESM and Rolldown can resolve
+  // workspace dependencies through the ancestor node_modules directories.
+  const dir = await createTempDir('case-', tempRoot)
   const fixtureDir = resolve(dir, 'fixtures')
   await cp(resolve(import.meta.dirname, '../fixtures'), fixtureDir, {
     recursive: true,
@@ -208,7 +212,6 @@ export async function createNeemFixture(
     appFile: resolve(fixtureDir, 'shared/workers/runtime-app.ts'),
     outDir: resolve(dir, 'dist'),
     eventsFile: resolve(dir, 'events.jsonl'),
-    cleanup: () => rm(dir, { recursive: true, force: true }),
   }
 }
 
