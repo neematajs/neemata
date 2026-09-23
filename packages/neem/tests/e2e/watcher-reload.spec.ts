@@ -135,9 +135,10 @@ describe('Neem watcher dev reload', () => {
       'shared/workers/generic-runtime.ts',
     )
     const loggerFile = resolve(fixture.fixtureDir, 'shared/support/logger.ts')
+    // The plugin entry imports it; the edit must reach the restarted host.
     const pluginFile = resolve(
       fixture.fixtureDir,
-      'shared/support/plugin-hooks.ts',
+      'shared/support/plugin-marker.ts',
     )
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -163,11 +164,7 @@ describe('Neem watcher dev reload', () => {
         "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
       ),
       replaceInFile(loggerFile, "'Fixture'", "'Fixture logger-v2'"),
-      replaceInFile(
-        pluginFile,
-        "event: 'plugin-runtime-ready',\n        name: event.name,",
-        "event: 'plugin-runtime-ready',\n        marker: 'plugin-v2',\n        name: event.name,",
-      ),
+      replaceInFile(pluginFile, "'plugin-v1'", "'plugin-v2'"),
     ])
 
     const changeEvents = await waitForWatcherEventTypes(neem, [

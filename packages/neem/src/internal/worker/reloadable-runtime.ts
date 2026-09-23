@@ -56,16 +56,16 @@ export class ReloadableRuntime implements NeemRuntime {
     return this.upstreams
   }
 
+  /** Why a reload would be refused right now, before anything is touched. */
+  refusal(): Error | undefined {
+    if (this.stopped) return new Error('Neem runtime stopped')
+    if (this.replacing) return new Error('Neem runtime is already reloading')
+    return undefined
+  }
+
   async apply(next: Worker): Promise<GenerationReload> {
-    if (this.stopped) {
-      return { outcome: 'rejected', error: new Error('Neem runtime stopped') }
-    }
-    if (this.replacing) {
-      return {
-        outcome: 'rejected',
-        error: new Error('Neem runtime is already reloading'),
-      }
-    }
+    const refusal = this.refusal()
+    if (refusal) return { outcome: 'rejected', error: refusal }
     this.replacing = this.replace(next)
     try {
       await this.replacing

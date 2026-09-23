@@ -19,13 +19,12 @@ import type { ThreadLifecycleEvent } from './thread.ts'
 import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
 import { callHostHook, createHostHooks } from '../plugins/hooks.ts'
-import { normalizeError, raceWithTimeout } from '../utils.ts'
+import { normalizeError, raceWithTimeout, throwCollected } from '../utils.ts'
 import { HealthProbe } from './health.ts'
 import {
   isOperationAborted,
   OperationScope,
   resolveLifecycle,
-  throwCollected,
 } from './lifecycle.ts'
 import { ProxyController } from './proxy.ts'
 import { RuntimeController } from './runtime.ts'
@@ -57,6 +56,10 @@ export class HostController {
   // Parent of every operation requested before the next stop.
   private lifetime = new OperationScope()
   private stopping: Promise<void> | undefined
+  // A stop that gave up joining the operation in flight: it released what it
+  // found, and nothing releases what that operation acquires afterwards
+  // unless the operation does so itself.
+  private abandonedBy: Promise<void> | undefined
   private runtimes = new Map<string, RuntimeController>()
   private proxy: ProxyController | undefined
   private healthProbe: HealthProbe | undefined
@@ -187,8 +190,12 @@ export class HostController {
       options.onReady()
       this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
     } catch (error) {
-      // Aborted by stop(), which owns the cleanup from here.
-      if (isOperationAborted(error)) throw error
+      // Aborted by stop(), which owns the cleanup from here unless it has
+      // stopped waiting for this operation.
+      if (isOperationAborted(error)) {
+        await this.releaseAfterAbandonedJoin()
+        throw error
+      }
       const normalized = normalizeError(error)
       this.markState('failed', normalized)
       this.logger.error({ err: normalized }, options.failMessage)
@@ -347,6 +354,8 @@ export class HostController {
       scope.remaining(),
     )
     if (joined.timedOut) {
+      // stop() published this stop before the join above yielded.
+      this.abandonedBy = this.stopping
       errors.push(
         new Error(
           'Neem server operation did not settle before the stop deadline',
@@ -356,7 +365,9 @@ export class HostController {
 
     this.markState('stopping')
     this.logger.info('Neem server stopping')
-    await this.callServerHook('server:stop').catch(collect)
+    await scope
+      .within(this.callServerHook('server:stop'), 'Neem hook [server:stop]')
+      .catch(collect)
     await this.stopSubsystems(scope).catch(collect)
     this.markState('stopped')
     this.logger.debug('Neem server stopped')
@@ -377,6 +388,25 @@ export class HostController {
       } finally {
         scope.dispose()
       }
+    })
+  }
+
+  // An aborted operation that the stop gave up joining can still acquire a
+  // subsystem after that stop released everything it found (plugins, a probe
+  // or the proxy published once their start resolves). Once the stop has
+  // completed, whatever is published belongs to this operation alone.
+  private async releaseAfterAbandonedJoin(): Promise<void> {
+    const stopping = this.abandonedBy
+    if (!stopping) return
+    this.abandonedBy = undefined
+    await stopping.catch(() => undefined)
+    if (this.state !== 'stopped') return
+    await this.stopSubsystems(this.createStopScope()).catch((error) => {
+      this.logger.warn(
+        new Error('Neem server cleanup after an abandoned start failed', {
+          cause: normalizeError(error),
+        }),
+      )
     })
   }
 
@@ -462,15 +492,23 @@ export class HostController {
     const collect = (error: unknown) => {
       errors.push(normalizeError(error))
     }
-    await proxy?.stop().catch(collect)
+    if (proxy) {
+      await scope.within(proxy.stop(), 'Neem proxy stop').catch(collect)
+    }
     const results = await Promise.allSettled(
       runtimes.map((runtime) => runtime.stop(scope)),
     )
     for (const result of results) {
       if (result.status === 'rejected') collect(result.reason)
     }
-    await this.stopHealthProbe().catch(collect)
-    await plugins?.dispose().catch(collect)
+    await scope
+      .within(this.stopHealthProbe(), 'Neem health probe stop')
+      .catch(collect)
+    if (plugins) {
+      await scope
+        .within(plugins.dispose(), 'Neem plugin disposal')
+        .catch(collect)
+    }
     throwCollected(errors, 'Neem server subsystems did not stop cleanly')
   }
 

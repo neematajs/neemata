@@ -8,7 +8,6 @@ import type {
   PatchGlobal,
 } from '../../src/internal/worker/patch-globals.ts'
 import { NEEM_DEV_RUNTIME } from '../../src/internal/build/dev-runtime.ts'
-import { markGenerationIntact } from '../../src/internal/worker/patch-globals.ts'
 
 type HotContext = {
   data: Record<string, unknown>
@@ -26,6 +25,7 @@ afterEach(() => {
   delete testGlobal.__rolldown_runtime__
   delete testGlobal.__neem_patches__
   delete testGlobal.__neem_patch_client_id__
+  delete testGlobal.__neem_patch_guard__
 })
 
 // Models what the client needs from Rolldown's DevRuntime: the initial bundle
@@ -201,20 +201,58 @@ describe('patch client', () => {
     })
   })
 
-  it('rejects when the accept callback fails before retiring the generation', async () => {
+  it('rejects a patch the worker guard refuses before disposing anything', async () => {
     const { client, runtime } = install()
-    const app = acceptingApp(runtime, {
-      accept: () => {
-        throw markGenerationIntact(new Error('not a runtime worker'))
-      },
-    })
+    const app = acceptingApp(runtime)
     const load = vi.fn(async () => app.registerFactories())
+    const guard = vi.fn(() => "Worker requires reload: 'thread'")
+    testGlobal.__neem_patch_guard__ = guard
 
     await expect(client.apply(patch(1, ['dep']), load)).resolves.toEqual({
       outcome: 'rejected',
       delivered: true,
-      reason: 'failed to apply patch: Error: not a runtime worker',
+      reason: "Worker requires reload: 'thread'",
     })
+    expect(load).toHaveBeenCalledOnce()
+    expect(guard).toHaveBeenCalledOnce()
+    expect(app.events).toEqual([])
+  })
+
+  it('does not consult the guard for a patch its own checks reject', async () => {
+    const { client, runtime, load } = install()
+    acceptingApp(runtime)
+    const guard = vi.fn(() => undefined)
+    testGlobal.__neem_patch_guard__ = guard
+
+    await expect(client.apply(patch(1, ['dep']), load)).resolves.toMatchObject({
+      outcome: 'rejected',
+      reason: 'patch has no factory for dep',
+    })
+    expect(guard).not.toHaveBeenCalled()
+  })
+
+  it('reports the generation unavailable when the accept callback fails', async () => {
+    const { client, runtime } = install()
+    const app = acceptingApp(runtime, {
+      accept: () => {
+        throw new Error("Updated worker requires reload: 'thread'")
+      },
+    })
+    const load = vi.fn(async () => app.registerFactories())
+    testGlobal.__neem_patch_guard__ = () => undefined
+
+    await expect(client.apply(patch(1, ['dep']), load)).resolves.toEqual({
+      outcome: 'unavailable',
+      delivered: true,
+      reason:
+        "failed to apply patch: Error: Updated worker requires reload: 'thread'",
+    })
+    expect(app.events).toEqual([
+      'dispose:entry',
+      'run:entry:undefined',
+      'run:dep',
+      'accept:v2',
+    ])
   })
 
   it('re-executes up to the accepting module and hands dispose data over', async () => {

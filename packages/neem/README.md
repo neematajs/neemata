@@ -25,9 +25,11 @@ restart is deferred until the worker builds again.
 
 Each thread reports one of three patch outcomes: `applied`; `rejected`, which
 retired nothing, so the old generation keeps serving and the runtime falls back
-to the restart above; or `unavailable`, when the old generation was already
-stopped and its replacement failed to start (including a changed upstream
-list), so recovery restarts the runtime from the current output at once. If
+to the restart above; or `unavailable`, when the patch failed after it began
+disposing the old generation (a throwing dispose callback, an updated worker
+that declares `reload: 'thread'`, a replacement that failed to start or changed
+the upstream list) or the worker never answered it, so recovery restarts the
+runtime from the current output at once. If
 that restart fails too, the runtime stays failed and unready without ending
 `neem dev` until its next successful build restarts it. A crashed watcher
 restarts on its own and restarts the runtimes from its fresh build.

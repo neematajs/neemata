@@ -9,6 +9,7 @@ import type { NeemRuntimeState } from '../../src/shared/types.ts'
 import { HostController } from '../../src/internal/host/controller.ts'
 import { HealthProbe } from '../../src/internal/host/health.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
+import { PluginEnvironment } from '../../src/internal/plugins/environment.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
 
 // Control runtime readiness; the controller's hooks and operation queue are
@@ -230,6 +231,39 @@ describe('HostController stop during startup', () => {
     expect(events).toEqual(['probe:start', 'probe:started', 'probe:stop'])
     expect(runtime.starts).toEqual([])
   })
+
+  it('disposes plugins that finish initializing after the stop gave up on them', async () => {
+    readyRuntime()
+    const initializing = createFuture<void>()
+    const release = createFuture<void>()
+    vi.spyOn(PluginEnvironment.prototype, 'initialize').mockImplementation(
+      async () => {
+        initializing.resolve()
+        await release.promise
+      },
+    )
+    const dispose = vi
+      .spyOn(PluginEnvironment.prototype, 'dispose')
+      .mockResolvedValue()
+    const controller = createController({
+      config: { lifecycle: { stopTimeout: 20 } },
+    })
+
+    const starting = controller.start().catch((error: unknown) => error)
+    await initializing.promise
+    await expect(controller.stop()).rejects.toThrow(
+      'Neem server operation did not settle before the stop deadline',
+    )
+    expect(controller.getSnapshot().state).toBe('stopped')
+    expect(dispose).not.toHaveBeenCalled()
+
+    release.resolve()
+
+    expect(await starting).toMatchObject({ name: 'AbortError' })
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(runtime.starts).toEqual([])
+    await expect(controller.stop()).resolves.toBeUndefined()
+  })
 })
 
 describe('HostController shutdown', () => {
@@ -264,6 +298,27 @@ describe('HostController shutdown', () => {
     expect(controller.getSnapshot().state).toBe('stopped')
     // The first error wins; a later stop does not repeat it.
     await expect(controller.stop()).resolves.toBeUndefined()
+  })
+
+  it('fails a stop hook that outlives the budget and still stops the runtimes', async () => {
+    readyRuntime()
+    runtime.stop.mockResolvedValue()
+    const hooks = createHostHooks()
+    hooks.hook('server:stop', () => new Promise<void>(() => {}))
+    const controller = createController({
+      hooks,
+      config: { lifecycle: { stopTimeout: 50 } },
+    })
+    await controller.start()
+    const startedAt = Date.now()
+
+    await expect(controller.stop()).rejects.toThrow(
+      'Neem hook [server:stop] did not finish within the stop budget',
+    )
+
+    expect(Date.now() - startedAt).toBeLessThan(250)
+    expect(runtime.stop).toHaveBeenCalledOnce()
+    expect(controller.getSnapshot().state).toBe('stopped')
   })
 
   it('passes one deadline to every runtime it stops', async () => {

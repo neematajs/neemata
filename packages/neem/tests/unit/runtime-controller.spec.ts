@@ -484,6 +484,42 @@ describe('RuntimeController patches', () => {
     expect(runtime.listThreads()).not.toContain(retired)
   })
 
+  it('treats a patch request that fails as an unavailable generation', async () => {
+    const { runtime, onRecovered, onFailure } = await createFixture()
+    await runtime.start()
+    const threads = runtime.listThreads()
+    const [timedOut, intact] = threads
+    timedOut!.applyPatch = async () => {
+      throw new Error(
+        `Worker [${timedOut!.name}] patch timed out after 30000ms`,
+      )
+    }
+    intact!.applyPatch = async () => ({
+      outcome: 'applied',
+      delivered: true,
+      patches: 1,
+    })
+
+    const result = await runtime.applyPatch(
+      threads.map((thread) => ({
+        clientId: thread.id,
+        update: { type: 'Noop' } as const,
+      })),
+    )
+
+    expect(result).toEqual({
+      outcome: 'unavailable',
+      reason: 'Worker [api:0] patch timed out after 30000ms',
+      deliveredFiles: [],
+    })
+    expect(timedOut!.getHealth()).toMatchObject({ failureCount: 1 })
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(runtime.listThreads()).not.toContain(timedOut)
+  })
+
   it('rejects patches while the runtime is not ready', async () => {
     const { runtime } = await createFixture()
 

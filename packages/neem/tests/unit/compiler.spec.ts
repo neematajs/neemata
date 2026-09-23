@@ -15,6 +15,7 @@ import {
   watchTarget,
 } from '../../src/internal/build/compiler.ts'
 import { createBuildGraph } from '../../src/internal/build/graph.ts'
+import { raceWithTimeout } from '../../src/internal/utils.ts'
 import { defineRuntime } from '../../src/public/config.ts'
 import { createTempDir } from '../support/temp.ts'
 
@@ -26,6 +27,22 @@ beforeEach(() => {
   rolldownMock.build.mockReset()
   rolldownMock.watch.mockReset()
 })
+
+// DevEngine drops an edit that lands within a few milliseconds of the update
+// it just emitted: no callback fires and ensureLatestBuildOutput treats the
+// output as current. Only a later write is seen, so write until it reports.
+async function editUntilReported(
+  file: string,
+  content: string,
+  reported: () => Promise<unknown>,
+): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    await writeFile(file, `${content}${'\n'.repeat(attempt)}`)
+    const result = await raceWithTimeout(reported(), 1_500)
+    if (!result.timedOut) return result.value
+    if (attempt >= 8) throw new Error(`DevEngine never reported ${file}`)
+  }
+}
 
 // These drive a real DevEngine through file-system events, whose latency
 // under a loaded machine exceeds the default test timeout.
@@ -157,6 +174,38 @@ describe('Neem compiler', () => {
     )
   })
 
+  it.each(['plugin-entry', 'logger'] as const)(
+    'emits a watched %s target as one file and splits it in production',
+    async (kind) => {
+      const target = { ...(await createTarget()), kind }
+      rolldownMock.watch.mockReturnValue(createWatcher())
+      rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+
+      await watchTarget(target)
+      await compileTarget(target)
+
+      const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+      const built = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
+      // A cache-busted import of the entry must reach every module it loads.
+      expect(watched.output).toMatchObject({ codeSplitting: false })
+      expect(built.output).toMatchObject({
+        codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
+      })
+    },
+  )
+
+  it('keeps splitting watched targets that each start in a fresh thread', async () => {
+    const target = await createTarget()
+    rolldownMock.watch.mockReturnValue(createWatcher())
+
+    await watchTarget(target)
+
+    const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+    expect(watched.output).toMatchObject({
+      codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
+    })
+  })
+
   it('uses the watcher initial build as ready output', async () => {
     const target = await createTarget()
     rolldownMock.build.mockResolvedValue(
@@ -247,16 +296,26 @@ describe('Neem compiler', () => {
       })
       try {
         await watcher.addPatchClient('api', 'client')
-        await writeFile(valueFile, "export const value = 'v2'\n")
-        expect(await settled.promise).toEqual([
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v2'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
           expect.objectContaining({
             update: expect.objectContaining({ type: 'Patch' }),
           }),
         ])
 
         settled = createFuture<unknown>()
-        await writeFile(valueFile, 'export const value = !!!\n')
-        expect(await settled.promise).toBeInstanceOf(Error)
+        expect(
+          await editUntilReported(
+            valueFile,
+            'export const value = !!!\n',
+            () => settled.promise,
+          ),
+        ).toBeInstanceOf(Error)
 
         await expect(watcher.ensureWorkerOutput('api')).rejects.toThrow(
           'source has build errors',
@@ -323,16 +382,24 @@ describe('Neem compiler', () => {
         // A directory in its place makes the asset write fail.
         await rm(assetFile, { force: true })
         await mkdir(assetFile)
-        await writeFile(valueFile, "export const value = 'v2'\n")
-        const failed = await settled.promise
+        const failed = await editUntilReported(
+          valueFile,
+          "export const value = 'v2'\n",
+          () => settled.promise,
+        )
         expect(failed).toBeInstanceOf(Error)
         expect((failed as Error).message).toContain('assets were not written')
         expect(errors).toHaveLength(1)
 
         await rm(assetFile, { recursive: true })
         settled = createFuture<unknown>()
-        await writeFile(valueFile, "export const value = 'v3'\n")
-        expect(await settled.promise).toEqual([
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v3'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
           expect.objectContaining({
             update: expect.objectContaining({ type: 'Patch' }),
           }),

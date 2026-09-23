@@ -1,5 +1,5 @@
 import type { NeemLifecycleConfig } from '../../shared/types.ts'
-import { wait } from '../utils.ts'
+import { raceWithTimeout, wait } from '../utils.ts'
 
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000
 export const DEFAULT_START_TIMEOUT_MS = 30_000
@@ -85,7 +85,12 @@ export class OperationScope {
    * underlying resource cleans it up.
    */
   async wait<T>(value: PromiseLike<T> | T): Promise<T> {
-    this.throwIfAborted()
+    if (this.signal.aborted) {
+      // Callers launch `value` before this check. Nobody else awaits it, so
+      // its eventual rejection would otherwise go unhandled.
+      void Promise.resolve(value).catch(noop)
+      throw new OperationAbortedError()
+    }
     const result = await new Promise<T>((resolve, reject) => {
       const onAbort = () => reject(new OperationAbortedError())
       this.signal.addEventListener('abort', onAbort, { once: true })
@@ -104,6 +109,22 @@ export class OperationScope {
     return result
   }
 
+  /**
+   * Bounds a stop step that does not take the scope itself (a hook, closing a
+   * server) by the deadline. A step that misses it is left running and fails
+   * here, so the caller records the error and still runs the next step.
+   */
+  async within<T>(value: PromiseLike<T>, label: string): Promise<T> {
+    const result = await raceWithTimeout(
+      Promise.resolve(value),
+      this.remaining(),
+    )
+    if (result.timedOut) {
+      throw new Error(`${label} did not finish within the stop budget`)
+    }
+    return result.value
+  }
+
   async sleep(ms: number): Promise<void> {
     this.throwIfAborted()
     try {
@@ -120,19 +141,6 @@ export class OperationScope {
   }
 }
 
-/** Throws every collected cleanup error at once so none of them is lost. */
-export function throwCollected(
-  errors: readonly Error[],
-  message: string,
-): void {
-  if (errors.length === 0) return
-  if (errors.length === 1) throw errors[0]
-  throw new AggregateError(
-    errors,
-    `${message}: ${errors.map((error) => error.message).join('; ')}`,
-  )
-}
-
 function earliest(
   first: number | undefined,
   second: number | undefined,
@@ -141,3 +149,5 @@ function earliest(
   if (second === undefined) return first
   return Math.min(first, second)
 }
+
+function noop(): void {}

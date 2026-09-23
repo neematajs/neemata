@@ -8,7 +8,7 @@
 /**
  * @import { DevRuntimeConstructor, HotAcceptCallback, HotData, HotDisposer } from './patch-client-types.js'
  * @import { WorkerUpdate } from '../src/internal/build/updates.ts'
- * @import { GenerationIntactMark, PatchGlobal } from '../src/internal/worker/patch-globals.ts'
+ * @import { PatchGlobal } from '../src/internal/worker/patch-globals.ts'
  * @import { PatchClientResult } from '../src/internal/worker/protocol.ts'
  */
 ;(() => {
@@ -197,9 +197,9 @@
       return pending.filter((id) => !reached.has(id))
     }
 
-    // Every rejection leaves the running generation serving. Once disposers
-    // or re-executed modules have run, a failure is an unavailable generation
-    // unless the accept callback marks that it failed before retiring it.
+    // Every rejection leaves the running generation serving, so every check
+    // that can refuse a patch, the worker's guard included, runs before the
+    // first disposer. Once one has run, any failure leaves nothing serving.
     /**
      * @param {WorkerUpdate} update
      * @param {() => Promise<unknown>} load imports the patch file
@@ -256,6 +256,8 @@
           true,
         )
       }
+      const refusal = patchGlobal.__neem_patch_guard__?.()
+      if (refusal) return rejected(refusal, true)
 
       const applies = computed.boundaries.map(([boundary, acceptedVia]) => ({
         acceptedVia,
@@ -276,10 +278,8 @@
           for (const callback of callbacks) await callback.fn([fresh])
         }
       } catch (error) {
-        const mark = /** @type {GenerationIntactMark | undefined} */ (error)
         return {
-          outcome:
-            mark?.neemGenerationIntact === true ? 'rejected' : 'unavailable',
+          outcome: 'unavailable',
           delivered: true,
           reason: 'failed to apply patch: ' + String(error),
         }

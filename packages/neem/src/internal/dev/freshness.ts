@@ -70,16 +70,24 @@ export class DevFreshness {
     for (const record of this.runtimes.values()) record.pending = undefined
   }
 
+  /** A host restart waits for some runtime's worker to build again. */
+  hasPendingRestart(): boolean {
+    for (const record of this.runtimes.values()) {
+      if (record.pending === 'restart') return true
+    }
+    return false
+  }
+
   /**
    * What a worker patch for this runtime resumes. The patch means the worker
    * builds again, so a restart deferred on its stale output can run now. A
-   * deferred host restart is session-wide and wins over any runtime's own.
+   * deferred host restart is session-wide and wins over any runtime's own; it
+   * resumes even on fresh output, since a reload or recovery may have
+   * refreshed the output it was waiting for without running it.
    */
   resumable(runtimeName: string): DeferredRestart | undefined {
+    if (this.hasPendingRestart()) return 'restart'
     if (!this.isStale(runtimeName)) return undefined
-    for (const record of this.runtimes.values()) {
-      if (record.pending === 'restart') return 'restart'
-    }
     return this.runtimes.get(runtimeName)?.pending
   }
 

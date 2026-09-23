@@ -1,5 +1,5 @@
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
@@ -268,27 +268,27 @@ export async function writeStartEntries(
   manifest: Pick<Manifest, 'runtime' | 'runtimes'>,
 ): Promise<void> {
   const runtimeStartFile = resolve(outDir, manifest.runtime.start.file)
-  await writeFile(
-    resolve(outDir, manifest.runtime.entry),
-    [
-      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(outDir, runtimeStartFile))}`,
-      'await startStandalone()',
+  // Each launcher locates the output root from its own URL, so a copied or
+  // moved build keeps working wherever the runtime start module lands.
+  const launcher = (dir: string, runtimes?: readonly string[]) => {
+    const outDirUrl = `new URL(${JSON.stringify(toDirSpecifier(dir, outDir))}, import.meta.url)`
+    const options = runtimes
+      ? `{ outDir: ${outDirUrl}, runtimes: ${JSON.stringify(runtimes)} }`
+      : `{ outDir: ${outDirUrl} }`
+    return [
+      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
+      `await startStandalone(${options})`,
       '',
-    ].join('\n'),
-  )
+    ].join('\n')
+  }
+  const entry = resolve(outDir, manifest.runtime.entry)
+  await writeFile(entry, launcher(dirname(entry)))
 
   await Promise.all(
     Object.keys(manifest.runtimes).map(async (name) => {
       const dir = resolve(outDir, 'runtimes', toSafeDirName(name))
       await mkdir(dir, { recursive: true })
-      await writeFile(
-        resolve(dir, 'start.js'),
-        [
-          `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
-          `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
-          '',
-        ].join('\n'),
-      )
+      await writeFile(resolve(dir, 'start.js'), launcher(dir, [name]))
     }),
   )
 }
@@ -296,6 +296,12 @@ export async function writeStartEntries(
 function toImportSpecifier(fromDir: string, target: string): string {
   const specifier = toManifestPath(fromDir, target)
   return specifier.startsWith('.') ? specifier : `./${specifier}`
+}
+
+function toDirSpecifier(fromDir: string, dir: string): string {
+  const specifier = toManifestPath(fromDir, dir)
+  if (!specifier) return './'
+  return `${toImportSpecifier(fromDir, dir)}/`
 }
 
 function getRequiredArtifact(

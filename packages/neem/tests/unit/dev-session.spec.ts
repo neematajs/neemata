@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   signals: [] as { close: ReturnType<typeof vi.fn> }[],
   // Whether the next ensure-worker-output request finds a build.
   outputBuilds: true,
+  // Whether the next controllers fail to start.
+  startFails: false,
 }))
 
 type FakeWatcher = {
@@ -81,7 +83,10 @@ vi.mock('../../src/internal/host/controller.ts', () => ({
   HostController: class {
     options: HostControllerOptions
     threadId = `api:${state.controllers.length}`
-    start = vi.fn(async () => this.thread('thread-started'))
+    start = vi.fn(async () => {
+      if (state.startFails) throw new Error('plugin failed to initialize')
+      this.thread('thread-started')
+    })
     stop = vi.fn(async () => this.thread('thread-stopped'))
     reloadRuntime = vi.fn(async () => {})
     applyPatch = vi.fn(
@@ -137,6 +142,7 @@ afterEach(() => {
   state.controllers.length = 0
   state.signals.length = 0
   state.outputBuilds = true
+  state.startFails = false
 })
 
 describe('DevFreshness', () => {
@@ -169,9 +175,13 @@ describe('DevFreshness', () => {
     freshness.resume('aux', 'reload')
     expect(freshness.resumable('aux')).toBe('restart')
 
+    // A deferred host restart resumes even once the output was refreshed.
     freshness.outputRefreshed('api')
-    expect(freshness.resumable('api')).toBeUndefined()
+    expect(freshness.resumable('api')).toBe('restart')
+    expect(freshness.hasPendingRestart()).toBe(true)
     freshness.restarted()
+    expect(freshness.hasPendingRestart()).toBe(false)
+    expect(freshness.resumable('api')).toBeUndefined()
     expect(freshness.resumable('aux')).toBeUndefined()
     expect(freshness.isStale('aux')).toBe(true)
 
@@ -272,6 +282,97 @@ describe('DevSession', () => {
       runtimeName: 'api',
     })
     await expectOpen(session)
+  })
+})
+
+describe('DevSession deferred host restarts', () => {
+  it('runs a deferred host restart once a runtime reload refreshed its output', async () => {
+    const { session, probe } = await startSession()
+    const [controller] = state.controllers
+    // An applied patch leaves the output on disk behind the running threads.
+    state.watchers[0]!.emit(workerPatch('api:0'))
+    await vi.waitFor(() =>
+      expect(probe.emit).toHaveBeenCalledWith(
+        'runtime:patch-applied',
+        expect.objectContaining({ runtimeName: 'api' }),
+      ),
+    )
+
+    state.outputBuilds = false
+    state.watchers[0]!.emit({ type: 'plugin-changed', ...manifest })
+    await vi.waitFor(() =>
+      expect(probe.emit).toHaveBeenCalledWith('runtime:restart-deferred', {
+        runtimeName: 'api',
+      }),
+    )
+    expect(state.controllers).toHaveLength(1)
+
+    state.outputBuilds = true
+    state.watchers[0]!.emit({
+      type: 'runtime-changed',
+      runtimeName: 'api',
+      ...manifest,
+    })
+
+    await vi.waitFor(() => expect(state.controllers).toHaveLength(2))
+    expect(controller!.stop).toHaveBeenCalledOnce()
+    // The restart replaced the runtime the reload was for.
+    expect(controller!.reloadRuntime).not.toHaveBeenCalled()
+    await expectOpen(session)
+  })
+
+  it('keeps running after a failed host restart and retries it on the next build', async () => {
+    const { session, probe } = await startSession()
+    const [first] = state.controllers
+
+    state.startFails = true
+    state.watchers[0]!.emit({ type: 'plugin-changed', ...manifest })
+    await vi.waitFor(() =>
+      expect(probe.emit).toHaveBeenCalledWith(
+        'runtime:error',
+        expect.objectContaining({
+          error: expect.objectContaining({
+            message: 'plugin failed to initialize',
+          }),
+        }),
+      ),
+    )
+    const failed = state.controllers[1]!
+    expect(first!.stop).toHaveBeenCalledOnce()
+    expect(failed.stop).toHaveBeenCalledOnce()
+
+    state.startFails = false
+    state.watchers[0]!.emit(workerPatch('api:1'))
+    await vi.waitFor(() => expect(state.controllers).toHaveLength(3))
+    // The patch alone is not in the output the restart loads.
+    expect(state.watchers[0]!.requests).toContainEqual({
+      type: 'ensure-worker-output',
+      runtimeName: 'api',
+    })
+    expect(failed.applyPatch).not.toHaveBeenCalled()
+    await vi.waitFor(() =>
+      expect(state.watchers[0]!.requests).toContainEqual(
+        expect.objectContaining({
+          type: 'patch-client-started',
+          clientId: 'api:2',
+        }),
+      ),
+    )
+    await expectOpen(session)
+  })
+
+  it('still fails the session when the first host start fails', async () => {
+    state.startFails = true
+    const session = new DevSession({
+      configFile: '/app/neem.config.ts',
+      outDir: '/out',
+      signal: new AbortController().signal,
+    })
+
+    await session.start()
+
+    await expect(session.closed).rejects.toThrow('plugin failed to initialize')
+    await session.stop().catch(() => undefined)
   })
 })
 

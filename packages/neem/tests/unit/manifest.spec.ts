@@ -300,7 +300,7 @@ describe('Neem manifest', () => {
 function rootStartEntry(specifier = './runtime/start.js'): string {
   return [
     `import { startStandalone } from ${JSON.stringify(specifier)}`,
-    'await startStandalone()',
+    'await startStandalone({ outDir: new URL("./", import.meta.url) })',
     '',
   ].join('\n')
 }
@@ -311,7 +311,7 @@ function runtimeStartEntry(
 ): string {
   return [
     `import { startStandalone } from ${JSON.stringify(specifier)}`,
-    `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
+    `await startStandalone({ outDir: new URL("../../", import.meta.url), runtimes: [${JSON.stringify(name)}] })`,
     '',
   ].join('\n')
 }

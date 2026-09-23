@@ -302,9 +302,14 @@ export class ThreadController {
     this.port.close()
     this.upstreams = []
     this.markStopped()
-    await this.callWorkerHook('worker:stop').catch((hookError) => {
-      error ??= normalizeError(hookError)
-    })
+    await scope
+      .within(
+        this.callWorkerHook('worker:stop'),
+        `Worker [${this.name}] hook [worker:stop]`,
+      )
+      .catch((hookError) => {
+        error ??= normalizeError(hookError)
+      })
     this.logger.trace('Neem worker stopped')
     if (error) throw error
   }

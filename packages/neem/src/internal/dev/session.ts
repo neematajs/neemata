@@ -19,7 +19,6 @@ import {
   isOperationAborted,
   OperationScope,
   resolveLifecycle,
-  throwCollected,
 } from '../host/lifecycle.ts'
 import {
   childLogger,
@@ -34,6 +33,7 @@ import {
   normalizeError,
   raceWithTimeout,
   serializeError,
+  throwCollected,
 } from '../utils.ts'
 import { DevFreshness } from './freshness.ts'
 
@@ -56,6 +56,11 @@ export class DevSession {
   private configSignalWatcher: ConfigSignalWatcher | undefined
   private configSignalFiles: readonly string[] | undefined
   private controller: HostController | undefined
+  // Only the first host start ends `neem dev` when it fails; a later one waits
+  // for the next successful build instead.
+  private hostStarted = false
+  // Runtimes of the latest controller, kept for when none is running.
+  private runtimeNames: readonly string[] = []
   // Recoveries of the current controller, held until the worker output they
   // restart from includes every patch the crashed threads accepted.
   private readonly recoveries = new Map<string, Future<void>>()
@@ -327,19 +332,53 @@ export class DevSession {
       return false
     }
     this.freshness.restarted()
-    const manifest = await readManifest(this.manifestFile)
-    // The logger artifact keeps its file name across dev rebuilds, so only a
-    // cache-busted import picks up a changed logger for the next generation.
-    this.hostLogger = await resolveManifestLogger(manifest.config.logger, {
-      mode: 'development',
-      outDir: this.options.outDir,
-      cacheBust: true,
-    })
-    this.logger = childLogger(this.hostLogger, 'neem:server')
-    await this.retireController()
-    if (this.stopped) return false
-    await this.startController(this.manifestFile)
+    let retired = false
+    try {
+      const manifest = await readManifest(this.manifestFile)
+      // The logger artifact keeps its file name across dev rebuilds, so only a
+      // cache-busted import picks up a changed logger for the next generation.
+      this.hostLogger = await resolveManifestLogger(manifest.config.logger, {
+        mode: 'development',
+        outDir: this.options.outDir,
+        cacheBust: true,
+      })
+      this.logger = childLogger(this.hostLogger, 'neem:server')
+      await this.retireController()
+      retired = true
+      if (this.stopped) return false
+      await this.startController(this.manifestFile)
+    } catch (error) {
+      if (!this.hostStarted) throw error
+      if (this.stopped) return false
+      await this.deferFailedRestart(error, retired)
+      return false
+    }
     return true
+  }
+
+  // Development never ends on a failed host restart, as on a failed runtime:
+  // the restart waits for the next successful build. A controller that failed
+  // to start is retired; one the restart never reached keeps serving.
+  private async deferFailedRestart(
+    error: unknown,
+    retired: boolean,
+  ): Promise<void> {
+    const normalized = normalizeError(error)
+    const runtimeNames = this.controller?.getSnapshot().runtimeNames
+    if (retired) await this.retireController()
+    this.logger.error(
+      { err: normalized },
+      'Neem server restart failed; it restarts after the next successful build',
+    )
+    this.options.probe?.emit('runtime:error', {
+      type: 'error',
+      error: serializeError(normalized),
+    })
+    // A worker patch alone does not rewrite the output the restart loads.
+    for (const runtimeName of runtimeNames ?? this.runtimeNames) {
+      this.freshness.markStale(runtimeName)
+      this.freshness.defer(runtimeName, 'restart')
+    }
   }
 
   private async startController(manifestFile: string): Promise<void> {
@@ -366,6 +405,7 @@ export class DevSession {
         this.onRuntimeFailure(controller, error, runtimeName),
     })
     this.controller = controller
+    this.runtimeNames = controller.getSnapshot().runtimeNames
     try {
       await controller.start()
     } catch (error) {
@@ -374,6 +414,7 @@ export class DevSession {
       throw error
     }
     if (this.controller !== controller) return
+    this.hostStarted = true
     this.options.probe?.emit('runtime:ready', {
       type: 'ready',
       health: controller.getHealth(),
@@ -405,8 +446,13 @@ export class DevSession {
   }
 
   private async reloadRuntime(runtimeName: string): Promise<boolean> {
+    if (!this.manifestFile) return false
     const controller = this.controller
-    if (!controller || !this.manifestFile) return false
+    // No host runs after a failed restart; this build may be what it needs.
+    if (!controller) {
+      if (!this.freshness.hasPendingRestart()) return false
+      return this.restartRuntime()
+    }
     if (
       this.freshness.isStale(runtimeName) &&
       !(await this.refreshWorkerOutput(runtimeName))
@@ -414,6 +460,13 @@ export class DevSession {
       this.freshness.defer(runtimeName, 'reload')
       this.reportRestartDeferred(runtimeName)
       return false
+    }
+    // The refresh above may be the one a deferred host restart waits for, and
+    // that restart replaces this runtime as well.
+    if (this.freshness.hasPendingRestart()) {
+      if (await this.restartRuntime()) return true
+      // A failed restart retired the controller this reload was meant for.
+      if (this.controller !== controller) return false
     }
     this.freshness.resume(runtimeName, 'reload')
     // The reload replaces a recovering runtime, which must not keep waiting.
@@ -476,6 +529,11 @@ export class DevSession {
       this.reportRestartDeferred(runtimeName)
       return false
     }
+    // A deferred host restart replaces the recovering runtime too, and it
+    // releases every recovery of the controller it retires.
+    if (this.freshness.hasPendingRestart() && (await this.restartRuntime())) {
+      return true
+    }
     this.freshness.resume(runtimeName, 'recovery')
     this.releaseRecovery(runtimeName)
     return true
@@ -515,6 +573,9 @@ export class DevSession {
     event: Extract<WatcherEvent, { type: 'worker-patch' }>,
   ): Promise<void> {
     const { runtimeName, updates } = event
+    // No host runs after a failed restart, and the deferred restart has just
+    // retried on this build, so there is nothing to patch.
+    if (!this.controller) return
     if (!updates.length) {
       await this.fallback(runtimeName, 'No active patch clients')
       return

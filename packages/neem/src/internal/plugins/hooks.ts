@@ -9,6 +9,7 @@ import type {
   NeemHostWorkerHookEvent,
 } from '../../shared/types.ts'
 import { childLogger } from '../logger.ts'
+import { normalizeError, throwCollected } from '../utils.ts'
 
 export type HostHookMap = NeemHostHookMap
 
@@ -26,6 +27,11 @@ export function createHostHooks(): HostHooks {
   return createHooks<HostHookMap>()
 }
 
+/**
+ * Runs every callback of a hook in registration order. One that fails does
+ * not skip the rest: a later plugin's `dispose` still releases its resources.
+ * Rejects with every failure once all have run.
+ */
 export async function callHostHook<Name extends keyof HostHookMap>(
   hooks: HostHooks,
   logger: Logger,
@@ -41,9 +47,15 @@ export async function callHostHook<Name extends keyof HostHookMap>(
           'Neem host hook callbacks',
         )
       }
+      const errors: Error[] = []
       for (const callback of callbacks) {
-        await callback(...callbackArgs)
+        try {
+          await callback(...callbackArgs)
+        } catch (error) {
+          errors.push(normalizeError(error))
+        }
       }
+      throwCollected(errors, `Neem hook [${hookName}] failed`)
     },
     name,
     args,

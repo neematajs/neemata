@@ -22,7 +22,6 @@ import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { serveRpc } from '../rpc.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
-import { markGenerationIntact } from './patch-globals.ts'
 import { WORKER_SERIAL_COMMANDS } from './protocol.ts'
 import { ReloadableRuntime } from './reloadable-runtime.ts'
 
@@ -76,6 +75,7 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   )
   // The DevEngine prelude reads the client id during artifact evaluation.
   patchGlobal.__neem_patch_client_id__ = data.patchClientId
+  patchGlobal.__neem_patch_guard__ = refusePatch
   patchGlobal.__neem_accept_worker__ = acceptWorker
   const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
     data.artifact.file,
@@ -103,23 +103,36 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   return created
 }
 
-async function acceptWorker(next: unknown): Promise<void> {
-  if (!isNeemRuntimeWorker(next)) {
-    throw markGenerationIntact(
-      new Error('Updated worker default export is not a marked runtime worker'),
-    )
-  }
-  if (currentWorker?.reload === 'thread' || next.reload === 'thread') {
-    throw markGenerationIntact(new Error("Worker requires reload: 'thread'"))
+// Refusals that depend only on the running generation. The patch client asks
+// before it disposes anything, so a refused patch leaves that generation
+// serving and the runtime restarts around it.
+function refusePatch(): string | undefined {
+  if (currentWorker?.reload === 'thread') {
+    return "Worker requires reload: 'thread'"
   }
   if (!(runtime instanceof ReloadableRuntime)) {
-    throw markGenerationIntact(
-      new Error('Worker generation reload is only available in development'),
+    return 'Worker generation reload is only available in development'
+  }
+  return runtime.refusal()?.message
+}
+
+// Runs once the patch client has disposed the running generation's modules
+// and re-executed the worker definition, so every failure here leaves no
+// generation serving; recovery restarts the runtime.
+async function acceptWorker(next: unknown): Promise<void> {
+  if (!isNeemRuntimeWorker(next)) {
+    throw new Error(
+      'Updated worker default export is not a marked runtime worker',
     )
   }
+  if (next.reload === 'thread') {
+    throw new Error("Updated worker requires reload: 'thread'")
+  }
+  if (!(runtime instanceof ReloadableRuntime)) {
+    throw new Error('Worker generation reload is only available in development')
+  }
   const reload = await runtime.apply(next)
-  if (reload.outcome === 'rejected') throw markGenerationIntact(reload.error)
-  if (reload.outcome === 'unavailable') throw reload.error
+  if (reload.outcome !== 'applied') throw reload.error
   currentWorker = next
 }
 

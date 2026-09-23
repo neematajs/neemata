@@ -649,7 +649,7 @@ function createRolldownOptions(
         : '[name]-[hash][extname]',
     },
     userOutput,
-    { codeSplitting: resolveCodeSplitting(target.artifact.chunks) },
+    { codeSplitting: resolveTargetCodeSplitting(target, metadata) },
   )
 
   return {
@@ -721,6 +721,23 @@ function createGroupedRolldownOptions(
     ],
     output,
   }
+}
+
+// The dev host reimports plugin entries and the logger in its own process on
+// every restart, busting the module cache with a query on the entry file. The
+// query does not reach the chunks the entry imports, so a watch build emits
+// these targets as one file for the busted import to cover everything.
+const HOST_RELOADED_TARGETS: ReadonlySet<BuildTarget['kind']> = new Set([
+  'plugin-entry',
+  'logger',
+])
+
+function resolveTargetCodeSplitting(
+  target: BuildTarget,
+  metadata: ArtifactBuildMetadata,
+): OutputOptions['codeSplitting'] {
+  if (metadata.watch && HOST_RELOADED_TARGETS.has(target.kind)) return false
+  return resolveCodeSplitting(target.artifact.chunks)
 }
 
 const DEFAULT_DEPS_CHUNK_TEST = /node_modules/

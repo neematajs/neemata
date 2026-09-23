@@ -32,6 +32,19 @@ export function normalizeError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
 }
 
+/** Throws every collected error at once so none of them is lost. */
+export function throwCollected(
+  errors: readonly Error[],
+  message: string,
+): void {
+  if (errors.length === 0) return
+  if (errors.length === 1) throw errors[0]
+  throw new AggregateError(
+    errors,
+    `${message}: ${errors.map((error) => error.message).join('; ')}`,
+  )
+}
+
 export type SerializedError = {
   message: string
   name?: string

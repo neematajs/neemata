@@ -401,12 +401,13 @@ describe('Neem runtime restart', () => {
       30_000,
     )
     expect(fallback.reason).toContain("reload: 'thread'")
-    // Refused before retiring the generation, so it kept serving.
+    // Only the re-executed definition declares it, after the running
+    // generation was disposed, so recovery restarts the runtime.
     expect(
       neem
         .events()
         .some((event) => event.event === 'runtime:patch-unavailable'),
-    ).toBe(false)
+    ).toBe(true)
     await waitFor(
       () =>
         neem

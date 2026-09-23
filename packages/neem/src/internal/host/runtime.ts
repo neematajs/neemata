@@ -20,13 +20,12 @@ import type { HostRunnerData } from './runner-protocol.ts'
 import type { ThreadPlan, ThreadLifecycleEvent } from './thread.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { normalizeError, raceWithTimeout } from '../utils.ts'
+import { normalizeError, raceWithTimeout, throwCollected } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 import {
   isOperationAborted,
   OperationScope,
   resolveLifecycle,
-  throwCollected,
 } from './lifecycle.ts'
 import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
@@ -164,9 +163,12 @@ export class RuntimeController {
         try {
           return { update, thread, result: await thread.applyPatch(update) }
         } catch (error) {
+          // A timed-out patch, a worker that exited mid-patch or one no longer
+          // running: none of them shows that the generation survived.
           return {
             update,
-            result: rejectedPatch(normalizeError(error).message),
+            thread,
+            result: unavailablePatch(normalizeError(error).message),
           }
         }
       }),
@@ -294,6 +296,9 @@ export class RuntimeController {
 
     try {
       await attempt.wait(this.callRuntimeHook('runtime:start'))
+      // Nothing is launched once a stop aborted the attempt: stop() may
+      // already have released this generation without it.
+      attempt.throwIfAborted()
       const host = this.createHostRunner(generation.id)
       generation.host = host
       await attempt.wait(host.start())
@@ -313,6 +318,7 @@ export class RuntimeController {
         'Neem runtime worker topology',
       )
 
+      attempt.throwIfAborted()
       generation.threads = threadPlans.map(
         (plan, index) =>
           new ThreadController({
@@ -344,7 +350,10 @@ export class RuntimeController {
       )
     } catch (error) {
       const failure = generation.starting?.failure
-      if (isOperationAborted(error) && !failure) throw error
+      if (isOperationAborted(error) && !failure) {
+        await this.releaseAbandoned(generation)
+        throw error
+      }
       const normalized = failure ?? normalizeError(error)
       // The outer scope, not the attempt: a stop arriving now still aborts
       // the remaining failure handling and takes over the cleanup.
@@ -363,6 +372,20 @@ export class RuntimeController {
       generation.starting = undefined
       attempt.dispose()
     }
+  }
+
+  // stop() releases the generation it finds once it has joined this attempt
+  // or given up joining it. A generation that is still current after the stop
+  // completed was never released, so the attempt releases it itself.
+  private async releaseAbandoned(generation: Generation): Promise<void> {
+    if (this.state !== 'stopped' || this.current !== generation) return
+    await this.releaseGeneration(this.createStopScope()).catch((error) => {
+      this.logger.warn(
+        new Error(`Runtime [${this.name}] cleanup after its stop failed`, {
+          cause: normalizeError(error),
+        }),
+      )
+    })
   }
 
   // Releases the current generation within the scope's deadline and reports
@@ -387,7 +410,12 @@ export class RuntimeController {
       if (result.status === 'rejected') collect(result.reason)
     }
     await host?.shutdown(scope).catch(collect)
-    await this.callRuntimeHook('runtime:stop').catch(collect)
+    await scope
+      .within(
+        this.callRuntimeHook('runtime:stop'),
+        `Runtime [${this.name}] hook [runtime:stop]`,
+      )
+      .catch(collect)
     this.logger.debug('Neem runtime stopped')
     throwCollected(errors, `Runtime [${this.name}] did not stop cleanly`)
   }
@@ -702,6 +730,10 @@ function getPoolState(
 
 function rejectedPatch(reason: string): WorkerPatchResult {
   return { outcome: 'rejected', delivered: false, patches: 0, reason }
+}
+
+function unavailablePatch(reason: string): WorkerPatchResult {
+  return { outcome: 'unavailable', delivered: false, patches: 0, reason }
 }
 
 function noop(): void {}
