@@ -66,15 +66,20 @@ await redis.quit()
   `(obj: unknown, msg?: string) => void`; a Pino logger fits.
 - `publish(event, params, payload): Promise<boolean>` validates params and
   encodes payload before calling the adapter. Invalid params/payloads reject.
-  Adapter exceptions propagate; a false adapter result remains false.
+  An encoded payload that is not plain JSON (a `Date`, `bigint`, `NaN`, class
+  instance, sparse array...) rejects with `TypeError`; an absent (`undefined`)
+  payload is allowed. Adapter exceptions propagate; a false adapter result
+  remains false.
 - `subscribe(channel, params, events?, signal?)` resolves to an
   `AsyncIterable` of `{ event, payload }` with decoded, discriminated payloads.
   Omit event selection to receive all events; `{ message: true }` narrows it.
   An explicit empty selection `{}` selects no events at runtime.
 - Unknown/unselected events and payload decode failures are logged and skipped.
   Broker/iterator failures end the stream with an error; abort ends it normally.
-  Abort or leaving the consumer loop releases the subscription. Resolving
-  `subscribe()` itself is not an acknowledgement of broker readiness.
+  Abort or leaving the consumer loop releases the subscription, even before
+  the first read. `subscribe()` resolves once the broker subscription is live:
+  a message published after it resolves is delivered. A failed broker
+  subscription rejects it.
 
 ## Redis / Valkey adapter
 
@@ -86,13 +91,15 @@ and `RedisPubSubClient` (`ioredis.Redis | iovalkey.Redis`).
 logger?)` requires calling `initialize()` yourself before subscriptions.
 - Each adapter instance duplicates the command client with
   `{ lazyConnect: true }`, connects that one subscriber, and shares it across
-  channels/local listeners. Channel subscriptions are reference-counted; this
-  is not a process-global singleton. Reuse an adapter to share connections.
-- `dispose()` aborts subscriptions, removes local listeners and quits the
+  channels/local listeners. Channel subscriptions are reference-counted, with
+  SUBSCRIBE/UNSUBSCRIBE serialized per channel; a failed SUBSCRIBE is retried
+  by the next subscriber. This is not a process-global singleton. Reuse an
+  adapter to share connections.
+- `dispose()` ends live subscriptions cleanly (streams end, no error), waits
+  for in-flight SUBSCRIBE/UNSUBSCRIBE, removes local listeners and quits the
   duplicate only. The caller must close its original client afterward.
   Neither `PubSubManager` nor the Effect layer calls adapter disposal.
-- Messages are JSON-serialized; encoded payloads must be JSON-safe. Malformed
-  incoming JSON is logged and skipped.
+- Messages are JSON-serialized. Malformed incoming JSON is logged and skipped.
 - Redis publish returns true when the broker command succeeds, even with zero
   subscribers; serialization/broker failures return false. `true` is not a
   delivery receipt.
@@ -101,9 +108,10 @@ logger?)` requires calling `initialize()` yourself before subscriptions.
 
 Other brokers implement `PubSubAdapter`:
 `publish(channel: string, payload: unknown): Promise<boolean>` and
-`subscribe(channel: string, signal?: AbortSignal): AsyncIterable<PubSubMessage>`.
+`subscribe(channel: string, signal?: AbortSignal): Promise<AsyncIterable<PubSubMessage>>`,
+resolving once the broker delivers the channel's messages.
 A `PubSubMessage` is `{ channel, data: { event, payload } }`. Honor abort so
-idle subscriptions can be released.
+idle subscriptions, including ones never read, can be released.
 
 ## Effect
 

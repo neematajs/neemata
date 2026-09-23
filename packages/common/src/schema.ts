@@ -9,6 +9,36 @@ export type Json =
   | { readonly [key: string]: Json }
 
 /**
+ * Asserts a value survives a JSON round trip unchanged. No schema library
+ * guarantees JSON, and nothing can restore what JSON drops or rewrites.
+ * Undefined object properties are the exception: JSON omits them, as readers
+ * expect.
+ */
+export function assertJson(value: unknown, path = '$'): asserts value is Json {
+  if (value === null) return
+  if (
+    typeof value === 'string' ||
+    typeof value === 'boolean' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  )
+    return
+  if (Array.isArray(value)) {
+    // Indexed, not forEach: holes would be skipped, and JSON writes them as null.
+    for (let index = 0; index < value.length; index++)
+      assertJson(value[index], `${path}[${index}]`)
+    return
+  }
+  const prototype =
+    typeof value === 'object' ? Object.getPrototypeOf(value) : undefined
+  if (prototype === Object.prototype || prototype === null) {
+    for (const [key, member] of Object.entries(value as object))
+      if (member !== undefined) assertJson(member, `${path}.${key}`)
+    return
+  }
+  throw new TypeError(`Expected a JSON value at ${path}`)
+}
+
+/**
  * A transformed value's serialized boundary, as two Standard Schemas: `decode`
  * validates the serialized form into `Type`, `encode` validates `Type` into the
  * form to serialize. Standard Schema validates in one direction only, hence the

@@ -33,20 +33,22 @@ function broker() {
       for (const deliver of waiting) deliver(message)
       return true
     },
-    async *subscribe(channel, signal) {
+    async subscribe(channel, signal) {
       open.add(channel)
-      try {
-        while (!signal?.aborted) {
-          const next = Promise.withResolvers<PubSubMessage | undefined>()
-          waiting.add(next.resolve)
-          signal?.addEventListener('abort', () => next.resolve(undefined))
-          const message = await next.promise
-          waiting.delete(next.resolve)
-          if (message?.channel === channel) yield message
+      return (async function* () {
+        try {
+          while (!signal?.aborted) {
+            const next = Promise.withResolvers<PubSubMessage | undefined>()
+            waiting.add(next.resolve)
+            signal?.addEventListener('abort', () => next.resolve(undefined))
+            const message = await next.promise
+            waiting.delete(next.resolve)
+            if (message?.channel === channel) yield message
+          }
+        } finally {
+          open.delete(channel)
         }
-      } finally {
-        open.delete(channel)
-      }
+      })()
     },
   }
   return { adapter, published, open }
@@ -94,6 +96,33 @@ describe('Effect adapter', () => {
     ])
     expect(received).toMatchObject({ _tag: 'Some', value: { event: 'seen' } })
     await waitFor(() => open.size === 0)
+  })
+
+  it('releases a subscription interrupted while the broker subscription opens', async () => {
+    const opening = Promise.withResolvers<void>()
+    let released: AbortSignal | undefined
+    const adapter: PubSubAdapter = {
+      publish: async () => true,
+      subscribe: async (_channel, signal) => {
+        released = signal
+        await opening.promise
+        return (async function* () {})()
+      },
+    }
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        const fiber = yield* Effect.forkChild(
+          Stream.runDrain(pubsub.subscribe(room, { roomId: 'a' })),
+        )
+        yield* Effect.promise(() => waitFor(() => released !== undefined))
+        yield* Fiber.interrupt(fiber)
+      }).pipe(Effect.provide(layer({ adapter }))),
+    )
+
+    expect(released?.aborted).toBe(true)
+    opening.resolve()
   })
 
   it('fails with a PubSubError for an invalid payload', async () => {

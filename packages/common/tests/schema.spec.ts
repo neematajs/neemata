@@ -6,7 +6,12 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 
 import { codec, schemaOf } from '../src/effect.ts'
-import { decodeWith, encodeWith, SchemaError } from '../src/schema.ts'
+import {
+  assertJson,
+  decodeWith,
+  encodeWith,
+  SchemaError,
+} from '../src/schema.ts'
 
 const text: StandardSchemaV1<string, string> = {
   '~standard': {
@@ -40,6 +45,38 @@ describe('schema helpers', () => {
     expect(() => decodeWith(later, 1)).toThrow(
       'Schemas must validate synchronously',
     )
+  })
+
+  it('accepts only values that survive a JSON round trip', () => {
+    expect(() =>
+      assertJson({
+        text: 'x',
+        count: 1,
+        flag: false,
+        none: null,
+        omitted: undefined,
+        list: [1, [2], { three: 3 }],
+        bare: Object.assign(Object.create(null), { key: 'value' }),
+      }),
+    ).not.toThrow()
+
+    // oxlint-disable-next-line no-sparse-arrays
+    const sparse = [1, , 3]
+    const rejected: [unknown, string][] = [
+      [undefined, '$'],
+      [{ at: new Date() }, '$.at'],
+      [{ n: Number.NaN }, '$.n'],
+      [[Infinity], '$[0]'],
+      [1n, '$'],
+      [sparse, '$[1]'],
+      [[1, undefined], '$[1]'],
+      [new Map(), '$'],
+      [{ nested: [{ fn: () => 1 }] }, '$.nested[0].fn'],
+    ]
+    for (const [value, path] of rejected)
+      expect(() => assertJson(value)).toThrow(
+        new TypeError(`Expected a JSON value at ${path}`),
+      )
   })
 
   it('turns an Effect schema into a JSON codec pair it can be recovered from', () => {

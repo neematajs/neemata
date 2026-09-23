@@ -32,7 +32,9 @@ export const room = defineChannel({
 ```
 
 Schemas must validate synchronously. A lone schema that transforms its input is
-rejected at compile time.
+rejected at compile time. Messages travel as JSON, so an encoded payload must be
+plain JSON: publishing a `Date`, `bigint` or other value JSON would alter throws a
+`TypeError`; declare `{ decode, encode }` to publish such values.
 
 ## Publishing and subscribing
 
@@ -56,21 +58,26 @@ for await (const { event, payload } of messages) {
 }
 ```
 
-Omit the event selection to receive every event of the channel. Unknown events and
-payloads that fail to decode are logged and skipped. Aborting the signal, or leaving
-the loop, releases the subscription.
+`subscribe()` resolves once the broker subscription is live, so a message published
+after it resolves is delivered. Omit the event selection to receive every event of
+the channel. Unknown events and payloads that fail to decode are logged and skipped.
+Aborting the signal, or leaving the loop, releases the subscription.
 
-The Redis adapter shares one subscriber connection across channels and subscribes
-to each channel once per process, however many local listeners it has. It does not
-own the client passed to it: call `adapter.dispose()` before closing the client.
-`logger` is optional and accepts a Pino logger.
+Each Redis adapter shares one subscriber connection across channels and subscribes
+to each channel once, however many local listeners it has. It does not own the
+client passed to it: call `adapter.dispose()` before closing the client; disposal
+ends live subscriptions. `logger` is optional and accepts a Pino logger.
 
 Any broker can be plugged in through `PubSubAdapter`:
 
 ```ts
 interface PubSubAdapter {
   publish(channel: string, payload: unknown): Promise<boolean>
-  subscribe(channel: string, signal?: AbortSignal): AsyncIterable<PubSubMessage>
+  // Resolves once the broker delivers the channel's messages.
+  subscribe(
+    channel: string,
+    signal?: AbortSignal,
+  ): Promise<AsyncIterable<PubSubMessage>>
 }
 ```
 
