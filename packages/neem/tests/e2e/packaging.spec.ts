@@ -114,6 +114,7 @@ async function createConsumerFixture(): Promise<{
 
 async function stagePublishedPackages(packagesDir: string): Promise<void> {
   await mkdir(packagesDir, { recursive: true })
+  const catalog = await readWorkspaceCatalog()
 
   await Promise.all(
     stagedPackages.map(async (packageName) => {
@@ -136,13 +137,34 @@ async function stagePublishedPackages(packagesDir: string): Promise<void> {
 
       await writeFile(
         resolve(packageDir, 'package.json'),
-        `${JSON.stringify(toPublishedManifest(manifest), null, 2)}\n`,
+        `${JSON.stringify(toPublishedManifest(manifest, catalog), null, 2)}\n`,
       )
     }),
   )
 }
 
-function toPublishedManifest(manifest: PackageJson): PackageJson {
+// The workspace has no YAML parser, and the default catalog is a flat
+// `name: spec` map, so reading just that block keeps specs in sync with pnpm.
+async function readWorkspaceCatalog(): Promise<Map<string, string>> {
+  const workspace = await readFile(
+    resolve(workspaceRoot, 'pnpm-workspace.yaml'),
+    'utf8',
+  )
+  const block = /^catalog:\n((?:[ \t]+.*\n)*)/m.exec(workspace)?.[1] ?? ''
+
+  return new Map(
+    block
+      .split('\n')
+      .map((line) => /^\s+'?([^':]+)'?:\s*'?([^'\s]+)'?/.exec(line))
+      .filter((match) => match !== null)
+      .map(([, name, spec]) => [name, spec]),
+  )
+}
+
+function toPublishedManifest(
+  manifest: PackageJson,
+  catalog: Map<string, string>,
+): PackageJson {
   // `pnpm --dir packages/neem pack` currently fails with
   // `[ERR_PNPM_PACKAGE_VERSION_NOT_FOUND] Package version is not defined in the package.json.`
   // This temp manifest mirrors the published boundary by applying publishConfig
@@ -151,10 +173,15 @@ function toPublishedManifest(manifest: PackageJson): PackageJson {
     ...manifest,
     version: '0.0.0',
     exports: manifest.publishConfig?.exports ?? manifest.exports,
-    dependencies: rewriteDependencies(manifest.dependencies, 'dependencies'),
+    dependencies: rewriteDependencies(
+      manifest.dependencies,
+      'dependencies',
+      catalog,
+    ),
     peerDependencies: rewriteDependencies(
       manifest.peerDependencies,
       'peerDependencies',
+      catalog,
     ),
   }
 
@@ -169,6 +196,7 @@ function toPublishedManifest(manifest: PackageJson): PackageJson {
 function rewriteDependencies(
   dependencies: Record<string, string> | undefined,
   kind: 'dependencies' | 'peerDependencies',
+  catalog: Map<string, string>,
 ): Record<string, string> | undefined {
   if (!dependencies) return undefined
 
@@ -183,7 +211,11 @@ function rewriteDependencies(
         return [name, rewritten]
       }
 
-      if (spec === 'catalog:') return [name, '^4.0.0']
+      if (spec === 'catalog:') {
+        const catalogSpec = catalog.get(name)
+        if (!catalogSpec) throw new Error(`${name} is missing from the catalog`)
+        return [name, catalogSpec]
+      }
 
       return [name, spec]
     }),
