@@ -1,13 +1,9 @@
 # Runtime Declarations
 
-Runtime declaration files are the build-time entrypoint for one named runtime.
-They default-export a marked declaration from `defineRuntime(...)` or a package
-helper built on `createRuntime(...)`.
+## Declaration and validation
 
-## Raw Declaration
-
-Use raw `defineRuntime(...)` for a custom runtime or for tests of the generic
-Neem contract:
+Runtime declaration files default-export `defineRuntime(declaration)` or the
+result of a package helper built on `createRuntime(commonOptions)`.
 
 ```ts
 import { defineRuntime } from '@nmtjs/neem'
@@ -21,101 +17,101 @@ export default defineRuntime({
 })
 ```
 
-Rules:
+- `defineRuntime<const TDeclaration extends NeemRuntimeDeclaration>` returns
+  `NeemMarkedRuntimeDeclaration<TDeclaration>`: a shallow-frozen, branded copy.
+  Supplied `env` is separately copied and frozen; this is not deep freezing.
+- Declaration fields are optional `name`, `planner`, `env`, `proxy`, `worker`,
+  and `host`. A complete worker declaration requires `entry`; host `entry` is
+  optional. Both accept `build: { rolldown?, chunks? }`.
+- Discovery requires the marker. A plain default-exported object fails even
+  if it has the right fields. `isNeemRuntimeDeclaration(value)` checks the
+  marker; it does not validate all declaration fields.
+- Resolution requires a worker with an entry or a custom `host.entry`.
+  `host: {}` alone is invalid. Worker-only declarations get Neem's default
+  no-op host and still have a host-runner thread.
+- A planner is required even for host-only runtimes. Without explicit
+  `planner`, lookup tries sibling `neem.planner.ts`, `.mts`, `.js`, `.mjs`, in
+  that order. Host-only planners must return no workers.
+- Name is the trimmed explicit `name`, otherwise the nearest nonempty
+  `package.json#name` walking upward. Duplicate names fail resolution.
+- Project `runtimes` entries are files, directories, globs, or negated globs
+  relative to the config file. Directories use `neem.runtime.ts`, `.mts`,
+  `.js`, `.mjs` in that order. Positive entries matching nothing fail.
 
-- `planner`, `worker.entry`, and `host.entry` are module specifiers resolved from
-  the runtime declaration file.
-- Keep entries as import specifiers, not imported values. Neem builds planner,
-  host, and worker as separate artifacts with separate import graphs.
-- A planner is required. If omitted in the declaration, Neem looks for a
-  conventional `neem.planner.ts`, `.mts`, `.js`, or `.mjs` next to the
-  declaration file.
-- Runtime name comes from explicit `name` or nearest `package.json#name`.
-- `host + worker`, `host only` with `host.entry`, and `worker only` are valid.
-  `no host + no worker` is invalid.
-- `env` objects are frozen and merged between declaration layers.
-- Build options are artifact concerns, not runtime behavior.
-- Declaration files should not create runtime resources.
+## Entry resolution and import boundaries
 
-## Import Boundary
+`NeemEntryInput` is `string | URL`. Relative paths resolve from the runtime
+declaration file, including defaults supplied by a package helper. Absolute
+paths and bare package exports are accepted. URL objects must use `file:`;
+use `new URL('./host.ts', import.meta.url)` for a package-relative URL, or a
+published export such as `@nmtjs/workflows/neem/host`.
 
-Runtime declarations describe entrypoints; they do not compose the runtime by
-importing planner, host, or worker implementations directly.
+Keep entry specifiers in declarations instead of importing marked entries as
+values. Declarations are evaluated during build/dev discovery; module-level
+clients, sockets, and schedulers would be created in that process.
 
-```ts
-// Good: entry specifiers preserve artifact/thread isolation.
-export default defineRuntime({
-  name: 'service',
-  planner: './neem.planner.ts',
-  host: { entry: './neem.host.ts' },
-  worker: { entry: './neem.worker.ts' },
-})
-```
+- Runtime worker, host, and planner are separate build targets under
+  `runtime/<sanitized-name>/{worker,host,planner}`. Planner and host load in the
+  host-runner thread; each worker loads in its own runtime worker thread.
+- Share pure helpers and type-only imports through separate modules. Avoid
+  cross-entry value imports: they pull code and side effects into another
+  target. This is an ownership rule, not an enforced import prohibition.
+- Separate targets do not mean one output file each. Dependencies are bundled
+  by default except Node builtins and configured externals; per-target chunks
+  are supported. Neem's own start/worker/host-runner infrastructure is built
+  together and can share chunks, while retaining separate entry modules.
+- Artifact changes can trigger rebuilds, but a runtime reload stops and
+  recreates the runtime. It does not hot-swap an individual host or worker
+  entry while preserving the other running entries.
 
-```ts
-// Bad: direct imports collapse separate runtime graphs into this module.
-import host from './neem.host.ts'
-import planner from './neem.planner.ts'
-import worker from './neem.worker.ts'
-```
+## Declaration helpers and layering
 
-Why:
-
-- Planner and host run in the host-runner worker thread.
-- Worker entry runs in runtime worker threads.
-- Each entry becomes its own build artifact and bundle graph.
-- Direct imports pull code into the wrong artifact and can start resources in
-  the wrong process.
-- Specifiers let Neem rebuild/reload planner, host, and worker artifacts
-  independently.
-
-## Runtime Factory Helper
-
-Expose a `create*Runtime()` helper only when the package contributes runtime
-declaration defaults. Good defaults are package-owned `host.entry` values,
-worker build plugins, or other package-owned artifact settings.
+`createRuntime<const TCommon extends NeemRuntimeDeclarationLayer>(common)`
+returns a declaration function accepting
+`const TUser extends NeemRuntimeDeclarationLayer`. Calling it returns a
+`NeemMarkedRuntimeDeclaration`, not a running instance. Layer types allow
+partial worker/host settings; discovery validates the merged result.
 
 ```ts
 import { createRuntime } from '@nmtjs/neem'
 
-export function createServiceRuntime() {
-  return createRuntime({
-    host: { entry: '@acme/service/neem/host' },
-  })
-}
-```
+const defineServiceRuntime = createRuntime({
+  env: { FEATURE_FLAG: '0', SERVICE_KIND: 'custom' },
+  worker: { build: { chunks: false } },
+})
 
-The app calls the returned helper and supplies app-owned entries:
-
-```ts
-const defineRuntime = createServiceRuntime()
-
-export default defineRuntime({
+export default defineServiceRuntime({
   name: 'service',
   planner: './neem.planner.ts',
   worker: { entry: './neem.worker.ts' },
+  env: { FEATURE_FLAG: '1' },
 })
 ```
 
-Rules:
+Merge rules:
 
-- `createRuntime(...)` returns a declaration helper. The returned helper merges
-  common and user declaration layers, freezes merged `env`, and brands the final
-  declaration for Neem validation.
-- App-owned entries (`name`, `planner`, `worker.entry`) belong in app runtime
-  declarations.
-- Package-owned defaults (`host.entry`, build plugins) belong in
-  `create*Runtime()`.
-- Package helpers should provide package-owned entry specifiers, not imported
-  host/worker/planner functions.
-- If the package contributes no declaration defaults, do not create a runtime
-  helper. Use raw `defineRuntime(...)` in the app declaration.
+- Top-level fields use common then user spread order; user values win.
+- `env` merges keys common then user and is copied/frozen. Values are strings.
+- `proxy` merges shallowly. `routing` is a complete mode choice
+  (`path`, `subdomain`, or `default`), replaced as a whole when supplied.
+- `worker` and `host` merge their entry/settings separately. Their
+  `build.rolldown` options merge with user scalar priority and common plugins
+  before user plugins. `build.chunks` uses the user value when defined,
+  otherwise common; chunk groups are not concatenated across layers.
+- `host.build` applies to both host and planner artifacts. `worker.build`
+  applies to the worker. Public Rolldown options customize compilation, not
+  input/output topology: Neem strips unsupported fields such as `output`.
+- `chunks: false` disables Neem's default dependency chunk group; otherwise a
+  `deps` group is added unless the user supplies one with that name. It does
+  not promise a single output file.
 
-## Discovery Contract
+Declaration env is baked into the manifest as defaults. Execution merges
+project env, then runtime env, then the live process env, then explicit
+per-start overrides. Host runner and workers receive the resulting environment;
+there is no `ctx.env` field. Use `process.env` in the owning entry.
 
-Neem project config resolves runtime declarations from `runtimes` entries:
-files, folders, globs, and negated globs.
-
-Runtime declaration files must default-export a marked declaration. Plain
-objects/functions fail validation with an error pointing at the declaration
-file.
+Use a package helper when the package supplies real defaults, including a
+default planner, custom host, or worker build settings. Prefer raw
+`defineRuntime` when there are no defaults. See
+[package-helpers.md](package-helpers.md) for the differing Workflows and Effect
+helper call shapes.

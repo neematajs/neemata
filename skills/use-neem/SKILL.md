@@ -9,6 +9,8 @@ description: 'Use when configuring or running @nmtjs/neem projects: neem.config.
 discovers runtime declarations, builds artifacts, writes manifests, starts
 selected runtimes, reloads changed runtime graphs, wires env/logger/plugin
 hooks, exposes health, and routes proxy traffic to runtime upstreams.
+Neem itself has no Effect dependency. Host an Effect application with
+`@nmtjs/effect`; the application owns its transports and services.
 
 Use this skill when consuming Neem in an application or service repo:
 `neem.config.ts`, `neem build`, `neem dev`, `neem start`, runtime selection,
@@ -21,11 +23,13 @@ runtime workers, runtime planners, or host/worker `MessagePort` protocols, use
 ## References
 
 - [Runtimes](references/runtimes.md) - `defineConfig`, runtime discovery,
-  package runtime declaration files, config shape, env, proxy, plugins.
+  declarations, config shape, env precedence, proxy, health, logger, plugins.
 - [CLI](references/cli.md) - `neem build`, `neem dev`, `neem start`,
-  `dev --env-files`, runtime selection, output layout, dev reload behavior.
+  `dev --env-files`, Node/Bun, runtime selection, output, reload, shutdown.
 - [Metrics](references/metrics.md) - metrics plugin, `/metrics` server,
   default metrics injection, Pushgateway, and lifecycle/health observations.
 - [Package Integration](references/package-integration.md) - package-owned
-  runtime helpers, workflow backend resource placement, and generic runtime
-  project layout for end users.
+  runtime helpers, workflows planner/worker contracts, Promise versus Effect
+  resources, and Redis client ownership.
+- [Effect Applications](references/effect.md) - `createEffectRuntime`,
+  `defineEffectWorker`, Layer requirements, readiness, and supervised shutdown.
