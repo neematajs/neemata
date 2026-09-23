@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/workflows",
-  "version": "0.17.0-beta.17",
+  "version": "0.18.0-alpha.0",
   "description": "Workflow design primitives for Neemata.",
   "type": "module",
   "repository": {
