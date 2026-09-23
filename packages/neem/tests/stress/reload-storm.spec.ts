@@ -38,10 +38,7 @@ describe('Neem reload storm stress', () => {
           setRuntimeStartMarker(content, `worker-stress-${index}`),
         ),
         updateFileAtomically(loggerFile, (content) =>
-          content.replace(
-            /'Fixture(?: logger-stress-\d+)?',/,
-            `'Fixture logger-stress-${index}',`,
-          ),
+          setLoggerMarker(content, `logger-stress-${index}`),
         ),
         updateFileAtomically(pluginFile, (content) =>
           setPluginReadyMarker(content, `plugin-stress-${index}`),
@@ -80,6 +77,13 @@ function setRuntimeStartMarker(content: string, marker: string): string {
     pattern,
     `record({ event: 'runtime-start', name: ctx.name, marker: '${marker}' })`,
   )
+}
+
+function setLoggerMarker(content: string, marker: string): string {
+  // Match the label itself so trailing punctuation cannot prevent the edit.
+  const pattern = /\$label:\s*'Fixture(?: logger-stress-\d+)?'/
+  expect(content).toMatch(pattern)
+  return content.replace(pattern, `$label: 'Fixture ${marker}'`)
 }
 
 function setPluginReadyMarker(content: string, marker: string): string {
