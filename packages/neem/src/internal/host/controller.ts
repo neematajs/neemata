@@ -1,6 +1,5 @@
 import { performance } from 'node:perf_hooks'
 
-import type { MaybePromise } from '@nmtjs/common'
 import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { OperationQueue } from '@nmtjs/common'
 
@@ -20,8 +19,14 @@ import type { ThreadLifecycleEvent } from './thread.ts'
 import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
 import { callHostHook, createHostHooks } from '../plugins/hooks.ts'
-import { normalizeError } from '../utils.ts'
+import { normalizeError, raceWithTimeout } from '../utils.ts'
 import { HealthProbe } from './health.ts'
+import {
+  isOperationAborted,
+  OperationScope,
+  resolveLifecycle,
+  throwCollected,
+} from './lifecycle.ts'
 import { ProxyController } from './proxy.ts'
 import { RuntimeController } from './runtime.ts'
 
@@ -35,25 +40,22 @@ export type HostControllerOptions = {
   onFailure?: (error: Error) => void
 }
 
-class StopRequested extends Error {
-  constructor() {
-    super('Neem server stop requested')
-    this.name = 'StopRequested'
-  }
-}
-
+/**
+ * Owns the server lifecycle. Start, reload, runtime reload and patch run one at
+ * a time as operations of the current lifetime; stop() is never queued behind
+ * them: it aborts the lifetime, joins whatever is in flight, then cleans up.
+ */
 export class HostController {
   private state: NeemRuntimeServerState = 'idle'
-  // The flag interrupts the operation that is running now; the revision cancels
-  // starts that were queued before the stop and have not run yet.
-  private stopRequested = false
-  private stopRevision = 0
   private revision = 0
   private lastError: Error | undefined
   private snapshot: RuntimeSnapshot
   private logger: RuntimeSnapshot['logger']
   private readonly hooks: HostHooks
   private readonly operations = new OperationQueue()
+  // Parent of every operation requested before the next stop.
+  private lifetime = new OperationScope()
+  private stopping: Promise<void> | undefined
   private runtimes = new Map<string, RuntimeController>()
   private proxy: ProxyController | undefined
   private healthProbe: HealthProbe | undefined
@@ -100,13 +102,9 @@ export class HostController {
     )
   }
 
+  /** Rejects with OperationAbortedError when a stop interrupts it. */
   start(): Promise<void> {
-    const revision = this.stopRevision
-    return this.operations.run(async () => {
-      // A stop also cancels starts queued before it; a later explicit start may
-      // still restart this controller after the queued shutdown has finished.
-      if (revision !== this.stopRevision) return
-      this.stopRequested = false
+    return this.runOperation(async (scope) => {
       if (this.state === 'running') return
       this.markState('starting')
       this.logger.info('Neem server starting')
@@ -120,7 +118,7 @@ export class HostController {
         'Neem server options',
       )
 
-      await this.bringUp({
+      await this.bringUp(scope, {
         readyHook: 'server:ready',
         onReady: () => this.logger.info('Neem server ready'),
         failMessage: 'Failed to start Neem server',
@@ -128,9 +126,9 @@ export class HostController {
     })
   }
 
+  /** Rejects with OperationAbortedError when a stop interrupts it. */
   reload(snapshot: RuntimeSnapshot): Promise<void> {
-    return this.operations.run(async () => {
-      if (this.stopRequested) return
+    return this.runOperation(async (scope) => {
       this.markState('reloading')
       this.logger.debug('Neem server reloading')
       this.logger.trace(
@@ -143,9 +141,11 @@ export class HostController {
         'Neem server options',
       )
 
-      await this.bringUp({
+      await this.bringUp(scope, {
         prepare: async () => {
-          await this.stopSubsystems()
+          await this.stopSubsystems(this.createStopScope()).catch((error) =>
+            this.reportUncleanStop(error),
+          )
           this.replaceSnapshot(snapshot)
         },
         readyHook: 'server:reload',
@@ -155,57 +155,59 @@ export class HostController {
     })
   }
 
-  // Every awaited startup or reload step goes through here, so a stop unwinds
-  // the operation without a check after each await. The check before run() is
-  // what closes the gap between steps: returning from this async function
-  // yields, and a stop landing there must not let the next step begin.
-  private async step(run: () => MaybePromise<void>): Promise<void> {
-    if (this.stopRequested) throw new StopRequested()
-    await run()
-    if (this.stopRequested) throw new StopRequested()
-  }
-
   // Shared start/reload bring-up: identical subsystem ordering and error
   // handling, differing only in the reload prelude and success hook/log.
-  private async bringUp(options: {
-    prepare?: () => Promise<void>
-    readyHook: 'server:ready' | 'server:reload'
-    onReady: () => void
-    failMessage: string
-  }): Promise<void> {
+  // Subsystems this operation acquires itself are awaited to completion, so
+  // stop() never cleans up next to a half-started one; waits on hooks and
+  // workers end as soon as the scope is aborted.
+  private async bringUp(
+    scope: OperationScope,
+    options: {
+      prepare?: () => Promise<void>
+      readyHook: 'server:ready' | 'server:reload'
+      onReady: () => void
+      failMessage: string
+    },
+  ): Promise<void> {
     try {
-      await this.step(() => options.prepare?.())
-      await this.step(() => this.startPlugins())
-      await this.step(() => this.syncHealthProbe())
-      await this.step(() => this.callServerHook('server:start'))
-      await this.step(() => this.startRuntimes())
-      await this.step(() => this.startProxy())
-      // Synchronous effects are steps too: a stop in the gap before them must
-      // not publish a running state or announce readiness.
-      await this.step(() => this.markState('running'))
-      await this.step(() => this.callServerHook(options.readyHook))
-      await this.step(() => {
-        options.onReady()
-        this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
-      })
+      await options.prepare?.()
+      scope.throwIfAborted()
+      await this.startPlugins()
+      scope.throwIfAborted()
+      await this.syncHealthProbe()
+      scope.throwIfAborted()
+      await scope.wait(this.callServerHook('server:start'))
+      await this.startRuntimes(scope)
+      scope.throwIfAborted()
+      await this.startProxy()
+      scope.throwIfAborted()
+      this.markSettled()
+      await scope.wait(this.callServerHook(options.readyHook))
+      options.onReady()
+      this.logger.trace(this.getSnapshot(), 'Neem server snapshot')
     } catch (error) {
-      if (this.stopRequested) return
+      // Aborted by stop(), which owns the cleanup from here.
+      if (isOperationAborted(error)) throw error
       const normalized = normalizeError(error)
       this.markState('failed', normalized)
       this.logger.error({ err: normalized }, options.failMessage)
-      await this.callServerFailHook(normalized)
-      await this.stopSubsystems().catch(() => undefined)
+      await scope.wait(this.callServerFailHook(normalized))
+      await this.stopSubsystems(this.createStopScope()).catch((stopError) => {
+        this.logger.warn(
+          new Error('Neem server cleanup after a failed start failed', {
+            cause: normalizeError(stopError),
+          }),
+        )
+      })
       throw normalized
     }
   }
 
+  /** Rejects with OperationAbortedError when a stop interrupts it. */
   reloadRuntime(runtimeName: string, snapshot: RuntimeSnapshot): Promise<void> {
-    return this.operations.run(async () => {
-      if (this.stopRequested) return
+    return this.runOperation(async (scope) => {
       const reloadStartedAt = performance.now()
       const current = this.runtimes.get(runtimeName)
-      let currentDetached = false
-      let currentStopped = false
       let next: RuntimeController | undefined
       let detachProxyMs = 0
       let stopMs = 0
@@ -220,38 +222,47 @@ export class HostController {
       try {
         if (current) {
           this.runtimes.delete(runtimeName)
-          currentDetached = true
           const detachProxyStartedAt = performance.now()
-          await this.syncProxyUpstreams()
-          detachProxyMs = performance.now() - detachProxyStartedAt
-          const stopStartedAt = performance.now()
-          await this.step(() => current.stop())
-          stopMs = performance.now() - stopStartedAt
-          currentStopped = true
+          // Once detached, stop() cannot reach this runtime, so this operation
+          // finishes stopping it even when it is aborted.
+          try {
+            await this.syncProxyUpstreams()
+            detachProxyMs = performance.now() - detachProxyStartedAt
+          } finally {
+            const stopStartedAt = performance.now()
+            await current
+              .stop(this.createStopScope())
+              .catch((error) => this.reportUncleanStop(error))
+            stopMs = performance.now() - stopStartedAt
+          }
+          scope.throwIfAborted()
         }
 
         this.replaceSnapshot(snapshot)
 
-        const exists = Boolean(snapshot.manifest.runtimes[runtimeName])
-        if (exists) {
+        if (snapshot.manifest.runtimes[runtimeName]) {
           const startStartedAt = performance.now()
           const created = this.createRuntime(runtimeName)
           next = created
+          // Published before it starts so stop() reaches it.
           this.runtimes.set(runtimeName, created)
-          await this.step(() => created.start())
+          await created.start(scope)
           startMs = performance.now() - startStartedAt
         }
 
         const attachProxyStartedAt = performance.now()
-        await this.step(() => this.syncProxyUpstreams())
+        await this.syncProxyUpstreams()
+        scope.throwIfAborted()
         attachProxyMs = performance.now() - attachProxyStartedAt
-        await this.step(() => this.markState('running'))
+        this.markSettled()
         const hooksStartedAt = performance.now()
-        await callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
-          mode: this.snapshot.mode,
-          name: runtimeName,
-          upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
-        })
+        await scope.wait(
+          callHostHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
+            mode: this.snapshot.mode,
+            name: runtimeName,
+            upstreams: this.runtimes.get(runtimeName)?.getUpstreams() ?? [],
+          }),
+        )
         hooksMs = performance.now() - hooksStartedAt
         this.logger.debug(`Neem runtime ${runtimeName} reloaded`)
         this.logger.debug(
@@ -268,31 +279,29 @@ export class HostController {
         )
         this.logger.trace({ runtimeName }, 'Neem runtime reload result')
       } catch (error) {
+        if (isOperationAborted(error)) throw error
         const normalized = normalizeError(error)
         this.runtimes.delete(runtimeName)
-        if (currentDetached && !currentStopped) {
-          await current?.stop().catch(() => undefined)
-        }
-        await next?.stop().catch(() => undefined)
+        await next?.stop(this.createStopScope()).catch(() => undefined)
         await this.syncProxyUpstreams().catch(() => undefined)
-        if (this.stopRequested) return
         this.markState('failed', normalized)
         this.logger.error(
           { err: normalized, runtimeName },
           `Failed to reload Neem runtime ${runtimeName}`,
         )
-        await this.callServerFailHook(normalized)
+        await scope.wait(this.callServerFailHook(normalized))
       }
     })
   }
 
+  /** Rejects with OperationAbortedError when a stop interrupts it. */
   applyPatch(
     runtimeName: string,
     updates: readonly BindingClientHmrUpdate[],
   ): Promise<RuntimePatchResult> {
-    return this.operations.run(async () => {
+    return this.runOperation(async (scope) => {
       const runtime = this.runtimes.get(runtimeName)
-      if (!runtime || this.stopRequested) {
+      if (!runtime) {
         return {
           accepted: false,
           deliveredFiles: [],
@@ -300,51 +309,87 @@ export class HostController {
           reason: `Runtime [${runtimeName}] is not running`,
         }
       }
-      // Applying patches can await replacement readiness just like a full reload.
-      // Expose that state so stop interrupts workers before joining the queue.
-      // A patch does not repair an earlier failure, so restore it afterwards.
-      const { state, lastError } = this
-      this.markState('reloading')
+      // A patch can await replacement readiness inside a worker; stop() must
+      // not wait for it, since stopping the runtime is what settles it.
+      return scope.wait(runtime.applyPatch(updates))
+    })
+  }
+
+  /**
+   * Interrupts the operation in flight, joins it and stops every subsystem
+   * within `lifecycle.stopTimeout`. Rejects with every cleanup error, including
+   * workers or host runners terminated at the deadline; a stop requested while
+   * one is running joins it, and one after the controller stopped is a no-op.
+   */
+  stop(scope?: OperationScope): Promise<void> {
+    if (this.stopping) return this.stopping
+    if (this.state === 'stopped') return Promise.resolve()
+    this.lifetime.abort()
+    const stopping = this.runStop(scope ?? this.createStopScope()).finally(
+      () => {
+        this.stopping = undefined
+        // Operations requested during this stop belong to the aborted
+        // lifetime; a later start begins a new one.
+        this.lifetime = new OperationScope()
+      },
+    )
+    this.stopping = stopping
+    return stopping
+  }
+
+  private async runStop(scope: OperationScope): Promise<void> {
+    const errors: Error[] = []
+    const collect = (error: unknown) => {
+      errors.push(normalizeError(error))
+    }
+    const joined = await raceWithTimeout(
+      this.operations.waitIdle(),
+      scope.remaining(),
+    )
+    if (joined.timedOut) {
+      errors.push(
+        new Error(
+          'Neem server operation did not settle before the stop deadline',
+        ),
+      )
+    }
+
+    this.markState('stopping')
+    this.logger.info('Neem server stopping')
+    await this.callServerHook('server:stop').catch(collect)
+    await this.stopSubsystems(scope).catch(collect)
+    this.markState('stopped')
+    this.logger.debug('Neem server stopped')
+    throwCollected(errors, 'Neem server did not stop cleanly')
+  }
+
+  // The lifetime is captured when the operation is requested, so one requested
+  // before a stop never runs after it, even if the queue reaches it later.
+  private runOperation<T>(
+    run: (scope: OperationScope) => Promise<T>,
+  ): Promise<T> {
+    const lifetime = this.lifetime
+    return this.operations.run(async () => {
+      const scope = lifetime.child()
       try {
-        return await runtime.applyPatch(updates)
+        scope.throwIfAborted()
+        return await run(scope)
       } finally {
-        if (!this.stopRequested) this.markState(state, lastError)
+        scope.dispose()
       }
     })
   }
 
-  stop(): Promise<void> {
-    this.stopRequested = true
-    this.stopRevision++
-    // Interrupt active startup before joining the serial queue; otherwise a
-    // worker awaiting readiness prevents its own stop request from reaching it.
-    const interrupted =
-      this.state === 'starting' || this.state === 'reloading'
-        ? Promise.allSettled(
-            [...this.runtimes.values()].map((runtime) => runtime.stop()),
-          )
-        : undefined
-    return this.operations.run(async () => {
-      await interrupted
-      if (this.state === 'stopped') return
-      this.markState('stopping')
-      this.logger.info('Neem server stopping')
-
-      let stopError: Error | undefined
-      try {
-        await this.callServerHook('server:stop').catch((error) => {
-          stopError = normalizeError(error)
-        })
-        await this.stopSubsystems().catch((error) => {
-          stopError ??= normalizeError(error)
-        })
-      } finally {
-        this.markState('stopped')
-        this.logger.debug('Neem server stopped')
-      }
-
-      if (stopError) throw stopError
-    })
+  // Ends a successful operation. A runtime that failed while it ran keeps the
+  // server failed rather than being overwritten by the operation's success.
+  private markSettled(): void {
+    const failed = this.failOnWorkerError()
+      ? [...this.runtimes.values()].find(
+          (runtime) => runtime.getState() === 'failed',
+        )
+      : undefined
+    if (failed) this.markState('failed', failed.getLastError())
+    else this.markState('running')
   }
 
   private async startPlugins(): Promise<void> {
@@ -361,24 +406,20 @@ export class HostController {
     this.plugins = plugins
   }
 
-  private async startRuntimes(): Promise<void> {
+  private async startRuntimes(scope: OperationScope): Promise<void> {
+    scope.throwIfAborted()
     const runtimes = new Map<string, RuntimeController>()
     for (const runtimeName of Object.keys(this.snapshot.manifest.runtimes)) {
       runtimes.set(runtimeName, this.createRuntime(runtimeName))
     }
 
-    // Publish ownership before readiness so stop can reach starting workers.
+    // Publish ownership before readiness so stop can reach starting workers;
+    // a failure is cleaned up by bringUp, whose runtime stops join the
+    // siblings that are still starting.
     this.runtimes = runtimes
-    try {
-      await Promise.all(
-        [...runtimes.values()].map((runtime) => runtime.start()),
-      )
-    } catch (error) {
-      await Promise.allSettled(
-        [...runtimes.values()].map((runtime) => runtime.stop()),
-      )
-      throw error
-    }
+    await Promise.all(
+      [...runtimes.values()].map((runtime) => runtime.start(scope)),
+    )
   }
 
   private async startProxy(): Promise<void> {
@@ -408,18 +449,29 @@ export class HostController {
     this.healthProbe = probe
   }
 
-  private async stopSubsystems(): Promise<void> {
+  // Runs every disposer even when an earlier one fails, then reports them all.
+  private async stopSubsystems(scope: OperationScope): Promise<void> {
     const proxy = this.proxy
     const runtimes = [...this.runtimes.values()]
     const plugins = this.plugins
     this.proxy = undefined
-    this.runtimes.clear()
+    this.runtimes = new Map()
     this.plugins = undefined
 
-    await proxy?.stop()
-    await Promise.allSettled(runtimes.map((runtime) => runtime.stop()))
-    await this.stopHealthProbe()
-    await plugins?.dispose()
+    const errors: Error[] = []
+    const collect = (error: unknown) => {
+      errors.push(normalizeError(error))
+    }
+    await proxy?.stop().catch(collect)
+    const results = await Promise.allSettled(
+      runtimes.map((runtime) => runtime.stop(scope)),
+    )
+    for (const result of results) {
+      if (result.status === 'rejected') collect(result.reason)
+    }
+    await this.stopHealthProbe().catch(collect)
+    await plugins?.dispose().catch(collect)
+    throwCollected(errors, 'Neem server subsystems did not stop cleanly')
   }
 
   private async stopHealthProbe(): Promise<void> {
@@ -440,13 +492,29 @@ export class HostController {
       onRecovered: () => this.refreshProxyUpstreams(),
       onUpstreamsChange: () => this.refreshProxyUpstreams(),
       onFailure: (error) => {
-        const failOnWorkerError =
-          this.options.failOnWorkerError ?? this.snapshot.mode === 'production'
-        if (!failOnWorkerError) return
+        if (!this.failOnWorkerError()) return
         this.markState('failed', error)
         this.options.onFailure?.(error)
       },
     })
+  }
+
+  // A replaced generation is gone either way (anything that missed the
+  // deadline was terminated), so its replacement still starts.
+  private reportUncleanStop(error: unknown): void {
+    this.logger.error(
+      { err: normalizeError(error) },
+      'Neem runtime did not stop cleanly before its replacement',
+    )
+  }
+
+  private failOnWorkerError(): boolean {
+    return this.options.failOnWorkerError ?? this.snapshot.mode === 'production'
+  }
+
+  private createStopScope(): OperationScope {
+    const { stopTimeout } = resolveLifecycle(this.snapshot.config.lifecycle)
+    return OperationScope.withTimeout(stopTimeout)
   }
 
   // Worker failure and recovery must not fail on proxy mutations; the proxy logs the
@@ -457,11 +525,11 @@ export class HostController {
       .catch(() => undefined)
   }
 
+  // Runtimes keep the snapshot they started from until they are reloaded, so
+  // a recovery restarts a runtime from the same output as its siblings.
   private replaceSnapshot(snapshot: RuntimeSnapshot): void {
     this.snapshot = snapshot
     this.logger = childLogger(snapshot.logger, 'neem:server')
-    for (const runtime of this.runtimes.values())
-      runtime.replaceSnapshot(snapshot)
   }
 
   private collectRuntimeUpstreams(): readonly RuntimeUpstreams[] {

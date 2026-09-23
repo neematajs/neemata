@@ -12,6 +12,7 @@ import {
 import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
 import { normalizeError } from '../utils.ts'
 import { HostController } from './controller.ts'
+import { isOperationAborted } from './lifecycle.ts'
 
 export type LoadRuntimeSnapshotOptions = {
   mode: NeemMode
@@ -55,7 +56,8 @@ export type RunHostOptions = {
 }
 
 // Production host lifecycle shared by `neem start` and standalone start.js:
-// run until the signal aborts or a worker failure brings the host down.
+// run until the signal aborts or a worker failure brings the host down. A
+// failed shutdown rejects, so the process exits non-zero.
 export async function runHostUntilClosed(
   snapshot: RuntimeSnapshot,
   options: RunHostOptions,
@@ -86,12 +88,24 @@ export async function runHostUntilClosed(
   }
   signal.addEventListener('abort', onAbort, { once: true })
 
+  let failed = false
   try {
-    await controller.start()
-    if (!signal.aborted) options.onReady?.(controller.getHealth())
+    try {
+      await controller.start()
+      if (!signal.aborted) options.onReady?.(controller.getHealth())
+    } catch (error) {
+      // A signal stopped the start; `closed` carries the stop's outcome.
+      if (!isOperationAborted(error)) throw error
+    }
     await closed.promise
+  } catch (error) {
+    failed = true
+    throw error
   } finally {
     signal.removeEventListener('abort', onAbort)
-    await stop().catch(() => undefined)
+    // The first error wins: after a failure, a failing cleanup stop must not
+    // replace it; otherwise the stop's own failure is the result.
+    if (failed) await stop().catch(() => undefined)
+    else await stop()
   }
 }

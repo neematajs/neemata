@@ -7,6 +7,7 @@ import type {
   NeemBuildConfig,
   NeemEnv,
   NeemHealthConfig,
+  NeemLifecycleConfig,
   NeemLoggerOptions,
   NeemProxyConfig,
   NeemResolvedArtifact,
@@ -49,6 +50,7 @@ export type ManifestConfig = {
   env?: NeemEnv
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  lifecycle?: NeemLifecycleConfig
   runtimes: Record<string, ManifestRuntimeConfig>
 }
 
@@ -116,7 +118,25 @@ export function createManifest(compiled: CompiledGraph): Manifest {
 
 export async function readManifest(manifestFile: string): Promise<Manifest> {
   const content = await readFile(manifestFile, 'utf8')
-  return parseManifest(JSON.parse(content))
+  const manifest: unknown = JSON.parse(content)
+  assertManifestSchemaVersion(manifestFile, manifest)
+  return parseManifest(manifest)
+}
+
+// A schema mismatch means the output predates this Neem version; the strict
+// schema errors would describe symptoms instead of the fix.
+function assertManifestSchemaVersion(
+  manifestFile: string,
+  manifest: unknown,
+): void {
+  const version =
+    typeof manifest === 'object' && manifest !== null
+      ? (manifest as { schemaVersion?: unknown }).schemaVersion
+      : undefined
+  if (version === MANIFEST_SCHEMA_VERSION) return
+  throw new Error(
+    `Neem manifest [${manifestFile}] has schema version [${String(version)}], expected [${MANIFEST_SCHEMA_VERSION}]; rebuild it with \`neem build\``,
+  )
 }
 
 export async function writeManifest(
@@ -281,7 +301,7 @@ function getRequiredArtifact(
 }
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
-  const { proxy, health } = compiled.graph.config
+  const { proxy, health, lifecycle } = compiled.graph.config
   const updates = compiled.graph.config.build?.updates
   const build = updates ? { updates: { ...updates } } : undefined
   const logger = createLogger(compiled)
@@ -297,6 +317,7 @@ function createConfig(compiled: CompiledGraph): ManifestConfig {
     env,
     proxy,
     health,
+    lifecycle: lifecycle ? { ...lifecycle } : undefined,
     runtimes: Object.fromEntries(runtimes),
   }
 }

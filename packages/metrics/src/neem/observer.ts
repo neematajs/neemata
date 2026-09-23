@@ -38,9 +38,10 @@ export function createNeemMetricsLifecycle(options: {
 
   function recordHealth() {
     const health = options.getHealth()
-    for (const { name: runtime, pool } of health.runtimes) {
-      const ready = pool.state === 'ready' ? 1 : 0
-      runtimeReady.set({ runtime }, ready)
+    for (const { name: runtime, ready, pool } of health.runtimes) {
+      // Lifecycle readiness, not the pool: a recovering runtime has no
+      // threads for a moment and an empty pool would count as ready.
+      runtimeReady.set({ runtime }, ready ? 1 : 0)
 
       for (const state of ['ready', 'failed', 'stopped', 'starting'] as const) {
         runtimePoolThreads.set({ runtime, state }, pool[state])

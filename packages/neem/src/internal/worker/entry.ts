@@ -47,9 +47,22 @@ let logger: Logger | undefined
 // stopRequested records that the host asked for it, so exits are not failures.
 let stopping: Promise<void> | undefined
 let stopRequested = false
+let exiting: Promise<void> | undefined
 
 function postMessage(message: WorkerMessage): void {
   port.postMessage(message)
+}
+
+// Every exit path closes the ports and yields once after its last message so
+// the parent receives that message before the exit event.
+function exitAfterFlush(code: number, message?: WorkerMessage): Promise<void> {
+  return (exiting ??= (async () => {
+    if (message) postMessage(message)
+    workerData.port.close()
+    port.close()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    process.exit(code)
+  })())
 }
 
 function reportError(value: unknown, origin: WorkerErrorOrigin): void {
@@ -170,15 +183,12 @@ async function stopAndExit(): Promise<void> {
   stopRequested = true
   try {
     await stopRuntime()
-    postMessage({ type: 'stopped' })
-    workerData.port.close()
-    port.close()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    process.exit(0)
   } catch (error) {
     reportError(error, 'runtime')
-    process.exit(1)
+    await exitAfterFlush(1)
+    return
   }
+  await exitAfterFlush(0, { type: 'stopped' })
 }
 
 async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
@@ -195,7 +205,7 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
     if (stopRequested) return
     reportError(error, 'runtime')
   }
-  process.exit(1)
+  await exitAfterFlush(1)
 }
 
 port.on('message', (message: ParentMessage) => {
@@ -205,12 +215,12 @@ port.on('message', (message: ParentMessage) => {
 
 process.on('uncaughtException', (error) => {
   reportError(error, 'runtime')
-  process.exit(1)
+  void exitAfterFlush(1)
 })
 
 process.on('unhandledRejection', (error) => {
   reportError(error, 'runtime')
-  process.exit(1)
+  void exitAfterFlush(1)
 })
 
 // Started before main so a stop that arrives during bootstrap can await it.
@@ -222,7 +232,8 @@ async function main(): Promise<void> {
   } catch (error) {
     if (stopRequested) return
     reportError(error, 'bootstrap')
-    process.exit(1)
+    await exitAfterFlush(1)
+    return
   }
 
   if (stopRequested) return
@@ -245,7 +256,7 @@ async function main(): Promise<void> {
     })
     if (stopRequested) return
     reportError(error, 'start')
-    process.exit(1)
+    await exitAfterFlush(1)
   }
 }
 

@@ -38,6 +38,18 @@ After that many patches, the next update restarts the runtime from fresh
 output. Set it to `0` to restart on every update. Production workers are
 created directly and their bundles contain no DevEngine instrumentation.
 
+## Shutdown
+
+`neem start`, `neem dev` and a built `start.js` stop within one total budget,
+`lifecycle.stopTimeout` in `neem.config.ts` (milliseconds, default `15000`).
+Host `stop()` hooks, runtime hosts, workers and plugins share it: each step
+gets what earlier steps left over. Anything still running when the budget runs
+out is terminated.
+
+A shutdown that fails exits with a non-zero code: a cleanup step that throws,
+or a worker or host runner that had to be terminated. `lifecycle.startTimeout`
+(default `30000`) bounds how long a worker may take to become ready.
+
 ## Development environment files
 
 Load an environment file before evaluating `neem.config.ts` and starting workers:

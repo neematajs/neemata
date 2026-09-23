@@ -1,4 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -14,6 +14,7 @@ import type {
 import {
   createManifest as createCompiledManifest,
   MANIFEST_SCHEMA_VERSION,
+  readManifest,
   selectManifestRuntimes,
   toManifestPath,
   validateManifest,
@@ -71,6 +72,44 @@ describe('Neem manifest', () => {
     )
   })
 
+  it('asks to rebuild a manifest written by another schema version', async () => {
+    const outDir = await createTempDir('neem-manifest-')
+    const manifestFile = resolve(outDir, 'neem.manifest.json')
+    await writeFile(
+      manifestFile,
+      JSON.stringify({ ...createManifest(), schemaVersion: 1 }),
+    )
+
+    await expect(readManifest(manifestFile)).rejects.toThrow(
+      /schema version \[1\], expected \[2\]; rebuild it with `neem build`/,
+    )
+  })
+
+  it('accepts positive integer lifecycle timeouts only', () => {
+    const withLifecycle = (lifecycle: unknown) =>
+      createManifest({
+        config: {
+          runtimes: { api: {}, jobs: {} },
+          lifecycle: lifecycle as Manifest['config']['lifecycle'],
+        },
+      })
+
+    expect(() =>
+      validateManifest(
+        withLifecycle({ stopTimeout: 20_000, startTimeout: 60_000 }),
+      ),
+    ).not.toThrow()
+    for (const invalid of [
+      { stopTimeout: 0 },
+      { startTimeout: 1.5 },
+      { stopTimeout: 1_000, deadline: 5 },
+    ]) {
+      expect(() => validateManifest(withLifecycle(invalid))).toThrow(
+        /lifecycle/,
+      )
+    }
+  })
+
   it('selects manifest runtimes and matching config entries', () => {
     const manifest = createManifest()
 
@@ -87,6 +126,7 @@ describe('Neem manifest', () => {
     const manifest = createCompiledManifest(createCompiledHostOnlyGraph())
 
     expect(manifest.config.env).toEqual({ ROOT_ENV: 'root' })
+    expect(manifest.config.lifecycle).toEqual({ stopTimeout: 20_000 })
     expect(manifest.config.runtimes.scheduler?.proxy).toEqual({
       routing: { type: 'path', name: 'scheduler' },
       sni: 'scheduler.localhost',
@@ -321,7 +361,11 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
   return {
     graph: {
       outDir,
-      config: { env: { ROOT_ENV: 'root' }, runtimes: { scheduler: {} } },
+      config: {
+        env: { ROOT_ENV: 'root' },
+        lifecycle: { stopTimeout: 20_000 },
+        runtimes: { scheduler: {} },
+      },
     },
     targets: [
       compiledTarget('start-entry', start),

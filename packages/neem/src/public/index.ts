@@ -58,6 +58,7 @@ export type {
   NeemRuntimeServerRuntimeHealth,
   NeemRuntimeServerSnapshot,
   NeemRuntimeServerState,
+  NeemRuntimeState,
   NeemRuntimeThreadHandle,
   NeemRuntimeUpstream,
   NeemRuntimeUpstreamType,

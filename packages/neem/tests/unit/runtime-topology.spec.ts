@@ -121,7 +121,7 @@ function createSnapshot(
     mode: 'development',
     outDir: '/out',
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtime: {
         entry: 'runtime/start.js',
         start: artifact('start', 'start', '/out/runtime/start.js'),

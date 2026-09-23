@@ -173,12 +173,19 @@ export const devCommand = defineCommand({
       probe: createNeemTestProbe(),
     })
 
+    let failed = false
     try {
       await session.start()
       await session.closed
+    } catch (error) {
+      failed = true
+      throw error
     } finally {
       controller.dispose()
-      await session.stop().catch(() => undefined)
+      // The first error wins: a stop failure already rejected `closed`, and
+      // after another failure it must not replace that one.
+      if (failed) await session.stop().catch(() => undefined)
+      else await session.stop()
     }
   },
 })

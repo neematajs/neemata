@@ -28,6 +28,11 @@ if (!parentPort) {
 const port = parentPort
 const data = rawWorkerData as HostRunnerData
 let host: NeemRuntimeHost | undefined
+// The factory may still be resolving when stop arrives; stop awaits it so the
+// host it eventually returns is stopped exactly once.
+let creating: Promise<NeemRuntimeHost> | undefined
+let stopping: Promise<void> | undefined
+let exiting: Promise<void> | undefined
 let logger: Logger | undefined
 let plannerOptions: unknown
 let currentThreads: readonly NeemRuntimeThreadHandle[] = []
@@ -39,6 +44,21 @@ function closeCurrentThreads(): void {
 
 function post(message: HostRunnerResponse): void {
   port.postMessage(message)
+}
+
+// Every exit path posts its last message, closes the ports and yields once so
+// the parent receives that message before the exit event.
+function exitAfterFlush(
+  code: number,
+  message?: HostRunnerResponse,
+): Promise<void> {
+  return (exiting ??= (async () => {
+    if (message) post(message)
+    closeCurrentThreads()
+    port.close()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    process.exit(code)
+  })())
 }
 
 async function initialize(): Promise<void> {
@@ -98,16 +118,30 @@ async function initializeHost(
       `Runtime host file [${data.hostArtifact.file}] default export must be a marked runtime host factory produced by defineRuntimeHost`,
     )
   }
+  if (stopping) throw new Error('Neem runtime host stopped before start')
 
   currentThreads = threads
-  host = await factory({
+  const params = {
     mode: data.mode,
     name: data.runtimeName,
     logger,
     threads,
     options: plannerOptions,
-  })
-  await host.start?.()
+  }
+  creating = (async () => factory(params))()
+  const created = await creating
+  if (stopping) throw new Error('Neem runtime host stopped before start')
+  host = created
+  await created.start?.()
+}
+
+function stopHost(): Promise<void> {
+  return (stopping ??= (async () => {
+    const current = host ?? (await creating?.catch(() => undefined))
+    host = undefined
+    await current?.stop?.()
+    closeCurrentThreads()
+  })())
 }
 
 async function handle(request: HostRunnerRequest): Promise<void> {
@@ -134,18 +168,15 @@ async function handle(request: HostRunnerRequest): Promise<void> {
           { threads: currentThreads.length },
           'Calling Neem runtime host stop',
         )
-        await host?.stop?.()
-        host = undefined
-        closeCurrentThreads()
+        await stopHost()
         post({ id: request.id, type: 'result' })
         return
       case 'shutdown':
         logger?.trace('Neem host runner shutting down')
-        closeCurrentThreads()
-        post({ id: request.id, type: 'result' })
-        port.close()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        process.exit(0)
+        // Without an earlier stop, a host still being created would outlive
+        // the runner; an earlier stop that hangs is the parent's to abandon.
+        if (!stopping && creating) await stopHost()
+        await exitAfterFlush(0, { id: request.id, type: 'result' })
         return
     }
   } catch (error) {
@@ -159,8 +190,7 @@ port.on('message', (message: HostRunnerRequest) => {
 
 process.on('uncaughtException', (error) => {
   logger?.error(new Error('Neem host uncaught exception', { cause: error }))
-  post({ type: 'failure', error: serializeError(error) })
-  process.exit(1)
+  void exitAfterFlush(1, { type: 'failure', error: serializeError(error) })
 })
 
 process.on('unhandledRejection', (error) => {
@@ -168,11 +198,9 @@ process.on('unhandledRejection', (error) => {
   logger?.error(
     new Error('Neem host unhandled rejection', { cause: normalized }),
   )
-  post({ type: 'failure', error: serializeError(normalized) })
-  process.exit(1)
+  void exitAfterFlush(1, { type: 'failure', error: serializeError(normalized) })
 })
 
 initialize().catch((error) => {
-  post({ type: 'failure', error: serializeError(error) })
-  process.exit(1)
+  void exitAfterFlush(1, { type: 'failure', error: serializeError(error) })
 })

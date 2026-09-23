@@ -59,7 +59,8 @@ describe('ThreadController', () => {
       const result = await raceWithTimeout(entered.promise, 2_000)
       expect(result.timedOut).toBe(false)
       await thread.stop()
-      expect(await start).toBeUndefined()
+      // The aborted start is not a failure; stop owned the cleanup.
+      expect(await start).toMatchObject({ name: 'AbortError' })
       expect(await readFile(eventsFile, 'utf8')).toBe('stop\nfinalized\n')
       expect(failures).toBe(0)
       expect(thread.getState()).toBe('stopped')
@@ -296,7 +297,7 @@ async function createThreadFixture(
     outDir,
   }
   const manifest: Manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runtime: {
       entry: 'start.js',
       start: {

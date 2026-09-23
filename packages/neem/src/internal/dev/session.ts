@@ -2,6 +2,7 @@ import type { Future } from '@nmtjs/common'
 import type { Logger } from 'pino'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 
+import type { NeemLifecycleConfig } from '../../shared/types.ts'
 import type { ThreadLifecycleEvent } from '../host/thread.ts'
 import type { WorkerServiceStopProgressEvent } from '../services/client.ts'
 import type { ConfigSignalWatcher } from '../services/config-signal.ts'
@@ -14,6 +15,12 @@ import type { NeemTestProbe } from '../test-probe.ts'
 import { loadRuntimeSnapshot } from '../host/bootstrap.ts'
 import { HostController } from '../host/controller.ts'
 import {
+  isOperationAborted,
+  OperationScope,
+  resolveLifecycle,
+  throwCollected,
+} from '../host/lifecycle.ts'
+import {
   childLogger,
   createDefaultLogger,
   resolveManifestLogger,
@@ -21,7 +28,12 @@ import {
 import { readManifest } from '../manifest/manifest.ts'
 import { resolveServiceEntry, WorkerServiceClient } from '../services/client.ts'
 import { watchConfigSignal } from '../services/config-signal.ts'
-import { deserializeError, normalizeError, serializeError } from '../utils.ts'
+import {
+  deserializeError,
+  normalizeError,
+  raceWithTimeout,
+  serializeError,
+} from '../utils.ts'
 
 type WatcherClient = WorkerServiceClient<WatcherEvent, WatcherResult>
 
@@ -55,6 +67,8 @@ export class DevSession {
   private restartDeferred = false
   // Resolved once per host generation; runtime reloads reuse it.
   private hostLogger: Logger | undefined
+  // From the latest manifest; sizes the session's stop budget.
+  private lifecycle: NeemLifecycleConfig | undefined
   private logger = childLogger(
     createDefaultLogger('development'),
     'neem:server',
@@ -81,26 +95,53 @@ export class DevSession {
     await this.startWatcher()
   }
 
+  /**
+   * Stops the host and the watcher within one `lifecycle.stopTimeout` budget.
+   * A failed shutdown rejects both this promise and `closed`.
+   */
   stop(): Promise<void> {
     if (this.stopping) return this.stopping
     this.stopped = true
+    const scope = OperationScope.withTimeout(
+      resolveLifecycle(this.lifecycle).stopTimeout,
+    )
     // A watcher event may be awaiting host readiness. Deliver stop before
     // draining that queue so a pending start can finish its own cleanup.
-    const controller = this.stopController()
+    const controller = this.stopController(scope)
     return (this.stopping = (async () => {
-      await Promise.all([controller, this.events.waitIdle()])
+      const errors: Error[] = []
+      const collect = (error: unknown) => {
+        errors.push(normalizeError(error))
+      }
+      await controller.catch(collect)
+      // Stopping the watcher below settles an event still waiting on it.
+      await raceWithTimeout(this.events.waitIdle(), scope.remaining())
       const watcher = this.watcher
       const configSignalWatcher = this.configSignalWatcher
       this.watcher = undefined
       this.configSignalWatcher = undefined
-      await Promise.all([configSignalWatcher?.close(), watcher?.stop()])
+      const results = await Promise.allSettled([
+        configSignalWatcher?.close(),
+        watcher?.stop(undefined, scope),
+      ])
+      for (const result of results) {
+        if (result.status === 'rejected') collect(result.reason)
+      }
       this.options.probe?.emit('cli:dev:closed')
+      try {
+        throwCollected(errors, 'Neem dev session did not stop cleanly')
+      } catch (error) {
+        this.closedFuture.reject(error)
+        throw error
+      }
       this.closedFuture.resolve()
     })())
   }
 
   private enqueue(task: () => Promise<unknown>): void {
     void this.events.run(task).catch((error) => {
+      // A stop interrupted the event; the stop reports its own outcome.
+      if (isOperationAborted(error)) return
       this.closedFuture.reject(normalizeError(error))
     })
   }
@@ -180,7 +221,7 @@ export class DevSession {
     this.restartDeferred = false
     const previousSignalFiles = this.configSignalFiles
     this.watcher = undefined
-    await this.stopController()
+    await this.retireController()
     await this.stopConfigSignalWatcher()
     await previousWatcher?.stop().catch(() => undefined)
 
@@ -256,7 +297,7 @@ export class DevSession {
       cacheBust: true,
     })
     this.logger = childLogger(this.hostLogger, 'neem:server')
-    await this.stopController()
+    await this.retireController()
     if (this.stopped) return false
     await this.startController(this.manifestFile)
     return true
@@ -272,6 +313,7 @@ export class DevSession {
     })
     // stop() only reaches a controller once it is published below.
     if (this.stopped) return
+    this.lifecycle = snapshot.config.lifecycle
     const controller: HostController = new HostController({
       snapshot,
       failOnWorkerError: true,
@@ -290,7 +332,13 @@ export class DevSession {
       },
     })
     this.controller = controller
-    await controller.start()
+    try {
+      await controller.start()
+    } catch (error) {
+      // The session stopped this controller; stop() reports how that went.
+      if (isOperationAborted(error)) return
+      throw error
+    }
     if (this.controller !== controller) return
     this.options.probe?.emit('runtime:ready', {
       type: 'ready',
@@ -428,8 +476,8 @@ export class DevSession {
         )
       }
     } catch (error) {
-      if (!this.stopped)
-        await this.fallback(runtimeName, normalizeError(error).message)
+      if (isOperationAborted(error) || this.stopped) return
+      await this.fallback(runtimeName, normalizeError(error).message)
     }
   }
 
@@ -475,14 +523,28 @@ export class DevSession {
     }
   }
 
-  private async stopController(): Promise<void> {
+  private async stopController(scope?: OperationScope): Promise<void> {
     const controller = this.controller
     this.controller = undefined
     for (const runtimeName of this.recoveries.keys())
       this.releaseRecovery(runtimeName)
     if (!controller) return
-    await controller.stop()
-    this.options.probe?.emit('runtime:stopped', { type: 'stopped' })
+    try {
+      await controller.stop(scope)
+    } finally {
+      this.options.probe?.emit('runtime:stopped', { type: 'stopped' })
+    }
+  }
+
+  // A restart replaces the generation either way; an unclean stop of the old
+  // one is reported without ending the session.
+  private async retireController(): Promise<void> {
+    await this.stopController().catch((error) => {
+      this.logger.error(
+        { err: normalizeError(error) },
+        'Neem server did not stop cleanly',
+      )
+    })
   }
 
   // Every manifest snapshot is cumulative and written to the same file, so an

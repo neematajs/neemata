@@ -68,6 +68,10 @@ export async function raceWithTimeout<T>(
   promise: Promise<T>,
   ms: number,
 ): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  // Timers clamp values beyond 2^31-1 ms to 1 ms; an unbounded wait has no timer.
+  if (!Number.isFinite(ms)) {
+    return { timedOut: false, value: await promise }
+  }
   const timeout = new AbortController()
   try {
     return await Promise.race([

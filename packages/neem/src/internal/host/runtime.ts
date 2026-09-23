@@ -6,6 +6,7 @@ import type {
   NeemResolvedArtifact,
   NeemRuntimePlan,
   NeemRuntimeServerRuntimeHealth,
+  NeemRuntimeState,
   NeemRuntimeUpstream,
   NeemWorkerPoolHealth,
   NeemWorkerPoolState,
@@ -13,13 +14,19 @@ import type {
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
-import type { RecoveryOptions } from './recovery.ts'
+import type { RecoveryOptions, RecoveryPolicy } from './recovery.ts'
 import type { HostRunnerData } from './runner-protocol.ts'
 import type { ThreadPlan, ThreadLifecycleEvent } from './thread.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { normalizeError, wait } from '../utils.ts'
+import { normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
+import {
+  isOperationAborted,
+  OperationScope,
+  resolveLifecycle,
+  throwCollected,
+} from './lifecycle.ts'
 import { createRecoveryPolicy, getRecoveryDelay } from './recovery.ts'
 import { HostRunner } from './runner.ts'
 import { ThreadController } from './thread.ts'
@@ -39,43 +46,77 @@ export type RuntimeControllerOptions = {
   runtimeName: string
   hooks: HostHooks
   recovery?: RecoveryOptions
+  // Reports a failure the recovery policy could not repair.
   onFailure?: (error: Error, runtime: RuntimeController) => MaybePromise<void>
   onRecovered?: (runtime: RuntimeController) => MaybePromise<void>
   // Runs when failed or cleaned-up workers stop advertising upstreams.
   onUpstreamsChange?: (runtime: RuntimeController) => MaybePromise<void>
 }
 
-export class RuntimeController {
-  private host: HostRunner | undefined
-  private logger: Logger | undefined
-  private threads: readonly ThreadController[] = []
-  private stopped = true
-  private cleanupPromise: Promise<void> | undefined
-  private recoveryPromise: Promise<void> | undefined
-  private restartAttempts = 0
+// The host runner and threads of one start attempt. Events carry the id of the
+// generation that produced them, so a retired generation cannot steer this one.
+type Generation = {
+  id: number
+  host?: HostRunner
+  threads: readonly ThreadController[]
+  // Present while the attempt is starting: a failure reported by one of its
+  // members fails the attempt instead of starting a recovery around it.
+  starting?: { scope: OperationScope; failure?: Error }
+}
 
-  constructor(private options: RuntimeControllerOptions) {}
+type Operation = { scope: OperationScope; settled: Promise<void> }
+
+/**
+ * Sole owner of one runtime's lifecycle. Start, recovery and stop are
+ * operations: at most one start or recovery runs at a time, and stop aborts it
+ * and joins it before releasing the generation it left behind.
+ */
+export class RuntimeController {
+  private state: NeemRuntimeState = 'idle'
+  private lastError: Error | undefined
+  private generations = 0
+  private current: Generation | undefined
+  private operation: Operation | undefined
+  private stopping: Promise<void> | undefined
+  private restartAttempts = 0
+  private readonly logger: Logger
+
+  constructor(private readonly options: RuntimeControllerOptions) {
+    this.logger = childLogger(
+      options.snapshot.logger,
+      runtimeLabel(options.runtimeName),
+    )
+  }
 
   get name(): string {
     return this.options.runtimeName
   }
 
+  getState(): NeemRuntimeState {
+    return this.state
+  }
+
+  getLastError(): Error | undefined {
+    return this.lastError
+  }
+
   listThreads(): readonly ThreadController[] {
-    return this.threads
+    return this.current?.threads ?? []
   }
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
-    return this.threads.flatMap((thread) => thread.getUpstreams())
+    return this.listThreads().flatMap((thread) => thread.getUpstreams())
   }
 
   async applyPatch(
     updates: readonly BindingClientHmrUpdate[],
   ): Promise<RuntimePatchResult> {
+    const threadList = this.listThreads()
     const maxPatches =
       this.options.snapshot.manifest.config.build?.updates?.maxPatches ?? 50
     // The budget permits exactly maxPatches successful patches; recycle before
     // applying the following edit, so the fresh bundle includes that edit too.
-    if (this.threads.some((thread) => thread.patches >= maxPatches)) {
+    if (threadList.some((thread) => thread.patches >= maxPatches)) {
       return {
         accepted: false,
         deliveredFiles: [],
@@ -86,7 +127,7 @@ export class RuntimeController {
     // A thread that registered after DevEngine computed this update may have
     // loaded output without it, and the engine would treat it as current.
     const clients = new Set(updates.map(({ clientId }) => clientId))
-    const missed = this.threads.find((thread) => !clients.has(thread.id))
+    const missed = threadList.find((thread) => !clients.has(thread.id))
     if (missed) {
       return {
         accepted: false,
@@ -95,7 +136,7 @@ export class RuntimeController {
         reason: `Worker [${missed.name}] started without this update`,
       }
     }
-    const threads = new Map(this.threads.map((thread) => [thread.id, thread]))
+    const threads = new Map(threadList.map((thread) => [thread.id, thread]))
     const results = await Promise.all(
       updates.map(async ({ clientId, update }) => {
         const thread = threads.get(clientId)
@@ -140,36 +181,112 @@ export class RuntimeController {
   }
 
   getHealth(): NeemRuntimeServerRuntimeHealth {
-    const pool = this.getPoolHealth()
     return {
       name: this.name,
-      ready: pool.state === 'ready',
-      pool,
-      threads: this.threads.map((thread) => thread.getHealth()),
+      // Readiness is the lifecycle state, not the thread count: a recovering
+      // runtime has no threads for a moment and still serves nothing.
+      ready: this.state === 'ready',
+      state: this.state,
+      pool: this.getPoolHealth(),
+      threads: this.listThreads().map((thread) => thread.getHealth()),
     }
   }
 
-  async start(): Promise<void> {
-    this.stopped = false
-    const logger = this.createLogger()
-    this.logger = logger
-    logger.debug('Neem runtime starting')
+  /**
+   * Rejects with the start failure, or with OperationAbortedError when the
+   * parent scope or stop() aborts it; stop() then releases what it started.
+   */
+  start(parent: OperationScope = new OperationScope()): Promise<void> {
+    if (this.state !== 'idle') {
+      return Promise.reject(
+        new Error(`Runtime [${this.name}] cannot start while ${this.state}`),
+      )
+    }
+    this.setState('starting')
+    return this.runOperation(parent, async (scope) => {
+      try {
+        await this.startGeneration(scope)
+      } catch (error) {
+        if (!isOperationAborted(error)) {
+          this.setState('failed', normalizeError(error))
+        }
+        throw error
+      }
+      this.setState('ready')
+    })
+  }
+
+  /**
+   * Stops within the scope's deadline and rejects with every cleanup error,
+   * including workers or the host runner terminated at the deadline. A stop
+   * requested while one runs joins it; one after it finished is a no-op.
+   */
+  stop(scope: OperationScope = this.createStopScope()): Promise<void> {
+    this.stopping ??= this.runStop(scope).finally(() => {
+      this.stopping = Promise.resolve()
+    })
+    return this.stopping
+  }
+
+  private async runStop(scope: OperationScope): Promise<void> {
+    this.setState('stopping')
+    const errors: Error[] = []
+    const operation = this.operation
+    if (operation) {
+      operation.scope.abort()
+      const joined = await raceWithTimeout(operation.settled, scope.remaining())
+      if (joined.timedOut) {
+        errors.push(
+          new Error(
+            `Runtime [${this.name}] start or recovery did not settle before the stop deadline`,
+          ),
+        )
+      }
+    }
+    await this.releaseGeneration(scope).catch((error) => {
+      errors.push(normalizeError(error))
+    })
+    this.setState('stopped')
+    throwCollected(errors, `Runtime [${this.name}] did not stop cleanly`)
+  }
+
+  private runOperation(
+    parent: OperationScope,
+    run: (scope: OperationScope) => Promise<void>,
+  ): Promise<void> {
+    const scope = parent.child()
+    const promise = run(scope).finally(() => {
+      scope.dispose()
+      if (this.operation?.scope === scope) this.operation = undefined
+    })
+    this.operation = { scope, settled: promise.then(noop, noop) }
+    return promise
+  }
+
+  // One start attempt: creates a generation and brings it to ready or throws.
+  // A failed attempt releases its generation; an aborted one leaves it to stop().
+  private async startGeneration(scope: OperationScope): Promise<void> {
+    const attempt = scope.child()
+    const generation: Generation = {
+      id: ++this.generations,
+      threads: [],
+      starting: { scope: attempt },
+    }
+    this.current = generation
+    this.logger.debug('Neem runtime starting')
 
     try {
-      await this.callRuntimeHook('runtime:start')
-      if (this.stopped) return
-      const host = this.createHostRunner()
-      this.host = host
-      await host.start()
-      if (this.stopped) return
-      const plan = await host.plan()
-      if (this.stopped) return
+      await attempt.wait(this.callRuntimeHook('runtime:start'))
+      const host = this.createHostRunner(generation.id)
+      generation.host = host
+      await attempt.wait(host.start())
+      const plan = await attempt.wait(host.plan())
       const threadPlans = resolveThreadTopology({
         snapshot: this.options.snapshot,
         runtimeName: this.name,
         plan,
       })
-      logger.trace(
+      this.logger.trace(
         {
           threads: threadPlans.map((thread) => ({
             name: thread.name,
@@ -179,7 +296,7 @@ export class RuntimeController {
         'Neem runtime worker topology',
       )
 
-      this.threads = threadPlans.map(
+      generation.threads = threadPlans.map(
         (plan, index) =>
           new ThreadController({
             snapshot: this.options.snapshot,
@@ -189,167 +306,177 @@ export class RuntimeController {
             hooks: this.options.hooks,
             onThreadEvent: this.options.onThreadEvent,
             onFailure: (error, thread) =>
-              this.handleFailure(error, `worker ${thread.name}`),
+              this.handleFailure(error, generation.id, `worker ${thread.name}`),
           }),
       )
 
-      await Promise.all(this.threads.map((thread) => thread.start()))
-      if (this.stopped) return
-      await host.callStart(this.getThreadHandles())
-      if (this.stopped) return
-      await this.callRuntimeHook('runtime:ready', this.getUpstreams())
-      if (this.stopped) return
-      logger.debug('Neem runtime ready')
-      logger.trace(
-        { threads: this.threads.length, upstreams: this.getUpstreams().length },
+      await Promise.all(
+        generation.threads.map((thread) => thread.start(attempt)),
+      )
+      await attempt.wait(host.callStart(this.getThreadHandles()))
+      await attempt.wait(
+        this.callRuntimeHook('runtime:ready', this.getUpstreams()),
+      )
+      this.logger.debug('Neem runtime ready')
+      this.logger.trace(
+        {
+          threads: generation.threads.length,
+          upstreams: this.getUpstreams().length,
+        },
         'Neem runtime summary',
       )
     } catch (error) {
-      if (this.stopped) return
-      const normalized = normalizeError(error)
-      await this.callRuntimeFailHook(normalized)
-      await this.cleanup().catch((stopError) => {
-        logger.warn(
-          new Error(`Runtime [${this.name}] cleanup failed`, {
-            cause: normalizeError(stopError),
-          }),
-        )
-      })
+      const failure = generation.starting?.failure
+      if (isOperationAborted(error) && !failure) throw error
+      const normalized = failure ?? normalizeError(error)
+      // The outer scope, not the attempt: a stop arriving now still aborts
+      // the remaining failure handling and takes over the cleanup.
+      await scope.wait(this.callRuntimeFailHook(normalized))
+      await this.releaseGeneration(this.createStopScope()).catch(
+        (stopError) => {
+          this.logger.warn(
+            new Error(`Runtime [${this.name}] cleanup failed`, {
+              cause: normalizeError(stopError),
+            }),
+          )
+        },
+      )
       throw normalized
+    } finally {
+      generation.starting = undefined
+      attempt.dispose()
     }
   }
 
-  async stop(): Promise<void> {
-    this.stopped = true
-    await this.cleanup()
-  }
+  // Releases the current generation within the scope's deadline and reports
+  // every error: host stop, each thread, host runner shutdown, the stop hook.
+  private async releaseGeneration(scope: OperationScope): Promise<void> {
+    const generation = this.current
+    if (!generation) return
+    this.current = undefined
+    const { host, threads } = generation
+    this.logger.debug('Neem runtime stopping')
+    this.logger.trace({ threads: threads.length }, 'Neem runtime stop options')
 
-  // Failed startup cleanup must leave the remaining recovery attempts eligible.
-  private cleanup(): Promise<void> {
-    // Startup failure and recovery can reach cleanup together. Replacements
-    // must wait for the original workers to release their resources.
-    this.cleanupPromise ??= this.stopResources().finally(() => {
-      this.cleanupPromise = undefined
-    })
-    return this.cleanupPromise
-  }
-
-  private async stopResources(): Promise<void> {
-    const host = this.host
-    const threads = this.threads
-    const logger = this.logger
-    this.host = undefined
-    this.threads = []
-    this.logger = undefined
-    logger?.debug('Neem runtime stopping')
-    logger?.trace({ threads: threads.length }, 'Neem runtime stop options')
-
-    let hostError: Error | undefined
-    try {
-      await host?.callStop()
-    } catch (error) {
-      hostError = normalizeError(error)
+    const errors: Error[] = []
+    const collect = (error: unknown) => {
+      errors.push(normalizeError(error))
     }
-
+    await host?.callStop(scope).catch(collect)
     const threadResults = await Promise.allSettled(
-      threads.map((thread) => thread.stop()),
+      threads.map((thread) => thread.stop(scope)),
     )
-    await host?.shutdown().catch((error) => {
-      hostError ??= normalizeError(error)
-    })
-
-    let hookError: Error | undefined
-    if (logger) {
-      await this.callRuntimeHook('runtime:stop').catch((error) => {
-        hookError = normalizeError(error)
-      })
+    for (const result of threadResults) {
+      if (result.status === 'rejected') collect(result.reason)
     }
-    logger?.debug('Neem runtime stopped')
-
-    const threadError = threadResults.find(
-      (result): result is PromiseRejectedResult => result.status === 'rejected',
-    )
-    if (hostError) throw hostError
-    if (threadError) throw normalizeError(threadError.reason)
-    if (hookError) throw hookError
+    await host?.shutdown(scope).catch(collect)
+    await this.callRuntimeHook('runtime:stop').catch(collect)
+    this.logger.debug('Neem runtime stopped')
+    throwCollected(errors, `Runtime [${this.name}] did not stop cleanly`)
   }
 
-  replaceSnapshot(snapshot: RuntimeSnapshot): void {
-    this.options = { ...this.options, snapshot }
-  }
+  // Failures only report here; this controller alone decides between failing
+  // the attempt that is starting, recovering, or giving up.
+  private handleFailure(
+    error: Error,
+    generationId: number,
+    source: string,
+  ): Promise<void> | undefined {
+    const generation = this.current
+    if (generation?.id !== generationId) return
+    if (generation.starting) {
+      generation.starting.failure ??= error
+      generation.starting.scope.abort()
+      return
+    }
+    if (this.state !== 'ready') return
 
-  private async handleFailure(error: Error, source: string): Promise<void> {
-    if (this.stopped) return
-    this.logger?.warn({ err: error }, `Neem runtime ${source} failed`)
-    // Detach before hooks and the recovery delay so routing stops reaching the dead worker.
-    await this.options.onUpstreamsChange?.(this)
-    await this.callRuntimeFailHook(error)
-
-    if (this.stopped || this.recoveryPromise) return
-
+    this.logger.warn({ err: error }, `Neem runtime ${source} failed`)
     const policy = createRecoveryPolicy(
       this.options.snapshot.mode,
       this.options.recovery,
     )
+    this.setState(policy.attempts === 0 ? 'failed' : 'recovering', error)
+    const recovery = this.runOperation(new OperationScope(), (scope) =>
+      this.recover(error, policy, scope),
+    )
+    // A stop aborts recovery and joins it; that outcome belongs to the stop.
+    return recovery.catch((recoveryError) => {
+      if (isOperationAborted(recoveryError)) return
+      this.logger.error(
+        { err: normalizeError(recoveryError) },
+        'Neem runtime recovery failed',
+      )
+    })
+  }
+
+  private async recover(
+    initialError: Error,
+    policy: RecoveryPolicy,
+    scope: OperationScope,
+  ): Promise<void> {
+    // Detach before hooks and the recovery delay so routing stops reaching the dead worker.
+    await this.options.onUpstreamsChange?.(this)
+    await scope.wait(this.callRuntimeFailHook(initialError))
     if (policy.attempts === 0) {
-      await this.options.onFailure?.(error, this)
+      await this.options.onFailure?.(initialError, this)
       return
     }
 
-    this.recoveryPromise = this.recover(error).finally(() => {
-      this.recoveryPromise = undefined
-    })
-    await this.recoveryPromise
-  }
-
-  private async recover(initialError: Error): Promise<void> {
-    // Cleanup clears the active logger between attempts.
-    const logger = this.logger
-    const policy = createRecoveryPolicy(
-      this.options.snapshot.mode,
-      this.options.recovery,
-    )
     let lastError = initialError
-
     while (this.restartAttempts < policy.attempts) {
-      if (this.stopped) return
       const attempt = this.restartAttempts + 1
       this.restartAttempts = attempt
-      const delayMs = getRecoveryDelay(policy, attempt)
-      logger?.warn(
+      this.logger.warn(
         { err: lastError },
         `Restarting Neem runtime after failure (${attempt}/${policy.attempts})`,
       )
-      await wait(delayMs)
-      if (this.stopped) return
+      await scope.sleep(getRecoveryDelay(policy, attempt))
 
       try {
-        await this.cleanup()
-        if (this.stopped) return
+        await this.releaseGeneration(this.createStopScope())
+        scope.throwIfAborted()
         await this.options.onUpstreamsChange?.(this)
-        if (this.stopped) return
-        await this.options.prepareRecovery?.()
-        if (this.stopped) return
-        await this.start()
-        if (this.stopped) return
-        await this.options.onRecovered?.(this)
+        scope.throwIfAborted()
+        await scope.wait(this.options.prepareRecovery?.())
+        await this.startGeneration(scope)
         this.restartAttempts = 0
+        this.setState('ready')
+        await this.options.onRecovered?.(this)
         return
       } catch (error) {
+        if (isOperationAborted(error)) throw error
         lastError = normalizeError(error)
       }
     }
 
-    if (this.stopped) return
-    logger?.error({ err: lastError }, 'Neem runtime recovery exhausted')
+    this.logger.error({ err: lastError }, 'Neem runtime recovery exhausted')
+    this.setState('failed', lastError)
     await this.options.onFailure?.(lastError, this)
   }
 
-  private createHostRunner(): HostRunner {
+  // Stopping and stopped belong to stop(): an operation settling after the
+  // stop began must not move the runtime back to another state.
+  private setState(state: NeemRuntimeState, error?: Error): void {
+    if (this.state === 'stopped') return
+    if (this.state === 'stopping' && state !== 'stopped') return
+    this.state = state
+    this.lastError = error
+    this.logger.trace({ state, err: error }, 'Neem runtime state')
+  }
+
+  private createStopScope(): OperationScope {
+    const { stopTimeout } = resolveLifecycle(
+      this.options.snapshot.config.lifecycle,
+    )
+    return OperationScope.withTimeout(stopTimeout)
+  }
+
+  private createHostRunner(generationId: number): HostRunner {
     return new HostRunner({
       data: this.createHostRunnerData(),
       env: this.createRuntimeEnv(),
-      onFailure: (error) => this.handleFailure(error, 'host'),
+      onFailure: (error) => this.handleFailure(error, generationId, 'host'),
     })
   }
 
@@ -380,14 +507,10 @@ export class RuntimeController {
     }
   }
 
-  private createLogger(): Logger {
-    return childLogger(this.options.snapshot.logger, runtimeLabel(this.name))
-  }
-
   private async callRuntimeFailHook(error: Error): Promise<void> {
     await this.callRuntimeHook('runtime:fail', undefined, error).catch(
       (hookError) => {
-        this.logger?.warn(
+        this.logger.warn(
           new Error(`Runtime [${this.name}] fail hook failed`, {
             cause: normalizeError(hookError),
           }),
@@ -401,7 +524,7 @@ export class RuntimeController {
     upstreams?: readonly NeemRuntimeUpstream[],
     error?: Error,
   ): Promise<void> {
-    this.logger?.trace(
+    this.logger.trace(
       { hook: name, upstreams: upstreams?.length, err: error },
       'Neem runtime hook',
     )
@@ -414,6 +537,7 @@ export class RuntimeController {
   }
 
   private getPoolHealth(): NeemWorkerPoolHealth {
+    const threads = this.listThreads()
     const counts: Record<NeemWorkerState, number> = {
       idle: 0,
       starting: 0,
@@ -422,9 +546,9 @@ export class RuntimeController {
       stopped: 0,
       failed: 0,
     }
-    for (const thread of this.threads) counts[thread.getState()]++
+    for (const thread of threads) counts[thread.getState()]++
 
-    const size = this.threads.length
+    const size = threads.length
     const state = getPoolState(counts, size)
     return {
       name: `runtime:${this.name}`,
@@ -438,7 +562,7 @@ export class RuntimeController {
   }
 
   private getThreadHandles() {
-    return this.threads.map((thread) => thread.getHandle())
+    return this.listThreads().map((thread) => thread.getHandle())
   }
 }
 
@@ -557,3 +681,5 @@ function getPoolState(
   if (counts.failed > 0) return 'failed'
   return 'idle'
 }
+
+function noop(): void {}

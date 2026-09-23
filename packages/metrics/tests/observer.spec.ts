@@ -42,6 +42,8 @@ describe('createNeemMetricsLifecycle', () => {
         runtimes: [
           {
             ...testHealth.runtimes[0]!,
+            ready: false,
+            state: 'recovering',
             pool: {
               ...testHealth.runtimes[0]!.pool,
               state: 'degraded',
