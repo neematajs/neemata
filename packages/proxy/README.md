@@ -4,8 +4,9 @@ This package lives in the Neemata workspace. Its source was imported from
 `neematajs/neemata-proxy` at `87c2f1860e50145033aedc253639de18735fa82c`
 (Pingora 0.9.0).
 
-From the workspace root, run `pnpm build:proxy` for a local debug binding or
-`pnpm --filter @nmtjs/proxy build` for a release binding. `pnpm test:proxy`
+From the workspace root, run `pnpm --filter @nmtjs/proxy build:debug` for a local
+debug binding or `pnpm --filter @nmtjs/proxy build` for a release binding. The
+rest of the workspace uses the published package, not this build. `pnpm test:proxy`
 runs Rust tests, builds the binding, checks TypeScript usage, and runs integration
 tests. Generated bindings live in `dist`; platform package manifests live in
 `npm`. Binaries and Cargo build output are not committed.

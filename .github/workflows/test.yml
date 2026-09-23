@@ -22,10 +22,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -66,10 +62,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -129,10 +121,6 @@ jobs:
         uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ matrix.bun }}
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -197,10 +185,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          rust-src-dir: packages/proxy
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:

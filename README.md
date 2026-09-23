@@ -96,8 +96,8 @@ for precedence and multiple-file usage.
 
 ## Workspace development
 
-Use Node.js 24 through `vp`, pnpm, and a stable Rust toolchain with `rustfmt` and
-`clippy`. Building the proxy also requires a C/C++ toolchain, CMake, and pkg-config.
+Use Node.js 24 through `vp` and pnpm. Proxy work also needs a stable Rust
+toolchain with `rustfmt` and `clippy`, a C/C++ toolchain, CMake, and pkg-config.
 On macOS, install the Xcode command-line tools first.
 
 ```sh
@@ -107,18 +107,23 @@ vp env exec pnpm test --reporter=agent
 vp env exec pnpm check
 ```
 
-`pnpm build` builds a local debug proxy binding before the TypeScript packages.
-`pnpm build:ts` builds only TypeScript when the native binding is already available.
-`pnpm test:proxy` runs the Rust and proxy integration suites; `pnpm test:prom-client`
-runs the prom-client Vitest project. The root Vitest run includes both packages
-alongside the existing workspace tests.
+The stack installs `@nmtjs/proxy` from npm at the version pinned in
+`packages/neem/package.json`, so `pnpm build`, `pnpm test` and `pnpm check` need no
+Rust toolchain. `pnpm test:proxy` runs the Rust and proxy integration suites and
+builds a local debug binding; set `NEEM_INTERNAL_PROXY_MODULE` to the absolute path
+of `packages/proxy/dist/index.js` (for example `$PWD/packages/proxy/dist/index.js`
+from the workspace root) to run Neem against it. CI does the same in the
+**Test proxy** workflow, which runs only when `packages/proxy` changes.
+`pnpm test:prom-client` runs the prom-client Vitest project, which the root Vitest
+run also includes.
 
 Package versions are committed and bumped by hand in pull requests. The eight
 stack packages (`common`, `effect`, `metrics`, `neem`, `nuxt`, `pubsub`, `vite`,
 `workflows`) share one version: `pnpm run version:stack <version>` sets it on all
 of them. Proxy and prom-client are versioned independently; bump and release them
-before a stack release that needs the new version. After the bump is merged,
-dispatch the matching workflow: **Publish Neem stack**, **Publish proxy** or
+before a stack release that needs the new version; after a proxy release, update
+the pinned version and peer range in `packages/neem/package.json`. After the bump
+is merged, dispatch the matching workflow: **Publish Neem stack**, **Publish proxy** or
 **Publish prom-client**. Each one reads the committed version and fails early if
 it is already on npm. The stack workflow also fails if the stack versions differ,
 or if the committed proxy or prom-client version has not been published yet. All
@@ -126,14 +131,13 @@ three workflows share one publishing queue, so releases run one at a time across
 packages and branches.
 
 Stack packages depend on each other with `workspace:*`, which publishes exact
-versions. They depend on proxy and prom-client with `workspace:^`, which publishes
-a caret range, so those can be upgraded without a stack release. Proxy releases
+versions. They depend on prom-client with `workspace:^` and on proxy through a
+caret peer range, so both can be upgraded without a stack release. Proxy releases
 build all seven native targets, generate the platform packages from
 `packages/proxy/package.json`, and publish them with `napi pre-publish` before
 publishing the wrapper. Generated `packages/proxy/npm/` directories are ignored
-and are not workspace members; local development loads the binding built in
-`packages/proxy/dist/`. Git tags are `v<version>` for the stack, `proxy-v<version>`
-for proxy, and `prom-client-v<version>` for prom-client.
+and are not workspace members. Git tags are `v<version>` for the stack,
+`proxy-v<version>` for proxy, and `prom-client-v<version>` for prom-client.
 
 Package-specific READMEs and licenses are retained; prom-client remains
 Apache-2.0 and includes its upstream notices. Configure npm publishing access

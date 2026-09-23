@@ -4,7 +4,8 @@ export default defineConfig({
   test: {
     testTimeout: 15000,
     passWithNoTests: true,
-    projects: ['./packages/*'],
+    // Proxy tests need a local native build; they run in the proxy workflow.
+    projects: ['./packages/*', '!./packages/proxy'],
     coverage: {
       enabled: false,
       include: ['packages/*/src/**'],

@@ -59,14 +59,22 @@ async function guardStack() {
     )
 
   // The stack publishes `workspace:^` ranges against these committed versions.
+  // Standalone packages pinned to a registry version are already published.
   for (const dir of standalone) {
     const { name, version: dependencyVersion } = readManifest(dir)
+    if (!manifests.some((manifest) => linksWorkspace(manifest, name))) continue
     if (!(await isPublished(name, dependencyVersion)))
       throw new Error(
         `${name}@${dependencyVersion} is committed but not published; release it first`,
       )
   }
   return version
+}
+
+function linksWorkspace(manifest, name) {
+  return ['dependencies', 'peerDependencies', 'optionalDependencies'].some(
+    (field) => manifest[field]?.[name]?.startsWith('workspace:'),
+  )
 }
 
 async function guardPackage(dir) {

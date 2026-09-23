@@ -1,0 +1,52 @@
+name: Test proxy
+
+permissions:
+  contents: read
+
+# The stack installs proxy from npm, so only proxy changes need the Rust build.
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'packages/proxy/**'
+      - '.github/workflows/test-proxy.yml'
+  # Saves the Rust cache on main, where every pull request can restore it.
+  push:
+    branches: [main]
+    paths:
+      - 'packages/proxy/**'
+      - '.github/workflows/test-proxy.yml'
+
+concurrency:
+  group: test-proxy-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  proxy:
+    name: Proxy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-26
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          rust-src-dir: packages/proxy
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @nmtjs/proxy run check:rust
+      - run: pnpm --filter @nmtjs/proxy run test
+      - run: pnpm run build:ts
+      - name: Run Neem e2e tests against the local proxy build
+        run: pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
+        env:
+          NEEM_INTERNAL_PROXY_MODULE: ${{ github.workspace }}/packages/proxy/dist/index.js

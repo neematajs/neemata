@@ -9,6 +9,9 @@ catalog:
   zod: ^4.4.3
 
 minimumReleaseAgeExclude:
+  # The stack installs proxy from npm, so a fresh release must be usable at once.
+  - '@nmtjs/proxy'
+  - '@nmtjs/proxy-*'
   - '@rolldown/binding-android-arm64@1.2.4'
   - '@rolldown/binding-darwin-arm64@1.2.4'
   - '@rolldown/binding-darwin-x64@1.2.4'
