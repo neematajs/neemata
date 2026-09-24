@@ -203,6 +203,37 @@ for (const target of serviceTargets) {
         await messages.return?.()
       })
 
+      it('leaves no broker subscription behind a SUBSCRIBE that timed out', async () => {
+        const channel = createTestName('pubsub-timed-out')
+        const client = target.createClient({ commandTimeout: 150 })
+        const admin = target.createClient()
+        const adapter = new RedisPubSubAdapter(
+          client,
+          createTestLogger('pubsub-timed-out'),
+        )
+        clients.push(client, admin)
+        adapters.push(adapter)
+        await adapter.initialize()
+
+        // The broker holds the SUBSCRIBE past its timeout, then runs it.
+        await admin.call('CLIENT', 'PAUSE', '400', 'ALL')
+        await expect(adapter.subscribe(channel)).rejects.toThrow(/timed out/i)
+
+        await waitFor(async () => {
+          const [, receivers] = (await admin.call(
+            'PUBSUB',
+            'NUMSUB',
+            channel,
+          )) as [string, number]
+          return receivers === 0
+        })
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(await admin.call('PUBSUB', 'NUMSUB', channel)).toEqual([
+          channel,
+          0,
+        ])
+      })
+
       it('filters selected events and unsubscribes from channels', async () => {
         const channelName = createTestName('pubsub-filter')
         const channel = defineChannel({

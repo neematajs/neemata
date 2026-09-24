@@ -300,7 +300,24 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       // The last listener may have left while the connection was down.
       if (ready && state.listeners > 0) {
         const [subClient, connection] = ready
-        await untilAborted(subClient.subscribe(channel), connection)
+        try {
+          await untilAborted(subClient.subscribe(channel), connection)
+        } catch (error) {
+          // A SUBSCRIBE that failed on a live connection, at `commandTimeout`
+          // say, may still reach the broker. An UNSUBSCRIBE sent after it on
+          // the same connection is processed after it, so it cannot stay.
+          if (!connection.aborted)
+            await untilAborted(
+              subClient.unsubscribe(channel),
+              connection,
+            ).catch((error) =>
+              this.logger?.warn(
+                { channel, error },
+                'Failed to undo a failed SUBSCRIBE',
+              ),
+            )
+          throw error
+        }
         state.subscribed = true
         this.logger?.debug(
           { channel, listeners: state.listeners },

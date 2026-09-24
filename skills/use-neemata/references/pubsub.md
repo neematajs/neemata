@@ -2,8 +2,9 @@
 
 Use `@nmtjs/pubsub` for typed, ephemeral fanout across workers, processes and
 servers. Delivery is at most once: no replay, offsets, consumer groups or
-disconnected-subscriber recovery. Refetch authoritative state on resubscription
-when gaps matter.
+disconnected-subscriber recovery. A dropped broker connection ends
+subscriptions with `PubSubConnectionLostError`; refetch authoritative state on
+resubscription when gaps matter.
 
 ## Channels and manager
 
@@ -90,15 +91,27 @@ and `RedisPubSubClient` (`ioredis.Redis | iovalkey.Redis`).
   `initialize()`; direct construction with `new RedisPubSubAdapter(client,
 logger?)` requires calling `initialize()` yourself before subscriptions.
 - Each adapter instance duplicates the command client with
-  `{ lazyConnect: true }`, connects that one subscriber, and shares it across
+  `{ lazyConnect: true }` and driver resubscribe, command resend and the
+  offline queue turned off, connects that one subscriber, and shares it across
   channels/local listeners. Channel subscriptions are reference-counted, with
   SUBSCRIBE/UNSUBSCRIBE serialized per channel; a failed SUBSCRIBE is retried
-  by the next subscriber. This is not a process-global singleton. Reuse an
-  adapter to share connections.
-- `dispose()` ends live subscriptions cleanly (streams end, no error), waits
-  for in-flight SUBSCRIBE/UNSUBSCRIBE, removes local listeners and quits the
-  duplicate only. The caller must close its original client afterward.
-  Neither `PubSubManager` nor the Effect layer calls adapter disposal.
+  by the next subscriber and followed by an UNSUBSCRIBE, so one that timed out
+  but still reached the broker does not linger. This is not a process-global
+  singleton. Reuse an adapter to share connections.
+- When the subscriber connection drops, the adapter does not resubscribe:
+  established subscriptions end with `PubSubConnectionLostError` (exported by
+  `@nmtjs/pubsub` and `@nmtjs/pubsub/effect`) ahead of their unread backlog; a
+  manager stream may still yield a message or two it had read ahead.
+  Resubscribe and refetch on it. A subscription opened while the connection is
+  down waits for it (bounded only by an abort signal) and rejects once the
+  client stops reconnecting; one whose SUBSCRIBE was in flight at the drop
+  rejects with `PubSubConnectionLostError`. Releases never wait on a
+  connection that is down.
+- `dispose()` ends live subscriptions cleanly (streams end, no error; pending
+  openings reject with an `AbortError`), removes local listeners and
+  disconnects the duplicate only, without waiting on a connection that is
+  down. The caller must close its original client afterward. Neither
+  `PubSubManager` nor the Effect layer calls adapter disposal.
 - Messages are JSON-serialized. Malformed incoming JSON is logged and skipped.
 - Redis publish returns true when the broker command succeeds, even with zero
   subscribers; serialization/broker failures return false. `true` is not a

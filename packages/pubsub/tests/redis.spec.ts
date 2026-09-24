@@ -237,6 +237,22 @@ describe('RedisPubSubAdapter', () => {
     await adapter.dispose()
   })
 
+  it('undoes a failed SUBSCRIBE the broker may still have applied', async () => {
+    const { adapter, subscriber } = await setup()
+    // The broker ran the command, but its reply came too late.
+    subscriber.onSubscribe = (channel) => {
+      subscriber.subscribed.add(channel)
+      throw new Error('Command timed out')
+    }
+
+    await expect(open(adapter)).rejects.toThrow('Command timed out')
+
+    expect(subscriber.unsubscribeCalls).toBe(1)
+    expect(subscriber.subscribed.has('room')).toBe(false)
+    expect(adapter['channels'].size).toBe(0)
+    await adapter.dispose()
+  })
+
   it('ends live subscriptions cleanly when disposed', async () => {
     const logged: unknown[] = []
     const logger: PubSubLogger = {
