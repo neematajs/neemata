@@ -127,7 +127,7 @@ async function stagePublishedPackages(packagesDir: string): Promise<void> {
       })
       if (packageName === 'neem') {
         // Published beside dist through package.json `files`.
-        for (const dir of ['bin', 'injected']) {
+        for (const dir of ['bin', 'lib']) {
           await cp(resolve(sourceDir, dir), resolve(packageDir, dir), {
             recursive: true,
           })

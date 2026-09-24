@@ -76,7 +76,7 @@
   "files": [
     "bin",
     "dist",
-    "injected",
+    "lib",
     "LICENSE.md",
     "README.md"
   ]
