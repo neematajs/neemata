@@ -303,18 +303,22 @@ export class RedisPubSubAdapter implements PubSubAdapter {
         try {
           await untilAborted(subClient.subscribe(channel), connection)
         } catch (error) {
-          // A SUBSCRIBE that failed on a live connection, at `commandTimeout`
-          // say, may still reach the broker. An UNSUBSCRIBE sent after it on
-          // the same connection is processed after it, so it cannot stay.
-          if (!connection.aborted)
-            await untilAborted(
-              subClient.unsubscribe(channel),
-              connection,
-            ).catch((error) =>
-              this.logger?.warn(
-                { channel, error },
-                'Failed to undo a failed SUBSCRIBE',
-              ),
+          // A SUBSCRIBE that failed without a broker reply, at
+          // `commandTimeout` say, may still reach the broker. An UNSUBSCRIBE
+          // sent after it on the same connection is processed after it, and
+          // before any later SUBSCRIBE, so it is not awaited.
+          if (!connection.aborted && !isReplyError(error))
+            untilAborted(subClient.unsubscribe(channel), connection).catch(
+              (error) => {
+                if (
+                  !(error instanceof PubSubConnectionLostError) &&
+                  !isAbortError(error)
+                )
+                  this.logger?.warn(
+                    { channel, error },
+                    'Failed to undo a failed SUBSCRIBE',
+                  )
+              },
             )
           throw error
         }
@@ -386,6 +390,11 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       })
     }
   }
+}
+
+// The broker answered the command, so it did not and will not take effect.
+function isReplyError(error: unknown) {
+  return error instanceof Error && error.name === 'ReplyError'
 }
 
 function untilAborted<T>(promise: Promise<T>, signal: AbortSignal) {

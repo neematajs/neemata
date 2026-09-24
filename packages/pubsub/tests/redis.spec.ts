@@ -248,8 +248,44 @@ describe('RedisPubSubAdapter', () => {
     await expect(open(adapter)).rejects.toThrow('Command timed out')
 
     expect(subscriber.unsubscribeCalls).toBe(1)
-    expect(subscriber.subscribed.has('room')).toBe(false)
+    await waitFor(() => !subscriber.subscribed.has('room'))
     expect(adapter['channels'].size).toBe(0)
+    await adapter.dispose()
+  })
+
+  it('does not wait for the UNSUBSCRIBE that undoes a failed SUBSCRIBE', async () => {
+    const { adapter, subscriber } = await setup()
+    let failures = 1
+    subscriber.onSubscribe = () => {
+      if (failures-- > 0) throw new Error('Command timed out')
+    }
+    let unanswered = 1
+    subscriber.onUnsubscribe = () =>
+      unanswered-- > 0 ? new Promise(() => {}) : undefined
+
+    await expect(Promise.race([open(adapter), timeout(250)])).rejects.toThrow(
+      'Command timed out',
+    )
+    await expect(
+      Promise.race([open(adapter), timeout(250)]),
+    ).resolves.toBeDefined()
+    expect(subscriber.subscribeCalls).toBe(2)
+    expect(subscriber.subscribed.has('room')).toBe(true)
+
+    await adapter.dispose()
+  })
+
+  it('does not undo a SUBSCRIBE the broker rejected', async () => {
+    const { adapter, subscriber } = await setup()
+    subscriber.onSubscribe = () => {
+      const error = new Error('NOPERM no permissions to access a channel')
+      error.name = 'ReplyError'
+      throw error
+    }
+
+    await expect(open(adapter)).rejects.toThrow('NOPERM')
+
+    expect(subscriber.unsubscribeCalls).toBe(0)
     await adapter.dispose()
   })
 

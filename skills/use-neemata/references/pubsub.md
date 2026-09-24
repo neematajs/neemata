@@ -95,9 +95,12 @@ logger?)` requires calling `initialize()` yourself before subscriptions.
   offline queue turned off, connects that one subscriber, and shares it across
   channels/local listeners. Channel subscriptions are reference-counted, with
   SUBSCRIBE/UNSUBSCRIBE serialized per channel; a failed SUBSCRIBE is retried
-  by the next subscriber and followed by an UNSUBSCRIBE, so one that timed out
-  but still reached the broker does not linger. This is not a process-global
-  singleton. Reuse an adapter to share connections.
+  by the next subscriber. A SUBSCRIBE that failed without a broker reply (a
+  `commandTimeout`) is followed, best effort, by an UNSUBSCRIBE on the same
+  connection, which the broker runs after a late SUBSCRIBE and before any
+  retry; if that UNSUBSCRIBE is itself rejected, a warning is logged and the
+  broker subscription may remain until the connection closes. This is not a
+  process-global singleton. Reuse an adapter to share connections.
 - When the subscriber connection drops, the adapter does not resubscribe:
   established subscriptions end with `PubSubConnectionLostError` (exported by
   `@nmtjs/pubsub` and `@nmtjs/pubsub/effect`) ahead of their unread backlog; a
