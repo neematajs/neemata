@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream'
 import EventEmitter from 'node:events'
 
 import { describe, expect, it } from 'vitest'
@@ -395,9 +396,12 @@ describe('RedisPubSubAdapter', () => {
           while (!(await messages.next()).done) delivered++
         })(),
       ).rejects.toBeInstanceOf(PubSubConnectionLostError)
-      // The stream learns of the loss on its next pull from the adapter,
-      // which its consumer's next read triggers.
-      expect(delivered).toBeLessThanOrEqual(2)
+      // The stream learns of the loss on its next pull from the adapter, so
+      // only what it had read ahead can come first; how much that is varies
+      // with the Node version, within the stream's buffer.
+      expect(delivered).toBeLessThanOrEqual(
+        (stream as Readable).readableHighWaterMark,
+      )
       await adapter.dispose()
     })
 

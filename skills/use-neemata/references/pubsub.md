@@ -104,7 +104,7 @@ logger?)` requires calling `initialize()` yourself before subscriptions.
 - When the subscriber connection drops, the adapter does not resubscribe:
   established subscriptions end with `PubSubConnectionLostError` (exported by
   `@nmtjs/pubsub` and `@nmtjs/pubsub/effect`) ahead of their unread backlog; a
-  manager stream may still yield a message or two it had read ahead.
+  manager stream may still yield a few messages it had read ahead.
   Resubscribe and refetch on it. A subscription opened while the connection is
   down waits for it (bounded only by an abort signal) and rejects once the
   client stops reconnecting; one whose SUBSCRIBE was in flight at the drop

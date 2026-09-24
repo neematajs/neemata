@@ -71,7 +71,7 @@ ends live subscriptions. `logger` is optional and accepts a Pino logger.
 When the subscriber connection drops, the adapter does not resubscribe by itself:
 live subscriptions end with a `PubSubConnectionLostError` rather than delivering
 their unread backlog first, so their consumers can resubscribe and refetch what they
-missed. A manager or Effect stream may still hand out a message or two it had
+missed. A manager or Effect stream may still hand out a few messages it had
 already read ahead. A subscription opened while the connection is down waits for it
 to come back, and rejects if the client stops reconnecting.
 
