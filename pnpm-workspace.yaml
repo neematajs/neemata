@@ -5,7 +5,7 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  rolldown: ^1.2.10
+  rolldown: ^1.2.11
   vite: 8.0.11
   zod: ^4.4.3
 
@@ -13,19 +13,19 @@ minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  - '@rolldown/binding-android-arm-eabi@1.2.10'
-  - '@rolldown/binding-android-arm64@1.2.10'
-  - '@rolldown/binding-darwin-arm64@1.2.10'
-  - '@rolldown/binding-darwin-x64@1.2.10'
-  - '@rolldown/binding-freebsd-x64@1.2.10'
-  - '@rolldown/binding-linux-arm-gnueabihf@1.2.10'
-  - '@rolldown/binding-linux-arm64-gnu@1.2.10'
-  - '@rolldown/binding-linux-arm64-musl@1.2.10'
-  - '@rolldown/binding-linux-ppc64-gnu@1.2.10'
-  - '@rolldown/binding-linux-s390x-gnu@1.2.10'
-  - '@rolldown/binding-linux-x64-gnu@1.2.10'
-  - '@rolldown/binding-linux-x64-musl@1.2.10'
-  - '@rolldown/binding-openharmony-arm64@1.2.10'
-  - '@rolldown/binding-win32-arm64-msvc@1.2.10'
-  - '@rolldown/binding-win32-x64-msvc@1.2.10'
-  - rolldown@1.2.10
+  - '@rolldown/binding-android-arm-eabi@1.2.11'
+  - '@rolldown/binding-android-arm64@1.2.11'
+  - '@rolldown/binding-darwin-arm64@1.2.11'
+  - '@rolldown/binding-darwin-x64@1.2.11'
+  - '@rolldown/binding-freebsd-x64@1.2.11'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.11'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.11'
+  - '@rolldown/binding-linux-arm64-musl@1.2.11'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.11'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.11'
+  - '@rolldown/binding-linux-x64-gnu@1.2.11'
+  - '@rolldown/binding-linux-x64-musl@1.2.11'
+  - '@rolldown/binding-openharmony-arm64@1.2.11'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.11'
+  - '@rolldown/binding-win32-x64-msvc@1.2.11'
+  - rolldown@1.2.11

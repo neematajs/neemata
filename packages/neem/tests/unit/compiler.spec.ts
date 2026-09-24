@@ -36,7 +36,7 @@ beforeEach(() => {
   devSpy.dev.mockClear()
 })
 
-// On macOS, Rolldown 1.2.10 restarts its FSEvents stream after every rebuild,
+// On macOS, Rolldown (1.2.11) restarts its FSEvents stream after every rebuild,
 // even when no watched path changed, and a write landing in that gap is never
 // reported. Write until the engine reports so these cases test Neem, not that
 // race.
