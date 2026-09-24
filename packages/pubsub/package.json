@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/pubsub",
-  "version": "0.18.0-alpha.1",
+  "version": "0.18.0-alpha.2",
   "description": "Typed ephemeral publish/subscribe channels with Redis and Valkey adapters.",
   "type": "module",
   "repository": {
