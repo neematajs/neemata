@@ -364,7 +364,26 @@ function createWatchOptions(
       ? { buildDelay: config.buildDelay }
       : {}),
     clearScreen: false,
-    watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
+    watcher: {
+      debounceDelay: config?.debounceDelay ?? 50,
+      useDebounce: true,
+      ...resolvePollingOptions(config),
+    },
+  }
+}
+
+// Only set when the user opted in, so the bundle watcher and the dev engine
+// keep their own native-watching defaults otherwise.
+function resolvePollingOptions(config: NeemBuildWatchConfig | undefined): {
+  usePolling?: boolean
+  pollInterval?: number
+} {
+  if (!config?.usePolling) return {}
+  return {
+    usePolling: true,
+    ...(config.pollInterval !== undefined
+      ? { pollInterval: config.pollInterval }
+      : {}),
   }
 }
 
@@ -416,6 +435,7 @@ async function watchWorkerTarget(
       skipWrite: false,
       useDebounce: true,
       debounceDuration: watchConfig?.debounceDelay ?? 50,
+      ...resolvePollingOptions(watchConfig),
     },
     onOutput(result) {
       // DevEngine does not await callbacks. Keep the application promise so a

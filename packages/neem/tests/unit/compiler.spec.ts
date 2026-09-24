@@ -20,12 +20,20 @@ import { defineRuntime } from '../../src/public/config.ts'
 import { createTempDir } from '../support/temp.ts'
 
 const rolldownMock = vi.hoisted(() => ({ build: vi.fn(), watch: vi.fn() }))
+// The DevEngine stays real; the spy records the options Neem hands it.
+const devSpy = vi.hoisted(() => ({ dev: vi.fn() }))
 
 vi.mock('rolldown', () => rolldownMock)
+vi.mock('rolldown/experimental', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('rolldown/experimental')>()
+  devSpy.dev.mockImplementation(actual.dev)
+  return { ...actual, dev: devSpy.dev }
+})
 
 beforeEach(() => {
   rolldownMock.build.mockReset()
   rolldownMock.watch.mockReset()
+  devSpy.dev.mockClear()
 })
 
 // On macOS, Rolldown 1.2.10 restarts its FSEvents stream after every rebuild,
@@ -268,6 +276,85 @@ describe('Neem compiler', () => {
       })
     }
   })
+
+  it('passes polling options to the bundle watcher only when enabled', async () => {
+    const root = await createTempDir('neem-compiler-')
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+
+    await watchGraph(
+      createCompilerGraph(root, { watch: { pollInterval: 25 } }, false),
+    )
+    for (const [options] of rolldownMock.watch.mock.calls) {
+      const watcher = fileWatcherOptions(options as BuildOptions)
+      expect(watcher).not.toHaveProperty('usePolling')
+      expect(watcher).not.toHaveProperty('pollInterval')
+    }
+
+    rolldownMock.watch.mockClear()
+    await watchGraph(
+      createCompilerGraph(
+        root,
+        { watch: { usePolling: true, pollInterval: 25 } },
+        false,
+      ),
+    )
+    for (const [options] of rolldownMock.watch.mock.calls) {
+      expect(fileWatcherOptions(options as BuildOptions)).toMatchObject({
+        usePolling: true,
+        pollInterval: 25,
+      })
+    }
+  })
+
+  it(
+    'polls the worker sources when the watch config asks for it',
+    async () => {
+      const root = await createTempDir('neem-compiler-')
+      const valueFile = resolve(root, 'api/value.ts')
+      await mkdir(resolve(root, 'api'), { recursive: true })
+      await writeFile(
+        resolve(root, 'api/worker.ts'),
+        "export { value as default } from './value.ts'\n",
+      )
+      await writeFile(valueFile, "export const value = 'v1'\n")
+      const graph = createCompilerGraph(root, {
+        watch: { usePolling: true, pollInterval: 25 },
+      })
+      const workerGraph = {
+        ...graph,
+        runtimes: [],
+        buildGroups: graph.buildGroups.filter(
+          (group) =>
+            group.kind === 'target' && group.target.kind === 'runtime-worker',
+        ),
+      }
+      const settled = createFuture<unknown>()
+      const watcher = await watchGraph(workerGraph, {
+        onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+        onUpdateError: (_runtimeName, error) => settled.resolve(error),
+      })
+      try {
+        expect(devSpy.dev).toHaveBeenCalledTimes(1)
+        expect(devSpy.dev.mock.calls[0]?.[2]?.watch).toMatchObject({
+          usePolling: true,
+          pollInterval: 25,
+        })
+        await watcher.addPatchClient('api', 'client')
+        // A polling watcher has no event-stream gap, so one write suffices.
+        await writeFile(valueFile, "export const value = 'v2'\n")
+        const result = await raceWithTimeout(settled.promise, 5_000)
+        if (result.timedOut) throw new Error('DevEngine never polled the edit')
+        expect(result.value).toEqual([
+          expect.objectContaining({
+            update: expect.objectContaining({ type: 'Patch' }),
+          }),
+        ])
+      } finally {
+        await watcher.close()
+      }
+    },
+    DEV_ENGINE_TEST_TIMEOUT_MS,
+  )
 
   it(
     'refuses to refresh worker output while the latest source fails to build',
@@ -547,6 +634,12 @@ function createCompilerGraph(
       },
     },
   })
+}
+
+function fileWatcherOptions(options: BuildOptions) {
+  const watch = options.watch
+  if (!watch) throw new Error('watch options missing')
+  return watch.watcher
 }
 
 function rolldownOutput(fileName: string, target: BuildTarget): RolldownOutput {

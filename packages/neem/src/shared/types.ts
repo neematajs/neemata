@@ -99,6 +99,14 @@ export type NeemBuildConfig = {
 export type NeemBuildWatchConfig = {
   buildDelay?: number
   debounceDelay?: number
+  /**
+   * Poll the file system instead of subscribing to native events. Native
+   * watching is the default; polling costs CPU per watched module and adds up
+   * to one interval of latency, but has no gaps in which an edit can be lost.
+   */
+  usePolling?: boolean
+  /** Poll interval in milliseconds; only used with `usePolling`. Rolldown's default is 100. */
+  pollInterval?: number
 }
 
 export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }

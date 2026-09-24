@@ -34,6 +34,12 @@ that restart fails too, the runtime stays failed and unready without ending
 `neem dev` until its next successful build restarts it. A crashed watcher
 restarts on its own and restarts the runtimes from its fresh build.
 
+Watching uses native file-system events. Set `build.watch.usePolling: true` in
+`neem.config.ts` (with an optional `pollInterval`, milliseconds, Rolldown's
+default is 100) to poll instead; it costs CPU per watched module but has no
+gap in which an edit can go unreported, which native watching on macOS
+currently has right after a rebuild.
+
 Modules re-executed by a patch can register `import.meta.hot.dispose(callback)`
 to release module-level timers or listeners; the callback receives
 `import.meta.hot.data`, which the next instance of the module sees. Only
