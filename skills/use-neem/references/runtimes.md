@@ -106,10 +106,16 @@ config evaluation. `envFiles` is not a config property.
 
 ## Proxy and Health
 
-Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.8` when enabling `proxy`.
+Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.9` when enabling `proxy`.
 The controller config takes required `hostname` and `port`, plus optional
 `healthChecks: { interval? }`, `stickySessions: { enabled?, cookieName?,
-headerName?, ttlMs?, maxEntries? }`, and `tls: { keyPath, certPath }`.
+headerName?, ttlMs?, maxEntries? }`, `limits`, and `tls: { keyPath, certPath }`.
+
+`limits` takes `maxUriSize` (default 8 KiB), `maxRequestHeaders` (100),
+`maxSingleHeaderSize` (8 KiB), `maxRequestHeaderSize` (64 KiB), and
+`maxRequestBodySize` (16 MiB). Sizes are bytes. `null` disables one check;
+`limits: null` disables all of them. The body limit is checked against the
+declared `Content-Length` only, so chunked uploads are not limited by the proxy.
 
 Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
 
@@ -120,9 +126,14 @@ Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
   Missing path/subdomain `name` uses the full runtime name.
 - Runtime `proxy.sni` is optional. Workers report `{ type, url }` upstreams,
   where `type` is `'http'`, `'http2'`, or `'ws'`.
+- Runtime `proxy.maxRequestBodySize` overrides `limits.maxRequestBodySize` for
+  that runtime. `null` lets any size through so the runtime enforces its own
+  limit, e.g. for large streamed uploads.
 - Proxy errors: no matching route is 404; a matched runtime without a live
   upstream (restarting, failed, or unhealthy) is 503 with `Retry-After: 1`;
-  a failed connection to a chosen upstream is 502. Application responses pass
+  a failed connection to a chosen upstream is 502; an exceeded limit is 413,
+  414, or 431. These carry a `text/plain` body and echo the request `Origin` in
+  CORS headers so browser clients can read them. Application responses pass
   through unchanged.
 
 `health` enables a separate HTTP probe server. It requires `port`, defaults
