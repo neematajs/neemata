@@ -6,11 +6,11 @@ import { describe, expect, it } from 'vitest'
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
+  editWorkerFile,
   getDistinctFreePorts,
   readRuntimeEvents,
   spawnNeem,
   waitFor,
-  writeFileAtomically,
 } from './support/e2e.ts'
 
 describe('Neem recovery health and proxy behavior', () => {
@@ -244,7 +244,7 @@ describe('Neem recovery health and proxy behavior', () => {
       version: 'good-v1',
     })
 
-    await writeFileAtomically(workerFile, badWorker)
+    await editWorkerFile(neem, workerFile, () => badWorker)
     await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-fallback',
       30_000,
@@ -294,7 +294,7 @@ describe('Neem recovery health and proxy behavior', () => {
     expect(failedProxy.headers.get('retry-after')).toBe('1')
     expect(await failedProxy.text()).toBe('No upstream available\n')
 
-    await writeFileAtomically(workerFile, fixedWorker)
+    await editWorkerFile(neem, workerFile, () => fixedWorker)
     await waitForProbeEventCount(neem, 'runtime:patch-fallback', 2)
     await waitForMatchingEventCount(
       fixture.eventsFile,

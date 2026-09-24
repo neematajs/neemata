@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
+  editWorkerFile,
   readRuntimeEvents,
   spawnNeem,
   updateFileAtomically,
@@ -18,7 +19,7 @@ describe('Neem runtime restart', () => {
     const neem = start(fixture)
     const initial = await generations(fixture, neem, 'v1', 1)
 
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     const updated = await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
 
@@ -57,6 +58,7 @@ describe('Neem runtime restart', () => {
       fixture.valueFile,
       "marker: 'v1', upstream: false",
       "marker: 'v2', upstream: true",
+      neem,
     )
     const fallback = await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-fallback',
@@ -85,7 +87,7 @@ describe('Neem runtime restart', () => {
     const fixture = await createFixture()
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
 
@@ -107,7 +109,7 @@ describe('Neem runtime restart', () => {
     await generations(fixture, neem, 'v1', 1)
 
     for (let patch = 1; patch <= 2; patch++) {
-      await editMarker(fixture, `v${patch}`, `v${patch + 1}`)
+      await editMarker(fixture, neem, `v${patch}`, `v${patch + 1}`)
       await generations(fixture, neem, `v${patch + 1}`, patch + 1)
       await applied(neem, patch)
     }
@@ -115,7 +117,7 @@ describe('Neem runtime restart', () => {
       neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
     ).toHaveLength(0)
 
-    await editMarker(fixture, 'v3', 'v4')
+    await editMarker(fixture, neem, 'v3', 'v4')
     const fallback = await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-fallback',
       30_000,
@@ -132,14 +134,14 @@ describe('Neem runtime restart', () => {
     const crashFile = resolve(fixture.dir, 'crash')
     const neem = start(fixture, { NEEM_RESTART_CRASH_FILE: crashFile })
     await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
 
     await writeFile(crashFile, '')
     await generations(fixture, neem, 'v2', 1)
     // Recovery-created threads must also be registered as patch clients.
-    await editMarker(fixture, 'v2', 'v3')
+    await editMarker(fixture, neem, 'v2', 'v3')
     await generations(fixture, neem, 'v3', 2)
     await applied(neem, 2)
   }, 60_000)
@@ -153,7 +155,7 @@ describe('Neem runtime restart', () => {
       NEEM_RESTART_RETIRED_FILE: retiredFile,
     })
     await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
 
@@ -172,6 +174,7 @@ describe('Neem runtime restart', () => {
       resolve(fixture.caseDir, 'lazy-value.ts'),
       "lazyValue = 'l1'",
       "lazyValue = 'l2'",
+      neem,
     )
     // Its chunk on disk predates the edit, so the runtime restarts from
     // refreshed output instead of accepting a patch it cannot apply.
@@ -209,6 +212,7 @@ describe('Neem runtime restart', () => {
       fixture.valueFile,
       "marker: 'v1', upstream: false, startDelayMs: 0",
       "marker: 'v2', upstream: true, startDelayMs: 2000",
+      neem,
     )
     await generations(fixture, neem, 'v2', 2)
     await replaceInFile(
@@ -229,9 +233,9 @@ describe('Neem runtime restart', () => {
     const fixture = await createFixture()
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
-    await editMarker(fixture, 'v2', 'v3')
+    await editMarker(fixture, neem, 'v2', 'v3')
     await generations(fixture, neem, 'v3', 3)
 
     const disposed = (await readRuntimeEvents(fixture.eventsFile))
@@ -256,7 +260,7 @@ describe('Neem runtime restart', () => {
     const neem = start(fixture)
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
 
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await neem.waitForEvent(
       (event) =>
         event.event === 'runtime:patch-fallback' &&
@@ -275,7 +279,7 @@ describe('Neem runtime restart', () => {
     const fixture = await createFixture()
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
-    await replaceInFile(fixture.valueFile, "marker: 'v1'", 'marker: !!!')
+    await replaceInFile(fixture.valueFile, "marker: 'v1'", 'marker: !!!', neem)
     await neem.waitForEvent(
       (event) => event.event === 'watcher:worker-patch-failed',
       30_000,
@@ -284,7 +288,7 @@ describe('Neem runtime restart', () => {
       neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
     ).toHaveLength(0)
 
-    await replaceInFile(fixture.valueFile, 'marker: !!!', "marker: 'v2'")
+    await replaceInFile(fixture.valueFile, 'marker: !!!', "marker: 'v2'", neem)
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
   }, 60_000)
@@ -293,11 +297,11 @@ describe('Neem runtime restart', () => {
     const fixture = await createFixture()
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
 
-    await replaceInFile(fixture.valueFile, "marker: 'v2'", 'marker: !!!')
+    await replaceInFile(fixture.valueFile, "marker: 'v2'", 'marker: !!!', neem)
     await neem.waitForEvent(
       (event) => event.event === 'watcher:worker-patch-failed',
       30_000,
@@ -313,7 +317,7 @@ describe('Neem runtime restart', () => {
       neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
     ).toHaveLength(0)
 
-    await replaceInFile(fixture.valueFile, 'marker: !!!', "marker: 'v3'")
+    await replaceInFile(fixture.valueFile, 'marker: !!!', "marker: 'v3'", neem)
     await generations(fixture, neem, 'v3', 1)
     const v1Starts = (await readRuntimeEvents(fixture.eventsFile)).filter(
       (event) =>
@@ -327,7 +331,7 @@ describe('Neem runtime restart', () => {
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
 
-    await editDefinition(fixture, ['v1', 'v2'], ['never', 'patched'])
+    await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'patched'])
     const unavailable = await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-unavailable',
       30_000,
@@ -340,7 +344,7 @@ describe('Neem runtime restart', () => {
     ).toHaveLength(2)
 
     // The recovered threads are patch clients again.
-    await editDefinition(fixture, ['v2', 'v3'], ['patched', 'never'])
+    await editDefinition(fixture, neem, ['v2', 'v3'], ['patched', 'never'])
     await generations(fixture, neem, 'v3', 2)
     await applied(neem, 1)
   }, 60_000)
@@ -350,7 +354,7 @@ describe('Neem runtime restart', () => {
     const neem = start(fixture)
     await generations(fixture, neem, 'v1', 1)
 
-    await editDefinition(fixture, ['v1', 'v2'], ['never', 'always'])
+    await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'always'])
     await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-unavailable',
       30_000,
@@ -363,7 +367,7 @@ describe('Neem runtime restart', () => {
     )
     await generations(fixture, neem, 'v2', 1)
 
-    await editDefinition(fixture, ['v2', 'v3'], ['always', 'never'])
+    await editDefinition(fixture, neem, ['v2', 'v3'], ['always', 'never'])
     await generations(fixture, neem, 'v3', 1)
   }, 60_000)
 
@@ -382,7 +386,7 @@ describe('Neem runtime restart', () => {
     // with it as patch clients.
     await generations(fixture, neem, 'v1', 1, 4)
 
-    await editMarker(fixture, 'v1', 'v2')
+    await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
     await applied(neem, 1)
   }, 60_000)
@@ -395,6 +399,7 @@ describe('Neem runtime restart', () => {
       resolve(fixture.caseDir, 'api.worker.ts'),
       '  definition,',
       "  definition,\n  reload: 'thread',",
+      neem,
     )
     const fallback = await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-fallback',
@@ -441,6 +446,7 @@ function start(
 
 function editMarker(
   fixture: { valueFile: string },
+  neem: SpawnedNeem,
   previous: string,
   next: string,
 ) {
@@ -448,16 +454,18 @@ function editMarker(
     fixture.valueFile,
     `marker: '${previous}'`,
     `marker: '${next}'`,
+    neem,
   )
 }
 
-// One write, so DevEngine sees a single update.
+// Change both fields together so the watcher cannot build a partial definition.
 function editDefinition(
   fixture: { valueFile: string },
+  neem: SpawnedNeem,
   [previousMarker, nextMarker]: [string, string],
   [previousFailStart, nextFailStart]: [string, string],
 ) {
-  return updateFileAtomically(fixture.valueFile, (content) => {
+  return editWorkerFile(neem, fixture.valueFile, (content) => {
     const marker = `marker: '${previousMarker}'`
     const failStart = `failStart: string = '${previousFailStart}'`
     expect(content).toContain(marker)
@@ -472,11 +480,18 @@ async function replaceInFile(
   file: string,
   search: string,
   replacement: string,
+  neem?: SpawnedNeem,
 ): Promise<void> {
-  await updateFileAtomically(file, (content) => {
+  function update(content: string) {
     expect(content).toContain(search)
     return content.replace(search, replacement)
-  })
+  }
+
+  if (neem) {
+    await editWorkerFile(neem, file, update)
+  } else {
+    await updateFileAtomically(file, update)
+  }
 }
 
 async function generations(

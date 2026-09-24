@@ -10,6 +10,7 @@ import type {
 } from './support/e2e.ts'
 import {
   createNeemFixture,
+  editWorkerFile,
   getFreePort,
   readRuntimeEvents,
   spawnNeem,
@@ -158,11 +159,14 @@ describe('Neem watcher dev reload', () => {
     )
 
     await Promise.all([
-      replaceInFile(
-        workerFile,
-        "record({ event: 'runtime-start', name: ctx.name })",
-        "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
-      ),
+      editWorkerFile(neem, workerFile, (content) => {
+        const search = "record({ event: 'runtime-start', name: ctx.name })"
+        expect(content).toContain(search)
+        return content.replace(
+          search,
+          "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
+        )
+      }),
       replaceInFile(loggerFile, "'Fixture'", "'Fixture logger-v2'"),
       replaceInFile(pluginFile, "'plugin-v1'", "'plugin-v2'"),
     ])
