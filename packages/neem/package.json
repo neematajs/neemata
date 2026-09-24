@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/neem",
-  "version": "0.18.0-alpha.1",
+  "version": "0.18.0-alpha.2",
   "description": "Neem host core for running compiled runtime artifacts.",
   "type": "module",
   "repository": {
