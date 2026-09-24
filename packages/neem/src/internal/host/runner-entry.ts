@@ -18,7 +18,12 @@ import {
   isNeemRuntimeHostFactory,
   isNeemRuntimePlanner,
 } from '../../public/runtime.ts'
-import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import {
+  childLogger,
+  flushLogger,
+  resolveManifestLogger,
+  runtimeLabel,
+} from '../logger.ts'
 import { serveRpc } from '../rpc.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
 import { HOST_RUNNER_SERIAL_COMMANDS } from './runner-protocol.ts'
@@ -60,15 +65,22 @@ const server = serveRpc<HostRunnerCommands, HostRunnerEvent>(
       )
       return stopHost()
     },
-    shutdown: async (_params, { exitAfterReply }) => {
+    shutdown: async ({ timeoutMs }, { exitAfterReply }) => {
+      // The parent's wait for the exit began when it sent this request.
+      const deadline = Date.now() + timeoutMs
       logger?.trace('Neem host runner shutting down')
       // Without an earlier stop, a host still being created would outlive
       // the runner; an earlier stop that hangs is the parent's to abandon.
       if (!stopping && creating) await stopHost()
-      exitAfterReply(0)
+      exitAfterReply(0, deadline - Date.now())
     },
   },
-  { serial: HOST_RUNNER_SERIAL_COMMANDS, onClose: closeCurrentThreads },
+  {
+    serial: HOST_RUNNER_SERIAL_COMMANDS,
+    onClose: closeCurrentThreads,
+    beforeExit: (timeoutMs) =>
+      logger ? flushLogger(logger, timeoutMs) : undefined,
+  },
 )
 
 async function initialize(): Promise<void> {

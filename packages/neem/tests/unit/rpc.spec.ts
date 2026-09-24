@@ -1,10 +1,14 @@
 import { MessageChannel } from 'node:worker_threads'
 
 import { createFuture } from '@nmtjs/common'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
-import type { NoParams } from '../../src/internal/rpc.ts'
-import { RpcChannel, serveRpc } from '../../src/internal/rpc.ts'
+import type { NoParams, RpcServerOptions } from '../../src/internal/rpc.ts'
+import {
+  DEFAULT_EXIT_HOOK_TIMEOUT_MS,
+  RpcChannel,
+  serveRpc,
+} from '../../src/internal/rpc.ts'
 
 type EchoCommands = {
   echo: { params: { value: string }; result: string }
@@ -116,23 +120,76 @@ describe('serveRpc', () => {
       'slow:second:end',
     ])
   })
+
+  it('exits after the reply only once the beforeExit hook settles, passing it the budget', async () => {
+    const exit = stubProcessExit()
+    const flushed = createFuture<void>()
+    const beforeExit = vi.fn(() => flushed.promise)
+    const { client } = createPair(
+      {
+        echo: ({ value }, { exitAfterReply }) => {
+          exitAfterReply(0, 1_234)
+          return value
+        },
+        slow: ({ value }) => value,
+      },
+      [],
+      { beforeExit },
+    )
+
+    await expect(client.request('echo', { value: 'bye' })).resolves.toBe('bye')
+    await vi.waitFor(() => expect(beforeExit).toHaveBeenCalledWith(1_234))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(exit).not.toHaveBeenCalled()
+
+    flushed.resolve()
+    await vi.waitFor(() => expect(exit).toHaveBeenCalledWith(0))
+  })
+
+  it('gives a fatal exit the default hook budget and exits even if the hook fails', async () => {
+    const exit = stubProcessExit()
+    const beforeExit = vi.fn(async () => {
+      throw new Error('flush failed')
+    })
+    const { server } = createPair(
+      { echo: ({ value }) => value, slow: ({ value }) => value },
+      [],
+      { beforeExit },
+    )
+
+    await server.exit(1)
+    expect(beforeExit).toHaveBeenCalledWith(DEFAULT_EXIT_HOOK_TIMEOUT_MS)
+    expect(exit).toHaveBeenCalledExactlyOnceWith(1)
+  })
 })
+
+function stubProcessExit() {
+  const exit = vi
+    .spyOn(process, 'exit')
+    .mockImplementation((() => undefined) as typeof process.exit)
+  onTestFinished(() => exit.mockRestore())
+  return exit
+}
 
 function createPair(
   handlers: Parameters<typeof serveRpc<EchoCommands, never>>[2],
   serial: readonly (keyof EchoCommands)[] = [],
+  options: RpcServerOptions<EchoCommands> = {},
 ) {
   const { port1, port2 } = new MessageChannel()
   onTestFinished(() => {
     port1.close()
     port2.close()
   })
-  serveRpc<EchoCommands, never>(port2, 'Test server', handlers, { serial })
+  const server = serveRpc<EchoCommands, never>(port2, 'Test server', handlers, {
+    ...options,
+    serial,
+  })
   const client = new RpcChannel<EchoCommands>({
     post: (message) => port1.postMessage(message),
     timeoutMs: () => 5_000,
     timeoutMessage: (type) => `request [${type}] timed out`,
   })
   port1.on('message', (message: unknown) => client.settle(message))
-  return { client }
+  return { client, server }
 }

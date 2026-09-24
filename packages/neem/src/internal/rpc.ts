@@ -132,9 +132,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+// What a server's beforeExit hook gets when its exit carries no budget, e.g. a
+// crash: enough for a best-effort flush without holding up the failure.
+export const DEFAULT_EXIT_HOOK_TIMEOUT_MS = 1_000
+
 export type RpcHandlerContext = {
-  /** Exits the process with `code` once this request's reply is posted. */
-  exitAfterReply: (code: number) => void
+  /**
+   * Exits the process with `code` once this request's reply is posted, giving
+   * the server's `beforeExit` hook up to `timeoutMs`.
+   */
+  exitAfterReply: (code: number, timeoutMs?: number) => void
 }
 
 export type RpcHandlers<TMap extends RpcCommandMap> = {
@@ -153,13 +160,20 @@ export type RpcServerOptions<TMap extends RpcCommandMap> = {
   // Runs once on exit before the parent port closes, e.g. to close ports the
   // entry owns.
   onClose?: () => void
+  /**
+   * Awaited once on exit, after the ports close and before `process.exit`, so
+   * the entry can flush what an exit would drop. It must settle within the
+   * `timeoutMs` it is given; a rejection is ignored.
+   */
+  beforeExit?: (timeoutMs: number) => MaybePromise<void>
 }
 
 export type RpcServer<TEvent> = {
   post: (event: TEvent) => void
   /**
-   * Posts `event` as the last message, closes the ports and yields once so the
-   * parent receives it before the exit event. The first exit wins.
+   * Posts `event` as the last message, closes the ports, runs `beforeExit`
+   * within DEFAULT_EXIT_HOOK_TIMEOUT_MS and yields once so the parent receives
+   * the event before the exit event. The first exit wins.
    */
   exit: (code: number, event?: TEvent) => Promise<void>
 }
@@ -182,20 +196,32 @@ export function serveRpc<TMap extends RpcCommandMap, TEvent>(
 
   const post = (message: RpcMessage<TEvent>) => port.postMessage(message)
 
-  const exit = (code: number, event?: TEvent): Promise<void> =>
+  const exitWithin = (
+    code: number,
+    event: TEvent | undefined,
+    timeoutMs: number,
+  ): Promise<void> =>
     (exiting ??= (async () => {
       if (event !== undefined) post({ type: 'event', event })
       options.onClose?.()
       port.close()
+      try {
+        await options.beforeExit?.(timeoutMs)
+      } catch {
+        // The exit goes ahead regardless; there is nobody left to report to.
+      }
       await new Promise<void>((resolve) => setImmediate(resolve))
       process.exit(code)
     })())
 
+  const exit = (code: number, event?: TEvent): Promise<void> =>
+    exitWithin(code, event, DEFAULT_EXIT_HOOK_TIMEOUT_MS)
+
   const run = async (id: number, type: string, params: unknown) => {
-    let exitCode = undefined as number | undefined
+    let exitAfter: { code: number; timeoutMs: number } | undefined
     const context: RpcHandlerContext = {
-      exitAfterReply: (code) => {
-        exitCode = code
+      exitAfterReply: (code, timeoutMs = DEFAULT_EXIT_HOOK_TIMEOUT_MS) => {
+        exitAfter = { code, timeoutMs }
       },
     }
     try {
@@ -211,7 +237,9 @@ export function serveRpc<TMap extends RpcCommandMap, TEvent>(
     } catch (error) {
       post({ id, type: 'error', error: serializeError(error) })
     }
-    if (exitCode !== undefined) await exit(exitCode)
+    if (exitAfter) {
+      await exitWithin(exitAfter.code, undefined, exitAfter.timeoutMs)
+    }
   }
 
   port.on('message', (message: unknown) => {

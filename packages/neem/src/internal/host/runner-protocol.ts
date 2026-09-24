@@ -29,7 +29,9 @@ export type HostRunnerCommands = {
     result: void
   }
   stop: { params: NoParams; result: void }
-  shutdown: { params: NoParams; result: void }
+  // `timeoutMs`: how long the host still waits for the runner to exit, so it
+  // can bound what it flushes before exiting.
+  shutdown: { params: { timeoutMs: number }; result: void }
 }
 
 export const HOST_RUNNER_SERIAL_COMMANDS = [

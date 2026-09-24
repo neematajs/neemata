@@ -1,10 +1,18 @@
 import { threadId } from 'node:worker_threads'
 
+import { pino } from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { childLogger, createDefaultLogger } from '../../src/internal/logger.ts'
+import {
+  childLogger,
+  createDefaultLogger,
+  flushLogger,
+} from '../../src/internal/logger.ts'
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.useRealTimers()
+})
 
 describe('Neem logger', () => {
   it('selects development and production defaults and accepts a level override', () => {
@@ -64,5 +72,55 @@ describe('Neem logger', () => {
   it('disables the default logger during tests', () => {
     vi.stubEnv('NODE_ENV', 'test')
     expect(createDefaultLogger().isLevelEnabled('fatal')).toBe(false)
+  })
+
+  it('flushes every multistream destination of a child logger, waiting for a late one', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.useFakeTimers()
+    const flushed: string[] = []
+    const delayed = (name: string, ms: number) => ({
+      write: () => {},
+      flush: (callback: () => void) =>
+        setTimeout(() => {
+          flushed.push(name)
+          callback()
+        }, ms),
+    })
+    const logger = createDefaultLogger('production', {
+      destinations: [
+        { level: 'info', stream: delayed('fast', 10) },
+        { level: 'error', stream: delayed('slow', 500) },
+        // No flush(cb): nothing to wait for.
+        { level: 'info', stream: { write: () => {} } },
+      ],
+    })
+    let settled = false
+    const flush = flushLogger(childLogger(logger, 'runtime:api'), 1_000).then(
+      () => {
+        settled = true
+      },
+    )
+
+    await vi.advanceTimersByTimeAsync(499)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await flush
+    expect(flushed).toEqual(['fast', 'slow'])
+  })
+
+  it('resolves at the cap when a destination never reports its flush', async () => {
+    vi.useFakeTimers()
+    const stream = { write: () => {}, flush: () => {} }
+    const logger = pino({}, stream)
+    let settled = false
+    const flush = flushLogger(logger, 1_000).then(() => {
+      settled = true
+    })
+
+    await vi.advanceTimersByTimeAsync(999)
+    expect(settled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await flush
+    expect(settled).toBe(true)
   })
 })

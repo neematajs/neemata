@@ -23,6 +23,7 @@ import {
 import {
   childLogger,
   createDefaultLogger,
+  flushLogger,
   resolveManifestLogger,
 } from '../logger.ts'
 import { readManifest } from '../manifest/manifest.ts'
@@ -132,6 +133,9 @@ export class DevSession {
       for (const result of results) {
         if (result.status === 'rejected') collect(result.reason)
       }
+      // A failed session ends in the CLI's process.exit, which drops what
+      // async log destinations still buffer.
+      await flushLogger(this.logger, scope.remaining())
       this.options.probe?.emit('cli:dev:closed')
       try {
         throwCollected(errors, 'Neem dev session did not stop cleanly')

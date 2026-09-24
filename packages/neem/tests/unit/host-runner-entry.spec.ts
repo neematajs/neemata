@@ -87,7 +87,7 @@ describe('host runner entry', () => {
     await vi.waitFor(async () =>
       expect(await runner.events()).toContain('create'),
     )
-    const shutdown = runner.rpc.request('shutdown', {})
+    const shutdown = runner.rpc.request('shutdown', { timeoutMs: 5_000 })
 
     await expect(shutdown).resolves.toBeUndefined()
     expect(await runner.events()).toEqual(['create', 'stop'])

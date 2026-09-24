@@ -33,6 +33,7 @@ import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
 import {
   DEFAULT_STOP_TIMEOUT_MS,
+  exitBudget,
   isOperationAborted,
   OperationScope,
   resolveLifecycle,
@@ -280,7 +281,9 @@ export class ThreadController {
     this.logger.trace('Neem worker stopping')
     const budget = scope.remaining()
     // The exit acknowledges the stop; the reply only races it.
-    this.rpc.request('stop', {}).catch(() => undefined)
+    this.rpc
+      .request('stop', { timeoutMs: exitBudget(budget) })
+      .catch(() => undefined)
 
     const exit = this.exited
       ? await raceWithTimeout(this.exited.promise, budget)

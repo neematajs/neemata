@@ -8,7 +8,6 @@ import type {
 } from '../../shared/types.ts'
 import type { WorkerUpdate } from '../build/updates.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
-import type { NoParams } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
 
 export type RuntimeWorkerData = {
@@ -33,7 +32,9 @@ export type WorkerCommands = {
     params: { update: WorkerUpdate; url?: string }
     result: WorkerPatchResult
   }
-  stop: { params: NoParams; result: void }
+  // `timeoutMs`: how long the host still waits for the thread to exit, so the
+  // thread can bound what it flushes before exiting.
+  stop: { params: { timeoutMs: number }; result: void }
 }
 
 export const WORKER_SERIAL_COMMANDS = [

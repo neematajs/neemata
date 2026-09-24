@@ -18,7 +18,12 @@ import type {
   WorkerPatchResult,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
-import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import {
+  childLogger,
+  flushLogger,
+  resolveManifestLogger,
+  runtimeLabel,
+} from '../logger.ts'
 import { serveRpc } from '../rpc.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
@@ -42,14 +47,18 @@ const server = serveRpc<WorkerCommands, WorkerEvent>(
   'Neem runtime worker entry',
   {
     'patch-update': ({ update, url }) => applyUpdate(update, url),
-    stop: async (_params, { exitAfterReply }) => {
+    stop: async ({ timeoutMs }, { exitAfterReply }) => {
+      // The host's wait for the exit began when it sent this request.
+      const deadline = Date.now() + timeoutMs
       await stopOnRequest()
-      exitAfterReply(0)
+      exitAfterReply(0, deadline - Date.now())
     },
   },
   {
     serial: WORKER_SERIAL_COMMANDS,
     onClose: () => workerData.port.close(),
+    beforeExit: (timeoutMs) =>
+      logger ? flushLogger(logger, timeoutMs) : undefined,
   },
 )
 

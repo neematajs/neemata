@@ -16,7 +16,7 @@ import type {
 } from './runner-protocol.ts'
 import { isRpcEvent, RpcChannel } from '../rpc.ts'
 import { deserializeError, raceWithTimeout } from '../utils.ts'
-import { DEFAULT_REQUEST_TIMEOUT_MS } from './lifecycle.ts'
+import { DEFAULT_REQUEST_TIMEOUT_MS, exitBudget } from './lifecycle.ts'
 
 export type HostRunnerOptions = {
   // The built runner entry the manifest records (RuntimeSnapshot.runnerEntry).
@@ -99,12 +99,13 @@ export class HostRunner {
 
     if (this.state === 'running') {
       this.state = 'shutting-down'
+      const remaining = scope.remaining()
       // The exit acknowledges the shutdown; the reply only races it.
       this.rpc
         .request(
           'shutdown',
-          {},
-          { timeoutMs: Math.min(this.requestTimeoutMs(), scope.remaining()) },
+          { timeoutMs: exitBudget(remaining) },
+          { timeoutMs: Math.min(this.requestTimeoutMs(), remaining) },
         )
         .catch(() => undefined)
     }

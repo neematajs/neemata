@@ -4,6 +4,16 @@ import { raceWithTimeout, wait } from '../utils.ts'
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000
 export const DEFAULT_START_TIMEOUT_MS = 30_000
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+// Held back from the exit budget a stopping thread is given, so its exit still
+// reaches the host, which terminates it at the deadline, after the thread has
+// spent that budget flushing.
+const EXIT_BUDGET_MARGIN_MS = 250
+
+// The budget a thread is told it has left to exit in, out of what the host
+// still waits for it.
+export function exitBudget(remainingMs: number): number {
+  return Math.max(0, remainingMs - EXIT_BUDGET_MARGIN_MS)
+}
 
 export function resolveLifecycle(
   config: NeemLifecycleConfig | undefined,

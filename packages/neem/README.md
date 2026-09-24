@@ -57,6 +57,10 @@ Host `stop()` hooks, runtime hosts, workers and plugins share it: each step
 gets what earlier steps left over. Anything still running when the budget runs
 out is terminated.
 
+Before a worker, host runner or the host itself exits, it flushes its logger
+within what is left of that budget, so asynchronous destinations keep the
+shutdown logs. A crashing thread gets a best-effort flush of up to one second.
+
 A shutdown that fails exits with a non-zero code: a cleanup step that throws,
 or a worker or host runner that had to be terminated. `lifecycle.startTimeout`
 (default `30000`) bounds how long a worker may take to become ready.
