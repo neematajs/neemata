@@ -68,6 +68,13 @@ to each channel once, however many local listeners it has. It does not own the
 client passed to it: call `adapter.dispose()` before closing the client; disposal
 ends live subscriptions. `logger` is optional and accepts a Pino logger.
 
+When the subscriber connection drops, the adapter does not resubscribe by itself:
+live subscriptions end with a `PubSubConnectionLostError` rather than delivering
+their unread backlog first, so their consumers can resubscribe and refetch what they
+missed. A manager or Effect stream may still hand out a few messages it had
+already read ahead. A subscription opened while the connection is down waits for it
+to come back, and rejects if the client stops reconnecting.
+
 Any broker can be plugged in through `PubSubAdapter`:
 
 ```ts
@@ -108,5 +115,6 @@ const program = Effect.gen(function* () {
 program.pipe(Effect.provide(layer({ adapter })))
 ```
 
-Failures are `PubSubError`s carrying the cause. The layer does not own the adapter;
-acquire and dispose it in the application's own layer.
+Failures are `PubSubError`s carrying the cause, such as the
+`PubSubConnectionLostError` that ends a stream when the connection drops. The layer
+does not own the adapter; acquire and dispose it in the application's own layer.

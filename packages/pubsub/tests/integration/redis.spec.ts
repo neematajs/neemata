@@ -1,4 +1,8 @@
-import { defineChannel, PubSubManager } from '@nmtjs/pubsub'
+import {
+  defineChannel,
+  PubSubConnectionLostError,
+  PubSubManager,
+} from '@nmtjs/pubsub'
 import { RedisPubSubAdapter } from '@nmtjs/pubsub/redis'
 import { afterEach, describe, expect, it } from 'vitest'
 import * as z from 'zod'
@@ -156,6 +160,78 @@ for (const target of serviceTargets) {
         await expect(consumed).resolves.toBeUndefined()
         expect(received).toEqual([{ event: 'ping', payload: 1 }])
         expect(logged).toEqual([])
+      })
+
+      it('ends established subscriptions when the subscriber connection is killed, and subscribes again after the reconnect', async () => {
+        const channel = defineChannel({
+          name: createTestName('pubsub-killed'),
+          events: { ping: z.number() },
+        })
+        const client = target.createClient()
+        const adapter = new RedisPubSubAdapter(
+          client,
+          createTestLogger('pubsub-killed'),
+        )
+        clients.push(client)
+        adapters.push(adapter)
+        await adapter.initialize()
+        const manager = new PubSubManager({ adapter })
+
+        const raw = (await adapter.subscribe(channel.name))[
+          Symbol.asyncIterator
+        ]()
+        const stream = await manager.subscribe(channel, undefined)
+        const consumed = (async () => {
+          for await (const _ of stream);
+        })()
+        const ended = Promise.all([
+          expect(raw.next()).rejects.toBeInstanceOf(PubSubConnectionLostError),
+          expect(consumed).rejects.toBeInstanceOf(PubSubConnectionLostError),
+        ])
+
+        await client.call('CLIENT', 'KILL', 'TYPE', 'pubsub')
+        await ended
+
+        // Resolves once the connection is back and the channel subscribed.
+        const resubscribed = await manager.subscribe(channel, undefined)
+        await manager.publish(channel.events.ping, undefined, 1)
+        const messages = resubscribed[Symbol.asyncIterator]()
+        await expect(messages.next()).resolves.toEqual({
+          done: false,
+          value: { event: 'ping', payload: 1 },
+        })
+        await messages.return?.()
+      })
+
+      it('leaves no broker subscription behind a SUBSCRIBE that timed out', async () => {
+        const channel = createTestName('pubsub-timed-out')
+        const client = target.createClient({ commandTimeout: 150 })
+        const admin = target.createClient()
+        const adapter = new RedisPubSubAdapter(
+          client,
+          createTestLogger('pubsub-timed-out'),
+        )
+        clients.push(client, admin)
+        adapters.push(adapter)
+        await adapter.initialize()
+
+        // The broker holds the SUBSCRIBE past its timeout, then runs it.
+        await admin.call('CLIENT', 'PAUSE', '400', 'ALL')
+        await expect(adapter.subscribe(channel)).rejects.toThrow(/timed out/i)
+
+        await waitFor(async () => {
+          const [, receivers] = (await admin.call(
+            'PUBSUB',
+            'NUMSUB',
+            channel,
+          )) as [string, number]
+          return receivers === 0
+        })
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(await admin.call('PUBSUB', 'NUMSUB', channel)).toEqual([
+          channel,
+          0,
+        ])
       })
 
       it('filters selected events and unsubscribes from channels', async () => {

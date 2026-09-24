@@ -9,21 +9,27 @@ import type { PubSubLogger } from '../../src/utils.ts'
 export type PubSubServiceTarget = {
   name: string
   url: string | undefined
-  createClient: () => RedisPubSubClient
+  createClient: (options?: { commandTimeout?: number }) => RedisPubSubClient
 }
 
 export const serviceTargets: PubSubServiceTarget[] = [
   {
     name: 'Redis',
     url: process.env.REDIS_URL,
-    createClient: () =>
-      new Redis(process.env.REDIS_URL!, { maxRetriesPerRequest: null }),
+    createClient: (options) =>
+      new Redis(process.env.REDIS_URL!, {
+        maxRetriesPerRequest: null,
+        ...options,
+      }),
   },
   {
     name: 'Valkey',
     url: process.env.VALKEY_URL,
-    createClient: () =>
-      new Valkey(process.env.VALKEY_URL!, { maxRetriesPerRequest: null }),
+    createClient: (options) =>
+      new Valkey(process.env.VALKEY_URL!, {
+        maxRetriesPerRequest: null,
+        ...options,
+      }),
   },
 ]
 
