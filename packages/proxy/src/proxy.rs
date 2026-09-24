@@ -834,6 +834,9 @@ fn build_router_config(
             .cloned();
         cfg.apps
             .insert(app.name.clone(), router::AppPools { http1, ws, http2 });
+        if let Some(limit) = app.max_request_body_bytes {
+            cfg.max_request_body_bytes.insert(app.name.clone(), limit);
+        }
     }
 
     cfg

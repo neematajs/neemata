@@ -776,6 +776,22 @@ describe('Proxy wiring', () => {
       'InvalidProxyOptions',
       'limits.maxUriSize must be greater than 0',
     )
+
+    await expectRejectCode(
+      () =>
+        new NeemataProxy({
+          listen: `127.0.0.1:${port}`,
+          applications: [
+            {
+              name: 'app',
+              routing: { type: 'default' },
+              maxRequestBodySize: 0,
+            },
+          ],
+        }),
+      'InvalidApplicationOptions',
+      'ApplicationOptions.maxRequestBodySize must be greater than 0',
+    )
   })
 
   it('rejects zero timeout option values with stable code', async () => {
@@ -1105,6 +1121,196 @@ describe('Proxy wiring', () => {
         body: 'larger-than-eight',
       })
       expect(res.status).toBe(413)
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('returns a readable cross-origin 413 body', async () => {
+    const port = await getFreePort()
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [{ name: 'app', routing: { type: 'default' } }],
+      limits: { maxRequestBodySize: 8 },
+    })
+
+    await proxy.addUpstream('app', {
+      type: 'port',
+      transport: 'http',
+      secure: false,
+      hostname: '127.0.0.1',
+      port: upstreamHttp1Port,
+    })
+
+    await proxy.start()
+    try {
+      const res = await httpRequest(port, {
+        method: 'POST',
+        path: '/upload',
+        headers: { origin: 'http://client.example' },
+        body: 'larger-than-eight',
+      })
+      expect(res.status).toBe(413)
+      expect(res.body).toBe('Request body exceeds the 8-byte limit\n')
+      expect(res.headers['content-type']).toBe('text/plain; charset=utf-8')
+      expect(res.headers['access-control-allow-origin']).toBe(
+        'http://client.example',
+      )
+      expect(res.headers['access-control-allow-credentials']).toBe('true')
+      expect(res.headers.vary).toBe('Origin')
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('delivers 413 to clients still uploading the rejected body', async () => {
+    const port = await getFreePort()
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [{ name: 'app', routing: { type: 'default' } }],
+      limits: { maxRequestBodySize: 1024 },
+    })
+
+    await proxy.start()
+    try {
+      // fetch keeps writing after the early response, so without draining the
+      // proxy closes over unread bytes and the client sees a reset instead.
+      const body = Buffer.alloc(20 * 1024 * 1024)
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const res = await fetch(`http://127.0.0.1:${port}/upload`, {
+          method: 'POST',
+          body,
+        })
+        expect(res.status).toBe(413)
+        expect(await res.text()).toBe(
+          'Request body exceeds the 1024-byte limit\n',
+        )
+      }
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('applies per-application maxRequestBodySize overrides', async () => {
+    const port = await getFreePort()
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [
+        { name: 'strict', routing: { type: 'path', name: 'strict' } },
+        {
+          name: 'relaxed',
+          routing: { type: 'path', name: 'relaxed' },
+          maxRequestBodySize: 64,
+        },
+        {
+          name: 'unlimited',
+          routing: { type: 'path', name: 'unlimited' },
+          maxRequestBodySize: null,
+        },
+        {
+          name: 'tighter',
+          routing: { type: 'path', name: 'tighter' },
+          maxRequestBodySize: 4,
+        },
+      ],
+      limits: { maxRequestBodySize: 8 },
+    })
+
+    for (const app of ['strict', 'relaxed', 'unlimited', 'tighter']) {
+      await proxy.addUpstream(app, {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: upstreamHttp1Port,
+      })
+    }
+
+    await proxy.start()
+    try {
+      const post = (path: string, body: string) =>
+        waitFor(
+          () => httpRequest(port, { method: 'POST', path, body }),
+          (res) => res.status !== 503,
+        )
+
+      expect((await post('/strict/upload', 'x'.repeat(16))).status).toBe(413)
+      expect((await post('/relaxed/upload', 'x'.repeat(16))).status).toBe(200)
+      expect((await post('/relaxed/upload', 'x'.repeat(128))).status).toBe(413)
+      expect((await post('/unlimited/upload', 'x'.repeat(4096))).status).toBe(
+        200,
+      )
+      expect((await post('/tighter/upload', 'x'.repeat(6))).status).toBe(413)
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('applies per-application maxRequestBodySize when global limits are null', async () => {
+    const port = await getFreePort()
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [
+        {
+          name: 'app',
+          routing: { type: 'default' },
+          maxRequestBodySize: 8,
+        },
+      ],
+      limits: null,
+    })
+
+    await proxy.addUpstream('app', {
+      type: 'port',
+      transport: 'http',
+      secure: false,
+      hostname: '127.0.0.1',
+      port: upstreamHttp1Port,
+    })
+
+    await proxy.start()
+    try {
+      const res = await httpRequest(port, {
+        method: 'POST',
+        path: '/upload',
+        body: 'larger-than-eight',
+      })
+      expect(res.status).toBe(413)
+    } finally {
+      await proxy.stop()
+    }
+  })
+
+  it('accepts maxRequestBodySize values above 4 GiB', async () => {
+    const port = await getFreePort()
+    const limit = 8 * 1024 ** 3
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [{ name: 'app', routing: { type: 'default' } }],
+      limits: { maxRequestBodySize: limit },
+    })
+
+    await proxy.start()
+    try {
+      // Upstreams are not needed: a declared length above the limit is refused
+      // before routing reaches an upstream.
+      const oversized = await new Promise<string>((resolve, reject) => {
+        const socket = net.connect(port, '127.0.0.1', () => {
+          socket.write(
+            `POST /upload HTTP/1.1\r\nhost: localhost\r\ncontent-length: ${limit + 1}\r\n\r\n`,
+          )
+        })
+        let data = ''
+        socket.on('data', (chunk) => {
+          data += chunk.toString('utf8')
+          if (data.includes('\r\n\r\n')) {
+            socket.destroy()
+            resolve(data.split('\r\n', 1)[0])
+          }
+        })
+        socket.on('error', reject)
+      })
+      expect(oversized).toBe('HTTP/1.1 413 Payload Too Large')
     } finally {
       await proxy.stop()
     }

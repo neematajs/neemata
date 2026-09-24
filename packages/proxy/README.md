@@ -69,7 +69,12 @@ with:
 - After `start()`, `proxy.address()` returns the bound listener address as `{ hostname, port }`. This includes the OS-assigned port when `listen` uses port `0`; it returns `null` when the proxy is not running.
 - Dynamic upstream changes are eventually consistent with health checks. After `addUpstream()` or `start()`, a backend does not become routable until its health-check loop marks it healthy, so callers should expect a short convergence window where requests may still receive `503`.
 - The convergence window is controlled by `healthCheckIntervalMs`. Tests in this repository use polling helpers for that reason, and production callers should follow the same pattern when they need to wait for a backend to become ready.
-- Proxy-generated errors are stable:
-  - no application matches the request: `404` with an empty body;
-  - the matched application has no upstream for the request (none registered, or all unhealthy): `503` with `Retry-After: 1` and a `text/plain` body;
-  - connecting to or proxying through the selected upstream fails (for example connection refused or reset): `502` with a `text/plain` body.
+- Proxy-generated errors are stable. Each has a `text/plain` body and, when the request carries an `Origin`, echoes it in `Access-Control-Allow-Origin` (with `Access-Control-Allow-Credentials: true`) so browsers on other origins can read the status:
+  - no application matches the request: `404`;
+  - the matched application has no upstream for the request (none registered, or all unhealthy): `503` with `Retry-After: 1`;
+  - connecting to or proxying through the selected upstream fails (for example connection refused or reset): `502`;
+  - a request limit is exceeded: `414`, `431`, or `413`.
+
+  On HTTP/1, the proxy then discards the unread request body for up to 2 seconds before closing, so clients still uploading can read the response instead of seeing a connection reset.
+
+- `limits.maxRequestBodySize` (default 16 MiB) is checked against the declared `Content-Length` only. An application's `maxRequestBodySize` overrides it; `null` disables the check so the upstream can enforce its own limit.

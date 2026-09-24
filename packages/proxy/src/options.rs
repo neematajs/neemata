@@ -43,8 +43,8 @@ pub struct ProxyLimitsOptions {
     pub max_single_header_size: Option<Either<u32, Null>>,
     /// Maximum total request header size, in bytes (default: 65536 bytes / 64 KiB). Set null to disable this check.
     pub max_request_header_size: Option<Either<u32, Null>>,
-    /// Maximum Content-Length accepted, in bytes (default: 16777216 bytes / 16 MiB). Set null to disable this check. Chunked or unknown-length body enforcement depends on future Pingora early body buffering support.
-    pub max_request_body_size: Option<Either<u32, Null>>,
+    /// Maximum Content-Length accepted, in bytes (default: 16777216 bytes / 16 MiB). Set null to disable this check. Applications may override it. Chunked or unknown-length body enforcement depends on future Pingora early body buffering support.
+    pub max_request_body_size: Option<Either<i64, Null>>,
 }
 
 #[napi(object)]
@@ -89,6 +89,8 @@ pub struct ApplicationOptions {
     pub name: String,
     pub routing: ProxyApplicationRouting,
     pub sni: Option<String>,
+    /// Maximum Content-Length accepted for this application, in bytes. Overrides limits.maxRequestBodySize when set; set null to disable the check for this application.
+    pub max_request_body_size: Option<Either<i64, Null>>,
 }
 
 #[napi(object_from_js, discriminant = "type", discriminant_case = "lowercase")]
@@ -120,9 +122,11 @@ pub struct StickySessionOptionsParsed {
 }
 
 #[derive(Debug, Clone)]
-pub enum ProxyLimitsOptionsParsed {
-    Disabled,
-    Enabled { checks: Vec<ProxyLimitCheckParsed> },
+pub struct ProxyLimitsOptionsParsed {
+    /// Checked before routing, so they apply to every request.
+    pub checks: Vec<ProxyLimitCheckParsed>,
+    /// Default for applications that do not override it.
+    pub max_request_body_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,7 +135,6 @@ pub enum ProxyLimitCheckParsed {
     RequestHeaders(usize),
     SingleHeaderBytes(usize),
     RequestHeaderBytes(usize),
-    RequestBodyBytes(u64),
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +160,8 @@ pub struct ApplicationOptionsParsed {
     pub name: String,
     pub routing: ApplicationRoutingParsed,
     pub sni: Option<String>,
+    /// Effective limit, with the proxy-wide default already applied.
+    pub max_request_body_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -175,15 +180,20 @@ pub fn parse_proxy_options(env: &Env, options: ProxyOptions) -> Result<ProxyOpti
         enable_h2: tls.enable_h2.unwrap_or(false),
     });
 
+    let limits = parse_limits_options(env, options.limits)?;
+
     let mut applications = Vec::with_capacity(options.applications.len());
     for app in options.applications {
-        applications.push(parse_application_options(env, app)?);
+        applications.push(parse_application_options(
+            env,
+            app,
+            limits.max_request_body_bytes,
+        )?);
     }
 
     validate_applications(env, &applications)?;
 
     let sticky_sessions = parse_sticky_session_options(env, options.sticky_sessions)?;
-    let limits = parse_limits_options(env, options.limits)?;
     let timeouts = parse_timeout_options(env, options.timeouts)?;
 
     Ok(ProxyOptionsParsed {
@@ -206,10 +216,13 @@ fn parse_limits_options(
     };
 
     let Either::A(limits) = limits else {
-        return Ok(ProxyLimitsOptionsParsed::Disabled);
+        return Ok(ProxyLimitsOptionsParsed {
+            checks: Vec::new(),
+            max_request_body_bytes: None,
+        });
     };
 
-    let mut checks = Vec::with_capacity(5);
+    let mut checks = Vec::with_capacity(4);
 
     if let Some(limit) = parse_nullable_positive_usize(
         env,
@@ -247,31 +260,29 @@ fn parse_limits_options(
         checks.push(ProxyLimitCheckParsed::RequestHeaderBytes(limit));
     }
 
-    if let Some(limit) = parse_nullable_positive_u64(
+    let max_request_body_bytes = parse_nullable_positive_u64(
         env,
+        errors::codes::INVALID_PROXY_OPTIONS,
         "limits.maxRequestBodySize",
         limits.max_request_body_size,
-        defaults::MAX_REQUEST_BODY_BYTES,
-    )? {
-        checks.push(ProxyLimitCheckParsed::RequestBodyBytes(limit));
-    }
+        Some(defaults::MAX_REQUEST_BODY_BYTES),
+    )?;
 
-    Ok(if checks.is_empty() {
-        ProxyLimitsOptionsParsed::Disabled
-    } else {
-        ProxyLimitsOptionsParsed::Enabled { checks }
+    Ok(ProxyLimitsOptionsParsed {
+        checks,
+        max_request_body_bytes,
     })
 }
 
 fn default_limit_checks() -> ProxyLimitsOptionsParsed {
-    ProxyLimitsOptionsParsed::Enabled {
+    ProxyLimitsOptionsParsed {
         checks: vec![
             ProxyLimitCheckParsed::UriBytes(defaults::MAX_URI_BYTES),
             ProxyLimitCheckParsed::RequestHeaders(defaults::MAX_REQUEST_HEADERS),
             ProxyLimitCheckParsed::SingleHeaderBytes(defaults::MAX_SINGLE_HEADER_BYTES),
             ProxyLimitCheckParsed::RequestHeaderBytes(defaults::MAX_REQUEST_HEADER_BYTES),
-            ProxyLimitCheckParsed::RequestBodyBytes(defaults::MAX_REQUEST_BODY_BYTES),
         ],
+        max_request_body_bytes: Some(defaults::MAX_REQUEST_BODY_BYTES),
     }
 }
 
@@ -339,13 +350,22 @@ fn parse_nullable_positive_usize(
     Ok(parse_nullable_positive_u32(env, field, value, default as u32)?.map(|value| value as usize))
 }
 
+// Takes i64 because NAPI u64 requires a JS BigInt, and body limits may exceed u32.
 fn parse_nullable_positive_u64(
     env: &Env,
+    code: &'static str,
     field: &str,
-    value: Option<Either<u32, Null>>,
-    default: u64,
+    value: Option<Either<i64, Null>>,
+    default: Option<u64>,
 ) -> Result<Option<u64>> {
-    Ok(parse_nullable_positive_u32(env, field, value, default as u32)?.map(|value| value as u64))
+    match value {
+        Some(Either::A(value)) if value > 0 => Ok(Some(value as u64)),
+        Some(Either::A(_)) => {
+            errors::throw_type_error(env, code, format!("{field} must be greater than 0"))
+        }
+        Some(Either::B(_)) => Ok(None),
+        None => Ok(default),
+    }
 }
 
 fn parse_nullable_positive_u32(
@@ -451,11 +471,24 @@ fn parse_sticky_session_options(
 fn parse_application_options(
     env: &Env,
     app: ApplicationOptions,
+    default_max_request_body_bytes: Option<u64>,
 ) -> Result<ApplicationOptionsParsed> {
     let name = app.name;
     let sni = parse_application_sni(env, app.sni)?;
     let routing = parse_routing(env, app.routing)?;
-    Ok(ApplicationOptionsParsed { name, routing, sni })
+    let max_request_body_bytes = parse_nullable_positive_u64(
+        env,
+        errors::codes::INVALID_APPLICATION_OPTIONS,
+        "ApplicationOptions.maxRequestBodySize",
+        app.max_request_body_size,
+        default_max_request_body_bytes,
+    )?;
+    Ok(ApplicationOptionsParsed {
+        name,
+        routing,
+        sni,
+        max_request_body_bytes,
+    })
 }
 
 fn parse_application_sni(env: &Env, sni: Option<String>) -> Result<Option<String>> {

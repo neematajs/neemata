@@ -20,6 +20,7 @@ fn router_config(route_count: usize) -> RouterConfig {
         path_routes,
         default_app: Some("default".to_string()),
         apps: HashMap::new(),
+        max_request_body_bytes: HashMap::new(),
     }
 }
 

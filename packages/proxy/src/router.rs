@@ -26,6 +26,8 @@ pub struct RouterConfig {
     pub path_routes: HashMap<String, String>,
     pub default_app: Option<String>,
     pub apps: HashMap<String, AppPools>,
+    /// Apps without an entry accept any declared body size.
+    pub max_request_body_bytes: HashMap<String, u64>,
 }
 
 #[derive(Clone)]
@@ -241,7 +243,7 @@ impl ProxyHttp for SharedRouter {
         let timeouts = &self.0.timeouts;
 
         if let Some(status) = request_limit_rejection_status(session, limits) {
-            return reject_request(session, status).await;
+            return reject_request(session, status, failure_body(status.as_u16())).await;
         }
 
         apply_downstream_timeouts(session, timeouts);
@@ -258,6 +260,14 @@ impl ProxyHttp for SharedRouter {
                 "no application matched",
             ));
         };
+
+        // Checked after routing because applications may override the proxy-wide limit.
+        if let Some(limit) = config.max_request_body_bytes.get(&resolved_route.app_name)
+            && request_content_length(session).is_some_and(|n| n > *limit)
+        {
+            let body = format!("Request body exceeds the {limit}-byte limit\n");
+            return reject_request(session, StatusCode::PAYLOAD_TOO_LARGE, body.into()).await;
+        }
 
         ctx.app_name = Some(resolved_route.app_name);
         ctx.path_rewrite_segment = resolved_route.path_rewrite_segment;
@@ -449,19 +459,11 @@ impl ProxyHttp for SharedRouter {
         let code = failure_status(ctx.failure_hint, e);
 
         if code > 0 {
-            let is_head = session.req_header().method == http::Method::HEAD;
-            let written = match upstream_failure_response(code, is_head) {
-                Some((resp, body)) => {
-                    session
-                        .as_downstream_mut()
-                        .write_error_response(resp, Bytes::from_static(body.as_bytes()))
-                        .await
-                }
-                None => session.respond_error(code).await,
-            };
-            written.unwrap_or_else(|err| {
-                log::error!("failed to send error response to downstream: {err}");
-            });
+            write_proxy_error_response(session, code, failure_body(code))
+                .await
+                .unwrap_or_else(|err| {
+                    log::error!("failed to send error response to downstream: {err}");
+                });
         }
 
         FailToProxy {
@@ -750,6 +752,9 @@ fn extract_first_path_segment(session: &Session) -> Option<&str> {
 // Missing upstreams are expected to be a short restart gap, so clients should come back soon.
 const NO_UPSTREAM_RETRY_AFTER_SECONDS: &str = "1";
 
+// Bounds how long a rejected upload can keep a connection open.
+const ERROR_RESPONSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
 fn failure_status(hint: Option<FailureHint>, e: &Error) -> u16 {
     match hint {
         Some(FailureHint::MissingApplication) => StatusCode::NOT_FOUND.as_u16(),
@@ -775,33 +780,90 @@ fn failure_status(hint: Option<FailureHint>, e: &Error) -> u16 {
     }
 }
 
-/// Proxy-generated 502/503 responses carry a body so clients can tell them apart from
-/// application errors; 503 also tells them when to retry.
-fn upstream_failure_response(code: u16, is_head: bool) -> Option<(ResponseHeader, &'static str)> {
-    let (body, retry_after) = match StatusCode::from_u16(code).ok()? {
-        StatusCode::SERVICE_UNAVAILABLE => (
-            "No upstream available\n",
-            Some(NO_UPSTREAM_RETRY_AFTER_SECONDS),
-        ),
-        StatusCode::BAD_GATEWAY => ("Upstream request failed\n", None),
-        _ => return None,
-    };
+// Proxy-generated responses carry a body so clients can tell them apart from
+// application errors.
+fn failure_body(code: u16) -> Cow<'static, str> {
+    match StatusCode::from_u16(code) {
+        Ok(StatusCode::NOT_FOUND) => "No application matched\n".into(),
+        Ok(StatusCode::BAD_GATEWAY) => "Upstream request failed\n".into(),
+        Ok(StatusCode::SERVICE_UNAVAILABLE) => "No upstream available\n".into(),
+        Ok(status) => format!("{}\n", status.canonical_reason().unwrap_or("Proxy error")).into(),
+        Err(_) => "Proxy error\n".into(),
+    }
+}
+
+/// The proxy cannot know the application's CORS policy, so it echoes the request origin.
+/// Otherwise browsers hide proxy errors behind an opaque network error. The bodies are
+/// fixed text with no user data, so exposing them to any origin, even with
+/// credentials, leaks nothing.
+fn proxy_error_response(
+    code: u16,
+    body: Cow<'static, str>,
+    origin: Option<&http::HeaderValue>,
+    is_head: bool,
+) -> Result<(ResponseHeader, Bytes)> {
+    let retry_after = code == StatusCode::SERVICE_UNAVAILABLE.as_u16();
 
     let mut resp = ServerSession::generate_error(code);
-    resp.insert_header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-        .ok()?;
-    resp.set_content_length(body.len()).ok()?;
-    if let Some(seconds) = retry_after {
-        resp.insert_header(header::RETRY_AFTER, seconds).ok()?;
+    resp.insert_header(header::CONTENT_TYPE, "text/plain; charset=utf-8")?;
+    resp.set_content_length(body.len())?;
+    if retry_after {
+        resp.insert_header(header::RETRY_AFTER, NO_UPSTREAM_RETRY_AFTER_SECONDS)?;
+    }
+    if let Some(origin) = origin {
+        resp.insert_header(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin.clone())?;
+        resp.insert_header(header::ACCESS_CONTROL_ALLOW_CREDENTIALS, "true")?;
+        resp.insert_header(header::VARY, "Origin")?;
+        if retry_after {
+            resp.insert_header(header::ACCESS_CONTROL_EXPOSE_HEADERS, "Retry-After")?;
+        }
     }
 
     // Pingora's HTTP/2 writer does not drop bodies for HEAD like its HTTP/1 writer does.
-    Some((resp, if is_head { "" } else { body }))
+    let body = match body {
+        _ if is_head => Bytes::new(),
+        Cow::Borrowed(body) => Bytes::from_static(body.as_bytes()),
+        Cow::Owned(body) => Bytes::from(body),
+    };
+    Ok((resp, body))
 }
 
-async fn reject_request(session: &mut Session, status: StatusCode) -> Result<bool> {
-    session.downstream_session.set_keepalive(None);
-    session.respond_error(status.as_u16()).await?;
+async fn write_proxy_error_response(
+    session: &mut Session,
+    code: u16,
+    body: Cow<'static, str>,
+) -> Result<()> {
+    let req = session.req_header();
+    let (resp, body) = proxy_error_response(
+        code,
+        body,
+        req.headers.get(header::ORIGIN),
+        req.method == http::Method::HEAD,
+    )?;
+    // Also disables keep-alive: the unread request body leaves the connection unusable.
+    session
+        .as_downstream_mut()
+        .write_error_response(resp, body)
+        .await?;
+
+    // Closing an HTTP/1 connection over unread upload bytes makes the kernel reset it, and
+    // clients still sending (e.g. fetch) then lose the response. Discarding the rest of the
+    // body for a bounded time lets them read it first. HTTP/2 ends the stream on its own.
+    let downstream = session.as_downstream_mut();
+    if downstream.as_http1().is_some() {
+        downstream.set_total_drain_timeout(Some(ERROR_RESPONSE_DRAIN_TIMEOUT));
+        // Timeout or EOF is expected once the client reacts to the response.
+        let _ = downstream.drain_request_body().await;
+    }
+    Ok(())
+}
+
+async fn reject_request(
+    session: &mut Session,
+    status: StatusCode,
+    body: Cow<'static, str>,
+) -> Result<bool> {
+    write_proxy_error_response(session, status.as_u16(), body).await?;
     Ok(true)
 }
 
@@ -836,11 +898,7 @@ fn request_limit_rejection_status(
     session: &Session,
     limits: &options::ProxyLimitsOptionsParsed,
 ) -> Option<StatusCode> {
-    let options::ProxyLimitsOptionsParsed::Enabled { checks } = limits else {
-        return None;
-    };
-
-    for check in checks {
+    for check in &limits.checks {
         match check {
             options::ProxyLimitCheckParsed::UriBytes(limit) => {
                 if session.req_header().raw_path().len() > *limit {
@@ -860,11 +918,6 @@ fn request_limit_rejection_status(
             options::ProxyLimitCheckParsed::RequestHeaderBytes(limit) => {
                 if request_header_size(session) > *limit {
                     return Some(StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE);
-                }
-            }
-            options::ProxyLimitCheckParsed::RequestBodyBytes(limit) => {
-                if request_content_length(session).is_some_and(|n| n > *limit) {
-                    return Some(StatusCode::PAYLOAD_TOO_LARGE);
                 }
             }
         }
@@ -1107,8 +1160,8 @@ pub mod bench {
 mod tests {
     use super::{
         AffinityEntry, AffinityMapKey, FailureHint, StickySessionConfig, StickySessionState,
-        StickyShard, apply_upstream_timeouts, failure_status, is_cookie_safe_affinity_key,
-        resolve_route, strip_first_path_segment, upstream_failure_response,
+        StickyShard, apply_upstream_timeouts, failure_body, failure_status,
+        is_cookie_safe_affinity_key, proxy_error_response, resolve_route, strip_first_path_segment,
     };
     use crate::lb::TransportKind;
     use crate::options::ProxyTimeoutOptionsParsed;
@@ -1230,9 +1283,11 @@ mod tests {
     }
 
     #[test]
-    fn upstream_failure_responses_carry_body_and_retry_hint() {
-        let (resp, body) = upstream_failure_response(503, false).expect("503 has a response");
+    fn proxy_error_responses_carry_body_and_retry_hint() {
+        let (resp, body) =
+            proxy_error_response(503, failure_body(503), None, false).expect("503 response");
         assert_eq!(resp.status.as_u16(), 503);
+        assert_eq!(body, "No upstream available\n");
         assert_eq!(resp.headers.get("retry-after").unwrap(), "1");
         assert_eq!(
             resp.headers.get("content-type").unwrap(),
@@ -1242,31 +1297,54 @@ mod tests {
             resp.headers.get("content-length").unwrap(),
             body.len().to_string().as_str()
         );
+        assert!(resp.headers.get("access-control-allow-origin").is_none());
 
-        let (resp, body) = upstream_failure_response(502, false).expect("502 has a response");
+        let (resp, body) =
+            proxy_error_response(502, failure_body(502), None, false).expect("502 response");
         assert_eq!(resp.status.as_u16(), 502);
+        assert_eq!(body, "Upstream request failed\n");
         assert!(resp.headers.get("retry-after").is_none());
-        assert_eq!(
-            resp.headers.get("content-length").unwrap(),
-            body.len().to_string().as_str()
-        );
 
-        assert!(upstream_failure_response(404, false).is_none());
-        assert!(upstream_failure_response(500, false).is_none());
+        assert_eq!(failure_body(404), "No application matched\n");
+        assert_eq!(failure_body(414), "URI Too Long\n");
     }
 
     #[test]
-    fn head_failure_responses_keep_headers_without_body() {
-        let (resp, body) = upstream_failure_response(503, true).expect("503 has a response");
-        assert_eq!(body, "");
+    fn proxy_error_responses_echo_request_origin() {
+        let origin = http::HeaderValue::from_static("http://client.example");
+        let (resp, _) = proxy_error_response(413, "too large\n".into(), Some(&origin), false)
+            .expect("413 response");
+        assert_eq!(
+            resp.headers.get("access-control-allow-origin").unwrap(),
+            "http://client.example"
+        );
+        assert_eq!(
+            resp.headers
+                .get("access-control-allow-credentials")
+                .unwrap(),
+            "true"
+        );
+        assert_eq!(resp.headers.get("vary").unwrap(), "Origin");
+        assert!(resp.headers.get("access-control-expose-headers").is_none());
+
+        let (resp, _) = proxy_error_response(503, failure_body(503), Some(&origin), false)
+            .expect("503 response");
+        assert_eq!(
+            resp.headers.get("access-control-expose-headers").unwrap(),
+            "Retry-After"
+        );
+    }
+
+    #[test]
+    fn head_error_responses_keep_headers_without_body() {
+        let (resp, body) =
+            proxy_error_response(503, failure_body(503), None, true).expect("503 response");
+        assert!(body.is_empty());
         assert_eq!(resp.headers.get("retry-after").unwrap(), "1");
         assert_eq!(
             resp.headers.get("content-length").unwrap(),
             "No upstream available\n".len().to_string().as_str()
         );
-
-        let (_, body) = upstream_failure_response(502, true).expect("502 has a response");
-        assert_eq!(body, "");
     }
 
     fn insert_entry(
@@ -1319,6 +1397,7 @@ mod tests {
             path_routes: HashMap::from([("app".to_string(), "path".to_string())]),
             default_app: Some("default".to_string()),
             apps: HashMap::new(),
+            max_request_body_bytes: HashMap::new(),
         };
 
         let route =
