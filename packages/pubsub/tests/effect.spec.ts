@@ -1,3 +1,4 @@
+import type * as Scope from 'effect/Scope'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'
@@ -23,80 +24,178 @@ const room = defineChannel({
   },
 })
 
-function broker() {
+// Buffers from the moment `subscribe` resolves, as a real broker does once it
+// acknowledges, and releases on abort even if the iterator is never pulled.
+function broker(acknowledged: Promise<void> = Promise.resolve()) {
   const published: PubSubMessage[] = []
+  const requested: string[] = []
   const open = new Set<string>()
-  const waiting = new Set<(message: PubSubMessage) => void>()
+  const queues = new Map<string, (message: PubSubMessage) => void>()
   const adapter: PubSubAdapter = {
     publish: async (channel, payload) => {
       const message = { channel, data: payload as PubSubMessage['data'] }
       published.push(message)
-      for (const deliver of waiting) deliver(message)
+      queues.get(channel)?.(message)
       return true
     },
     async subscribe(channel, signal) {
+      requested.push(channel)
+      await acknowledged
+      signal?.throwIfAborted()
+      const queue: PubSubMessage[] = []
+      let wake = Promise.withResolvers<void>()
+      const release = () => {
+        queues.delete(channel)
+        open.delete(channel)
+        wake.resolve()
+      }
+      queues.set(channel, (message) => {
+        queue.push(message)
+        wake.resolve()
+      })
       open.add(channel)
+      signal?.addEventListener('abort', release, { once: true })
       return (async function* () {
         try {
           while (!signal?.aborted) {
-            const next = Promise.withResolvers<PubSubMessage | undefined>()
-            waiting.add(next.resolve)
-            signal?.addEventListener('abort', () => next.resolve(undefined))
-            const message = await next.promise
-            waiting.delete(next.resolve)
-            if (message?.channel === channel) yield message
+            const message = queue.shift()
+            if (message) yield message
+            else {
+              await wake.promise
+              wake = Promise.withResolvers<void>()
+            }
           }
         } finally {
-          open.delete(channel)
+          release()
         }
       })()
     },
   }
-  return { adapter, published, open }
+  return { adapter, published, requested, open }
 }
 
 describe('Effect adapter', () => {
-  it('publishes and streams typed events, and unsubscribes on interruption', async () => {
-    const { adapter, published, open } = broker()
+  it('publishes and streams typed events', async () => {
+    const { adapter, published } = broker()
     const program = Effect.gen(function* () {
       const pubsub = yield* PubSub
-      const stream = pubsub.subscribe(room, { roomId: 'a' }, { seen: true })
-      expectTypeOf(stream).toEqualTypeOf<
-        Stream.Stream<
-          {
-            readonly event: 'seen'
-            readonly payload: Schema.Schema.Type<
-              typeof Schema.DateTimeUtcFromString
-            >
-          },
-          PubSubError
+      const subscribing = pubsub.subscribe(
+        room,
+        { roomId: 'a' },
+        { seen: true },
+      )
+      expectTypeOf(subscribing).toEqualTypeOf<
+        Effect.Effect<
+          Stream.Stream<
+            {
+              readonly event: 'seen'
+              readonly payload: Schema.Schema.Type<
+                typeof Schema.DateTimeUtcFromString
+              >
+            },
+            PubSubError
+          >,
+          PubSubError,
+          Scope.Scope
         >
       >()
-      const first = yield* Effect.forkChild(Stream.runHead(stream))
-      yield* Effect.promise(() => waitFor(() => open.has('room:a')))
+      const stream = yield* subscribing
 
       const at = Schema.decodeSync(Schema.DateTimeUtcFromString)(
         '2026-01-01T00:00:00.000Z',
       )
       yield* pubsub.publish(room.events.message, { roomId: 'a' }, { text: 'x' })
       yield* pubsub.publish(room.events.seen, { roomId: 'a' }, at)
-      const received = yield* Fiber.join(first)
-
-      const idle = yield* Effect.forkChild(Stream.runDrain(stream))
-      yield* Effect.promise(() => waitFor(() => open.has('room:a')))
-      yield* Fiber.interrupt(idle)
-      return received
+      return yield* Stream.runHead(stream)
     })
 
     const received = await Effect.runPromise(
-      program.pipe(Effect.provide(layer({ adapter }))),
+      program.pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
     )
     expect(published.map(({ data }) => data)).toEqual([
       { event: 'message', payload: { text: 'x' } },
       { event: 'seen', payload: '2026-01-01T00:00:00.000Z' },
     ])
     expect(received).toMatchObject({ _tag: 'Some', value: { event: 'seen' } })
-    await waitFor(() => open.size === 0)
+  })
+
+  it('completes subscribe only once the broker acknowledges the subscription', async () => {
+    const ack = Promise.withResolvers<void>()
+    const { adapter, requested } = broker(ack.promise)
+
+    const received = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        const opening = yield* Effect.forkChild(
+          pubsub.subscribe(room, { roomId: 'a' }),
+        )
+        yield* Effect.promise(() => waitFor(() => requested.length === 1))
+        yield* Effect.promise(() => new Promise((r) => setTimeout(r, 20)))
+        expect(opening.pollUnsafe()).toBeUndefined()
+
+        ack.resolve()
+        const stream = yield* Fiber.join(opening)
+        // Published before the stream is first pulled.
+        yield* pubsub.publish(
+          room.events.message,
+          { roomId: 'a' },
+          { text: 'x' },
+        )
+        return yield* Stream.runHead(stream)
+      }).pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
+    )
+
+    expect(received).toMatchObject({
+      _tag: 'Some',
+      value: { event: 'message', payload: { text: 'x' } },
+    })
+  })
+
+  it('releases the subscription when the scope closes', async () => {
+    const { adapter, open } = broker()
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        yield* pubsub.subscribe(room, { roomId: 'a' })
+        expect(open.has('room:a')).toBe(true)
+      }).pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
+    )
+
+    expect(open.size).toBe(0)
+  })
+
+  it('releases the subscription when the stream ends before the scope closes', async () => {
+    const { adapter, open } = broker()
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        const stream = yield* pubsub.subscribe(room, { roomId: 'a' })
+        yield* pubsub.publish(
+          room.events.message,
+          { roomId: 'a' },
+          { text: 'x' },
+        )
+        yield* Stream.runDrain(Stream.take(stream, 1))
+        yield* Effect.promise(() => waitFor(() => open.size === 0))
+      }).pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
+    )
+  })
+
+  it('releases an idle subscription when its consumer is interrupted', async () => {
+    const { adapter, open } = broker()
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        const stream = yield* pubsub.subscribe(room, { roomId: 'a' })
+        const idle = yield* Effect.forkChild(Stream.runDrain(stream))
+        yield* Effect.yieldNow
+        yield* Fiber.interrupt(idle)
+        expect(open.size).toBe(0)
+      }).pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
+    )
   })
 
   it('releases a subscription interrupted while the broker subscription opens', async () => {
@@ -115,7 +214,7 @@ describe('Effect adapter', () => {
       Effect.gen(function* () {
         const pubsub = yield* PubSub
         const fiber = yield* Effect.forkChild(
-          Stream.runDrain(pubsub.subscribe(room, { roomId: 'a' })),
+          Effect.scoped(pubsub.subscribe(room, { roomId: 'a' })),
         )
         yield* Effect.promise(() => waitFor(() => released !== undefined))
         yield* Fiber.interrupt(fiber)
@@ -124,6 +223,24 @@ describe('Effect adapter', () => {
 
     expect(released?.aborted).toBe(true)
     opening.resolve()
+  })
+
+  it('fails subscribe with a PubSubError when the broker subscription fails', async () => {
+    const failure = new Error('SUBSCRIBE failed')
+    const adapter: PubSubAdapter = {
+      publish: async () => true,
+      subscribe: () => Promise.reject(failure),
+    }
+
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        return yield* pubsub.subscribe(room, { roomId: 'a' })
+      }).pipe(Effect.scoped, Effect.flip, Effect.provide(layer({ adapter }))),
+    )
+
+    expect(error).toBeInstanceOf(PubSubError)
+    expect(error.cause).toBe(failure)
   })
 
   it('fails the stream with a PubSubError caused by a lost connection', async () => {
@@ -138,8 +255,9 @@ describe('Effect adapter', () => {
     const error = await Effect.runPromise(
       Effect.gen(function* () {
         const pubsub = yield* PubSub
-        return yield* Stream.runDrain(pubsub.subscribe(room, { roomId: 'a' }))
-      }).pipe(Effect.flip, Effect.provide(layer({ adapter }))),
+        const stream = yield* pubsub.subscribe(room, { roomId: 'a' })
+        return yield* Stream.runDrain(stream)
+      }).pipe(Effect.scoped, Effect.flip, Effect.provide(layer({ adapter }))),
     )
 
     expect(error).toBeInstanceOf(PubSubError)
