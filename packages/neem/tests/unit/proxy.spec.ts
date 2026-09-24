@@ -139,6 +139,7 @@ describe('Neem proxy helpers', () => {
       port: 8080,
       healthChecks: { interval: 250 },
       stickySessions: { enabled: true, cookieName: 'sid' },
+      limits: { maxRequestBodySize: 64 * 1024 * 1024, maxUriSize: null },
       tls: { keyPath: '/certs/key.pem', certPath: '/certs/cert.pem' },
     }
 
@@ -148,6 +149,7 @@ describe('Neem proxy helpers', () => {
           proxy: {
             routing: { type: 'subdomain', name: 'api' },
             sni: 'api.localhost',
+            maxRequestBodySize: null,
           },
         },
         jobs: {},
@@ -162,6 +164,7 @@ describe('Neem proxy helpers', () => {
           name: 'api',
           routing: { type: 'subdomain', name: 'api' },
           sni: 'api.localhost',
+          maxRequestBodySize: null,
         },
         { name: 'defaulted', routing: { type: 'default' }, sni: undefined },
         {
@@ -172,6 +175,7 @@ describe('Neem proxy helpers', () => {
       ],
       healthCheckIntervalMs: 250,
       stickySessions: { enabled: true, cookieName: 'sid' },
+      limits: { maxRequestBodySize: 64 * 1024 * 1024, maxUriSize: null },
     })
   })
 

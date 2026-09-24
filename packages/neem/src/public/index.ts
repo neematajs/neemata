@@ -31,6 +31,7 @@ export type {
   NeemPluginInput,
   NeemProxyConfig,
   NeemProxyHealth,
+  NeemProxyLimits,
   NeemProxyRoutingOptions,
   NeemProxyUpstream,
   NeemProxyUpstreamFailure,

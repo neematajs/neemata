@@ -291,6 +291,33 @@ export type NeemProxyRoutingOptions =
 export type NeemRuntimeProxyConfig = {
   routing?: NeemProxyRoutingOptions
   sni?: string
+  /**
+   * Maximum declared `Content-Length` for requests routed to this runtime, in
+   * bytes. Overrides `proxy.limits.maxRequestBodySize`; `null` lets any size
+   * through so the runtime can enforce its own limit.
+   */
+  maxRequestBodySize?: number | null
+}
+
+/**
+ * Proxy-wide request limits. Sizes are bytes; `null` disables a single check,
+ * and `limits: null` disables them all.
+ */
+export type NeemProxyLimits = {
+  /** @default 8192 */
+  maxUriSize?: number | null
+  /** @default 100 */
+  maxRequestHeaders?: number | null
+  /** @default 8192 */
+  maxSingleHeaderSize?: number | null
+  /** @default 65536 */
+  maxRequestHeaderSize?: number | null
+  /**
+   * Checked against the declared `Content-Length` only; chunked bodies are
+   * not limited by the proxy.
+   * @default 16777216 (16 MiB)
+   */
+  maxRequestBodySize?: number | null
 }
 
 /**
@@ -311,6 +338,7 @@ export type NeemProxyConfig = {
     ttlMs?: number
     maxEntries?: number
   }
+  limits?: NeemProxyLimits | null
   tls?: { keyPath: string; certPath: string }
 }
 

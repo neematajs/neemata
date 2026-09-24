@@ -34,9 +34,11 @@ export type NativeProxyOptions = {
     name: string
     routing: NativeProxyRouting
     sni?: string
+    maxRequestBodySize?: number | null
   }>
   healthCheckIntervalMs?: number
   stickySessions?: NeemProxyConfig['stickySessions']
+  limits?: NeemProxyConfig['limits']
 }
 
 type NativeProxyRouting =
@@ -384,7 +386,12 @@ export function createNativeProxyOptions(
     if (!proxy) continue
 
     const routing = normalizeProxyRouting(name, proxy.routing)
-    applications.push({ name, routing, sni: proxy.sni })
+    applications.push({
+      name,
+      routing,
+      sni: proxy.sni,
+      maxRequestBodySize: proxy.maxRequestBodySize,
+    })
   }
   assertSingleDefaultRoute(applications)
 
@@ -394,6 +401,7 @@ export function createNativeProxyOptions(
     applications,
     healthCheckIntervalMs: config.healthChecks?.interval,
     stickySessions: config.stickySessions,
+    limits: config.limits,
   }
 }
 

@@ -41,6 +41,36 @@ describe('Neem manifest', () => {
     )
   })
 
+  it('validates proxy request limits', () => {
+    const proxy = { hostname: '127.0.0.1', port: 8080 }
+    const withLimits = (
+      limits: unknown,
+      maxRequestBodySize?: unknown,
+    ): Manifest =>
+      createManifest({
+        config: {
+          proxy: { ...proxy, limits },
+          runtimes: { api: { proxy: { maxRequestBodySize } }, jobs: {} },
+        },
+      } as Partial<Manifest>)
+
+    expect(() =>
+      validateManifest(
+        withLimits(
+          { maxRequestBodySize: 8 * 1024 ** 3, maxUriSize: null },
+          null,
+        ),
+      ),
+    ).not.toThrow()
+    expect(() => validateManifest(withLimits(null, 1024))).not.toThrow()
+    expect(() =>
+      validateManifest(withLimits({ maxRequestBodySize: 0 })),
+    ).toThrow(/maxRequestBodySize/)
+    expect(() => validateManifest(withLimits(undefined, 1.5))).toThrow(
+      /maxRequestBodySize/,
+    )
+  })
+
   it('selects manifest runtimes and matching config entries', () => {
     const manifest = createManifest()
 
@@ -60,6 +90,7 @@ describe('Neem manifest', () => {
     expect(manifest.config.runtimes.scheduler?.proxy).toEqual({
       routing: { type: 'path', name: 'scheduler' },
       sni: 'scheduler.localhost',
+      maxRequestBodySize: null,
     })
     expect(manifest.runtimes.scheduler).toMatchObject({
       name: 'scheduler',
@@ -306,6 +337,7 @@ function createCompiledHostOnlyGraph(): CompiledGraph {
               proxy: {
                 routing: { type: 'path', name: 'scheduler' },
                 sni: 'scheduler.localhost',
+                maxRequestBodySize: null,
               },
             },
           },

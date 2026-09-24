@@ -318,6 +318,9 @@ function copyRuntimeProxy(
   return {
     ...(proxy.routing ? { routing: { ...proxy.routing } } : {}),
     ...(proxy.sni !== undefined ? { sni: proxy.sni } : {}),
+    ...(proxy.maxRequestBodySize !== undefined
+      ? { maxRequestBodySize: proxy.maxRequestBodySize }
+      : {}),
   }
 }
 

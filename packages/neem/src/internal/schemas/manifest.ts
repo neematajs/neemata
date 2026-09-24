@@ -69,9 +69,14 @@ const manifestProxyRoutingSchema = z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('default') }),
 ])
 
+const manifestProxyLimitSchema = z.optional(
+  z.nullable(z.number().check(z.int(), z.gt(0))),
+)
+
 const manifestRuntimeProxySchema = z.strictObject({
   routing: z.optional(manifestProxyRoutingSchema),
   sni: z.optional(stringSchema),
+  maxRequestBodySize: manifestProxyLimitSchema,
 })
 
 const manifestProxyConfigSchema = z.strictObject({
@@ -88,6 +93,17 @@ const manifestProxyConfigSchema = z.strictObject({
       ttlMs: z.optional(z.number()),
       maxEntries: z.optional(z.number()),
     }),
+  ),
+  limits: z.optional(
+    z.nullable(
+      z.strictObject({
+        maxUriSize: manifestProxyLimitSchema,
+        maxRequestHeaders: manifestProxyLimitSchema,
+        maxSingleHeaderSize: manifestProxyLimitSchema,
+        maxRequestHeaderSize: manifestProxyLimitSchema,
+        maxRequestBodySize: manifestProxyLimitSchema,
+      }),
+    ),
   ),
   tls: z.optional(
     z.strictObject({ keyPath: stringSchema, certPath: stringSchema }),
