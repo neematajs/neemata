@@ -1,3 +1,4 @@
+import type * as Scope from 'effect/Scope'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -30,7 +31,12 @@ export class PubSub extends Context.Service<
       params: EventParams<Event>,
       payload: EventPayload<Event>,
     ) => Effect.Effect<boolean, PubSubError>
-    /** Unsubscribes when the stream ends or its consumer is interrupted. */
+    /**
+     * Completes once the broker subscription is live, so a message published
+     * afterwards is delivered. The stream can be consumed once; it
+     * unsubscribes when it ends or its consumer stops, and otherwise when the
+     * scope closes.
+     */
     readonly subscribe: <
       C extends Channel,
       Events extends Partial<Record<keyof C['events'], true>> = {},
@@ -38,7 +44,11 @@ export class PubSub extends Context.Service<
       channel: C,
       params: ChannelParamsOf<C>,
       events?: Events,
-    ) => Stream.Stream<SelectedEventUnion<C, Events>, PubSubError>
+    ) => Effect.Effect<
+      Stream.Stream<SelectedEventUnion<C, Events>, PubSubError>,
+      PubSubError,
+      Scope.Scope
+    >
   }
 >()('@nmtjs/pubsub/PubSub') {}
 
@@ -51,9 +61,9 @@ export function make(options: PubSubManagerOptions): PubSub['Service'] {
         catch: (cause) => new PubSubError(cause),
       }),
     subscribe: (channel, params, events) =>
-      Stream.unwrap(
+      Effect.acquireRelease(
         Effect.tryPromise({
-          // `interrupted` aborts only if the stream is interrupted while the
+          // `interrupted` aborts only if `subscribe` is interrupted while the
           // broker subscription is still being opened, whose result is lost.
           try: async (interrupted) => {
             const controller = new AbortController()
@@ -63,13 +73,21 @@ export function make(options: PubSubManagerOptions): PubSub['Service'] {
               events,
               AbortSignal.any([interrupted, controller.signal]),
             )
-            return Stream.fromAsyncIterable(
-              releasable(messages, controller),
-              (cause) => new PubSubError(cause),
-            )
+            return { messages, controller }
           },
           catch: (cause) => new PubSubError(cause),
         }),
+        // Aborting releases the adapter subscription even if the stream was
+        // never pulled, when `return()` would not reach it.
+        ({ controller }) => Effect.sync(() => controller.abort()),
+        { interruptible: true },
+      ).pipe(
+        Effect.map(({ messages, controller }) =>
+          Stream.fromAsyncIterable(
+            releasable(messages, controller),
+            (cause) => new PubSubError(cause),
+          ),
+        ),
       ),
   }
 }

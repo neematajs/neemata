@@ -93,8 +93,8 @@ interface PubSubAdapter {
 `@nmtjs/pubsub/effect` needs the optional `effect` peer, pinned to `4.0.0-rc.116`.
 Its `defineChannel` takes `effect/Schema` schemas, published through their JSON
 encoding, and returns an ordinary channel. The `PubSub` service publishes with an
-Effect and subscribes with a Stream that unsubscribes when it ends or its consumer
-is interrupted.
+Effect. `subscribe` is a scoped Effect that completes once the broker subscription
+is live, like the manager's `subscribe()`, and yields a Stream of its messages.
 
 ```ts
 import { defineChannel, layer, PubSub } from '@nmtjs/pubsub/effect'
@@ -108,12 +108,21 @@ const room = defineChannel({
 
 const program = Effect.gen(function* () {
   const pubsub = yield* PubSub
+  const messages = yield* pubsub.subscribe(room, { roomId })
+  // Live from here: a message published now is delivered.
   yield* pubsub.publish(room.events.message, { roomId }, { text: 'hello' })
-  yield* pubsub.subscribe(room, { roomId }).pipe(Stream.runForEach(handle))
+  yield* Stream.runForEach(messages, handle)
 })
 
-program.pipe(Effect.provide(layer({ adapter })))
+program.pipe(Effect.scoped, Effect.provide(layer({ adapter })))
 ```
+
+The subscription is released when the scope closes, or earlier when the stream ends
+or its consumer stops; interrupting `subscribe` while it opens releases it too. The
+stream can be consumed once. Subscribe before reading the state that the messages
+update, so nothing committed in between is missed. Where that ordering does not
+matter, `Stream.unwrap(pubsub.subscribe(...))` gives a lazy stream that subscribes
+when it is run and unsubscribes when it ends.
 
 Failures are `PubSubError`s carrying the cause, such as the
 `PubSubConnectionLostError` that ends a stream when the connection drops. The layer

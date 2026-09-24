@@ -133,7 +133,8 @@ idle subscriptions, including ones never read, can be released.
 
 `@nmtjs/pubsub/effect` requires the optional peer `effect` exactly
 `4.0.0-rc.116`. It exports `defineChannel`, `PubSub`, `PubSubError`,
-`make`, `layer`, and `codec` / `schemaOf` from `@nmtjs/common/effect`.
+`PubSubConnectionLostError`, `make`, `layer`, and `codec` / `schemaOf` from
+`@nmtjs/common/effect`.
 
 ```ts
 import {
@@ -168,8 +169,31 @@ Effect schema only for a codec made through `codec`.
 disposing the adapter. Own its lifetime in the application.
 
 The service's `publish` returns `Effect<boolean, PubSubError>`;
-`subscribe(channel, params, events?)` returns a
-`Stream<SelectedEventUnion, PubSubError>` with scope/interruption cleanup
-(no explicit signal parameter). Raised failures carry `PubSubError` with
-`_tag: 'PubSubError'` and `cause`; a Redis adapter's false publish result
-stays a successful false Effect. Decode failures remain logged/skipped.
+`subscribe(channel, params, events?)` returns
+`Effect<Stream<SelectedEventUnion, PubSubError>, PubSubError, Scope>` (no
+explicit signal parameter).
+
+- The Effect completes only once the broker subscription is live, the same
+  barrier as the manager's `subscribe()`: a message published after it
+  completes is delivered, even before the stream is first pulled. For
+  change hints, subscribe first, then read the source of truth, then apply
+  hints from the stream.
+- The subscription is released when the scope closes, or earlier when the
+  stream ends or its consumer is interrupted. Interrupting while it opens
+  aborts the opening. The stream can be consumed once.
+- `Stream.unwrap(service.subscribe(...))` is the lazy form: it subscribes when
+  run and unsubscribes when it ends, but gives no acknowledgment point.
+- Raised failures carry `PubSubError` with `_tag: 'PubSubError'` and `cause`:
+  opening failures fail the Effect, broker/iterator failures (including
+  `PubSubConnectionLostError`) fail the stream. A Redis adapter's false
+  publish result stays a successful false Effect. Decode failures remain
+  logged/skipped.
+
+```ts
+const watchUpdates = Effect.gen(function* () {
+  const service = yield* PubSub
+  const hints = yield* service.subscribe(updates, undefined)
+  const current = yield* loadState // read after the subscription is live
+  yield* Stream.runForEach(hints, (hint) => applyHint(current, hint))
+}).pipe(Effect.scoped)
+```
