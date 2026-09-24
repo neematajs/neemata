@@ -33,5 +33,17 @@ export function isAbortError(error: any): error is Error {
   )
 }
 
+/**
+ * Ends a live subscription whose broker connection closed. Messages published
+ * until the channel is subscribed again are lost, so a subscriber resubscribes
+ * and refetches whatever state it derives from them.
+ */
+export class PubSubConnectionLostError extends Error {
+  constructor(options?: ErrorOptions) {
+    super('PubSub connection lost', options)
+    this.name = 'PubSubConnectionLostError'
+  }
+}
+
 /** The issues a schema reported for channel params or an event payload. */
 export { SchemaError as PubSubSchemaError }

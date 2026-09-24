@@ -9,6 +9,7 @@ import {
   defineChannel,
   layer,
   PubSub,
+  PubSubConnectionLostError,
   PubSubError,
 } from '../src/effect/index.ts'
 
@@ -123,6 +124,26 @@ describe('Effect adapter', () => {
 
     expect(released?.aborted).toBe(true)
     opening.resolve()
+  })
+
+  it('fails the stream with a PubSubError caused by a lost connection', async () => {
+    const lost = new PubSubConnectionLostError()
+    const adapter: PubSubAdapter = {
+      publish: async () => true,
+      subscribe: async () => ({
+        [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(lost) }),
+      }),
+    }
+
+    const error = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        return yield* Stream.runDrain(pubsub.subscribe(room, { roomId: 'a' }))
+      }).pipe(Effect.flip, Effect.provide(layer({ adapter }))),
+    )
+
+    expect(error).toBeInstanceOf(PubSubError)
+    expect(error.cause).toBe(lost)
   })
 
   it('fails with a PubSubError for an invalid payload', async () => {

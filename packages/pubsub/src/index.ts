@@ -21,4 +21,4 @@ export type {
 export type { PubSubLogger } from './utils.ts'
 export { defineChannel } from './contract.ts'
 export { PubSubManager } from './manager.ts'
-export { PubSubSchemaError } from './utils.ts'
+export { PubSubConnectionLostError, PubSubSchemaError } from './utils.ts'

@@ -11,7 +11,11 @@ import type {
   SelectedEventUnion,
 } from './contract.ts'
 import type { PubSubLogger } from './utils.ts'
-import { isAbortError, resolvePubSubChannel } from './utils.ts'
+import {
+  isAbortError,
+  PubSubConnectionLostError,
+  resolvePubSubChannel,
+} from './utils.ts'
 
 export type PubSubStream<Payload = unknown> = AsyncIterable<Payload>
 
@@ -126,7 +130,9 @@ export class PubSubManager {
     })
 
     stream.on('error', (error) => {
-      if (isAbortError(error)) return
+      // The consumer receives it and the adapter reports the drop once.
+      if (error instanceof PubSubConnectionLostError || isAbortError(error))
+        return
 
       this.logger?.error({ channel, error }, 'Pubsub channel stream failed')
     })
