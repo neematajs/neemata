@@ -340,10 +340,7 @@ describe('RedisPubSubAdapter', () => {
       let delivered = 0
       await expect(
         (async () => {
-          for (;;) {
-            await messages.next()
-            delivered++
-          }
+          while (!(await messages.next()).done) delivered++
         })(),
       ).rejects.toBeInstanceOf(PubSubConnectionLostError)
       // The stream learns of the loss on its next pull from the adapter,
@@ -442,9 +439,7 @@ describe('RedisPubSubAdapter', () => {
         for (let attempt = 0; attempt < 2; attempt++) {
           const controller = new AbortController()
           const opening = adapter.subscribe(channel, controller.signal)
-          await waitFor(
-            () => adapter['channels'].get(channel)?.idle !== undefined,
-          )
+          await waitFor(() => adapter['statusWaiters'].size === 1)
           controller.abort()
           await expect(opening).rejects.toMatchObject({ name: 'AbortError' })
         }
@@ -455,6 +450,41 @@ describe('RedisPubSubAdapter', () => {
       subscriber.reconnect()
       await new Promise((resolve) => setTimeout(resolve, 10))
       expect(subscriber.subscribeCalls).toBe(0)
+
+      await adapter.dispose()
+    })
+
+    it('queues nothing for joins aborted while another listener waits for the connection', async () => {
+      const { adapter, client, subscriber } = await setup()
+      subscriber.drop()
+      await new Promise((resolve) => process.nextTick(resolve))
+      const waiting = open(adapter)
+
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const controller = new AbortController()
+        const opening = open(adapter, controller.signal)
+        await new Promise((resolve) => setTimeout(resolve, 0))
+        controller.abort()
+        await expect(opening).rejects.toMatchObject({ name: 'AbortError' })
+      }
+
+      // Releases share one queued reconcile behind the one that waits to
+      // subscribe on the remaining listener's behalf, however many joins left.
+      const state = adapter['channels'].get('room')!
+      expect(state.listeners).toBe(1)
+      expect(state.queue.pending).toBeLessThanOrEqual(2)
+      expect(adapter['statusWaiters'].size).toBeLessThanOrEqual(2)
+
+      subscriber.reconnect()
+      const messages = await waiting
+      expect(subscriber.subscribeCalls).toBe(1)
+      await client.publish('room', JSON.stringify(message))
+      await expect(
+        Promise.race([messages.next(), timeout(250)]),
+      ).resolves.toEqual({
+        done: false,
+        value: { channel: 'room', data: message },
+      })
 
       await adapter.dispose()
     })

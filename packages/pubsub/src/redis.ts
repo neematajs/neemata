@@ -20,6 +20,9 @@ type ChannelState = {
   // Aborted when the last listener leaves while a SUBSCRIBE waits for the
   // connection, so the releases queued behind it drain during an outage.
   idle?: AbortController
+  // A release reconcile is queued and has not started. It converges on the
+  // listener count when it runs, so later releases need not queue another.
+  releasing: boolean
 }
 
 export class RedisPubSubAdapter implements PubSubAdapter {
@@ -148,13 +151,16 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       released = true
       finalSignal.removeEventListener('abort', release)
       this.established.delete(lost)
-      void this.release(channel, state)
+      this.release(channel, state)
     }
     // Abort releases even a subscription whose messages are never read.
     finalSignal.addEventListener('abort', release, { once: true })
 
     try {
-      // An abort stops waiting on a SUBSCRIBE held back by an outage; the
+      // Waits out an outage before queueing, so an opening aborted meanwhile
+      // leaves nothing behind in a queue another listener's SUBSCRIBE holds.
+      if (!(await this.connected(finalSignal))) finalSignal.throwIfAborted()
+      // An abort stops waiting on a SUBSCRIBE held back by a later drop; the
       // queued reconcile still runs, and the release queued after it
       // converges the broker.
       await untilAborted(
@@ -252,23 +258,33 @@ export class RedisPubSubAdapter implements PubSubAdapter {
   protected channelState(channel: string): ChannelState {
     let state = this.channels.get(channel)
     if (!state) {
-      state = { listeners: 0, subscribed: false, queue: new OperationQueue() }
+      state = {
+        listeners: 0,
+        subscribed: false,
+        releasing: false,
+        queue: new OperationQueue(),
+      }
       this.channels.set(channel, state)
     }
     return state
   }
 
-  protected release(channel: string, state: ChannelState): Promise<void> {
+  protected release(channel: string, state: ChannelState) {
     state.listeners--
     if (state.listeners === 0) state.idle?.abort()
     this.logger?.trace(
       { channel, listeners: state.listeners },
       'Channel listener detached',
     )
+    if (state.releasing) return
+    state.releasing = true
     // A SUBSCRIBE this issues is on behalf of a remaining listener whose own
     // queued reconcile retries it and reports the failure.
-    return state.queue
-      .run(() => this.reconcile(channel, state))
+    state.queue
+      .run(() => {
+        state.releasing = false
+        return this.reconcile(channel, state)
+      })
       .catch(() => undefined)
   }
 
