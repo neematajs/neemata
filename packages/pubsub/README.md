@@ -69,8 +69,9 @@ client passed to it: call `adapter.dispose()` before closing the client; disposa
 ends live subscriptions. `logger` is optional and accepts a Pino logger.
 
 When the subscriber connection drops, the adapter does not resubscribe by itself:
-live subscriptions end with a `PubSubConnectionLostError`, so their consumers can
-resubscribe and refetch what they missed. A subscription opened while the
+live subscriptions end with a `PubSubConnectionLostError`, ahead of any messages
+they have not read yet, so their consumers can resubscribe and refetch what they
+missed. A subscription opened while the
 connection is down waits for it to come back, and rejects if the client stops
 reconnecting.
 

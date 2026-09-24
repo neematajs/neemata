@@ -305,6 +305,53 @@ describe('RedisPubSubAdapter', () => {
       await adapter.dispose()
     })
 
+    it('ends before delivering a backlog the subscriber has not read', async () => {
+      const { adapter, client, subscriber } = await setup()
+      const messages = await open(adapter)
+      for (let i = 0; i < 50; i++)
+        await client.publish('room', JSON.stringify(message))
+
+      subscriber.drop()
+      await waitFor(() => adapter['channels'].size === 0)
+
+      await expect(messages.next()).rejects.toBeInstanceOf(
+        PubSubConnectionLostError,
+      )
+      await adapter.dispose()
+    })
+
+    it('ends a slow manager subscription before most of its backlog', async () => {
+      const { adapter, client, subscriber } = await setup()
+      const manager = new PubSubManager({ adapter })
+      const channel = defineChannel({
+        name: 'room',
+        events: { ping: z.number() },
+      })
+      const stream = await manager.subscribe(channel, undefined)
+      const messages = stream[Symbol.asyncIterator]()
+      for (let i = 0; i < 50; i++)
+        await client.publish('room', JSON.stringify(message))
+      // The stream reads ahead of its consumer up to its own buffer.
+      await messages.next()
+
+      subscriber.drop()
+      await waitFor(() => adapter['channels'].size === 0)
+
+      let delivered = 0
+      await expect(
+        (async () => {
+          for (;;) {
+            await messages.next()
+            delivered++
+          }
+        })(),
+      ).rejects.toBeInstanceOf(PubSubConnectionLostError)
+      // The stream learns of the loss on its next pull from the adapter,
+      // which its consumer's next read triggers.
+      expect(delivered).toBeLessThanOrEqual(2)
+      await adapter.dispose()
+    })
+
     it('subscribes a channel again for a listener that arrives after the reconnect', async () => {
       const { adapter, client, subscriber } = await setup()
       const lost = await open(adapter)

@@ -190,6 +190,10 @@ export class RedisPubSubAdapter implements PubSubAdapter {
   ): AsyncGenerator<PubSubMessage> {
     try {
       for await (const [data] of messages) {
+        // `on()` hands out its backlog before it surfaces the abort. The loss
+        // goes first: the subscriber refetches anyway, and a slow reader
+        // would otherwise learn of the gap only after its whole backlog.
+        lost.throwIfAborted()
         this.logger?.trace({ channel }, 'Delivering message')
         yield { channel, data } as PubSubMessage
       }
