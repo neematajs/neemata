@@ -28,9 +28,10 @@ beforeEach(() => {
   rolldownMock.watch.mockReset()
 })
 
-// DevEngine drops an edit that lands within a few milliseconds of the update
-// it just emitted: no callback fires and ensureLatestBuildOutput treats the
-// output as current. Only a later write is seen, so write until it reports.
+// On macOS, Rolldown 1.2.10 restarts its FSEvents stream after every rebuild,
+// even when no watched path changed, and a write landing in that gap is never
+// reported. Write until the engine reports so these cases test Neem, not that
+// race.
 async function editUntilReported(
   file: string,
   content: string,
