@@ -430,7 +430,6 @@ export class HostController {
       logger: this.snapshot.logger,
       hooks: this.hooks,
       getHealth: () => this.getHealth(),
-      cacheBust: this.snapshot.mode === 'development',
     })
     await plugins.initialize()
     this.plugins = plugins

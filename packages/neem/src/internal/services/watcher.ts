@@ -113,9 +113,8 @@ export class WatcherService {
   }
 
   private async createGraph(): Promise<BuildGraph> {
-    const config = await importDefault<NeemConfig>(this.options.configFile, {
-      cacheBust: true,
-    })
+    // A config change replaces this thread, so the import is fresh by construction.
+    const config = await importDefault<NeemConfig>(this.options.configFile)
     this.logger = createLoggerFromConfigInput('development', config.logger)
     this.logger.info('Neem watcher starting')
     this.logger.trace(

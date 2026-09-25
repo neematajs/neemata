@@ -34,6 +34,11 @@ that restart fails too, the runtime stays failed and unready without ending
 `neem dev` until its next successful build restarts it. A crashed watcher
 restarts on its own and restarts the runtimes from its fresh build.
 
+Plugin entries and the logger run in the `neem dev` process, and ESM never
+evicts a loaded module, so development builds emit them under content-hashed
+file names: a restart imports the rebuilt file by its new path, while the
+previous instances stay in memory until the process exits.
+
 Watching uses native file-system events. Set `build.watch.usePolling: true` in
 `neem.config.ts` (with an optional `pollInterval`, milliseconds, Rolldown's
 default is 100) to poll instead; it costs CPU per watched module but has no

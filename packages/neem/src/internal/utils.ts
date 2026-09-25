@@ -12,28 +12,15 @@ import {
 
 export type EntryModule<T> = { default: T }
 
-export async function importDefault<T>(
-  file: string | URL,
-  options: { cacheBust?: boolean } = {},
-): Promise<T> {
+export async function importDefault<T>(file: string | URL): Promise<T> {
   const href =
     file instanceof URL
       ? file.href
       : file.startsWith('file:')
         ? file
         : pathToFileURL(file).href
-  const module = (await import(
-    options.cacheBust ? cacheBustSpecifier(href) : href
-  )) as EntryModule<T>
+  const module = (await import(href)) as EntryModule<T>
   return module.default
-}
-
-// Bun keys its module registry by path for `file:` URLs and drops the query,
-// so a busted file URL returns the cached module; a plain path with a query
-// is re-evaluated on both runtimes.
-function cacheBustSpecifier(href: string): string {
-  const specifier = process.versions.bun ? fileURLToPath(href) : href
-  return `${specifier}?t=${Date.now()}`
 }
 
 export function normalizeError(value: unknown): Error {

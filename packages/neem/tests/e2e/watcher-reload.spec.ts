@@ -1,5 +1,5 @@
 import { access, readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -318,15 +318,35 @@ async function expectManifestArtifactsContainMarkers(
 
     for (const [kind, file] of Object.entries(files)) {
       expect(file).toEqual(expect.any(String))
-      const content = await readFile(
+      const content = await readArtifactGraph(
         resolve(resolve(manifestFile, '..'), file as string),
-        'utf8',
       )
       expect(content).toContain(markers[kind as keyof typeof markers])
     }
 
     return true
   })
+}
+
+// Dev builds of plugin entries and the logger are code-split, so the marker
+// may live in a chunk the entry imports, statically or lazily.
+async function readArtifactGraph(entryFile: string): Promise<string> {
+  const seen = new Set<string>()
+  const contents: string[] = []
+  const queue = [entryFile]
+  while (queue.length) {
+    const file = queue.shift() as string
+    if (seen.has(file)) continue
+    seen.add(file)
+    const content = await readFile(file, 'utf8')
+    contents.push(content)
+    for (const match of content.matchAll(
+      /(?:from\s+|import\()\s*"(\.\.?\/[^"]+)"/g,
+    )) {
+      queue.push(resolve(dirname(file), match[1] as string))
+    }
+  }
+  return contents.join('\n')
 }
 
 async function waitForFile(path: string): Promise<void> {

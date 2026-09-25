@@ -31,16 +31,14 @@ export function createLoggerFromConfigInput(
 
 export async function resolveManifestLogger(
   logger: ManifestLogger | undefined,
-  options: { mode: NeemMode; outDir: string; cacheBust?: boolean },
+  options: { mode: NeemMode; outDir: string },
 ): Promise<Logger> {
   if (!logger) return createDefaultLogger(options.mode)
   if (logger.type === 'options') {
     return createDefaultLogger(options.mode, logger.options)
   }
 
-  return importDefault<Logger>(resolve(options.outDir, logger.file), {
-    cacheBust: options.cacheBust,
-  })
+  return importDefault<Logger>(resolve(options.outDir, logger.file))
 }
 
 type FlushableStream = { flush: (callback: (error?: Error) => void) => void }

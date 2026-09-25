@@ -339,12 +339,11 @@ export class DevSession {
     let retired = false
     try {
       const manifest = await readManifest(this.manifestFile)
-      // The logger artifact keeps its file name across dev rebuilds, so only a
-      // cache-busted import picks up a changed logger for the next generation.
+      // Dev builds emit the logger under a content-hashed name, so the manifest
+      // points at a new file whenever it changed and a plain import loads it.
       this.hostLogger = await resolveManifestLogger(manifest.config.logger, {
         mode: 'development',
         outDir: this.options.outDir,
-        cacheBust: true,
       })
       this.logger = childLogger(this.hostLogger, 'neem:server')
       await this.retireController()

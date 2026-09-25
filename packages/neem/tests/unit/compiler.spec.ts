@@ -184,24 +184,35 @@ describe('Neem compiler', () => {
   })
 
   it.each(['plugin-entry', 'logger'] as const)(
-    'emits a watched %s target as one file and splits it in production',
+    'emits a watched %s target under hashed names and keeps splitting it',
     async (kind) => {
       const target = { ...(await createTarget()), kind }
       rolldownMock.watch.mockReturnValue(createWatcher())
-      rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
 
       await watchTarget(target)
-      await compileTarget(target)
 
       const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
-      const built = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
-      // A cache-busted import of the entry must reach every module it loads.
-      expect(watched.output).toMatchObject({ codeSplitting: false })
-      expect(built.output).toMatchObject({
+      // The dev host imports these in-process; a changed build needs a new path.
+      expect(watched.output).toMatchObject({
+        entryFileNames: '[name]-[hash].js',
+        chunkFileNames: '[name]-[hash].js',
         codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
       })
     },
   )
+
+  it('keeps stable names for watched targets that start in a fresh thread', async () => {
+    const target = await createTarget()
+    rolldownMock.watch.mockReturnValue(createWatcher())
+
+    await watchTarget(target)
+
+    const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+    expect(watched.output).toMatchObject({
+      entryFileNames: '[name].js',
+      chunkFileNames: '[name].js',
+    })
+  })
 
   it('keeps splitting watched targets that each start in a fresh thread', async () => {
     const target = await createTarget()

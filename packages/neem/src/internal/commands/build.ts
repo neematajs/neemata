@@ -36,9 +36,7 @@ export async function buildNeem(
 ): Promise<NeemBuildResult> {
   const cwd = options.cwd ?? process.cwd()
   const configFile = resolve(cwd, options.config ?? 'neem.config.ts')
-  const config = await importDefault<NeemConfig>(configFile, {
-    cacheBust: true,
-  })
+  const config = await importDefault<NeemConfig>(configFile)
   const outDir = resolveBuildOutDir({
     cwd,
     configFile,

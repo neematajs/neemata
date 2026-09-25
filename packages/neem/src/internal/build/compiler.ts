@@ -662,14 +662,14 @@ function createRolldownOptions(
       minify: false,
       dir: target.outDir,
       format: 'esm' as const,
-      entryFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
+      entryFileNames: resolveTargetFileNames(target, metadata),
+      chunkFileNames: resolveTargetFileNames(target, metadata),
       assetFileNames: metadata.watch
         ? createStableWatchAssetFileName
         : '[name]-[hash][extname]',
     },
     userOutput,
-    { codeSplitting: resolveTargetCodeSplitting(target, metadata) },
+    { codeSplitting: resolveCodeSplitting(target.artifact.chunks) },
   )
 
   return {
@@ -743,21 +743,24 @@ function createGroupedRolldownOptions(
   }
 }
 
-// The dev host reimports plugin entries and the logger in its own process on
-// every restart, busting the module cache with a query on the entry file. The
-// query does not reach the chunks the entry imports, so a watch build emits
-// these targets as one file for the busted import to cover everything.
+// The dev host imports plugin entries and the logger into its own process on
+// every restart, and ESM offers no way to evict a module once loaded. Emitting
+// these targets under content-hashed names gives a changed build a new path,
+// so a plain import loads it on any runtime. Every other watched target keeps
+// stable names: workers for the DevEngine, the rest for fresh threads.
 const HOST_RELOADED_TARGETS: ReadonlySet<BuildTarget['kind']> = new Set([
   'plugin-entry',
   'logger',
 ])
 
-function resolveTargetCodeSplitting(
+function resolveTargetFileNames(
   target: BuildTarget,
   metadata: ArtifactBuildMetadata,
-): OutputOptions['codeSplitting'] {
-  if (metadata.watch && HOST_RELOADED_TARGETS.has(target.kind)) return false
-  return resolveCodeSplitting(target.artifact.chunks)
+): string {
+  if (metadata.watch && !HOST_RELOADED_TARGETS.has(target.kind)) {
+    return '[name].js'
+  }
+  return '[name]-[hash].js'
 }
 
 const DEFAULT_DEPS_CHUNK_TEST = /node_modules/
