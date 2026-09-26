@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/effect",
-  "version": "0.18.0-alpha.2",
+  "version": "0.18.0-alpha.3",
   "description": "Neem runtime preset for supervised Effect applications.",
   "type": "module",
   "repository": {

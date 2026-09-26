@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/common",
-  "version": "0.18.0-alpha.2",
+  "version": "0.18.0-alpha.3",
   "description": "Shared utilities for Neemata packages.",
   "type": "module",
   "repository": {
