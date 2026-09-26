@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/nuxt",
-  "version": "0.18.0-alpha.2",
+  "version": "0.18.0-alpha.3",
   "description": "Neem runtime preset for hosting Nuxt apps.",
   "type": "module",
   "repository": {
