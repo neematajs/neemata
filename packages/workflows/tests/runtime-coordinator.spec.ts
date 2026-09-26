@@ -16,7 +16,7 @@ import {
   defineWorkflow as defineStandardWorkflow,
   implementWorkflow as implementStandardWorkflow,
 } from '../src/index.ts'
-import { createRunLeaseFencedStore } from '../src/runtime/coordinator.ts'
+import { createRunLeaseScope } from '../src/runtime/coordinator.ts'
 import {
   createHandlerRunner,
   continueWorkflowRun,
@@ -26,6 +26,7 @@ import {
   runExecutionWorker as runStoredExecutionWorker,
   runTaskAttempt,
   runWorkflowWorker as runStoredWorkflowWorker,
+  StaleWriteFenceError,
   startTaskRun,
   startWorkflowRun,
   type WorkflowStore,
@@ -255,10 +256,9 @@ describe('workflow runtime coordinator', () => {
     expect(snapshot?.run.output).toBeUndefined()
   })
 
-  it('renews the run lease before every fenced store mutation', async () => {
+  it('renews the run lease before every fenced store mutation and passes it as the fence', async () => {
     const lease = { runId: 'run-1', leaseToken: 'lease-token', version: 1 }
     const mutatingStoreCalls = [
-      ['createRun', { workflowName: 'workflow', input: {} }],
       ['createNode', { runId: 'run-1', name: 'node', kind: 'activity' }],
       ['setNodeInput', { runId: 'run-1', nodeName: 'node', input: {} }],
       [
@@ -329,12 +329,20 @@ describe('workflow runtime coordinator', () => {
           log.push('renewRunLease')
           return lease
         },
-        [method]: async () => {
+        [method]: async (observed: { readonly fence?: unknown }) => {
           log.push(method)
+          expect(observed.fence).toStrictEqual({ runLease: lease })
           return undefined
         },
       } as unknown as WorkflowStore
-      const fenced = createRunLeaseFencedStore(store, lease, 123)
+      const fenced = createRunLeaseScope(
+        {
+          store,
+          attemptExecutor: createInMemoryWorkflowRuntime().attemptExecutor,
+        },
+        lease,
+        123,
+      ).store
 
       await (
         fenced[method as keyof WorkflowStore] as (
@@ -344,6 +352,105 @@ describe('workflow runtime coordinator', () => {
 
       expect(log).toStrictEqual(['renewRunLease', method])
     }
+  })
+
+  it('fences unclaimed-command deletion with the run lease', async () => {
+    const lease = { runId: 'run-1', leaseToken: 'lease-token', version: 1 }
+    const runtime = createInMemoryWorkflowRuntime()
+    const observed: unknown[] = []
+    const { attemptExecutor } = createRunLeaseScope(
+      {
+        store: { ...runtime.store, renewRunLease: async () => lease },
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          deleteUnclaimed: async (params) => {
+            observed.push(params.fence)
+            return 0
+          },
+        },
+      },
+      lease,
+      123,
+    )
+
+    await attemptExecutor.deleteUnclaimed({ runId: 'run-1' })
+
+    expect(observed).toStrictEqual([{ runLease: lease }])
+  })
+
+  it('writes under the innermost lease scope and renews every enclosing lease', async () => {
+    const parent = { runId: 'parent', leaseToken: 'parent-token', version: 1 }
+    const child = { runId: 'child', leaseToken: 'child-token', version: 1 }
+    const runtime = createInMemoryWorkflowRuntime()
+    const renewed: string[] = []
+    const observed: unknown[] = []
+    const context = {
+      store: {
+        ...runtime.store,
+        renewRunLease: async (lease: typeof parent) => {
+          renewed.push(lease.runId)
+          return lease
+        },
+        cancelRun: async (params: { readonly fence?: unknown }) => {
+          observed.push(params.fence)
+          return undefined
+        },
+      } as WorkflowStore,
+      attemptExecutor: runtime.attemptExecutor,
+    }
+
+    const nested = createRunLeaseScope(
+      createRunLeaseScope(context, parent, 123),
+      child,
+      123,
+    )
+    await nested.store.cancelRun({ runId: 'child' })
+
+    expect(observed).toStrictEqual([{ runLease: child }])
+    expect(renewed.toSorted()).toStrictEqual(['child', 'parent'])
+  })
+
+  it('refuses a coordination write that stalls past its lease after renewing', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const run = await runtime.store.createRun({
+      workflowName: 'stalled-write',
+      input: {},
+    })
+    const lease = await runtime.store.acquireRunLease({
+      runId: run.id,
+      leaseMs: 20,
+    })
+    const stall = Promise.withResolvers<void>()
+    const renewed = Promise.withResolvers<void>()
+    const { store } = createRunLeaseScope(
+      {
+        store: {
+          ...runtime.store,
+          renewRunLease: async (...args) => {
+            const renewedLease = await runtime.store.renewRunLease(...args)
+            renewed.resolve()
+            await stall.promise
+            return renewedLease
+          },
+        },
+        attemptExecutor: runtime.attemptExecutor,
+      },
+      lease!,
+      20,
+    )
+
+    const write = store.failRun({ runId: run.id, error: new Error('late') })
+    await renewed.promise
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    await expect(
+      runtime.store.acquireRunLease({ runId: run.id, leaseMs: 30_000 }),
+    ).resolves.toBeDefined()
+    stall.resolve()
+
+    await expect(write).rejects.toBeInstanceOf(StaleWriteFenceError)
+    expect((await runtime.store.loadRunSnapshot(run.id))?.run.status).toBe(
+      'queued',
+    )
   })
 
   it('cancels the run when a node is cancelled', async () => {

@@ -15,6 +15,7 @@ import {
   runExecutionWorker,
   runTaskAttempt,
   runWorkflowWorker,
+  StaleWriteFenceError,
 } from '../src/runtime/index.ts'
 import { reapDeadWorkflowCommands } from '../src/runtime/worker.ts'
 
@@ -563,6 +564,95 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       .inspect()
       .activityCommands.filter(({ payload }) => payload.attemptId === retry.id)
     expect(command!.runAt).toBe(retry.dispatchedAt + HOUR_MS)
+  })
+})
+
+describe('reaping under a lost run lease', () => {
+  it('leaves that command for the next sweep and reaps the rest', async () => {
+    const task = defineTask({ name: 'reaper.lost', input: text, output: text })
+    const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
+    const client = createWorkflowRuntimeClient(runtime)
+    const lost = await client.start(task, 'lost')
+    const kept = await client.start(task, 'kept')
+    const names = { taskNames: [task.name] }
+    await claimAttempt(runtime, names)
+    await claimAttempt(runtime, names)
+    await wait(LEASE_EXPIRED_MS)
+    await expect(claimAttempt(runtime, names)).resolves.toBeNull()
+
+    await expect(
+      reapDeadWorkflowCommands({
+        ...runtime,
+        workflows: [],
+        store: {
+          ...runtime.store,
+          failNodeChild: async (params) => {
+            if (params.runId === lost.id) throw new StaleWriteFenceError()
+            return runtime.store.failNodeChild(params)
+          },
+        },
+      }),
+    ).resolves.toEqual({ reaped: 1 })
+
+    expect(
+      (await runtime.store.listUnreapedDeadCommands()).map(
+        ({ runId }) => runId,
+      ),
+    ).toStrictEqual([lost.id])
+    expect((await client.get(kept.id))!.run.status).toBe('failed')
+  })
+})
+
+describe('reaping an attempt a stalled worker retried meanwhile', () => {
+  it('leaves the successor attempt and its run alone', async () => {
+    const { task } = flakyTask()
+    const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(task, 'x')
+    const names = { taskNames: [task.name] }
+    const { command } = (await claimAttempt(runtime, names))!
+    await deadLetter(runtime, names)
+
+    let successor: string | undefined
+    await reapDeadWorkflowCommands({
+      ...runtime,
+      workflows: [],
+      store: {
+        ...runtime.store,
+        // The worker whose claim dead-lettered wakes up after the reaper read
+        // the run, fails its attempt and creates the retry.
+        loadRunSnapshot: async (runId) => {
+          const snapshot = await runtime.store.loadRunSnapshot(runId)
+          if (successor === undefined) {
+            const failed = await runtime.store.failCurrentAttempt({
+              attemptId: command.attemptId,
+              leaseToken: command.leaseToken,
+              error: new Error('first try fails'),
+            })
+            successor = (
+              await runtime.store.createAttempt({
+                runId,
+                nodeName: command.nodeName,
+                childKey: command.childKey,
+                input: failed!.input,
+                after: failed!.id,
+              })
+            ).id
+          }
+          return snapshot
+        },
+      },
+    })
+
+    const snapshot = (await runtime.store.loadRunSnapshot(run.id))!
+    expect(snapshot.run.status).not.toBe('failed')
+    expect(snapshot.children[0]).toMatchObject({
+      status: 'running',
+      currentAttemptId: successor,
+    })
+    expect(snapshot.attempts.find(({ id }) => id === successor)?.status).toBe(
+      'started',
+    )
   })
 })
 

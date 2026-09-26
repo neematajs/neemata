@@ -9,9 +9,11 @@ import {
   implementWorkflow,
 } from '../src/index.ts'
 import {
+  createHandlerRunner,
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
   runExecutionWorker,
+  runTaskAttempt,
   runWorkflowWorker,
   type WorkflowStore,
 } from '../src/runtime/index.ts'
@@ -516,6 +518,100 @@ describe('cancelling a child task run', () => {
 
     await runWorkflowWorker(workers)
     expect((await client.get(run.id))!.run.status).not.toBe('waiting')
+  })
+})
+
+describe('a task worker settling a cancellation it observed', () => {
+  it('leaves the task run alone once a manual retry reopened it', async () => {
+    const task = defineTask({
+      name: 'cancellation.retried-child',
+      input: text,
+      output: text,
+    })
+    const taskImplementation = implementTask(task, {
+      pool: 'test',
+      handler: async (input) => `${input}!`,
+    })
+    const workflow = defineWorkflow({
+      name: 'cancellation.retried-parent',
+      input: text,
+      output: text,
+      timeout: '1h',
+    })
+      .task('child', task)
+      .build()
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .child(task)
+      .finish(({ child }) => child)
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const workers = {
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'cancellation',
+    }
+    const run = await client.start(workflow, 'hi')
+    await runWorkflowWorker(workers)
+    const childRunId = (await client.get(run.id))!.children[0]!.childRunId!
+    await runtime.store.requestRunCancellation({ runId: childRunId })
+    const claimed = (await runtime.attemptExecutor.claim({
+      workerId: 'A',
+      workflowNames: [],
+      taskNames: [task.name],
+      leaseMs: 30,
+    }))!
+
+    // A observes `cancelling` and stalls. Meanwhile a timeout fails the parent
+    // and cancels the child, and a manual retry reopens both.
+    const stalled = gate()
+    const workerA = runTaskAttempt({
+      ...workers,
+      workerId: 'A',
+      handlers: createHandlerRunner(),
+      claimed,
+      atomicCompletion: {
+        run: (handler, claimed, context) =>
+          runtime.atomicCompletion.run(
+            (scoped) =>
+              handler({
+                ...scoped,
+                store: {
+                  ...scoped.store,
+                  loadRuns: async (runIds) => {
+                    const runs = await scoped.store.loadRuns(runIds)
+                    await stalled.pass()
+                    return runs
+                  },
+                },
+              }),
+            claimed,
+            context,
+          ),
+      },
+    })
+    await stalled.reached
+    await timeoutExpiredWorkflowRuns({
+      ...workers,
+      now: Date.now() + 2 * 3_600_000,
+    })
+    expect((await client.get(childRunId))!.run.status).toBe('cancelled')
+    // Its claim has to lapse too, or the retry would refuse the busy run.
+    await wait(80)
+    await client.retry(run.id)
+    await runWorkflowWorker(workers)
+    expect((await client.get(childRunId))!.run.status).not.toBe('cancelled')
+
+    stalled.release()
+    // Its lapsed claim cannot be acknowledged either; the driver releases it.
+    await expect(workerA).rejects.toThrow('Stale workflow command ack')
+    expect((await client.get(childRunId))!.run.status).not.toBe('cancelled')
+    await runExecutionWorker(workers)
+    await runWorkflowWorker(workers)
+    expect((await client.get(run.id))!.run).toMatchObject({
+      status: 'completed',
+      output: 'hi!',
+    })
   })
 })
 

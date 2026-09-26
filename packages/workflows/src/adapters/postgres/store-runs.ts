@@ -735,6 +735,9 @@ export const createPostgresWorkflowRunStore = (
         )
       })
     },
+    // Run leases are judged by wall clock, not transaction start: a continuation
+    // renews inside one long transaction, and a fence check may run in a
+    // transaction that began before the lease expired.
     async acquireRunLease({ runId, leaseMs }) {
       await ready
       if (!isUuid(runId)) return undefined
@@ -747,14 +750,14 @@ export const createPostgresWorkflowRunStore = (
           SELECT pg_try_advisory_xact_lock(hashtext('workflow_run_lease:' || $1::text)) AS acquired
         )
         INSERT INTO workflow_run_leases (run_id, lease_token, version, expires_at)
-        SELECT r.id, $2, r.version, now() + ($3::int * interval '1 millisecond')
+        SELECT r.id, $2, r.version, clock_timestamp() + ($3::int * interval '1 millisecond')
         FROM workflow_runs r CROSS JOIN lock
         WHERE r.id = $1::uuid AND lock.acquired
         ON CONFLICT (run_id) DO UPDATE
         SET lease_token = EXCLUDED.lease_token,
             version = EXCLUDED.version,
             expires_at = EXCLUDED.expires_at
-        WHERE workflow_run_leases.expires_at <= now()
+        WHERE workflow_run_leases.expires_at <= clock_timestamp()
         RETURNING *
       `,
         [runId, id(), leaseMs],
@@ -773,7 +776,7 @@ export const createPostgresWorkflowRunStore = (
         db,
         `
         UPDATE workflow_run_leases
-        SET expires_at = now() + ($3::int * interval '1 millisecond')
+        SET expires_at = clock_timestamp() + ($3::int * interval '1 millisecond')
         WHERE run_id = $1 AND lease_token = $2
         RETURNING *
       `,

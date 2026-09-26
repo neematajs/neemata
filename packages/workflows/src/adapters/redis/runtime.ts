@@ -153,13 +153,13 @@ export function createRedisWorkflowRuntime(
     },
     ack: (attempt) => attemptQueue.ack(attempt),
     release: (attempt, options) => attemptQueue.release(attempt, options),
-    deleteUnclaimed: ({ runId }) =>
-      attemptQueue.deleteUnclaimed(new Set([runId])),
+    deleteUnclaimed: ({ runId, fence }) =>
+      attemptQueue.deleteUnclaimed(new Set([runId]), fence),
   }
 
-  // Not a transaction: Redis only fences the attempt settlement by the queue
-  // claim. A worker that lost its claim settles nothing, and the writes that
-  // follow a settlement are idempotent, so the new claimant replays them.
+  // Not a transaction: Redis fences the attempt settlement by the queue claim,
+  // and each later write by the fence its caller passes. A worker that lost its
+  // claim settles nothing, and the new claimant replays the later writes.
   const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
     run: (handler, claimed, context) =>
       handler({

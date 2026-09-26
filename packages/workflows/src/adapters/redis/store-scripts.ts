@@ -1,4 +1,5 @@
 import type { WorkflowRedisClient } from './client.ts'
+import { WRITE_FENCE } from './fence.ts'
 import { QUEUE_INDEXES } from './scripts.ts'
 
 // State-machine decisions stay inside Redis so correctness never depends on a
@@ -266,6 +267,7 @@ return { 'created', ARGV[1], ARGV[2], ARGV[9] }
 `,
 
   createChildRun: `
+${WRITE_FENCE}
 ${FAMILY_HELPERS}
 ${RECORD_HELPERS}
 local childRaw = redis.call('HGET', KEYS[3], ARGV[1])
@@ -325,6 +327,7 @@ return { 'replayed', linkedRaw, runRaw }
 `,
 
   createNode: `
+${WRITE_FENCE}
 if not redis.call('HGET', KEYS[4], ARGV[3]) then return { 'missing-run' } end
 local existing = redis.call('HGET', KEYS[1], ARGV[1])
 if existing then return { 'existing', existing } end
@@ -344,6 +347,7 @@ return { 'created', ARGV[2] }
 `,
 
   ensureChildren: `
+${WRITE_FENCE}
 if not redis.call('HGET', KEYS[1], ARGV[1]) then return { 'missing-node' } end
 local existing = redis.call('HGET', KEYS[3], ARGV[2])
 if existing then return { 'existing', existing } end
@@ -366,6 +370,7 @@ return { 'created', encoded }
 `,
 
   updateRecord: `
+${WRITE_FENCE}
 ${RECORD_HELPERS}
 local raw = redis.call('HGET', KEYS[1], ARGV[1])
 if not raw then return { 'missing' } end
@@ -396,6 +401,7 @@ return { 'updated', updated }
 `,
 
   createAttempt: `
+${WRITE_FENCE}
 ${FAMILY_HELPERS}
 ${RECORD_HELPERS}
 local childRaw = redis.call('HGET', KEYS[2], ARGV[1])
@@ -474,6 +480,7 @@ return { 'created', attemptRaw }
 `,
 
   settleAttempt: `
+${WRITE_FENCE}
 ${RECORD_HELPERS}
 local attemptRaw = redis.call('HGET', KEYS[1], ARGV[1])
 if not attemptRaw then return { 'stale' } end
@@ -509,6 +516,7 @@ return { 'updated', updated }
 `,
 
   terminalRun: `
+${WRITE_FENCE}
 ${RECORD_HELPERS}
 local raw = redis.call('HGET', KEYS[2], ARGV[1])
 if not raw then return { 'missing' } end
@@ -564,6 +572,12 @@ redis.call('PUBLISH', KEYS[5], '1')
 return { 'updated', updated, tostring(remaining) }
 `,
 
+  // Answers a fenced write that has nothing to write with the fence's verdict.
+  checkFence: `
+${WRITE_FENCE}
+return { 'ok' }
+`,
+
   lease: `
 local operation = ARGV[1]
 local runId = ARGV[2]
@@ -605,6 +619,7 @@ return { 'updated', updated }
 `,
 
   cancelNodes: `
+${WRITE_FENCE}
 ${RECORD_HELPERS}
 local nodeFields = cjson.decode(redis.call('HGET', KEYS[3], 'nodes:' .. ARGV[1]) or '[]')
 local updated = {}

@@ -9,6 +9,7 @@ import type {
   TaskAttemptCommand,
 } from './commands.ts'
 import type { RuntimeRunStatus } from './status.ts'
+import type { Fenced } from './store.ts'
 
 /**
  * Single home for the fallback lease duration so the worker loop and both
@@ -78,5 +79,6 @@ export type AttemptExecutor = {
     attempt: ClaimedAttempt,
     options?: CommandReleaseOptions,
   ): Promise<void>
-  deleteUnclaimed(params: { readonly runId: string }): Promise<number>
+  /** Fenced like a store write: cancellation must not outlive its authority. */
+  deleteUnclaimed(params: Fenced<{ readonly runId: string }>): Promise<number>
 }

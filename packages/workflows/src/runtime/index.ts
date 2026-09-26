@@ -36,7 +36,7 @@ export type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
 } from './executors.ts'
-export { WorkflowRunConflictError } from './errors.ts'
+export { StaleWriteFenceError, WorkflowRunConflictError } from './errors.ts'
 export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
 export type { HandlerRunner, HandlerRunnerOptions } from './handler.ts'
 export { createInMemoryWorkflowRuntime } from '../adapters/in-memory.ts'
@@ -93,6 +93,7 @@ export type {
   DeleteRunResult,
   EnsureChildAttemptParams,
   EnsureChildAttemptResult,
+  Fenced,
   EnsureChildRunParams,
   EnsureChildRunResult,
   EnsureNodeChildInput,
@@ -119,6 +120,7 @@ export type {
   WaitNodeParams,
   WorkflowRetentionPruner,
   WorkflowStore,
+  WriteFence,
 } from './store.ts'
 export {
   runActivityAttempt,

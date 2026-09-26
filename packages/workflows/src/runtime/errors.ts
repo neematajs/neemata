@@ -33,6 +33,17 @@ export class WorkflowRunConflictError extends Error {
 }
 
 /**
+ * A write carried a `WriteFence` that no longer holds: its issuer lost the run
+ * lease or the attempt it acted for, and the store wrote nothing.
+ */
+export class StaleWriteFenceError extends Error {
+  constructor() {
+    super('Stale workflow write fence')
+    this.name = 'StaleWriteFenceError'
+  }
+}
+
+/**
  * Recorded as `last_error` when a claim takes over an expired lease and no
  * real error is stored yet. The dying worker persisted nothing, so this
  * synthetic error is the only trace of WHY the delivery is being counted.
