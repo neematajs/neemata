@@ -302,7 +302,10 @@ export function defineClaimFencingTests(
                     await expect(
                       claim(runtime, 'B', 30_000),
                     ).resolves.toBeNull()
-                    await reapDeadWorkflowCommands(runtime)
+                    await reapDeadWorkflowCommands({
+                      ...runtime,
+                      workflows: [],
+                    })
                     expect((await client.get(run.id))!.run.status).toBe(
                       'failed',
                     )

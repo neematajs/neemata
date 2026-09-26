@@ -4114,9 +4114,11 @@ function workflowRuntimeAdapterContract(
       })
 
       it('applies every fenced write while its fence holds', async () => {
-        const probe = await fixture(await createRuntime())
+        // Each write gets a fresh run; one runtime per write is too slow for
+        // PGlite on CI runners.
+        const runtime = await createRuntime()
+        const probe = await fixture(runtime)
         for (const [index] of probe.writes.entries()) {
-          const runtime = await createRuntime()
           const { run, attempt, step, writes, write } = await fixture(runtime)
           const lease = await runtime.store.acquireRunLease({
             runId: run.id,

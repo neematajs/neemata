@@ -583,6 +583,7 @@ describe('reaping under a lost run lease', () => {
     await expect(
       reapDeadWorkflowCommands({
         ...runtime,
+        workflows: [],
         store: {
           ...runtime.store,
           failNodeChild: async (params) => {
@@ -615,6 +616,7 @@ describe('reaping an attempt a stalled worker retried meanwhile', () => {
     let successor: string | undefined
     await reapDeadWorkflowCommands({
       ...runtime,
+      workflows: [],
       store: {
         ...runtime.store,
         // The worker whose claim dead-lettered wakes up after the reaper read
