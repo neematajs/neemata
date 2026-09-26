@@ -249,6 +249,69 @@ describe('workflows core without Effect', () => {
     await drain
   })
 
+  describe('finish rejecting once its pass is aborted', () => {
+    const aborting = defineWorkflow({
+      name: 'core.aborting-finish',
+      input: z.string(),
+      output: z.string(),
+    }).build()
+
+    function setup() {
+      const started = Promise.withResolvers<void>()
+      const implementation = implementWorkflow(aborting, {
+        pool: 'test',
+      }).finish(
+        (_outputs, _input, { signal }) =>
+          new Promise<string>((_resolve, reject) => {
+            signal.addEventListener('abort', () =>
+              reject(new Error('finish gave up')),
+            )
+            started.resolve()
+          }),
+      )
+      const runtime = createInMemoryWorkflowRuntime()
+      const errors: unknown[] = []
+      return {
+        started: started.promise,
+        runtime,
+        client: createWorkflowRuntimeClient(runtime),
+        errors,
+        worker: {
+          ...runtime,
+          workflows: [implementation],
+          workerId: 'aborting',
+          leaseMs: 30,
+          onError: (error: unknown) => errors.push(error),
+        },
+      }
+    }
+
+    it('is not reported on shutdown', async () => {
+      const { started, client, errors, worker } = setup()
+      const run = await client.start(aborting, 'x')
+      const stop = new AbortController()
+      const running = runWorkflowWorker({ ...worker, signal: stop.signal })
+      await started
+      stop.abort()
+      await running
+
+      expect(errors).toStrictEqual([])
+      expect((await client.get(run.id))!.run.status).toBe('running')
+    })
+
+    it('is not reported when the run is cancelled', async () => {
+      const { started, client, errors, worker } = setup()
+      const run = await client.start(aborting, 'x')
+      const running = runWorkflowWorker(worker)
+      await started
+      await client.cancel(run.id)
+      await running
+
+      expect(errors).toStrictEqual([])
+      expect((await client.get(run.id))!.run.status).toBe('cancelled')
+    })
+  })
+
   it('bounds cleanup when a handler aborts its own attempt synchronously', async () => {
     const fatal = Promise.withResolvers<unknown>()
     const handlers = createHandlerRunner({
