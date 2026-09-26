@@ -29,7 +29,6 @@ export type PluginEnvironmentOptions = {
   logger: Logger
   hooks: HostHooks
   getHealth: () => NeemRuntimeServerHealth
-  cacheBust?: boolean
 }
 
 export class PluginEnvironment {
@@ -105,7 +104,6 @@ export class PluginEnvironment {
       this.logger.trace({ plugin: plugin.name }, 'Loading Neem plugin')
       const factory = await importDefault<PluginFactory>(
         resolve(this.options.outDir, plugin.entry.file),
-        { cacheBust: this.options.cacheBust },
       )
       if (typeof factory !== 'function') {
         throw new Error(

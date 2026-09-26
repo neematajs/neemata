@@ -41,6 +41,87 @@ export async function resolveManifestLogger(
   return importDefault<Logger>(resolve(options.outDir, logger.file))
 }
 
+type FlushableStream = { flush: (callback: (error?: Error) => void) => void }
+
+/**
+ * Waits until the logger's destinations report their buffered output written,
+ * or `timeoutMs` passes; never rejects. A thread about to call `process.exit`
+ * uses it so asynchronous destinations do not drop their last lines.
+ *
+ * Only `flush(cb)` reports completion, and pino's multistream (the default
+ * logger's) has none, so its entries are flushed one by one. What this cannot
+ * cover: streams without `flush(cb)` (e.g. pino-loki passed as a stream
+ * rather than through `pino.transport()`) flush only by ending; a
+ * `pino.transport()` stream's flush only waits for its thread to read the
+ * lines, but pino ends it on process exit, which runs its close; a
+ * `pino.destination({ sync: false })` with the default `minLength: 0` calls
+ * back before its queued writes land.
+ */
+export function flushLogger(logger: Logger, timeoutMs: number): Promise<void> {
+  const stream = loggerStream(logger)
+  const streams: FlushableStream[] =
+    stream === undefined
+      ? [{ flush: (callback) => logger.flush(callback) }]
+      : flushableStreams(stream)
+  if (streams.length === 0) return Promise.resolve()
+
+  return new Promise<void>((resolve) => {
+    // Referenced on purpose: while an exiting thread waits here, this timer
+    // keeps its event loop alive, so it cannot end early with another code.
+    // An unbounded budget still needs a timer Node accepts (at most 2^31-1).
+    const timer = setTimeout(
+      resolve,
+      Math.min(Math.max(0, timeoutMs), 2 ** 31 - 1),
+    )
+    const flushes = streams.map(
+      (stream) =>
+        new Promise<void>((done) => {
+          try {
+            // A flush error means the destination is gone; nothing to wait for.
+            stream.flush(() => done())
+          } catch {
+            done()
+          }
+        }),
+    )
+    void Promise.all(flushes).then(() => {
+      clearTimeout(timer)
+      resolve()
+    })
+  })
+}
+
+// A logger module is bundled with its own copy of pino, whose stream symbol is
+// not the one this module imports, so the symbol is matched by description.
+function loggerStream(logger: Logger): unknown {
+  for (
+    let target: object | null = logger;
+    target;
+    target = Object.getPrototypeOf(target) as object | null
+  ) {
+    const symbol = Object.getOwnPropertySymbols(target).find(
+      (candidate) => candidate.description === 'pino.stream',
+    )
+    if (symbol) return (target as Record<symbol, unknown>)[symbol]
+  }
+  return undefined
+}
+
+function flushableStreams(stream: unknown): FlushableStream[] {
+  if (!isRecord(stream)) return []
+  if (Array.isArray(stream.streams)) {
+    // A multistream: its entries are `{ stream }` wrappers.
+    return stream.streams.flatMap((entry: unknown) =>
+      isRecord(entry) ? flushableStreams(entry.stream) : [],
+    )
+  }
+  return typeof stream.flush === 'function' ? [stream as FlushableStream] : []
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
 export function runtimeLabel(runtimeName: string, threadName?: string): string {
   if (!threadName) return `runtime:${runtimeName}`
   const prefix = `${runtimeName}:`

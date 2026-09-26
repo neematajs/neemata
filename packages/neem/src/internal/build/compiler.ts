@@ -30,6 +30,7 @@ import type {
   PluginBuildNode,
   RuntimeBuildNode,
 } from './graph.ts'
+import type { WorkerUpdate, WorkerUpdateBatch } from './updates.ts'
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { normalizeError, toFilePath } from '../utils.ts'
 import { NEEM_DEV_RUNTIME } from './dev-runtime.ts'
@@ -148,7 +149,7 @@ export async function watchGraph(
     onError?: (error: Error) => MaybePromise<void>
     onUpdates?: (
       runtimeName: string,
-      updates: BindingClientHmrUpdate[],
+      updates: WorkerUpdateBatch,
     ) => MaybePromise<void>
     onUpdateError?: (runtimeName: string, error: Error) => MaybePromise<void>
   } = {},
@@ -241,7 +242,29 @@ async function watchBuildGroup(
     }
   }
 
-  return watchTargetGroup(group.targets, handlers, watchConfig)
+  const { targets } = group
+  const metadata: ArtifactBuildMetadata = {
+    entryFileNames: new Map(),
+    watch: true,
+  }
+  await mkdirTargetDirs(targets)
+  return watchBundle(
+    {
+      ...createGroupedRolldownOptions(targets, metadata),
+      watch: createWatchOptions(watchConfig),
+    },
+    () => createResolvedTargets(targets, undefined, metadata),
+    {
+      onRebuild: (compiledTargets) =>
+        handlers.onRebuild?.({
+          target: targets[0]!,
+          compiled: compiledTargets[0]!,
+          compiledTargets,
+          initial: false,
+        }),
+      onError: handlers.onError,
+    },
+  )
 }
 
 export async function watchTarget(
@@ -251,14 +274,41 @@ export async function watchTarget(
 ): Promise<TargetWatcher> {
   const metadata: ArtifactBuildMetadata = { watch: true }
   await mkdir(target.outDir, { recursive: true })
-  const watcher = rolldown.watch({
-    ...createRolldownOptions(target, metadata),
-    watch: createWatchOptions(watchConfig),
-  })
+  const watcher = watchBundle(
+    {
+      ...createRolldownOptions(target, metadata),
+      watch: createWatchOptions(watchConfig),
+    },
+    () => ({
+      target,
+      artifact: createResolvedArtifact(target, undefined, metadata),
+    }),
+    {
+      onRebuild: (compiled) =>
+        handlers.onRebuild?.({ target, compiled, initial: false }),
+      onError: handlers.onError,
+    },
+  )
+  return { target, ...watcher }
+}
 
+/**
+ * Runs one Rolldown watcher. The first build resolves `ready`; each later
+ * bundle is a rebuild. `resolve` reads the artifacts once a bundle is written,
+ * which is all that differs between a single target and a grouped one.
+ */
+function watchBundle<TCompiled>(
+  options: rolldown.WatchOptions,
+  resolveCompiled: () => TCompiled,
+  handlers: {
+    onRebuild: (compiled: TCompiled) => MaybePromise<void>
+    onError?: (error: Error) => MaybePromise<void>
+  },
+): { ready: Promise<TCompiled>; close: () => Promise<void> } {
+  const watcher = rolldown.watch(options)
   let initialWatchBuild = true
-  let initialCompiled: CompiledTarget | undefined
-  const ready = createFuture<CompiledTarget>()
+  let initialCompiled: TCompiled | undefined
+  const ready = createFuture<TCompiled>()
 
   watcher.on('event', async (event) => {
     const code = event?.code
@@ -266,92 +316,13 @@ export async function watchTarget(
 
     if (code === 'BUNDLE_END') {
       try {
-        const compiled = {
-          target,
-          artifact: createResolvedArtifact(target, undefined, metadata),
-        }
+        const compiled = resolveCompiled()
         if (initialWatchBuild) {
           initialCompiled = compiled
           return
         }
 
-        await handlers.onRebuild?.({ target, compiled, initial: false })
-      } finally {
-        if ('result' in event) await event.result?.close?.()
-      }
-      return
-    }
-
-    if (code === 'END') {
-      if (initialWatchBuild) {
-        initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ?? {
-            target,
-            artifact: createResolvedArtifact(target, undefined, metadata),
-          },
-        )
-      }
-      return
-    }
-
-    if (code === 'ERROR') {
-      ready.reject(event.error)
-      await handlers.onError?.(event.error)
-      if ('result' in event) await event.result?.close?.()
-    }
-  })
-
-  return {
-    target,
-    ready: ready.promise,
-    async close() {
-      await watcher.close()
-    },
-  }
-}
-
-async function watchTargetGroup(
-  targets: readonly BuildTarget[],
-  handlers: WatchHandlers = {},
-  watchConfig?: NeemBuildWatchConfig,
-): Promise<BuildGroupWatcher> {
-  const metadata: ArtifactBuildMetadata = {
-    entryFileNames: new Map(),
-    watch: true,
-  }
-  await mkdirTargetDirs(targets)
-  const watcher = rolldown.watch({
-    ...createGroupedRolldownOptions(targets, metadata),
-    watch: createWatchOptions(watchConfig),
-  })
-
-  let initialWatchBuild = true
-  let initialCompiled: readonly CompiledTarget[] | undefined
-  const ready = createFuture<readonly CompiledTarget[]>()
-
-  watcher.on('event', async (event) => {
-    const code = event?.code
-    if (code === 'START' || code === 'BUNDLE_START') return
-
-    if (code === 'BUNDLE_END') {
-      try {
-        const compiledTargets = createResolvedTargets(
-          targets,
-          undefined,
-          metadata,
-        )
-        if (initialWatchBuild) {
-          initialCompiled = compiledTargets
-          return
-        }
-
-        await handlers.onRebuild?.({
-          target: targets[0]!,
-          compiled: compiledTargets[0]!,
-          compiledTargets,
-          initial: false,
-        })
+        await handlers.onRebuild(compiled)
       } finally {
         if ('result' in event) await event.result?.close?.()
         // Rolldown rebuilds retain sizeable allocations between watch builds;
@@ -365,10 +336,7 @@ async function watchTargetGroup(
     if (code === 'END') {
       if (initialWatchBuild) {
         initialWatchBuild = false
-        ready.resolve(
-          initialCompiled ??
-            createResolvedTargets(targets, undefined, metadata),
-        )
+        ready.resolve(initialCompiled ?? resolveCompiled())
       }
       return
     }
@@ -396,14 +364,33 @@ function createWatchOptions(
       ? { buildDelay: config.buildDelay }
       : {}),
     clearScreen: false,
-    watcher: { debounceDelay: config?.debounceDelay ?? 50, useDebounce: true },
+    watcher: {
+      debounceDelay: config?.debounceDelay ?? 50,
+      useDebounce: true,
+      ...resolvePollingOptions(config),
+    },
+  }
+}
+
+// Only set when the user opted in, so the bundle watcher and the dev engine
+// keep their own native-watching defaults otherwise.
+function resolvePollingOptions(config: NeemBuildWatchConfig | undefined): {
+  usePolling?: boolean
+  pollInterval?: number
+} {
+  if (!config?.usePolling) return {}
+  return {
+    usePolling: true,
+    ...(config.pollInterval !== undefined
+      ? { pollInterval: config.pollInterval }
+      : {}),
   }
 }
 
 async function watchWorkerTarget(
   target: BuildTarget,
   handlers: WatchHandlers & {
-    onUpdates: (updates: BindingClientHmrUpdate[]) => MaybePromise<void>
+    onUpdates: (updates: WorkerUpdateBatch) => MaybePromise<void>
     onUpdateError: (error: Error) => MaybePromise<void>
   },
   watchConfig?: NeemBuildWatchConfig,
@@ -413,9 +400,13 @@ async function watchWorkerTarget(
   void ready.promise.catch(() => {})
   let initial = true
   let chunks: string[] = []
+  // Each link reports its own failure and resolves, so one failure never
+  // rejects every later link of a long dev session.
   let outputApplied = Promise.resolve()
   let assetsWritten = Promise.resolve()
   let updatesApplied = Promise.resolve()
+  // A failed asset write fails the next update, which needs those assets.
+  let assetFailure: Error | undefined
 
   await mkdir(target.outDir, { recursive: true })
   const { output, ...input } = createRolldownOptions(target, metadata)
@@ -444,45 +435,25 @@ async function watchWorkerTarget(
       skipWrite: false,
       useDebounce: true,
       debounceDuration: watchConfig?.debounceDelay ?? 50,
+      ...resolvePollingOptions(watchConfig),
     },
     onOutput(result) {
       // DevEngine does not await callbacks. Keep the application promise so a
       // fresh-output request also waits for the compiled snapshot to catch up.
-      outputApplied = applyOutput(result)
-      void outputApplied.catch((error) =>
-        handlers.onError?.(normalizeError(error)),
-      )
+      outputApplied = settle(applyOutput(result), handlers.onError)
     },
     onAdditionalAssets(result) {
       assetsWritten = assetsWritten.then(() =>
-        writeOutput(target.outDir, result),
-      )
-      void assetsWritten.catch((error) =>
-        handlers.onError?.(normalizeError(error)),
+        settle(writeOutput(target.outDir, result), (error) => {
+          assetFailure = error
+          return handlers.onError?.(error)
+        }),
       )
     },
     onHmrUpdates(result) {
-      updatesApplied = updatesApplied
-        .then(async () => {
-          if (result instanceof Error) {
-            await handlers.onUpdateError(result)
-            return
-          }
-          await assetsWritten
-          for (const { update } of result.updates) {
-            if (update.type !== 'Patch') continue
-            await writeOutputFile(target.outDir, update.filename, update.code)
-            if (update.sourcemap && update.sourcemapFilename) {
-              await writeOutputFile(
-                target.outDir,
-                update.sourcemapFilename,
-                update.sourcemap,
-              )
-            }
-          }
-          await handlers.onUpdates(result.updates)
-        })
-        .catch((error) => handlers.onUpdateError(normalizeError(error)))
+      updatesApplied = updatesApplied.then(() =>
+        settle(applyUpdates(result), handlers.onUpdateError),
+      )
     },
   })
 
@@ -513,7 +484,6 @@ async function watchWorkerTarget(
         await engine.ensureLatestBuildOutput()
         // While the latest source fails to build, DevEngine resolves without
         // writing output, so the files on disk may predate accepted patches.
-        // Checking first also skips a rejection left by an earlier failure.
         const state = await engine.getBundleState()
         if (state.lastBuildErrored || state.hasStaleOutput) {
           throw new Error(
@@ -527,6 +497,36 @@ async function watchWorkerTarget(
       await engine.close()
       await Promise.allSettled([outputApplied, assetsWritten, updatesApplied])
     },
+  }
+
+  async function applyUpdates(
+    result: Error | { updates: BindingClientHmrUpdate[] },
+  ): Promise<void> {
+    if (result instanceof Error) throw result
+    // DevEngine reports the assets a patch emitted right after the patch,
+    // from a later callback; yield so they join the chain awaited below.
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    await assetsWritten
+    const failure = assetFailure
+    assetFailure = undefined
+    if (failure) {
+      throw new Error(
+        `Worker [${target.key}] update assets were not written: ${failure.message}`,
+        { cause: failure },
+      )
+    }
+    for (const { update } of result.updates) {
+      if (update.type !== 'Patch') continue
+      await writeOutputFile(target.outDir, update.filename, update.code)
+      if (update.sourcemap && update.sourcemapFilename) {
+        await writeOutputFile(
+          target.outDir,
+          update.sourcemapFilename,
+          update.sourcemap,
+        )
+      }
+    }
+    await handlers.onUpdates(result.updates.map(toWorkerUpdate))
   }
 
   async function applyOutput(result: Error | RolldownOutput): Promise<void> {
@@ -545,6 +545,45 @@ async function watchWorkerTarget(
       return
     }
     await handlers.onRebuild?.({ target, compiled, initial: false })
+  }
+}
+
+// The only place a DevEngine update crosses into Neem's own types.
+function toWorkerUpdate({ clientId, update }: BindingClientHmrUpdate): {
+  clientId: string
+  update: WorkerUpdate
+} {
+  switch (update.type) {
+    case 'Patch':
+      return {
+        clientId,
+        update: {
+          type: 'Patch',
+          filename: update.filename,
+          seq: update.seq,
+          changedIds: update.changedIds,
+        },
+      }
+    case 'FullReload':
+      return { clientId, update: { type: 'FullReload', reason: update.reason } }
+    case 'Noop':
+      return { clientId, update: { type: 'Noop' } }
+  }
+}
+
+// Reports a failed link of a callback chain and resolves, so the next runs.
+async function settle(
+  work: Promise<void>,
+  report: ((error: Error) => MaybePromise<void>) | undefined,
+): Promise<void> {
+  try {
+    await work
+  } catch (error) {
+    try {
+      await report?.(normalizeError(error))
+    } catch {
+      // Nothing is left to report a failing reporter to.
+    }
   }
 }
 
@@ -623,8 +662,8 @@ function createRolldownOptions(
       minify: false,
       dir: target.outDir,
       format: 'esm' as const,
-      entryFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
-      chunkFileNames: metadata.watch ? '[name].js' : '[name]-[hash].js',
+      entryFileNames: resolveTargetFileNames(target, metadata),
+      chunkFileNames: resolveTargetFileNames(target, metadata),
       assetFileNames: metadata.watch
         ? createStableWatchAssetFileName
         : '[name]-[hash][extname]',
@@ -702,6 +741,26 @@ function createGroupedRolldownOptions(
     ],
     output,
   }
+}
+
+// The dev host imports plugin entries and the logger into its own process on
+// every restart, and ESM offers no way to evict a module once loaded. Emitting
+// these targets under content-hashed names gives a changed build a new path,
+// so a plain import loads it on any runtime. Every other watched target keeps
+// stable names: workers for the DevEngine, the rest for fresh threads.
+const HOST_RELOADED_TARGETS: ReadonlySet<BuildTarget['kind']> = new Set([
+  'plugin-entry',
+  'logger',
+])
+
+function resolveTargetFileNames(
+  target: BuildTarget,
+  metadata: ArtifactBuildMetadata,
+): string {
+  if (metadata.watch && !HOST_RELOADED_TARGETS.has(target.kind)) {
+    return '[name].js'
+  }
+  return '[name]-[hash].js'
 }
 
 const DEFAULT_DEPS_CHUNK_TEST = /node_modules/

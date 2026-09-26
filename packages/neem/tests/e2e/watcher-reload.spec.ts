@@ -1,5 +1,5 @@
 import { access, readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { dirname, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
@@ -10,6 +10,7 @@ import type {
 } from './support/e2e.ts'
 import {
   createNeemFixture,
+  editWorkerFile,
   getFreePort,
   readRuntimeEvents,
   spawnNeem,
@@ -135,9 +136,10 @@ describe('Neem watcher dev reload', () => {
       'shared/workers/generic-runtime.ts',
     )
     const loggerFile = resolve(fixture.fixtureDir, 'shared/support/logger.ts')
+    // The plugin entry imports it; the edit must reach the restarted host.
     const pluginFile = resolve(
       fixture.fixtureDir,
-      'shared/support/plugin-hooks.ts',
+      'shared/support/plugin-marker.ts',
     )
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -157,17 +159,16 @@ describe('Neem watcher dev reload', () => {
     )
 
     await Promise.all([
-      replaceInFile(
-        workerFile,
-        "record({ event: 'runtime-start', name: ctx.name })",
-        "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
-      ),
+      editWorkerFile(neem, workerFile, (content) => {
+        const search = "record({ event: 'runtime-start', name: ctx.name })"
+        expect(content).toContain(search)
+        return content.replace(
+          search,
+          "record({ event: 'runtime-start', name: ctx.name, marker: 'worker-v2' })",
+        )
+      }),
       replaceInFile(loggerFile, "'Fixture'", "'Fixture logger-v2'"),
-      replaceInFile(
-        pluginFile,
-        "event: 'plugin-runtime-ready',\n        name: event.name,",
-        "event: 'plugin-runtime-ready',\n        marker: 'plugin-v2',\n        name: event.name,",
-      ),
+      replaceInFile(pluginFile, "'plugin-v1'", "'plugin-v2'"),
     ])
 
     const changeEvents = await waitForWatcherEventTypes(neem, [
@@ -317,15 +318,35 @@ async function expectManifestArtifactsContainMarkers(
 
     for (const [kind, file] of Object.entries(files)) {
       expect(file).toEqual(expect.any(String))
-      const content = await readFile(
+      const content = await readArtifactGraph(
         resolve(resolve(manifestFile, '..'), file as string),
-        'utf8',
       )
       expect(content).toContain(markers[kind as keyof typeof markers])
     }
 
     return true
   })
+}
+
+// Dev builds of plugin entries and the logger are code-split, so the marker
+// may live in a chunk the entry imports, statically or lazily.
+async function readArtifactGraph(entryFile: string): Promise<string> {
+  const seen = new Set<string>()
+  const contents: string[] = []
+  const queue = [entryFile]
+  while (queue.length) {
+    const file = queue.shift() as string
+    if (seen.has(file)) continue
+    seen.add(file)
+    const content = await readFile(file, 'utf8')
+    contents.push(content)
+    for (const match of content.matchAll(
+      /(?:from\s+|import\()\s*"(\.\.?\/[^"]+)"/g,
+    )) {
+      queue.push(resolve(dirname(file), match[1] as string))
+    }
+  }
+  return contents.join('\n')
 }
 
 async function waitForFile(path: string): Promise<void> {

@@ -59,7 +59,8 @@ describe('ThreadController', () => {
       const result = await raceWithTimeout(entered.promise, 2_000)
       expect(result.timedOut).toBe(false)
       await thread.stop()
-      expect(await start).toBeUndefined()
+      // The aborted start is not a failure; stop owned the cleanup.
+      expect(await start).toMatchObject({ name: 'AbortError' })
       expect(await readFile(eventsFile, 'utf8')).toBe('stop\nfinalized\n')
       expect(failures).toBe(0)
       expect(thread.getState()).toBe('stopped')
@@ -74,10 +75,13 @@ describe('ThreadController', () => {
       import { parentPort } from 'node:worker_threads'
 
       setInterval(() => {}, 1_000)
-      parentPort.postMessage({ type: 'ready', data: { upstreams: [] } })
+      parentPort.postMessage({
+        type: 'event',
+        event: { type: 'ready', data: { upstreams: [] } },
+      })
       parentPort.on('message', (message) => {
         if (message.type === 'stop') {
-          parentPort.postMessage({ type: 'stopped' })
+          parentPort.postMessage({ id: message.id, type: 'result' })
           parentPort.close()
           setImmediate(() => process.exit(0))
         }
@@ -112,7 +116,10 @@ describe('ThreadController', () => {
     const fixture = await createThreadFixture(`
       import { parentPort } from 'node:worker_threads'
 
-      parentPort.postMessage({ type: 'ready', data: { upstreams: [] } })
+      parentPort.postMessage({
+        type: 'event',
+        event: { type: 'ready', data: { upstreams: [] } },
+      })
       setImmediate(() => process.exit(1))
     `)
     const hooks = createHostHooks()
@@ -296,7 +303,7 @@ async function createThreadFixture(
     outDir,
   }
   const manifest: Manifest = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     runtime: {
       entry: 'start.js',
       start: {
@@ -311,6 +318,13 @@ async function createThreadFixture(
         kind: 'worker',
         owner: { type: 'runtime', name: 'worker' },
         file: 'worker-entry.mjs',
+        outDir: '.',
+      },
+      runner: {
+        id: 'host-runner-entry',
+        kind: 'worker',
+        owner: { type: 'runtime', name: 'host-runner' },
+        file: 'runner-entry.mjs',
         outDir: '.',
       },
     },

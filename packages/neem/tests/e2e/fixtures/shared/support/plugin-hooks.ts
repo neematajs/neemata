@@ -20,9 +20,11 @@ export default definePluginHooks((ctx) => {
     'runtime:start'(event) {
       record({ event: 'plugin-runtime-start', name: event.name })
     },
-    'runtime:ready'(event) {
+    async 'runtime:ready'(event) {
+      const { marker } = await import('./plugin-marker.ts')
       record({
         event: 'plugin-runtime-ready',
+        marker,
         name: event.name,
         upstreams: event.upstreams?.length ?? 0,
       })

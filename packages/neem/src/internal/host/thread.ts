@@ -5,7 +5,6 @@ import { MessageChannel, Worker } from 'node:worker_threads'
 
 import type { MaybePromise } from '@nmtjs/common'
 import type { Logger } from 'pino'
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
 import { createFuture } from '@nmtjs/common'
 
 import type {
@@ -16,19 +15,29 @@ import type {
   NeemStartedRuntimeThreadHealth,
   NeemWorkerState,
 } from '../../shared/types.ts'
+import type { WorkerUpdate } from '../build/updates.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
 import type { HostHooks } from '../plugins/hooks.ts'
+import type { RpcMessage } from '../rpc.ts'
 import type {
   RuntimeWorkerData,
+  WorkerCommands,
+  WorkerEvent,
   WorkerPatchResult,
-  WorkerMessage,
 } from '../worker/protocol.ts'
 import { NeemWorkerError } from '../../shared/errors.ts'
 import { childLogger, runtimeLabel } from '../logger.ts'
 import { callHostHook } from '../plugins/hooks.ts'
-import { RpcChannel } from '../rpc.ts'
+import { isRpcEvent, RpcChannel } from '../rpc.ts'
 import { deserializeError, normalizeError, raceWithTimeout } from '../utils.ts'
 import { createRuntimeEnv } from './env.ts'
+import {
+  DEFAULT_STOP_TIMEOUT_MS,
+  exitBudget,
+  isOperationAborted,
+  OperationScope,
+  resolveLifecycle,
+} from './lifecycle.ts'
 
 export type ThreadPlan = {
   name: string
@@ -52,9 +61,7 @@ export type ThreadControllerOptions = {
   onFailure?: (error: Error, thread: ThreadController) => MaybePromise<void>
 }
 
-const STARTUP_TIMEOUT_MS = 30_000
-const STOP_TIMEOUT_MS = 5_000
-const PATCH_TIMEOUT_MS = 30_000
+const REQUEST_TIMEOUT_MS = 30_000
 
 export class ThreadController {
   readonly id: string
@@ -65,7 +72,6 @@ export class ThreadController {
   readonly port: NodeMessagePort
 
   patches = 0
-  private registered = false
   private worker: Worker | undefined
   private state: NeemWorkerState = 'idle'
   private failureCount = 0
@@ -75,12 +81,13 @@ export class ThreadController {
   private lastError: Error | undefined
   private upstreams: readonly NeemRuntimeUpstream[] = []
   private ready: ReturnType<typeof createFuture<void>> | undefined
-  // ready stays assigned through hook cleanup; fail() must know if startup can still reject.
-  private readySettled = false
   private exited: ReturnType<typeof createFuture<void>> | undefined
-  private stopping = false
+  // The start in flight; stop aborts it and joins it before looking for a worker.
+  private starting:
+    | { scope: OperationScope; settled: Promise<void> }
+    | undefined
   private readonly logger: Logger
-  private readonly patch: RpcChannel<WorkerPatchResult>
+  private readonly rpc: RpcChannel<WorkerCommands>
 
   constructor(private readonly options: ThreadControllerOptions) {
     const channel = new MessageChannel()
@@ -106,16 +113,16 @@ export class ThreadController {
       patchClientId: this.id,
     }
     this.transferPort = channel.port2
-    this.patch = new RpcChannel({
+    this.rpc = new RpcChannel({
       post: (message) => {
         if (!this.worker) {
           throw new Error(`Worker [${this.name}] is not running`)
         }
         this.worker.postMessage(message)
       },
-      timeoutMs: () => PATCH_TIMEOUT_MS,
-      timeoutMessage: (_type, timeoutMs) =>
-        `Worker [${this.name}] patch timed out after ${timeoutMs}ms`,
+      timeoutMs: () => REQUEST_TIMEOUT_MS,
+      timeoutMessage: (type, timeoutMs) =>
+        `Worker [${this.name}] ${type === 'patch-update' ? 'patch' : type} timed out after ${timeoutMs}ms`,
     })
   }
 
@@ -143,12 +150,10 @@ export class ThreadController {
     return this.upstreams
   }
 
-  async applyPatch(
-    update: BindingClientHmrUpdate['update'],
-  ): Promise<WorkerPatchResult> {
+  async applyPatch(update: WorkerUpdate): Promise<WorkerPatchResult> {
     if (this.state !== 'ready') {
       return {
-        accepted: false,
+        outcome: 'rejected',
         delivered: false,
         patches: this.patches,
         reason: `Worker [${this.name}] is not ready`,
@@ -158,30 +163,39 @@ export class ThreadController {
       update.type === 'Patch'
         ? pathToFileURL(resolve(this.artifact.outDir, update.filename)).href
         : undefined
-    const result = await this.patch.request({
-      type: 'patch-update',
-      update,
-      url,
-    })
-    if (result) this.patches = result.patches
-    return (
-      result ?? {
-        accepted: false,
-        delivered: false,
-        patches: this.patches,
-        reason: `Worker [${this.name}] returned no patch result`,
-      }
-    )
+    const result = await this.rpc.request('patch-update', { update, url })
+    this.patches = result.patches
+    return result
   }
 
-  async start(): Promise<void> {
-    if (this.state === 'ready') return
-    if (this.worker) throw new Error(`Worker [${this.name}] already started`)
+  /**
+   * Fails a ready worker that can no longer serve although its thread still
+   * runs, exactly as if it had crashed: the runtime's recovery replaces it.
+   */
+  reportFailure(error: Error): void {
+    this.fail(error)
+  }
 
-    this.stopping = false
-    await this.callWorkerHook('worker:start')
-    // stop() may run while a startup hook is still pending.
-    if (this.stopping) return
+  /**
+   * Resolves once the worker is ready. Rejects with OperationAbortedError when
+   * the parent scope or stop() aborts it; stop() then owns the worker.
+   */
+  start(parent: OperationScope = new OperationScope()): Promise<void> {
+    if (this.state === 'ready') return Promise.resolve()
+    if (this.worker) {
+      return Promise.reject(new Error(`Worker [${this.name}] already started`))
+    }
+    const scope = parent.child()
+    const started = this.runStart(scope).finally(() => scope.dispose())
+    this.starting = { scope, settled: started.then(noop, noop) }
+    return started
+  }
+
+  private async runStart(scope: OperationScope): Promise<void> {
+    await scope.wait(this.callWorkerHook('worker:start'))
+    const { startTimeout } = resolveLifecycle(
+      this.options.snapshot.config.lifecycle,
+    )
     this.state = 'starting'
     this.startedAt = Date.now()
     this.readyAt = undefined
@@ -191,15 +205,14 @@ export class ThreadController {
 
     const ready = createFuture<void>()
     this.ready = ready
-    this.readySettled = false
     this.exited = createFuture<void>()
     const timer = setTimeout(() => {
       this.fail(
         new Error(
-          `Worker [${this.name}] did not become ready within ${STARTUP_TIMEOUT_MS}ms`,
+          `Worker [${this.name}] did not become ready within ${startTimeout}ms`,
         ),
       )
-    }, STARTUP_TIMEOUT_MS)
+    }, startTimeout)
 
     this.worker = new Worker(this.options.snapshot.workerEntry, {
       workerData: this.workerData,
@@ -215,34 +228,47 @@ export class ThreadController {
     this.worker.on('exit', (code) => this.handleExit(code))
 
     try {
-      await ready.promise
-      if (this.stopping) return
-      await this.callWorkerHook('worker:ready')
-      if (this.stopping) return
-      if (this.hasFailed() && this.lastError) throw this.lastError
+      await scope.wait(ready.promise)
+      await scope.wait(this.callWorkerHook('worker:ready'))
+      if (this.getState() === 'failed' && this.lastError) throw this.lastError
       this.logger.trace(
         { upstreams: this.upstreams.length },
         'Neem worker ready',
       )
     } catch (error) {
-      // stop() owns its cleanup deadline. Rejecting readiness must not terminate
+      // stop() owns its cleanup deadline. An aborted start must not terminate
       // the thread underneath runtime.stop() and its asynchronous finalizers.
-      if (this.stopping) return
+      if (isOperationAborted(error)) throw error
       const normalized = normalizeError(error)
-      const handledFailure = this.hasFailed() && this.readySettled
-      if (!this.hasFailed()) this.markFailed(normalized)
-      if (!handledFailure) await this.callWorkerFailHook(normalized)
+      // fail() reports failures after readiness itself; earlier ones only
+      // rejected readiness and are reported here.
+      const failed = this.getState() === 'failed'
+      const reported = failed && this.readyAt !== undefined
+      if (!failed) this.markFailed(normalized)
+      if (!reported) await this.callWorkerFailHook(normalized)
       await this.terminateWorker()
       throw normalized
     } finally {
       clearTimeout(timer)
       this.ready = undefined
-      this.readySettled = false
     }
   }
 
-  async stop(): Promise<void> {
-    this.stopping = true
+  /**
+   * Stops the worker within the scope's deadline. A worker that misses it is
+   * terminated and the stop rejects, as it does when the worker reports an
+   * error while stopping.
+   */
+  async stop(
+    scope: OperationScope = OperationScope.withTimeout(DEFAULT_STOP_TIMEOUT_MS),
+  ): Promise<void> {
+    const starting = this.starting
+    this.starting = undefined
+    starting?.scope.abort()
+    // Every wait in an aborted start settles at once, so this join only
+    // covers its synchronous tail and a failure cleanup already under way.
+    if (starting) await raceWithTimeout(starting.settled, scope.remaining())
+
     const worker = this.worker
     if (!worker || this.state === 'stopped') {
       this.port.close()
@@ -252,80 +278,86 @@ export class ThreadController {
     }
 
     this.state = 'stopping'
-    this.ready?.reject(new Error(`Worker [${this.name}] stopped before ready`))
     this.logger.trace('Neem worker stopping')
-    try {
-      worker.postMessage({ type: 'stop' })
-    } catch {}
+    const budget = scope.remaining()
+    // The exit acknowledges the stop; the reply only races it.
+    this.rpc
+      .request('stop', { timeoutMs: exitBudget(budget) })
+      .catch(() => undefined)
 
-    let exited = false
-    try {
-      if (this.exited) {
-        const result = await raceWithTimeout(
-          this.exited.promise,
-          STOP_TIMEOUT_MS,
-        )
-        exited = !result.timedOut
-      }
-    } finally {
-      if (!exited) {
-        this.logger.warn('Neem worker stop timed out; terminating worker')
-        await this.terminateWorker()
-      }
-      this.worker = undefined
-      this.patch.settleAll(new Error(`Worker [${this.name}] stopped`))
-      this.exited = undefined
-      this.port.close()
-      this.upstreams = []
-      this.markStopped()
-      await this.callWorkerHook('worker:stop')
-      this.logger.trace('Neem worker stopped')
+    const exit = this.exited
+      ? await raceWithTimeout(this.exited.promise, budget)
+      : { timedOut: false as const }
+    // fail() records errors the worker reports while stopping instead of
+    // treating them as a crash; they fail this stop.
+    let error = this.getState() === 'failed' ? this.lastError : undefined
+    if (exit.timedOut) {
+      this.logger.warn('Neem worker stop timed out; terminating worker')
+      await this.terminateWorker()
+      error = new Error(
+        `Worker [${this.name}] did not stop within ${Math.round(budget)}ms and was terminated`,
+      )
     }
+
+    this.worker = undefined
+    this.rpc.settleAll(new Error(`Worker [${this.name}] stopped`))
+    this.exited = undefined
+    this.port.close()
+    this.upstreams = []
+    this.markStopped()
+    await scope
+      .within(
+        this.callWorkerHook('worker:stop'),
+        `Worker [${this.name}] hook [worker:stop]`,
+      )
+      .catch((hookError) => {
+        error ??= normalizeError(hookError)
+      })
+    this.logger.trace('Neem worker stopped')
+    if (error) throw error
   }
 
-  private handleMessage(message: WorkerMessage): void {
-    if (this.patch.settle(message)) return
-    if (message.type === 'ready') {
-      if (this.stopping) return
-      this.upstreams = message.data.upstreams ?? []
-      this.markReady()
+  private handleMessage(message: RpcMessage<WorkerEvent>): void {
+    if (this.rpc.settle(message)) return
+    if (!isRpcEvent<WorkerEvent>(message)) return
+    const { event } = message
+    if (event.type === 'ready') {
+      this.markReady(event.data.upstreams ?? [])
       return
     }
 
-    if (message.type === 'error') {
-      this.fail(
-        new NeemWorkerError({
-          worker: this.name,
-          origin: message.data.origin,
-          cause: deserializeError(message.data),
-        }),
-      )
-      return
-    }
-
-    if (message.type === 'stopped') this.markStopped()
+    this.fail(
+      new NeemWorkerError({
+        worker: this.name,
+        origin: event.data.origin,
+        cause: deserializeError(event.data),
+      }),
+    )
   }
 
   private handleExit(code: number): void {
-    this.patch.settleAll(new Error(`Worker [${this.name}] exited`))
-    this.reportStopped()
+    this.rpc.settleAll(new Error(`Worker [${this.name}] exited`))
     this.exited?.resolve()
-    if (this.stopping || this.state === 'stopped') {
-      this.markStopped()
-      return
+    // Only a worker that announced itself as a patch client leaves as one.
+    if (this.readyAt !== undefined) {
+      this.options.onThreadEvent?.({
+        type: 'thread-stopped',
+        runtimeName: this.runtimeName,
+        threadId: this.id,
+      })
     }
-
+    if (this.state === 'stopping' || this.state === 'stopped') return
     if (this.state === 'failed') return
     this.fail(new Error(`Worker [${this.name}] exited with code [${code}]`))
   }
 
-  private markReady(): void {
+  private markReady(upstreams: readonly NeemRuntimeUpstream[]): void {
+    // A stop may already be under way; its worker must not advertise upstreams.
     if (this.state !== 'starting') return
+    this.upstreams = upstreams
     this.state = 'ready'
     this.readyAt = Date.now()
-    this.readySettled = true
     this.ready?.resolve()
-    this.registered = true
     this.options.onThreadEvent?.({
       type: 'thread-started',
       runtimeName: this.runtimeName,
@@ -334,29 +366,21 @@ export class ThreadController {
   }
 
   private markStopped(): void {
-    this.reportStopped()
     this.state = 'stopped'
     this.stoppedAt = Date.now()
-  }
-
-  private reportStopped(): void {
-    if (!this.registered) return
-    this.registered = false
-    this.options.onThreadEvent?.({
-      type: 'thread-stopped',
-      runtimeName: this.runtimeName,
-      threadId: this.id,
-    })
   }
 
   private fail(error: Error): void {
     if (this.state === 'failed' || this.state === 'stopped') return
 
-    this.patch.settleAll(error)
+    this.rpc.settleAll(error)
+    const previous = this.state
     this.markFailed(error)
-
-    if (this.ready && !this.readySettled) {
-      this.ready.reject(error)
+    // stop() owns a stopping worker; the error fails that stop instead.
+    if (previous === 'stopping') return
+    // Before readiness, start() reports the failure through its rejection.
+    if (previous === 'starting') {
+      this.ready?.reject(error)
       return
     }
 
@@ -371,10 +395,6 @@ export class ThreadController {
     // Failed workers exit; advertising their upstreams would route traffic to a dead port.
     this.upstreams = []
     this.logger.error({ err: error }, 'Neem worker failed')
-  }
-
-  private hasFailed(): boolean {
-    return this.state === 'failed'
   }
 
   private getWorkerHealth(): NeemManagedWorkerHealth {
@@ -424,3 +444,5 @@ export class ThreadController {
     await this.worker?.terminate().catch(() => undefined)
   }
 }
+
+function noop(): void {}

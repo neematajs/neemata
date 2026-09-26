@@ -22,6 +22,7 @@ export type RuntimeSnapshot = {
   logger: Logger
   artifacts: ScopedArtifactRegistry
   workerEntry: string
+  runnerEntry: string
 }
 
 export function createRuntimeSnapshot(options: {
@@ -56,6 +57,7 @@ export function createRuntimeSnapshot(options: {
       resolveManifestArtifacts(options.outDir, options.manifest),
     ),
     workerEntry: resolve(options.outDir, options.manifest.runtime.worker.file),
+    runnerEntry: resolve(options.outDir, options.manifest.runtime.runner.file),
   }
 }
 

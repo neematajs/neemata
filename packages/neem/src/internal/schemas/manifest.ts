@@ -4,7 +4,7 @@ import * as z from 'zod/mini'
 
 import type { Manifest } from '../manifest/manifest.ts'
 
-export const NEEM_MANIFEST_SCHEMA_VERSION = 1
+export const NEEM_MANIFEST_SCHEMA_VERSION = 3
 
 // Strict objects throughout: the manifest is written and read by the same
 // schema version, so unknown keys mean corruption, not forward compatibility.
@@ -121,6 +121,13 @@ const manifestHealthConfigSchema = z.strictObject({
   ),
 })
 
+const timeoutMsSchema = z.number().check(z.int(), z.gt(0))
+
+const manifestLifecycleConfigSchema = z.strictObject({
+  stopTimeout: z.optional(timeoutMsSchema),
+  startTimeout: z.optional(timeoutMsSchema),
+})
+
 const manifestRuntimeConfigSchema = z.strictObject({
   proxy: z.optional(manifestRuntimeProxySchema),
 })
@@ -139,6 +146,7 @@ const manifestConfigSchema = z.strictObject({
   env: z.optional(manifestEnvSchema),
   proxy: z.optional(manifestProxyConfigSchema),
   health: z.optional(manifestHealthConfigSchema),
+  lifecycle: z.optional(manifestLifecycleConfigSchema),
   runtimes: z.record(stringSchema, manifestRuntimeConfigSchema),
 })
 
@@ -161,6 +169,7 @@ const manifestRuntimeEntrySchema = z.strictObject({
   entry: manifestPathSchema,
   start: manifestArtifactSchema,
   worker: manifestArtifactSchema,
+  runner: manifestArtifactSchema,
 })
 
 export const manifestSchema = z

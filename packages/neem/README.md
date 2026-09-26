@@ -23,6 +23,28 @@ running until the source is fixed. A restart never loads output older than the
 running generation; when the latest worker output cannot be written, the
 restart is deferred until the worker builds again.
 
+Each thread reports one of three patch outcomes: `applied`; `rejected`, which
+retired nothing, so the old generation keeps serving and the runtime falls back
+to the restart above; or `unavailable`, when the patch failed after it began
+disposing the old generation (a throwing dispose callback, an updated worker
+that declares `reload: 'thread'`, a replacement that failed to start or changed
+the upstream list) or the worker never answered it, so recovery restarts the
+runtime from the current output at once. If
+that restart fails too, the runtime stays failed and unready without ending
+`neem dev` until its next successful build restarts it. A crashed watcher
+restarts on its own and restarts the runtimes from its fresh build.
+
+Plugin entries and the logger run in the `neem dev` process, and ESM never
+evicts a loaded module, so development builds emit them under content-hashed
+file names: a restart imports the rebuilt file by its new path, while the
+previous instances stay in memory until the process exits.
+
+Watching uses native file-system events. Set `build.watch.usePolling: true` in
+`neem.config.ts` (with an optional `pollInterval`, milliseconds, Rolldown's
+default is 100) to poll instead; it costs CPU per watched module but has no
+gap in which an edit can go unreported, which native watching on macOS
+currently has right after a rebuild.
+
 Modules re-executed by a patch can register `import.meta.hot.dispose(callback)`
 to release module-level timers or listeners; the callback receives
 `import.meta.hot.data`, which the next instance of the module sees. Only
@@ -37,6 +59,22 @@ its replacement can start.
 After that many patches, the next update restarts the runtime from fresh
 output. Set it to `0` to restart on every update. Production workers are
 created directly and their bundles contain no DevEngine instrumentation.
+
+## Shutdown
+
+`neem start`, `neem dev` and a built `start.js` stop within one total budget,
+`lifecycle.stopTimeout` in `neem.config.ts` (milliseconds, default `15000`).
+Host `stop()` hooks, runtime hosts, workers and plugins share it: each step
+gets what earlier steps left over. Anything still running when the budget runs
+out is terminated.
+
+Before a worker, host runner or the host itself exits, it flushes its logger
+within what is left of that budget, so asynchronous destinations keep the
+shutdown logs. A crashing thread gets a best-effort flush of up to one second.
+
+A shutdown that fails exits with a non-zero code: a cleanup step that throws,
+or a worker or host runner that had to be terminated. `lifecycle.startTimeout`
+(default `30000`) bounds how long a worker may take to become ready.
 
 ## Development environment files
 

@@ -7,36 +7,30 @@ import type {
   NeemRuntimeWorker,
   NeemRuntimeWorkerContext,
 } from '../../shared/types.ts'
+import type { WorkerUpdate } from '../build/updates.ts'
+import type { PatchGlobal } from './patch-globals.ts'
 import type {
-  ParentMessage,
+  PatchClientResult,
   RuntimeWorkerData,
+  WorkerCommands,
   WorkerErrorOrigin,
-  WorkerMessage,
+  WorkerEvent,
   WorkerPatchResult,
 } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
-import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import {
+  childLogger,
+  flushLogger,
+  resolveManifestLogger,
+  runtimeLabel,
+} from '../logger.ts'
+import { serveRpc } from '../rpc.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
+import { WORKER_SERIAL_COMMANDS } from './protocol.ts'
 import { ReloadableRuntime } from './reloadable-runtime.ts'
 
-if (!parentPort) {
-  throw new Error('Neem runtime worker entry requires a parent port')
-}
-
-const port = parentPort
 const workerData = rawWorkerData as RuntimeWorkerData
-
-type PatchGlobal = typeof globalThis & {
-  __neem_patch_client_id__?: string
-  __neem_accept_worker__?: (worker: unknown) => Promise<void>
-  __neem_patches__?: {
-    apply: (
-      update: Extract<ParentMessage, { type: 'patch-update' }>['update'],
-      url?: string,
-    ) => Promise<Omit<WorkerPatchResult, 'patches'>>
-  }
-}
 
 const patchGlobal = globalThis as PatchGlobal
 let currentWorker: NeemRuntimeWorker | undefined
@@ -46,11 +40,27 @@ let logger: Logger | undefined
 // stopping memoizes runtime cleanup, which a failed start also needs;
 // stopRequested records that the host asked for it, so exits are not failures.
 let stopping: Promise<void> | undefined
-let stopRequested = false
+let stopRequested: Promise<void> | undefined
 
-function postMessage(message: WorkerMessage): void {
-  port.postMessage(message)
-}
+const server = serveRpc<WorkerCommands, WorkerEvent>(
+  parentPort,
+  'Neem runtime worker entry',
+  {
+    'patch-update': ({ update, url }) => applyUpdate(update, url),
+    stop: async ({ timeoutMs }, { exitAfterReply }) => {
+      // The host's wait for the exit began when it sent this request.
+      const deadline = Date.now() + timeoutMs
+      await stopOnRequest()
+      exitAfterReply(0, deadline - Date.now())
+    },
+  },
+  {
+    serial: WORKER_SERIAL_COMMANDS,
+    onClose: () => workerData.port.close(),
+    beforeExit: (timeoutMs) =>
+      logger ? flushLogger(logger, timeoutMs) : undefined,
+  },
+)
 
 function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   // This thread is the only place the real value still exists, so it is
@@ -60,7 +70,7 @@ function reportError(value: unknown, origin: WorkerErrorOrigin): void {
   } else {
     logger?.error({ err: value }, `Neem runtime ${origin} error`)
   }
-  postMessage({ type: 'error', data: { ...serializeError(value), origin } })
+  server.post({ type: 'error', data: { ...serializeError(value), origin } })
 }
 
 async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
@@ -74,6 +84,7 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   )
   // The DevEngine prelude reads the client id during artifact evaluation.
   patchGlobal.__neem_patch_client_id__ = data.patchClientId
+  patchGlobal.__neem_patch_guard__ = refusePatch
   patchGlobal.__neem_accept_worker__ = acceptWorker
   const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
     data.artifact.file,
@@ -101,44 +112,72 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
   return created
 }
 
+// Refusals that depend only on the running generation. The patch client asks
+// before it disposes anything, so a refused patch leaves that generation
+// serving and the runtime restarts around it.
+function refusePatch(): string | undefined {
+  if (currentWorker?.reload === 'thread') {
+    return "Worker requires reload: 'thread'"
+  }
+  if (!(runtime instanceof ReloadableRuntime)) {
+    return 'Worker generation reload is only available in development'
+  }
+  return runtime.refusal()?.message
+}
+
+// Runs once the patch client has disposed the running generation's modules
+// and re-executed the worker definition, so every failure here leaves no
+// generation serving; recovery restarts the runtime.
 async function acceptWorker(next: unknown): Promise<void> {
   if (!isNeemRuntimeWorker(next)) {
     throw new Error(
       'Updated worker default export is not a marked runtime worker',
     )
   }
-  if (currentWorker?.reload === 'thread' || next.reload === 'thread') {
-    throw new Error("Worker requires reload: 'thread'")
+  if (next.reload === 'thread') {
+    throw new Error("Updated worker requires reload: 'thread'")
   }
   if (!(runtime instanceof ReloadableRuntime)) {
     throw new Error('Worker generation reload is only available in development')
   }
-  await runtime.apply(next)
+  const reload = await runtime.apply(next)
+  if (reload.outcome !== 'applied') throw reload.error
   currentWorker = next
 }
 
 async function applyUpdate(
-  message: Extract<ParentMessage, { type: 'patch-update' }>,
-): Promise<void> {
+  update: WorkerUpdate,
+  url: string | undefined,
+): Promise<WorkerPatchResult> {
   const client = patchGlobal.__neem_patches__
-  let result: Omit<WorkerPatchResult, 'patches'>
+  // The client decides whether the patch file loads at all; a skipped import
+  // leaves the patch undelivered.
+  const load = () =>
+    url
+      ? import(url)
+      : Promise.reject(new Error('Patch update carries no file URL'))
+  let result: PatchClientResult
   try {
     result = client
-      ? await client.apply(message.update, message.url)
+      ? await client.apply(update, load)
       : {
-          accepted: false,
+          outcome: 'rejected',
           delivered: false,
           reason: 'Worker artifact was not built with Rolldown DevEngine',
         }
-    if (result.accepted && message.update.type === 'Patch') patches++
+    if (result.outcome === 'applied' && update.type === 'Patch') {
+      patches++
+    }
   } catch (error) {
+    // The client classifies every failure after it starts touching modules;
+    // one escaping it happened before that.
     result = {
-      accepted: false,
+      outcome: 'rejected',
       delivered: false,
       reason: normalizeError(error).message,
     }
   }
-  postMessage({ id: message.id, type: 'result', data: { ...result, patches } })
+  return { ...result, patches }
 }
 
 async function resolveWorkerLogger(
@@ -165,20 +204,17 @@ function stopRuntime(): Promise<void> {
   })())
 }
 
-async function stopAndExit(): Promise<void> {
-  if (stopRequested) return
-  stopRequested = true
-  try {
-    await stopRuntime()
-    postMessage({ type: 'stopped' })
-    workerData.port.close()
-    port.close()
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    process.exit(0)
-  } catch (error) {
-    reportError(error, 'runtime')
-    process.exit(1)
-  }
+// Resolves once the runtime stopped; a failed stop is reported and exits the
+// thread instead, so the stop reply never claims a clean stop.
+function stopOnRequest(): Promise<void> {
+  return (stopRequested ??= (async () => {
+    try {
+      await stopRuntime()
+    } catch (error) {
+      reportError(error, 'runtime')
+      await server.exit(1)
+    }
+  })())
 }
 
 async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
@@ -195,22 +231,17 @@ async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
     if (stopRequested) return
     reportError(error, 'runtime')
   }
-  process.exit(1)
+  await server.exit(1)
 }
-
-port.on('message', (message: ParentMessage) => {
-  if (message?.type === 'stop') void stopAndExit()
-  if (message?.type === 'patch-update') void applyUpdate(message)
-})
 
 process.on('uncaughtException', (error) => {
   reportError(error, 'runtime')
-  process.exit(1)
+  void server.exit(1)
 })
 
 process.on('unhandledRejection', (error) => {
   reportError(error, 'runtime')
-  process.exit(1)
+  void server.exit(1)
 })
 
 // Started before main so a stop that arrives during bootstrap can await it.
@@ -222,7 +253,8 @@ async function main(): Promise<void> {
   } catch (error) {
     if (stopRequested) return
     reportError(error, 'bootstrap')
-    process.exit(1)
+    await server.exit(1)
+    return
   }
 
   if (stopRequested) return
@@ -232,7 +264,7 @@ async function main(): Promise<void> {
     if (stopRequested) return
     const upstreams = parseRuntimeStartResult(result)
     logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
-    postMessage({ type: 'ready', data: { upstreams } })
+    server.post({ type: 'ready', data: { upstreams } })
     void watchRuntimeFinished(runtime)
   } catch (error) {
     if (stopRequested) return
@@ -245,7 +277,7 @@ async function main(): Promise<void> {
     })
     if (stopRequested) return
     reportError(error, 'start')
-    process.exit(1)
+    await server.exit(1)
   }
 }
 

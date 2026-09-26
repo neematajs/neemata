@@ -237,6 +237,44 @@ export async function updateFileAtomically(
   await writeFileAtomically(path, update(content))
 }
 
+export async function editWorkerFile(
+  neem: SpawnedNeem,
+  path: string,
+  update: (content: string) => string,
+): Promise<void> {
+  const content = update(await readFile(path, 'utf8'))
+  const sequence = neem.events().length
+
+  function reported(event: NeemProbeEvent) {
+    return (
+      event.sequence > sequence &&
+      (event.event === 'watcher:worker-patch' ||
+        event.event === 'watcher:worker-patch-failed')
+    )
+  }
+
+  // Rolldown restarts its macOS watcher after rebuilds and can miss a nearby edit.
+  // Retry only until the watcher reports it; runtime failures must still fail the test.
+  for (let attempt = 0; attempt < 9; attempt++) {
+    if (neem.events().some(reported)) return
+    await writeFileAtomically(path, `${content}${'\n'.repeat(attempt)}`)
+    const deadline = Date.now() + 1_500
+    while (Date.now() < deadline) {
+      if (neem.events().some(reported)) return
+      await wait(25)
+    }
+  }
+
+  throw new Error(
+    `Worker watcher never reported the edit to ${path}\n${formatProcessDiagnostics(
+      neem.events(),
+      neem.stdout(),
+      neem.stderr(),
+      undefined,
+    )}`,
+  )
+}
+
 export async function writeFileAtomically(
   path: string,
   content: string,

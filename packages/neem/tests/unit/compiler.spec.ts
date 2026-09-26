@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,17 +15,47 @@ import {
   watchTarget,
 } from '../../src/internal/build/compiler.ts'
 import { createBuildGraph } from '../../src/internal/build/graph.ts'
+import { raceWithTimeout } from '../../src/internal/utils.ts'
 import { defineRuntime } from '../../src/public/config.ts'
 import { createTempDir } from '../support/temp.ts'
 
 const rolldownMock = vi.hoisted(() => ({ build: vi.fn(), watch: vi.fn() }))
+// The DevEngine stays real; the spy records the options Neem hands it.
+const devSpy = vi.hoisted(() => ({ dev: vi.fn() }))
 
 vi.mock('rolldown', () => rolldownMock)
+vi.mock('rolldown/experimental', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('rolldown/experimental')>()
+  devSpy.dev.mockImplementation(actual.dev)
+  return { ...actual, dev: devSpy.dev }
+})
 
 beforeEach(() => {
   rolldownMock.build.mockReset()
   rolldownMock.watch.mockReset()
+  devSpy.dev.mockClear()
 })
+
+// On macOS, Rolldown (1.2.11) restarts its FSEvents stream after every rebuild,
+// even when no watched path changed, and a write landing in that gap is never
+// reported. Write until the engine reports so these cases test Neem, not that
+// race.
+async function editUntilReported(
+  file: string,
+  content: string,
+  reported: () => Promise<unknown>,
+): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    await writeFile(file, `${content}${'\n'.repeat(attempt)}`)
+    const result = await raceWithTimeout(reported(), 1_500)
+    if (!result.timedOut) return result.value
+    if (attempt >= 8) throw new Error(`DevEngine never reported ${file}`)
+  }
+}
+
+// These drive a real DevEngine through file-system events, whose latency
+// under a loaded machine exceeds the default test timeout.
+const DEV_ENGINE_TEST_TIMEOUT_MS = 20_000
 
 describe('Neem compiler', () => {
   it('compiles infra targets with one multi-entry rolldown build', async () => {
@@ -153,6 +183,49 @@ describe('Neem compiler', () => {
     )
   })
 
+  it.each(['plugin-entry', 'logger'] as const)(
+    'emits a watched %s target under hashed names and keeps splitting it',
+    async (kind) => {
+      const target = { ...(await createTarget()), kind }
+      rolldownMock.watch.mockReturnValue(createWatcher())
+
+      await watchTarget(target)
+
+      const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+      // The dev host imports these in-process; a changed build needs a new path.
+      expect(watched.output).toMatchObject({
+        entryFileNames: '[name]-[hash].js',
+        chunkFileNames: '[name]-[hash].js',
+        codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
+      })
+    },
+  )
+
+  it('keeps stable names for watched targets that start in a fresh thread', async () => {
+    const target = await createTarget()
+    rolldownMock.watch.mockReturnValue(createWatcher())
+
+    await watchTarget(target)
+
+    const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+    expect(watched.output).toMatchObject({
+      entryFileNames: '[name].js',
+      chunkFileNames: '[name].js',
+    })
+  })
+
+  it('keeps splitting watched targets that each start in a fresh thread', async () => {
+    const target = await createTarget()
+    rolldownMock.watch.mockReturnValue(createWatcher())
+
+    await watchTarget(target)
+
+    const watched = rolldownMock.watch.mock.calls[0]?.[0] as BuildOptions
+    expect(watched.output).toMatchObject({
+      codeSplitting: { groups: [{ name: 'deps', test: /node_modules/ }] },
+    })
+  })
+
   it('uses the watcher initial build as ready output', async () => {
     const target = await createTarget()
     rolldownMock.build.mockResolvedValue(
@@ -215,50 +288,228 @@ describe('Neem compiler', () => {
     }
   })
 
-  it('refuses to refresh worker output while the latest source fails to build', async () => {
+  it('passes polling options to the bundle watcher only when enabled', async () => {
     const root = await createTempDir('neem-compiler-')
-    const valueFile = resolve(root, 'api/value.ts')
-    await mkdir(resolve(root, 'api'), { recursive: true })
-    await writeFile(
-      resolve(root, 'api/worker.ts'),
-      "export { value as default } from './value.ts'\n",
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+
+    await watchGraph(
+      createCompilerGraph(root, { watch: { pollInterval: 25 } }, false),
     )
-    await writeFile(valueFile, "export const value = 'v1'\n")
-    const graph = createCompilerGraph(root)
-    // DevEngine is real here; only the worker group is watched.
-    const workerGraph = {
-      ...graph,
-      runtimes: [],
-      buildGroups: graph.buildGroups.filter(
-        (group) =>
-          group.kind === 'target' && group.target.kind === 'runtime-worker',
-      ),
+    for (const [options] of rolldownMock.watch.mock.calls) {
+      const watcher = fileWatcherOptions(options as BuildOptions)
+      expect(watcher).not.toHaveProperty('usePolling')
+      expect(watcher).not.toHaveProperty('pollInterval')
     }
-    let settled = createFuture<unknown>()
-    const watcher = await watchGraph(workerGraph, {
-      onUpdates: (_runtimeName, updates) => settled.resolve(updates),
-      onUpdateError: (_runtimeName, error) => settled.resolve(error),
-    })
-    try {
-      await watcher.addPatchClient('api', 'client')
-      await writeFile(valueFile, "export const value = 'v2'\n")
-      expect(await settled.promise).toEqual([
-        expect.objectContaining({
-          update: expect.objectContaining({ type: 'Patch' }),
-        }),
-      ])
 
-      settled = createFuture<unknown>()
-      await writeFile(valueFile, 'export const value = !!!\n')
-      expect(await settled.promise).toBeInstanceOf(Error)
-
-      await expect(watcher.ensureWorkerOutput('api')).rejects.toThrow(
-        'source has build errors',
-      )
-    } finally {
-      await watcher.close()
+    rolldownMock.watch.mockClear()
+    await watchGraph(
+      createCompilerGraph(
+        root,
+        { watch: { usePolling: true, pollInterval: 25 } },
+        false,
+      ),
+    )
+    for (const [options] of rolldownMock.watch.mock.calls) {
+      expect(fileWatcherOptions(options as BuildOptions)).toMatchObject({
+        usePolling: true,
+        pollInterval: 25,
+      })
     }
   })
+
+  it(
+    'polls the worker sources when the watch config asks for it',
+    async () => {
+      const root = await createTempDir('neem-compiler-')
+      const valueFile = resolve(root, 'api/value.ts')
+      await mkdir(resolve(root, 'api'), { recursive: true })
+      await writeFile(
+        resolve(root, 'api/worker.ts'),
+        "export { value as default } from './value.ts'\n",
+      )
+      await writeFile(valueFile, "export const value = 'v1'\n")
+      const graph = createCompilerGraph(root, {
+        watch: { usePolling: true, pollInterval: 25 },
+      })
+      const workerGraph = {
+        ...graph,
+        runtimes: [],
+        buildGroups: graph.buildGroups.filter(
+          (group) =>
+            group.kind === 'target' && group.target.kind === 'runtime-worker',
+        ),
+      }
+      const settled = createFuture<unknown>()
+      const watcher = await watchGraph(workerGraph, {
+        onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+        onUpdateError: (_runtimeName, error) => settled.resolve(error),
+      })
+      try {
+        expect(devSpy.dev).toHaveBeenCalledTimes(1)
+        expect(devSpy.dev.mock.calls[0]?.[2]?.watch).toMatchObject({
+          usePolling: true,
+          pollInterval: 25,
+        })
+        await watcher.addPatchClient('api', 'client')
+        // A polling watcher has no event-stream gap, so one write suffices.
+        await writeFile(valueFile, "export const value = 'v2'\n")
+        const result = await raceWithTimeout(settled.promise, 5_000)
+        if (result.timedOut) throw new Error('DevEngine never polled the edit')
+        expect(result.value).toEqual([
+          expect.objectContaining({
+            update: expect.objectContaining({ type: 'Patch' }),
+          }),
+        ])
+      } finally {
+        await watcher.close()
+      }
+    },
+    DEV_ENGINE_TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'refuses to refresh worker output while the latest source fails to build',
+    async () => {
+      const root = await createTempDir('neem-compiler-')
+      const valueFile = resolve(root, 'api/value.ts')
+      await mkdir(resolve(root, 'api'), { recursive: true })
+      await writeFile(
+        resolve(root, 'api/worker.ts'),
+        "export { value as default } from './value.ts'\n",
+      )
+      await writeFile(valueFile, "export const value = 'v1'\n")
+      const graph = createCompilerGraph(root)
+      // DevEngine is real here; only the worker group is watched.
+      const workerGraph = {
+        ...graph,
+        runtimes: [],
+        buildGroups: graph.buildGroups.filter(
+          (group) =>
+            group.kind === 'target' && group.target.kind === 'runtime-worker',
+        ),
+      }
+      let settled = createFuture<unknown>()
+      const watcher = await watchGraph(workerGraph, {
+        onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+        onUpdateError: (_runtimeName, error) => settled.resolve(error),
+      })
+      try {
+        await watcher.addPatchClient('api', 'client')
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v2'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            update: expect.objectContaining({ type: 'Patch' }),
+          }),
+        ])
+
+        settled = createFuture<unknown>()
+        expect(
+          await editUntilReported(
+            valueFile,
+            'export const value = !!!\n',
+            () => settled.promise,
+          ),
+        ).toBeInstanceOf(Error)
+
+        await expect(watcher.ensureWorkerOutput('api')).rejects.toThrow(
+          'source has build errors',
+        )
+      } finally {
+        await watcher.close()
+      }
+    },
+    DEV_ENGINE_TEST_TIMEOUT_MS,
+  )
+
+  it(
+    'fails only the update whose assets could not be written',
+    async () => {
+      const root = await createTempDir('neem-compiler-')
+      const valueFile = resolve(root, 'api/value.ts')
+      await mkdir(resolve(root, 'api'), { recursive: true })
+      await writeFile(
+        resolve(root, 'api/worker.ts'),
+        "export { value as default } from './value.ts'\n",
+      )
+      await writeFile(valueFile, "export const value = 'v1'\n")
+      const graph = createCompilerGraph(root)
+      const workerGraph = {
+        ...graph,
+        runtimes: [],
+        buildGroups: graph.buildGroups.filter(
+          (group) =>
+            group.kind === 'target' && group.target.kind === 'runtime-worker',
+        ),
+      }
+      const worker = graph.targets.find(
+        (target) => target.kind === 'runtime-worker',
+      )!
+      // Stands for a module that brings a file along, as a native addon does.
+      worker.artifact.rolldown = {
+        plugins: [
+          {
+            name: 'test:value-asset',
+            transform(code, id) {
+              if (!id.endsWith('value.ts')) return null
+              this.emitFile({
+                type: 'asset',
+                fileName: 'value.txt',
+                source: code,
+              })
+              return null
+            },
+          },
+        ],
+      }
+      const assetFile = resolve(worker.outDir, 'value.txt')
+      let settled = createFuture<unknown>()
+      const errors: Error[] = []
+      const watcher = await watchGraph(workerGraph, {
+        onError: (error) => {
+          errors.push(error)
+        },
+        onUpdates: (_runtimeName, updates) => settled.resolve(updates),
+        onUpdateError: (_runtimeName, error) => settled.resolve(error),
+      })
+      try {
+        await watcher.addPatchClient('api', 'client')
+        // A directory in its place makes the asset write fail.
+        await rm(assetFile, { force: true })
+        await mkdir(assetFile)
+        const failed = await editUntilReported(
+          valueFile,
+          "export const value = 'v2'\n",
+          () => settled.promise,
+        )
+        expect(failed).toBeInstanceOf(Error)
+        expect((failed as Error).message).toContain('assets were not written')
+        expect(errors).toHaveLength(1)
+
+        await rm(assetFile, { recursive: true })
+        settled = createFuture<unknown>()
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v3'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            update: expect.objectContaining({ type: 'Patch' }),
+          }),
+        ])
+        expect(await readFile(assetFile, 'utf8')).toContain('v3')
+      } finally {
+        await watcher.close()
+      }
+    },
+    DEV_ENGINE_TEST_TIMEOUT_MS,
+  )
 
   it('watches infra targets with one watcher and reports one rebuild for all infra metadata', async () => {
     const root = await createTempDir('neem-compiler-')
@@ -394,6 +645,12 @@ function createCompilerGraph(
       },
     },
   })
+}
+
+function fileWatcherOptions(options: BuildOptions) {
+  const watch = options.watch
+  if (!watch) throw new Error('watch options missing')
+  return watch.watcher
 }
 
 function rolldownOutput(fileName: string, target: BuildTarget): RolldownOutput {

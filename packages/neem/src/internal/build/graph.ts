@@ -20,7 +20,7 @@ import {
   assertRuntimeNamesExist,
   normalizeRuntimeNames,
 } from '../runtime-selection.ts'
-import { sanitizePathPart } from '../utils.ts'
+import { sanitizePathPart, toSafeDirName } from '../utils.ts'
 import { resolveBuildEntry, resolveRequiredBuildEntry } from './resolver.ts'
 
 export type BuildTargetKind =
@@ -315,7 +315,7 @@ function createRuntimeNode(options: {
   const runtimeDir = resolve(
     options.outDir,
     'runtime',
-    sanitizePathPart(options.name),
+    toSafeDirName(options.name),
   )
   const declaration = options.runtime.declaration
   const workerEntry = declaration.worker
@@ -379,6 +379,7 @@ function createRuntimeNode(options: {
         id: 'planner',
         kind: 'module',
         entry: plannerEntry,
+        // The planner runs in the host runner, so it shares the host's build.
         rolldown: mergeOptionalRolldownOptions(
           normalizeUserRolldownOptions(declaration.host?.build?.rolldown),
           options.rootRolldown,

@@ -7,37 +7,46 @@ import type {
   NeemRuntimePlan,
   NeemRuntimeThreadHandle,
 } from '../../shared/types.ts'
+import type { RpcMessage } from '../rpc.ts'
+import type { OperationScope } from './lifecycle.ts'
 import type {
-  HostRunnerCommand,
+  HostRunnerCommands,
   HostRunnerData,
-  HostRunnerResponse,
-  HostRunnerResult,
+  HostRunnerEvent,
 } from './runner-protocol.ts'
-import { RpcChannel } from '../rpc.ts'
+import { isRpcEvent, RpcChannel } from '../rpc.ts'
 import { deserializeError, raceWithTimeout } from '../utils.ts'
-import { getTransferList } from './runner-protocol.ts'
+import { DEFAULT_REQUEST_TIMEOUT_MS, exitBudget } from './lifecycle.ts'
 
 export type HostRunnerOptions = {
+  // The built runner entry the manifest records (RuntimeSnapshot.runnerEntry).
+  entry: string
   data: HostRunnerData
   env: NodeJS.ProcessEnv
+  // Reports only; the owning RuntimeController decides what a failure means.
   onFailure?: (error: Error) => MaybePromise<void>
 }
 
-const STOP_TIMEOUT_MS = 5_000
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+// Only an exit or error while running is a failure; one during a requested
+// shutdown is the shutdown itself.
+type HostRunnerState = 'idle' | 'running' | 'shutting-down' | 'failed'
 
 export class HostRunner {
   private worker: Worker | undefined
-  private readonly rpc: RpcChannel<HostRunnerResult>
+  private state: HostRunnerState = 'idle'
+  private readonly rpc: RpcChannel<HostRunnerCommands>
   private ready: ReturnType<typeof createFuture<void>> | undefined
   private exited: ReturnType<typeof createFuture<void>> | undefined
-  private stopping = false
-  private failed = false
 
   constructor(private readonly options: HostRunnerOptions) {
     this.rpc = new RpcChannel({
-      post: (message, transfer) => this.worker?.postMessage(message, transfer),
-      timeoutMs: () => getRequestTimeoutMs(this.options.env),
+      post: (message, transfer) => {
+        if (!this.worker || this.state === 'failed') {
+          throw new Error('Neem host runner is not running')
+        }
+        this.worker.postMessage(message, transfer)
+      },
+      timeoutMs: () => this.requestTimeoutMs(),
       timeoutMessage: (type, timeoutMs) =>
         `Neem host runner request [${type}] timed out after ${timeoutMs}ms`,
     })
@@ -46,11 +55,10 @@ export class HostRunner {
   async start(): Promise<void> {
     if (this.worker) return
 
-    this.stopping = false
-    this.failed = false
+    this.state = 'running'
     this.ready = createFuture<void>()
     this.exited = createFuture<void>()
-    const worker = new Worker(resolveHostRunnerEntry(), {
+    const worker = new Worker(this.options.entry, {
       workerData: this.options.data,
       env: this.options.env,
     })
@@ -61,62 +69,68 @@ export class HostRunner {
     await this.ready.promise
   }
 
-  async plan(): Promise<NeemRuntimePlan | undefined> {
-    const result = await this.request({ type: 'plan' })
-    return result?.plan
+  plan(): Promise<NeemRuntimePlan> {
+    return this.rpc.request('plan', {})
   }
 
   async callStart(threads: readonly NeemRuntimeThreadHandle[]): Promise<void> {
-    await this.request({ type: 'start', threads })
+    await this.rpc.request(
+      'start',
+      { threads },
+      { transfer: threads.map((thread) => thread.port) },
+    )
   }
 
-  async callStop(): Promise<void> {
-    if (!this.worker) return
-    await this.request({ type: 'stop' })
+  // Bounded by both the request timeout and what is left of the stop budget.
+  async callStop(scope: OperationScope): Promise<void> {
+    if (this.state !== 'running') return
+    await this.rpc.request(
+      'stop',
+      {},
+      { timeoutMs: Math.min(this.requestTimeoutMs(), scope.remaining()) },
+    )
   }
 
-  async shutdown(): Promise<void> {
+  /** Rejects when the runner had to be terminated at the scope's deadline. */
+  async shutdown(scope: OperationScope): Promise<void> {
     const worker = this.worker
-    if (!worker) return
+    const exited = this.exited
+    if (!worker || !exited) return
 
-    this.stopping = true
-    let exited = false
-    try {
-      await this.request({ type: 'shutdown' })
-      if (this.exited) {
-        const result = await raceWithTimeout(
-          this.exited.promise,
-          STOP_TIMEOUT_MS,
+    if (this.state === 'running') {
+      this.state = 'shutting-down'
+      const remaining = scope.remaining()
+      // The exit acknowledges the shutdown; the reply only races it.
+      this.rpc
+        .request(
+          'shutdown',
+          { timeoutMs: exitBudget(remaining) },
+          { timeoutMs: Math.min(this.requestTimeoutMs(), remaining) },
         )
-        exited = !result.timedOut
-      }
-    } finally {
-      if (!exited) await worker.terminate().catch(() => undefined)
-      this.worker = undefined
-      this.rpc.settleAll(new Error('Neem host runner stopped'))
+        .catch(() => undefined)
     }
+    const budget = scope.remaining()
+    const exit = await raceWithTimeout(exited.promise, budget)
+    this.worker = undefined
+    this.rpc.settleAll(new Error('Neem host runner stopped'))
+    if (!exit.timedOut) return
+
+    await worker.terminate().catch(() => undefined)
+    throw new Error(
+      `Neem host runner did not exit within ${Math.round(budget)}ms and was terminated`,
+    )
   }
 
-  private request(
-    command: HostRunnerCommand,
-  ): Promise<HostRunnerResult | undefined> {
-    if (!this.worker) throw new Error('Neem host runner is not started')
-    return this.rpc.request(command, { transfer: getTransferList(command) })
-  }
-
-  private handleMessage(message: HostRunnerResponse): void {
-    if (message.type === 'ready') {
+  private handleMessage(message: RpcMessage<HostRunnerEvent>): void {
+    if (this.rpc.settle(message)) return
+    if (!isRpcEvent<HostRunnerEvent>(message)) return
+    const { event } = message
+    if (event.type === 'ready') {
       this.ready?.resolve()
       this.ready = undefined
       return
     }
-
-    if (message.type === 'failure') {
-      this.handleFailure(deserializeError(message.error))
-      return
-    }
-
-    this.rpc.settle(message)
+    this.handleFailure(deserializeError(event.error))
   }
 
   private handleExit(code: number): void {
@@ -128,34 +142,24 @@ export class HostRunner {
         `Neem host runner exited with code [${code}] before responding`,
       ),
     )
-
-    if (!this.stopping) {
-      this.handleFailure(
-        new Error(`Neem host runner exited with code [${code}]`),
-      )
-    }
+    this.handleFailure(new Error(`Neem host runner exited with code [${code}]`))
   }
 
   private handleFailure(error: Error): void {
-    if (this.failed) return
-    this.failed = true
-    this.worker = undefined
+    if (this.state !== 'running') return
+    this.state = 'failed'
     this.ready?.reject(error)
     this.rpc.settleAll(error)
     void this.options.onFailure?.(error)
   }
-}
 
-function resolveHostRunnerEntry(): URL {
-  return new URL('./runner-entry.js', import.meta.url)
-}
-
-function getRequestTimeoutMs(env: NodeJS.ProcessEnv): number {
-  const value = Number.parseInt(
-    env.NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS ?? '',
-    10,
-  )
-  return Number.isFinite(value) && value > 0
-    ? value
-    : DEFAULT_REQUEST_TIMEOUT_MS
+  private requestTimeoutMs(): number {
+    const value = Number.parseInt(
+      this.options.env.NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS ?? '',
+      10,
+    )
+    return Number.isFinite(value) && value > 0
+      ? value
+      : DEFAULT_REQUEST_TIMEOUT_MS
+  }
 }

@@ -11,6 +11,7 @@ import type {
 } from '../../src/internal/host/runner.ts'
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
 import type { NeemRuntimeUpstream } from '../../src/shared/types.ts'
+import { OperationScope } from '../../src/internal/host/lifecycle.ts'
 import { RuntimeController } from '../../src/internal/host/runtime.ts'
 import * as logging from '../../src/internal/logger.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
@@ -130,40 +131,77 @@ describe('RuntimeController recovery', () => {
     expect(onFailure).not.toHaveBeenCalled()
   })
 
-  it('waits for failed initial startup cleanup before starting replacements', async () => {
+  it('fails the initial start instead of recovering when its generation reports a failure', async () => {
     const { runtime, onRecovered, onFailure } = await createFixture()
+    const failure = new Error('host crashed during initial startup')
+    host.callStart.mockImplementationOnce(async () => {
+      void host.options[0]!.onFailure?.(failure)
+      await new Promise(() => {})
+    })
+
+    await expect(runtime.start()).rejects.toBe(failure)
+
+    expect(runtime.getState()).toBe('failed')
+    expect(host.start).toHaveBeenCalledOnce()
+    expect(host.callStop).toHaveBeenCalledOnce()
+    expect(runtime.listThreads()).toHaveLength(0)
+    expect(onRecovered).not.toHaveBeenCalled()
+    expect(onFailure).not.toHaveBeenCalled()
+  })
+
+  it('waits for the crashed generation to release its resources before starting a replacement', async () => {
+    const { runtime, onRecovered, onFailure } = await createFixture()
+    await runtime.start()
     const entered = createFuture<void>()
     const release = createFuture<void>()
-    const failure = new Error('host crashed during initial startup')
-    let recovery: Promise<void> | undefined
-    host.callStart.mockImplementationOnce(async () => {
-      recovery = Promise.resolve(host.options[0]!.onFailure?.(failure))
-      throw failure
-    })
     host.callStop.mockImplementationOnce(async () => {
       entered.resolve()
       await release.promise
     })
 
-    const startup = expect(runtime.start()).rejects.toThrow(failure)
+    const recovery = host.options[0]!.onFailure?.(new Error('host crashed'))
     await entered.promise
     try {
-      // The recovery delay is zero; the original workers must retain ownership
+      // The recovery delay is zero; the crashed workers must retain ownership
       // of their resources until their blocked cleanup can finish.
       await wait(25)
       expect(host.start).toHaveBeenCalledTimes(1)
       expect(onRecovered).not.toHaveBeenCalled()
     } finally {
       release.resolve()
-      await startup
       await recovery
     }
 
     expect(host.start).toHaveBeenCalledTimes(2)
-    expect(host.callStop).toHaveBeenCalledTimes(1)
     expect(onRecovered).toHaveBeenCalledOnce()
     expect(onFailure).not.toHaveBeenCalled()
-    expect(runtime.getHealth().pool).toMatchObject({ state: 'ready', ready: 2 })
+    expect(runtime.getHealth()).toMatchObject({
+      ready: true,
+      state: 'ready',
+      pool: { state: 'ready', ready: 2 },
+    })
+  })
+
+  it('is not ready while it recovers', async () => {
+    const { runtime, onRecovered } = await createFixture({
+      recovery: { delayMs: 300 },
+    })
+    await runtime.start()
+    expect(runtime.getHealth()).toMatchObject({ ready: true, state: 'ready' })
+
+    runtime.listThreads()[0]!.port.postMessage('crash')
+    await vi.waitFor(() => expect(runtime.getState()).toBe('recovering'), {
+      timeout: 5_000,
+    })
+
+    expect(runtime.getHealth()).toMatchObject({
+      ready: false,
+      state: 'recovering',
+    })
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+    expect(runtime.getHealth()).toMatchObject({ ready: true, state: 'ready' })
   })
 
   it.each([
@@ -264,6 +302,80 @@ describe('RuntimeController recovery', () => {
   })
 })
 
+describe('RuntimeController stop', () => {
+  it('joins the start it interrupts before releasing the generation', async () => {
+    const { runtime } = await createFixture()
+    const entered = createFuture<void>()
+    const release = createFuture<void>()
+    host.callStart.mockImplementationOnce(async () => {
+      entered.resolve()
+      await release.promise
+    })
+    let callStopsWhenStartSettled: number | undefined
+    const start = runtime.start().catch((error: unknown) => {
+      callStopsWhenStartSettled = host.callStop.mock.calls.length
+      return error
+    })
+    await entered.promise
+    const threads = runtime.listThreads()
+
+    try {
+      await runtime.stop()
+    } finally {
+      release.resolve()
+    }
+
+    expect(await start).toMatchObject({ name: 'AbortError' })
+    expect(callStopsWhenStartSettled).toBe(0)
+    expect(host.callStop).toHaveBeenCalledOnce()
+    expect(threads.map((thread) => thread.getState())).toEqual([
+      'stopped',
+      'stopped',
+    ])
+    expect(runtime.getState()).toBe('stopped')
+  })
+
+  it('shares one deadline down the stack and fails when a worker has to be terminated', async () => {
+    const { runtime } = await createFixture()
+    host.plan.mockResolvedValue({ workers: [{ behavior: 'ignore-stop' }, {}] })
+    await runtime.start()
+    const budgets: Record<string, number> = {}
+    host.callStop.mockImplementationOnce(async (scope) => {
+      budgets.callStop = scope.remaining()
+      await wait(100)
+    })
+    host.shutdown.mockImplementationOnce(async (scope) => {
+      budgets.shutdown = scope.remaining()
+    })
+    const threadBudgets: number[] = []
+    for (const thread of runtime.listThreads()) {
+      const stop = thread.stop.bind(thread)
+      thread.stop = (scope) => {
+        threadBudgets.push(scope!.remaining())
+        return stop(scope)
+      }
+    }
+    const startedAt = Date.now()
+
+    const stopping = runtime.stop(OperationScope.withTimeout(500))
+
+    await expect(stopping).rejects.toThrow(
+      /Worker \[api:0\] did not stop within \d+ms and was terminated/,
+    )
+    const elapsed = Date.now() - startedAt
+    // Every layer gets what is left of the one budget, never its own constant.
+    expect(budgets.callStop).toBeLessThanOrEqual(500)
+    expect(threadBudgets).toHaveLength(2)
+    for (const remaining of threadBudgets) {
+      expect(remaining).toBeLessThanOrEqual(budgets.callStop! - 90)
+    }
+    expect(budgets.shutdown).toBe(0)
+    expect(elapsed).toBeGreaterThanOrEqual(450)
+    expect(elapsed).toBeLessThan(2_000)
+    expect(runtime.getState()).toBe('stopped')
+  })
+})
+
 describe('RuntimeController upstreams', () => {
   const first = { type: 'http', url: 'http://127.0.0.1:4101/' } as const
   const second = { type: 'http', url: 'http://127.0.0.1:4102/' } as const
@@ -318,8 +430,102 @@ describe('RuntimeController patches', () => {
     ])
 
     expect(result).toMatchObject({
-      accepted: false,
+      outcome: 'rejected',
       reason: `Worker [${missed!.name}] started without this update`,
+    })
+  })
+
+  it('an unavailable patch outcome fails the thread and starts recovery', async () => {
+    const { runtime, onRecovered, onFailure } = await createFixture()
+    await runtime.start()
+    const threads = runtime.listThreads()
+    const [retired, intact] = threads
+    const update = { type: 'Noop' } as const
+    retired!.applyPatch = async () => ({
+      outcome: 'unavailable',
+      delivered: true,
+      patches: 0,
+      reason: 'failed to apply patch: Error: setup failed',
+    })
+    intact!.applyPatch = async () => ({
+      outcome: 'applied',
+      delivered: true,
+      patches: 1,
+    })
+
+    const result = await runtime.applyPatch(
+      threads.map((thread) => ({ clientId: thread.id, update })),
+    )
+
+    expect(result).toEqual({
+      outcome: 'unavailable',
+      reason: 'failed to apply patch: Error: setup failed',
+      deliveredFiles: [],
+    })
+    expect(retired!.getHealth()).toMatchObject({
+      state: expect.stringMatching(/failed|stopping|stopped/),
+      failureCount: 1,
+      lastError: {
+        message: expect.stringContaining(
+          'has no running generation after a failed patch',
+        ),
+      },
+    })
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(host.start).toHaveBeenCalledTimes(2)
+    expect(runtime.getHealth()).toMatchObject({
+      ready: true,
+      state: 'ready',
+      pool: { state: 'ready', ready: 2 },
+    })
+    expect(runtime.listThreads()).not.toContain(retired)
+  })
+
+  it('treats a patch request that fails as an unavailable generation', async () => {
+    const { runtime, onRecovered, onFailure } = await createFixture()
+    await runtime.start()
+    const threads = runtime.listThreads()
+    const [timedOut, intact] = threads
+    timedOut!.applyPatch = async () => {
+      throw new Error(
+        `Worker [${timedOut!.name}] patch timed out after 30000ms`,
+      )
+    }
+    intact!.applyPatch = async () => ({
+      outcome: 'applied',
+      delivered: true,
+      patches: 1,
+    })
+
+    const result = await runtime.applyPatch(
+      threads.map((thread) => ({
+        clientId: thread.id,
+        update: { type: 'Noop' } as const,
+      })),
+    )
+
+    expect(result).toEqual({
+      outcome: 'unavailable',
+      reason: 'Worker [api:0] patch timed out after 30000ms',
+      deliveredFiles: [],
+    })
+    expect(timedOut!.getHealth()).toMatchObject({ failureCount: 1 })
+    await vi.waitFor(() => expect(onRecovered).toHaveBeenCalledOnce(), {
+      timeout: 10_000,
+    })
+    expect(onFailure).not.toHaveBeenCalled()
+    expect(runtime.listThreads()).not.toContain(timedOut)
+  })
+
+  it('rejects patches while the runtime is not ready', async () => {
+    const { runtime } = await createFixture()
+
+    await expect(runtime.applyPatch([])).resolves.toMatchObject({
+      outcome: 'rejected',
+      reason: 'Runtime [api] is not ready',
     })
   })
 })
@@ -348,7 +554,9 @@ async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
             if (data.behavior === 'fail') throw new Error('replacement startup failed')
             return data.upstreams ?? []
           },
-          async stop() {},
+          async stop() {
+            if (data.behavior === 'ignore-stop') await new Promise(() => {})
+          },
         }
       },
     }
@@ -356,7 +564,7 @@ async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
   )
   const owner = { type: 'runtime' as const, name: 'api' }
   const manifest: Manifest = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     runtime: {
       entry: 'start.js',
       start: {
@@ -371,6 +579,13 @@ async function createFixture(options: { recovery?: RecoveryOptions } = {}) {
         kind: 'worker',
         owner,
         file: 'worker-entry.mjs',
+        outDir: '.',
+      },
+      runner: {
+        id: 'host-runner-entry',
+        kind: 'worker',
+        owner,
+        file: 'runner-entry.mjs',
         outDir: '.',
       },
     },

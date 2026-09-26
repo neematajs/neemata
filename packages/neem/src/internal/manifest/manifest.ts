@@ -1,12 +1,12 @@
-import { Buffer } from 'node:buffer'
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { relative, resolve } from 'node:path'
+import { dirname, relative, resolve } from 'node:path'
 
 import type {
   NeemArtifactKind,
   NeemBuildConfig,
   NeemEnv,
   NeemHealthConfig,
+  NeemLifecycleConfig,
   NeemLoggerOptions,
   NeemProxyConfig,
   NeemResolvedArtifact,
@@ -22,6 +22,7 @@ import {
   NEEM_MANIFEST_SCHEMA_VERSION,
   parseManifest,
 } from '../schemas/manifest.ts'
+import { toSafeDirName } from '../utils.ts'
 
 export const MANIFEST_FILE = 'neem.manifest.json'
 export const MANIFEST_SCHEMA_VERSION = NEEM_MANIFEST_SCHEMA_VERSION
@@ -49,6 +50,7 @@ export type ManifestConfig = {
   env?: NeemEnv
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  lifecycle?: NeemLifecycleConfig
   runtimes: Record<string, ManifestRuntimeConfig>
 }
 
@@ -60,7 +62,15 @@ export type ManifestPlugin = {
 
 export type Manifest = {
   schemaVersion: typeof MANIFEST_SCHEMA_VERSION
-  runtime: { entry: string; start: ManifestArtifact; worker: ManifestArtifact }
+  // `entry` is the root start.js; `start` is the standalone module it and the
+  // per-runtime start files import; `worker` and `runner` are the thread
+  // entries every runtime's workers and host runner load.
+  runtime: {
+    entry: string
+    start: ManifestArtifact
+    worker: ManifestArtifact
+    runner: ManifestArtifact
+  }
   plugins?: readonly ManifestPlugin[]
   config: ManifestConfig
   runtimes: Record<
@@ -85,6 +95,10 @@ export function createManifest(compiled: CompiledGraph): Manifest {
     outDir,
     getRequiredArtifact(compiled, 'worker-entry'),
   )
+  const runner = toManifestArtifact(
+    outDir,
+    getRequiredArtifact(compiled, 'host-runner-entry'),
+  )
   const plugins = createPlugins(compiled, outDir)
   const config = createConfig(compiled)
   const manifest: Manifest = {
@@ -93,6 +107,7 @@ export function createManifest(compiled: CompiledGraph): Manifest {
       entry: 'start.js',
       start,
       worker,
+      runner,
     },
     plugins,
     config,
@@ -116,7 +131,25 @@ export function createManifest(compiled: CompiledGraph): Manifest {
 
 export async function readManifest(manifestFile: string): Promise<Manifest> {
   const content = await readFile(manifestFile, 'utf8')
-  return parseManifest(JSON.parse(content))
+  const manifest: unknown = JSON.parse(content)
+  assertManifestSchemaVersion(manifestFile, manifest)
+  return parseManifest(manifest)
+}
+
+// A schema mismatch means the output predates this Neem version; the strict
+// schema errors would describe symptoms instead of the fix.
+function assertManifestSchemaVersion(
+  manifestFile: string,
+  manifest: unknown,
+): void {
+  const version =
+    typeof manifest === 'object' && manifest !== null
+      ? (manifest as { schemaVersion?: unknown }).schemaVersion
+      : undefined
+  if (version === MANIFEST_SCHEMA_VERSION) return
+  throw new Error(
+    `Neem manifest [${manifestFile}] has schema version [${String(version)}], expected [${MANIFEST_SCHEMA_VERSION}]; rebuild it with \`neem build\``,
+  )
 }
 
 export async function writeManifest(
@@ -128,7 +161,7 @@ export async function writeManifest(
   const manifestFile = resolve(outDir, MANIFEST_FILE)
   await writeFile(`${manifestFile}.tmp`, `${JSON.stringify(parsed, null, 2)}\n`)
   await rename(`${manifestFile}.tmp`, manifestFile)
-  await writeStartEntries(outDir, Object.keys(parsed.runtimes))
+  await writeStartEntries(outDir, parsed)
   return manifestFile
 }
 
@@ -186,6 +219,7 @@ export async function assertManifestFilesExist(
     { label: 'runtime.entry', file: manifest.runtime.entry },
     { label: 'runtime.start.file', file: manifest.runtime.start.file },
     { label: 'runtime.worker.file', file: manifest.runtime.worker.file },
+    { label: 'runtime.runner.file', file: manifest.runtime.runner.file },
   ]
 
   if (manifest.config.logger?.type === 'module') {
@@ -231,44 +265,43 @@ export async function assertManifestFilesExist(
 
 export async function writeStartEntries(
   outDir: string,
-  runtimeNames: readonly string[],
+  manifest: Pick<Manifest, 'runtime' | 'runtimes'>,
 ): Promise<void> {
-  const runtimeStartFile = resolve(outDir, 'runtime/start.js')
-  await writeFile(
-    resolve(outDir, 'start.js'),
-    [
-      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(outDir, runtimeStartFile))}`,
-      'await startStandalone()',
+  const runtimeStartFile = resolve(outDir, manifest.runtime.start.file)
+  // Each launcher locates the output root from its own URL, so a copied or
+  // moved build keeps working wherever the runtime start module lands.
+  const launcher = (dir: string, runtimes?: readonly string[]) => {
+    const outDirUrl = `new URL(${JSON.stringify(toDirSpecifier(dir, outDir))}, import.meta.url)`
+    const options = runtimes
+      ? `{ outDir: ${outDirUrl}, runtimes: ${JSON.stringify(runtimes)} }`
+      : `{ outDir: ${outDirUrl} }`
+    return [
+      `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
+      `await startStandalone(${options})`,
       '',
-    ].join('\n'),
-  )
+    ].join('\n')
+  }
+  const entry = resolve(outDir, manifest.runtime.entry)
+  await writeFile(entry, launcher(dirname(entry)))
 
   await Promise.all(
-    runtimeNames.map(async (name) => {
-      const dir = resolve(outDir, 'runtimes', toRuntimeStartDirName(name))
+    Object.keys(manifest.runtimes).map(async (name) => {
+      const dir = resolve(outDir, 'runtimes', toSafeDirName(name))
       await mkdir(dir, { recursive: true })
-      await writeFile(
-        resolve(dir, 'start.js'),
-        [
-          `import { startStandalone } from ${JSON.stringify(toImportSpecifier(dir, runtimeStartFile))}`,
-          `await startStandalone({ runtimes: [${JSON.stringify(name)}] })`,
-          '',
-        ].join('\n'),
-      )
+      await writeFile(resolve(dir, 'start.js'), launcher(dir, [name]))
     }),
   )
-}
-
-const SAFE_RUNTIME_START_DIR_NAME = /^[A-Za-z0-9_-]+$/
-
-function toRuntimeStartDirName(name: string): string {
-  if (SAFE_RUNTIME_START_DIR_NAME.test(name)) return name
-  return `~${Buffer.from(name, 'utf8').toString('base64url')}`
 }
 
 function toImportSpecifier(fromDir: string, target: string): string {
   const specifier = toManifestPath(fromDir, target)
   return specifier.startsWith('.') ? specifier : `./${specifier}`
+}
+
+function toDirSpecifier(fromDir: string, dir: string): string {
+  const specifier = toManifestPath(fromDir, dir)
+  if (!specifier) return './'
+  return `${toImportSpecifier(fromDir, dir)}/`
 }
 
 function getRequiredArtifact(
@@ -281,7 +314,7 @@ function getRequiredArtifact(
 }
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
-  const { proxy, health } = compiled.graph.config
+  const { proxy, health, lifecycle } = compiled.graph.config
   const updates = compiled.graph.config.build?.updates
   const build = updates ? { updates: { ...updates } } : undefined
   const logger = createLogger(compiled)
@@ -297,6 +330,7 @@ function createConfig(compiled: CompiledGraph): ManifestConfig {
     env,
     proxy,
     health,
+    lifecycle: lifecycle ? { ...lifecycle } : undefined,
     runtimes: Object.fromEntries(runtimes),
   }
 }

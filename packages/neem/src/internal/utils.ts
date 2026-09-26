@@ -1,4 +1,5 @@
 import type { TimerOptions } from 'node:timers'
+import { Buffer } from 'node:buffer'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -11,24 +12,32 @@ import {
 
 export type EntryModule<T> = { default: T }
 
-export async function importDefault<T>(
-  file: string | URL,
-  options: { cacheBust?: boolean } = {},
-): Promise<T> {
+export async function importDefault<T>(file: string | URL): Promise<T> {
   const href =
     file instanceof URL
       ? file.href
       : file.startsWith('file:')
         ? file
         : pathToFileURL(file).href
-  const module = (await import(
-    options.cacheBust ? `${href}?t=${Date.now()}` : href
-  )) as EntryModule<T>
+  const module = (await import(href)) as EntryModule<T>
   return module.default
 }
 
 export function normalizeError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
+}
+
+/** Throws every collected error at once so none of them is lost. */
+export function throwCollected(
+  errors: readonly Error[],
+  message: string,
+): void {
+  if (errors.length === 0) return
+  if (errors.length === 1) throw errors[0]
+  throw new AggregateError(
+    errors,
+    `${message}: ${errors.map((error) => error.message).join('; ')}`,
+  )
 }
 
 export type SerializedError = {
@@ -68,6 +77,10 @@ export async function raceWithTimeout<T>(
   promise: Promise<T>,
   ms: number,
 ): Promise<{ timedOut: false; value: T } | { timedOut: true }> {
+  // Timers clamp values beyond 2^31-1 ms to 1 ms; an unbounded wait has no timer.
+  if (!Number.isFinite(ms)) {
+    return { timedOut: false, value: await promise }
+  }
   const timeout = new AbortController()
   try {
     return await Promise.race([
@@ -85,6 +98,18 @@ export function toFilePath(entry: string | URL, cwd = process.cwd()): string {
   if (entry instanceof URL) return fileURLToPath(entry)
   if (entry.startsWith('file:')) return fileURLToPath(entry)
   return resolve(cwd, entry)
+}
+
+const SAFE_DIR_NAME = /^[A-Za-z0-9_-]+$/
+
+/**
+ * A directory name for an arbitrary name, such as a runtime's. Safe names stay
+ * as they are; any other is base64url-encoded behind a `~`, which no safe name
+ * contains, so two names never share a directory and none can traverse.
+ */
+export function toSafeDirName(name: string): string {
+  if (SAFE_DIR_NAME.test(name)) return name
+  return `~${Buffer.from(name, 'utf8').toString('base64url')}`
 }
 
 export function sanitizePathPart(value: string): string {

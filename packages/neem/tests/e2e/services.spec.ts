@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import type { SpawnedNeem } from './support/e2e.ts'
 import {
   createNeemFixture,
+  editWorkerFile,
   expectFile,
   readRuntimeEvents,
   runNeem,
@@ -448,9 +449,10 @@ describe('Neem v2 services', () => {
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     await waitForEventCount(fixture.eventsFile, 'start', 2)
 
-    await appendFile(
+    await editWorkerFile(
+      neem,
       workerFile,
-      "\nexport const workerReloadMarker = 'changed'\n",
+      (content) => `${content}\nexport const workerReloadMarker = 'changed'\n`,
     )
 
     await neem.waitForEvent(

@@ -93,6 +93,30 @@ describe('Neem runtime lifecycle failures', () => {
     )
   }, 60_000)
 
+  it('aborts production boot when a worker fails to start', async () => {
+    const fixture = await createNeemFixture({ config: 'start-failure-cleanup' })
+    await runNeem([
+      'build',
+      '--config',
+      fixture.configFile,
+      '--outDir',
+      fixture.outDir,
+    ])
+    const node = spawnNode([resolve(fixture.outDir, 'start.js')], {
+      env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile },
+    })
+
+    const exit = await node.waitForExit()
+    const events = await readRuntimeEvents(fixture.eventsFile)
+
+    expect(exit.code, formatSpawnedOutput(node)).not.toBe(0)
+    expect(node.stderr()).toContain('partial startup failure api:1')
+    expect(countEvents(events, 'partial-stop', 'api:0')).toBe(1)
+    expect(node.events().some(({ event }) => event === 'runtime:ready')).toBe(
+      false,
+    )
+  }, 60_000)
+
   it('fails startup when runtime host start exceeds the request timeout', async () => {
     const fixture = await createNeemFixture({ config: 'host-start-hang' })
     const neem = spawnNeem(
@@ -149,7 +173,9 @@ describe('Neem runtime lifecycle failures', () => {
     const startedAt = Date.now()
     const exit = await neem.stop({ killAfterMs: 2_000 })
 
-    expect(exit).toMatchObject({ code: 0, signal: null })
+    // The host stop timed out, so the shutdown failed and must say so.
+    expect(exit.signal).toBeNull()
+    expect(exit.code).not.toBe(0)
     expect(Date.now() - startedAt).toBeLessThan(5_000)
     await waitFor(
       async () => {

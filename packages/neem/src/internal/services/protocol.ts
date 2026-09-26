@@ -1,41 +1,44 @@
-import type { BindingClientHmrUpdate } from 'rolldown/experimental'
-
-import type { NeemMode, NeemRuntimeServerHealth } from '../../shared/types.ts'
-import type { RuntimePatchResult } from '../host/runtime.ts'
-import type { ThreadLifecycleEvent } from '../host/thread.ts'
+import type { WorkerUpdateBatch } from '../build/updates.ts'
+import type { NoParams } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
 
-export type ServiceResponse<TEvent, TResult = unknown> =
-  | { id: number; type: 'result'; data?: TResult }
-  | { id: number; type: 'error'; error: SerializedError }
-  | { type: 'event'; event: TEvent }
-
-export type WatcherStartRequest = {
-  id: number
-  type: 'start'
-  configFile: string
-  outDir: string
-  runtimes?: readonly string[]
+/**
+ * Commands the watcher service serves. `start` runs one at a time; the rest
+ * may overlap, as the dev session's event queue already orders the ones that
+ * depend on each other. The reply to `stop` precedes the service's exit.
+ */
+export type WatcherCommands = {
+  start: {
+    params: {
+      configFile: string
+      outDir: string
+      runtimes?: readonly string[]
+    }
+    result: WatcherStartResult
+  }
+  stop: { params: NoParams; result: void }
+  'patch-client-started': { params: PatchClientParams; result: void }
+  'patch-client-stopped': { params: PatchClientParams; result: void }
+  'patch-delivered': {
+    params: { runtimeName: string; filenames: readonly string[] }
+    result: void
+  }
+  'ensure-worker-output': {
+    params: { runtimeName: string }
+    result: WatcherManifestIdentity | undefined
+  }
 }
 
-export type WatcherStopRequest = { id: number; type: 'stop' }
+export const WATCHER_SERIAL_COMMANDS = [
+  'start',
+] as const satisfies readonly (keyof WatcherCommands)[]
 
-export type WatcherRequest =
-  | WatcherStartRequest
-  | WatcherStopRequest
-  | {
-      id: number
-      type: 'patch-client-started' | 'patch-client-stopped'
-      runtimeName: string
-      clientId: string
-    }
-  | {
-      id: number
-      type: 'patch-delivered'
-      runtimeName: string
-      filenames: readonly string[]
-    }
-  | { id: number; type: 'ensure-worker-output'; runtimeName: string }
+type PatchClientParams = { runtimeName: string; clientId: string }
+
+export type WatcherStartResult = {
+  manifestFile: string
+  configSignalFiles: readonly string[]
+}
 
 export type WatcherManifestIdentity = {
   manifestFile: string
@@ -56,70 +59,10 @@ export type WatcherEvent =
   | {
       type: 'worker-patch'
       runtimeName: string
-      updates: BindingClientHmrUpdate[]
+      updates: WorkerUpdateBatch
     }
   | { type: 'worker-patch-failed'; runtimeName: string; reason: string }
   | ({ type: 'ready' } & WatcherManifestIdentity)
   | { type: 'config-invalidated' }
   | WatcherManifestChangeEvent
   | { type: 'error'; error: SerializedError }
-
-export type WatcherResult = {
-  manifestFile?: string
-  manifest?: WatcherManifestIdentity
-  configSignalFiles?: readonly string[]
-}
-
-export type WatcherResponse = ServiceResponse<WatcherEvent, WatcherResult>
-
-export type RuntimeStartRequest = {
-  id: number
-  type: 'start'
-  mode: NeemMode
-  outDir: string
-  env?: NodeJS.ProcessEnv
-  manifestFile: string
-  runtimes?: readonly string[]
-}
-
-export type RuntimeReloadRequest = {
-  id: number
-  type: 'reload'
-  manifestFile: string
-}
-
-export type RuntimeReloadRuntimeRequest = {
-  id: number
-  type: 'reload-runtime'
-  runtimeName: string
-  manifestFile: string
-}
-
-export type RuntimeStopRequest = { id: number; type: 'stop' }
-
-export type RuntimeRequest =
-  | RuntimeStartRequest
-  | RuntimeReloadRequest
-  | RuntimeReloadRuntimeRequest
-  | RuntimeStopRequest
-  | {
-      id: number
-      type: 'apply-patch'
-      runtimeName: string
-      updates: readonly BindingClientHmrUpdate[]
-    }
-  | { id: number; type: 'recovery-output-ready'; runtimeName: string }
-
-export type RuntimeEvent =
-  | ThreadLifecycleEvent
-  | { type: 'runtime-recovering'; runtimeName: string }
-  | { type: 'ready'; health: NeemRuntimeServerHealth }
-  | { type: 'stopped' }
-  | { type: 'error'; error: SerializedError }
-
-export type RuntimeResult = {
-  health?: NeemRuntimeServerHealth
-  patch?: RuntimePatchResult
-}
-
-export type RuntimeResponse = ServiceResponse<RuntimeEvent, RuntimeResult>

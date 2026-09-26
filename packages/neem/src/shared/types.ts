@@ -99,6 +99,14 @@ export type NeemBuildConfig = {
 export type NeemBuildWatchConfig = {
   buildDelay?: number
   debounceDelay?: number
+  /**
+   * Poll the file system instead of subscribing to native events. Native
+   * watching is the default; polling costs CPU per watched module and adds up
+   * to one interval of latency, but has no gaps in which an edit can be lost.
+   */
+  usePolling?: boolean
+  /** Poll interval in milliseconds; only used with `usePolling`. Rolldown's default is 100. */
+  pollInterval?: number
 }
 
 export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }
@@ -214,9 +222,20 @@ export type NeemProxyUpstreamFailure = {
   error: Error
 }
 
+export type NeemRuntimeState =
+  | 'idle'
+  | 'starting'
+  | 'ready'
+  | 'recovering'
+  | 'failed'
+  | 'stopping'
+  | 'stopped'
+
 export type NeemRuntimeServerRuntimeHealth = {
   name: string
   ready: boolean
+  /** Lifecycle state of the runtime; `ready` is true only in the `ready` state. */
+  state?: NeemRuntimeState
   pool: NeemWorkerPoolHealth
   threads: readonly NeemStartedRuntimeThreadHealth[]
 }
@@ -353,6 +372,21 @@ export type NeemHealthConfig = {
   paths?: { health?: string; ready?: string }
 }
 
+/**
+ * Lifecycle deadlines in milliseconds. Values are baked into the manifest at
+ * build time.
+ */
+export type NeemLifecycleConfig = {
+  /**
+   * Total budget for shutting the server down (default `15000`): host stop,
+   * runtime hosts, workers and plugins share it. Anything still running when
+   * it runs out is terminated and the shutdown fails.
+   */
+  stopTimeout?: number
+  /** How long a worker may take to become ready (default `30000`). */
+  startTimeout?: number
+}
+
 export type NeemConfig = {
   /**
    * Logger configuration for Neem host/runtime logs.
@@ -374,6 +408,7 @@ export type NeemConfig = {
   runtimes: NeemRuntimeProjectEntries
   proxy?: NeemProxyConfig
   health?: NeemHealthConfig
+  lifecycle?: NeemLifecycleConfig
   // commands?: Record<string, NeemCommandInput>
   plugins?: readonly NeemPluginInput[]
   outDir?: string

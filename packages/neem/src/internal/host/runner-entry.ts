@@ -10,24 +10,30 @@ import type {
   NeemRuntimeThreadHandle,
 } from '../../shared/types.ts'
 import type {
+  HostRunnerCommands,
   HostRunnerData,
-  HostRunnerRequest,
-  HostRunnerResponse,
+  HostRunnerEvent,
 } from './runner-protocol.ts'
 import {
   isNeemRuntimeHostFactory,
   isNeemRuntimePlanner,
 } from '../../public/runtime.ts'
-import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import {
+  childLogger,
+  flushLogger,
+  resolveManifestLogger,
+  runtimeLabel,
+} from '../logger.ts'
+import { serveRpc } from '../rpc.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
+import { HOST_RUNNER_SERIAL_COMMANDS } from './runner-protocol.ts'
 
-if (!parentPort) {
-  throw new Error('Neem host runner requires a parent port')
-}
-
-const port = parentPort
 const data = rawWorkerData as HostRunnerData
 let host: NeemRuntimeHost | undefined
+// The factory may still be resolving when stop arrives; stop awaits it so the
+// host it eventually returns is stopped exactly once.
+let creating: Promise<NeemRuntimeHost> | undefined
+let stopping: Promise<void> | undefined
 let logger: Logger | undefined
 let plannerOptions: unknown
 let currentThreads: readonly NeemRuntimeThreadHandle[] = []
@@ -37,9 +43,45 @@ function closeCurrentThreads(): void {
   currentThreads = []
 }
 
-function post(message: HostRunnerResponse): void {
-  port.postMessage(message)
-}
+const server = serveRpc<HostRunnerCommands, HostRunnerEvent>(
+  parentPort,
+  'Neem host runner',
+  {
+    plan: () => {
+      logger?.trace('Calling Neem runtime planner')
+      return callPlanner()
+    },
+    start: ({ threads }) => {
+      logger?.trace(
+        { threads: threads.length },
+        'Calling Neem runtime host start',
+      )
+      return initializeHost(threads)
+    },
+    stop: () => {
+      logger?.trace(
+        { threads: currentThreads.length },
+        'Calling Neem runtime host stop',
+      )
+      return stopHost()
+    },
+    shutdown: async ({ timeoutMs }, { exitAfterReply }) => {
+      // The parent's wait for the exit began when it sent this request.
+      const deadline = Date.now() + timeoutMs
+      logger?.trace('Neem host runner shutting down')
+      // Without an earlier stop, a host still being created would outlive
+      // the runner; an earlier stop that hangs is the parent's to abandon.
+      if (!stopping && creating) await stopHost()
+      exitAfterReply(0, deadline - Date.now())
+    },
+  },
+  {
+    serial: HOST_RUNNER_SERIAL_COMMANDS,
+    onClose: closeCurrentThreads,
+    beforeExit: (timeoutMs) =>
+      logger ? flushLogger(logger, timeoutMs) : undefined,
+  },
+)
 
 async function initialize(): Promise<void> {
   logger = childLogger(
@@ -58,7 +100,7 @@ async function initialize(): Promise<void> {
     },
     'Neem host runner initialized',
   )
-  post({ type: 'ready' })
+  server.post({ type: 'ready' })
 }
 
 async function callPlanner(): Promise<NeemRuntimePlan> {
@@ -98,69 +140,35 @@ async function initializeHost(
       `Runtime host file [${data.hostArtifact.file}] default export must be a marked runtime host factory produced by defineRuntimeHost`,
     )
   }
+  if (stopping) throw new Error('Neem runtime host stopped before start')
 
   currentThreads = threads
-  host = await factory({
+  const params = {
     mode: data.mode,
     name: data.runtimeName,
     logger,
     threads,
     options: plannerOptions,
-  })
-  await host.start?.()
-}
-
-async function handle(request: HostRunnerRequest): Promise<void> {
-  try {
-    switch (request.type) {
-      case 'plan':
-        logger?.trace('Calling Neem runtime planner')
-        post({
-          id: request.id,
-          type: 'result',
-          data: { plan: await callPlanner() },
-        })
-        return
-      case 'start':
-        logger?.trace(
-          { threads: request.threads.length },
-          'Calling Neem runtime host start',
-        )
-        await initializeHost(request.threads)
-        post({ id: request.id, type: 'result' })
-        return
-      case 'stop':
-        logger?.trace(
-          { threads: currentThreads.length },
-          'Calling Neem runtime host stop',
-        )
-        await host?.stop?.()
-        host = undefined
-        closeCurrentThreads()
-        post({ id: request.id, type: 'result' })
-        return
-      case 'shutdown':
-        logger?.trace('Neem host runner shutting down')
-        closeCurrentThreads()
-        post({ id: request.id, type: 'result' })
-        port.close()
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        process.exit(0)
-        return
-    }
-  } catch (error) {
-    post({ id: request.id, type: 'error', error: serializeError(error) })
   }
+  creating = (async () => factory(params))()
+  const created = await creating
+  if (stopping) throw new Error('Neem runtime host stopped before start')
+  host = created
+  await created.start?.()
 }
 
-port.on('message', (message: HostRunnerRequest) => {
-  void handle(message)
-})
+function stopHost(): Promise<void> {
+  return (stopping ??= (async () => {
+    const current = host ?? (await creating?.catch(() => undefined))
+    host = undefined
+    await current?.stop?.()
+    closeCurrentThreads()
+  })())
+}
 
 process.on('uncaughtException', (error) => {
   logger?.error(new Error('Neem host uncaught exception', { cause: error }))
-  post({ type: 'failure', error: serializeError(error) })
-  process.exit(1)
+  void server.exit(1, { type: 'failure', error: serializeError(error) })
 })
 
 process.on('unhandledRejection', (error) => {
@@ -168,11 +176,9 @@ process.on('unhandledRejection', (error) => {
   logger?.error(
     new Error('Neem host unhandled rejection', { cause: normalized }),
   )
-  post({ type: 'failure', error: serializeError(normalized) })
-  process.exit(1)
+  void server.exit(1, { type: 'failure', error: serializeError(normalized) })
 })
 
 initialize().catch((error) => {
-  post({ type: 'failure', error: serializeError(error) })
-  process.exit(1)
+  void server.exit(1, { type: 'failure', error: serializeError(error) })
 })

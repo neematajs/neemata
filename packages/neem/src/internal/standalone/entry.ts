@@ -1,70 +1,39 @@
 import { resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 
-import { createFuture } from '@nmtjs/common'
-
-import { HostController } from '../host/controller.ts'
-import { resolveManifestLogger } from '../logger.ts'
-import {
-  assertManifestFilesExist,
-  MANIFEST_FILE,
-  readManifest,
-  selectManifestRuntimes,
-} from '../manifest/manifest.ts'
-import { createRuntimeSnapshot } from '../manifest/snapshot.ts'
-import { normalizeError } from '../utils.ts'
+import { loadRuntimeSnapshot, runHostUntilClosed } from '../host/bootstrap.ts'
+import { MANIFEST_FILE } from '../manifest/manifest.ts'
+import { toFilePath } from '../utils.ts'
 
 export type StandaloneStartOptions = {
+  // The build output root holding the manifest. The generated launchers pass
+  // it relative to themselves: this module's own location says nothing about
+  // it once chunking or a copied layout moves it.
+  outDir: string | URL
   env?: NodeJS.ProcessEnv
   runtimes?: readonly string[]
 }
 
 export async function startStandalone(
-  options: StandaloneStartOptions = {},
+  options: StandaloneStartOptions,
 ): Promise<void> {
-  const outDir = fileURLToPath(new URL('../', import.meta.url))
-  const manifestFile = resolve(outDir, MANIFEST_FILE)
-  const manifest = selectManifestRuntimes(
-    await readManifest(manifestFile),
-    options.runtimes,
-  )
-  await assertManifestFilesExist(outDir, manifest)
-  const logger = await resolveManifestLogger(manifest.config.logger, {
+  const outDir = toFilePath(options.outDir)
+  const snapshot = await loadRuntimeSnapshot({
     mode: 'production',
     outDir,
+    manifestFile: resolve(outDir, MANIFEST_FILE),
+    env: options.env,
+    runtimes: options.runtimes,
   })
-  const closed = createFuture<void>()
-  const controller = new HostController({
-    snapshot: createRuntimeSnapshot({
-      mode: 'production',
-      outDir,
-      env: options.env,
-      manifest,
-      manifestFile,
-      logger,
-    }),
-    failOnWorkerError: true,
-    onFailure(error) {
-      closed.reject(error)
-    },
-  })
-
-  const stop = () => {
-    void controller.stop().then(
-      () => closed.resolve(),
-      (error) => closed.reject(normalizeError(error)),
-    )
-  }
+  const controller = new AbortController()
+  const stop = () => controller.abort()
 
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
 
   try {
-    await controller.start()
-    await closed.promise
+    await runHostUntilClosed(snapshot, { signal: controller.signal })
   } finally {
     process.off('SIGINT', stop)
     process.off('SIGTERM', stop)
-    await controller.stop().catch(() => undefined)
   }
 }

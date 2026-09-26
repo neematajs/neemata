@@ -121,11 +121,16 @@ function createSnapshot(
     mode: 'development',
     outDir: '/out',
     manifest: {
-      schemaVersion: 1,
+      schemaVersion: 3,
       runtime: {
         entry: 'runtime/start.js',
         start: artifact('start', 'start', '/out/runtime/start.js'),
         worker: artifact('worker-entry', 'worker', '/out/runtime/worker.js'),
+        runner: artifact(
+          'host-runner-entry',
+          'host-runner',
+          '/out/runtime/runner.js',
+        ),
       },
       config: { runtimes: { api: {}, scheduler: {} } },
       runtimes: {
@@ -150,6 +155,7 @@ function createSnapshot(
     logger: createDefaultLogger('development'),
     artifacts: createArtifactRegistry(artifacts),
     workerEntry: '/out/runtime/worker.js',
+    runnerEntry: '/out/runtime/runner.js',
   }
 }
 
@@ -160,7 +166,7 @@ function artifact(
 ): NeemResolvedArtifact {
   return {
     id,
-    kind: id === 'worker' || id === 'worker-entry' ? 'worker' : 'module',
+    kind: id === 'worker' || id.endsWith('-entry') ? 'worker' : 'module',
     owner: { type: 'runtime', name: runtimeName },
     file,
     outDir: file.replace(/\/[^/]+$/, ''),
