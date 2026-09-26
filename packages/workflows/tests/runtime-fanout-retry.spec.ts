@@ -381,6 +381,7 @@ describe('workflow fan-out retry state model', () => {
       store: runtime.store,
       attemptExecutor: runtime.attemptExecutor,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
+      workflows: [],
     })
     expect(reaped).toBe(1)
     await runWorkflowWorker({
@@ -404,6 +405,7 @@ describe('workflow fan-out retry state model', () => {
       store: runtime.store,
       attemptExecutor: runtime.attemptExecutor,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
+      workflows: [],
     })
     expect(again.reaped).toBe(0)
   })

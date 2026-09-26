@@ -1,5 +1,12 @@
-import type { WorkflowImplementation } from '../../implement/index.ts'
-import type { AnyWorkflowDefinition, Timestamp } from '../../types/index.ts'
+import type {
+  TaskImplementation,
+  WorkflowImplementation,
+} from '../../implement/index.ts'
+import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
+  Timestamp,
+} from '../../types/index.ts'
 import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
@@ -7,7 +14,9 @@ import { cancelRunDescendants } from '../coordinator/cancel.ts'
 import { createRunLeaseFencedStore } from '../coordinator/continuation.ts'
 import { parseDurationMs } from '../duration.ts'
 import { toStoredError } from '../errors.ts'
+import { createWorkflowRuntimeRegistry } from '../registry.ts'
 import { wakeParentRun } from '../wake.ts'
+import { resolveActivityAttemptRetry } from './activity-attempt.ts'
 import {
   replayCompletedAttempt,
   replaySupersededAttempt,
@@ -18,11 +27,16 @@ type AnyWorkflowImplementation = WorkflowImplementation<
   AnyWorkflowDefinition,
   any
 >
+type AnyTaskImplementation = TaskImplementation<AnyTaskDefinition, any>
 
 export type ReapDeadWorkflowCommandsInput = {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
+  /** Resolve the retry policy, and so the backoff, of a lost retry. */
+  readonly workflows: readonly AnyWorkflowImplementation[]
+  /** A task run started outside a workflow carries no policy in its command. */
+  readonly tasks?: readonly AnyTaskImplementation[]
   readonly batchSize?: number
 }
 
@@ -45,6 +59,10 @@ export async function reapDeadWorkflowCommands(
     limit: input.batchSize,
   })
 
+  const registry = createWorkflowRuntimeRegistry({
+    workflows: input.workflows,
+    tasks: input.tasks,
+  })
   let reaped = 0
   for (const command of dead) {
     const lease = await input.store.acquireRunLease({
@@ -132,13 +150,11 @@ export async function reapDeadWorkflowCommands(
                     currentAttempt: snapshot?.attempts.find(
                       (attempt) => attempt.id === child.currentAttemptId,
                     ),
-                    // Only the dispatching node's policy travels with the
-                    // command. Without it a lost retry is dispatched at once,
-                    // which a dead-lettered recovery has long earned.
                     resolveRetry: () =>
                       attemptCommand.kind === 'taskAttempt'
-                        ? attemptCommand.retry
-                        : undefined,
+                        ? (attemptCommand.retry ??
+                          registry.getTask(attemptCommand.taskName)?.task.retry)
+                        : resolveActivityAttemptRetry(registry, attemptCommand),
                   },
                 )
               }

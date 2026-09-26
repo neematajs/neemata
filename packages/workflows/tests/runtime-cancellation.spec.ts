@@ -247,7 +247,9 @@ describe('child workflow cancellation policy', () => {
     await runtime.runCoordinationExecutor.release(continuation!, {
       error: new Error('dead'),
     })
-    expect(await reapDeadWorkflowCommands(runtime)).toEqual({ reaped: 1 })
+    expect(
+      await reapDeadWorkflowCommands({ ...runtime, workflows: [] }),
+    ).toEqual({ reaped: 1 })
     expect((await started.client.get(run.id))!.run.status).toBe('failed')
     return started
   }

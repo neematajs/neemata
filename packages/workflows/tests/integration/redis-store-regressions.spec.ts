@@ -433,6 +433,7 @@ for (const target of targets) {
         const store = runtime.store
         await reapDeadWorkflowCommands({
           ...runtime,
+          workflows: [],
           store: {
             ...store,
             listUnreapedDeadCommands: (params) => {

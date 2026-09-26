@@ -122,6 +122,8 @@ type MaintenanceDeps = {
   readonly store: WorkflowStore
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly workflows: readonly AnyWorkflowImplementation[]
+  readonly tasks?: readonly AnyTaskImplementation[]
   readonly maintenance?: readonly WorkerMaintenanceHook[]
   readonly reaping?: false | WorkerReapingOptions
 }
@@ -141,6 +143,8 @@ function withReapingHook(
           store: input.store,
           attemptExecutor: input.attemptExecutor,
           runCoordinationExecutor: input.runCoordinationExecutor,
+          workflows: input.workflows,
+          tasks: input.tasks,
           batchSize: options?.batchSize,
         })
       },
