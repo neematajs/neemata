@@ -1,5 +1,6 @@
 .vitest/
 .benchmark/
+.coverage/
 benchmark-results/
 packages/workflows/bench/.generated-types/
 packages/workflows/tests/.tmp-recovery-*/
@@ -46,6 +47,7 @@ lib-cov
 # Coverage directory used by tools like istanbul
 
 coverage
+!scripts/coverage/
 *.lcov
 
 # nyc test coverage
