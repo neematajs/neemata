@@ -130,6 +130,14 @@ pub struct UnixSocketUpstreamOptions {
     pub path: String,
 }
 
+#[napi(object)]
+pub struct ProxyHealthStatus {
+    /// Answers the health path with 200 when true, 503 otherwise.
+    pub healthy: bool,
+    /// Answers the ready path with 200 when true, 503 otherwise.
+    pub ready: bool,
+}
+
 #[napi]
 pub type UpstreamOptions = Either<PortUpstreamOptions, UnixSocketUpstreamOptions>;
 
@@ -157,6 +165,7 @@ impl Proxy {
             },
             parsed.limits.clone(),
             parsed.timeouts.clone(),
+            parsed.health.clone(),
         ));
 
         let mut upstreams_by_app = HashMap::new();
@@ -464,6 +473,22 @@ impl Proxy {
                 StopStatus::Ready => return Ok(()),
             }
         }
+    }
+
+    /// Sets the status served on the health endpoints. Starts as healthy and not ready.
+    #[napi]
+    pub fn set_health(&self, status: ProxyHealthStatus) -> Result<()> {
+        let router = self
+            .inner
+            .lock()
+            .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?
+            .router
+            .clone();
+        router.set_health(router::HealthStatus {
+            healthy: status.healthy,
+            ready: status.ready,
+        });
+        Ok(())
     }
 
     #[napi]

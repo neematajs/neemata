@@ -4,7 +4,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -121,6 +121,52 @@ pub struct Router {
     sticky: Option<Arc<StickySessionState>>,
     limits: options::ProxyLimitsOptionsParsed,
     timeouts: options::ProxyTimeoutOptionsParsed,
+    health: Option<options::ProxyHealthOptionsParsed>,
+    health_status: HealthStatusCell,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HealthStatus {
+    pub healthy: bool,
+    pub ready: bool,
+}
+
+/// Both flags live in one atomic so a probe never observes half of an update.
+struct HealthStatusCell(AtomicU8);
+
+const HEALTHY_BIT: u8 = 1;
+const READY_BIT: u8 = 2;
+
+impl HealthStatusCell {
+    // The process is alive once it can answer, but nothing is ready until the owner says so.
+    fn new() -> Self {
+        Self(AtomicU8::new(HEALTHY_BIT))
+    }
+
+    fn load(&self) -> HealthStatus {
+        let bits = self.0.load(Ordering::Acquire);
+        HealthStatus {
+            healthy: bits & HEALTHY_BIT != 0,
+            ready: bits & READY_BIT != 0,
+        }
+    }
+
+    fn store(&self, status: HealthStatus) {
+        let mut bits = 0;
+        if status.healthy {
+            bits |= HEALTHY_BIT;
+        }
+        if status.ready {
+            bits |= READY_BIT;
+        }
+        self.0.store(bits, Ordering::Release);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthProbe {
+    Health,
+    Ready,
 }
 
 impl Router {
@@ -130,6 +176,7 @@ impl Router {
         sticky_config: StickySessionConfig,
         limits: options::ProxyLimitsOptionsParsed,
         timeouts: options::ProxyTimeoutOptionsParsed,
+        health: Option<options::ProxyHealthOptionsParsed>,
     ) -> Self {
         let sticky = if sticky_config.enabled {
             let mut shards = Vec::with_capacity(STICKY_SHARD_COUNT);
@@ -154,12 +201,29 @@ impl Router {
             sticky,
             limits,
             timeouts,
+            health,
+            health_status: HealthStatusCell::new(),
         }
     }
 
     #[allow(dead_code)]
     pub fn update(&self, config: RouterConfig) {
         self.config.store(Arc::new(config));
+    }
+
+    pub fn set_health(&self, status: HealthStatus) {
+        self.health_status.store(status);
+    }
+
+    fn match_health_probe(&self, path: &str) -> Option<HealthProbe> {
+        let health = self.health.as_ref()?;
+        if path == health.health_path {
+            Some(HealthProbe::Health)
+        } else if path == health.ready_path {
+            Some(HealthProbe::Ready)
+        } else {
+            None
+        }
     }
 }
 
@@ -247,6 +311,12 @@ impl ProxyHttp for SharedRouter {
         }
 
         apply_downstream_timeouts(session, timeouts);
+
+        // Answered before routing so no application can shadow or receive a probe.
+        if let Some(probe) = self.0.match_health_probe(session.req_header().uri.path()) {
+            let status = self.0.health_status.load();
+            return respond_health(session, probe, status).await;
+        }
 
         let host = extract_host(session);
         let path_first_segment = extract_first_path_segment(session);
@@ -840,6 +910,14 @@ async fn write_proxy_error_response(
         req.headers.get(header::ORIGIN),
         req.method == http::Method::HEAD,
     )?;
+    write_error_and_drain(session, resp, body).await
+}
+
+async fn write_error_and_drain(
+    session: &mut Session,
+    resp: ResponseHeader,
+    body: Bytes,
+) -> Result<()> {
     // Also disables keep-alive: the unread request body leaves the connection unusable.
     session
         .as_downstream_mut()
@@ -856,6 +934,72 @@ async fn write_proxy_error_response(
         let _ = downstream.drain_request_body().await;
     }
     Ok(())
+}
+
+fn health_response(
+    probe: HealthProbe,
+    status: HealthStatus,
+    method: &http::Method,
+) -> Result<(ResponseHeader, Bytes)> {
+    let is_head = method == http::Method::HEAD;
+    let (code, body) = if method != http::Method::GET && !is_head {
+        (
+            StatusCode::METHOD_NOT_ALLOWED,
+            r#"{"ok":false,"error":"Method not allowed"}"#.to_string(),
+        )
+    } else {
+        let ok = match probe {
+            HealthProbe::Health => status.healthy,
+            HealthProbe::Ready => status.ready,
+        };
+        let code = if ok {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        };
+        // Probes are public on the proxy port, so the body carries no internal detail.
+        let body = format!(
+            r#"{{"ok":{ok},"healthy":{},"ready":{}}}"#,
+            status.healthy, status.ready
+        );
+        (code, body)
+    };
+
+    let mut resp = ResponseHeader::build(code, Some(4))?;
+    resp.insert_header(header::CONTENT_TYPE, "application/json; charset=utf-8")?;
+    resp.insert_header(header::CACHE_CONTROL, "no-store")?;
+    resp.set_content_length(body.len())?;
+    if code == StatusCode::METHOD_NOT_ALLOWED {
+        resp.insert_header(header::ALLOW, "GET, HEAD")?;
+    }
+
+    // Pingora's HTTP/2 writer does not drop bodies for HEAD like its HTTP/1 writer does.
+    let body = if is_head {
+        Bytes::new()
+    } else {
+        Bytes::from(body)
+    };
+    Ok((resp, body))
+}
+
+async fn respond_health(
+    session: &mut Session,
+    probe: HealthProbe,
+    status: HealthStatus,
+) -> Result<bool> {
+    let (resp, body) = health_response(probe, status, &session.req_header().method)?;
+    if resp.status == StatusCode::METHOD_NOT_ALLOWED {
+        write_error_and_drain(session, resp, body).await?;
+        return Ok(true);
+    }
+
+    session
+        .write_response_header(Box::new(resp), body.is_empty())
+        .await?;
+    if !body.is_empty() {
+        session.write_response_body(Some(body), true).await?;
+    }
+    Ok(true)
 }
 
 async fn reject_request(
@@ -1159,9 +1303,10 @@ pub mod bench {
 #[cfg(test)]
 mod tests {
     use super::{
-        AffinityEntry, AffinityMapKey, FailureHint, StickySessionConfig, StickySessionState,
-        StickyShard, apply_upstream_timeouts, failure_body, failure_status,
-        is_cookie_safe_affinity_key, proxy_error_response, resolve_route, strip_first_path_segment,
+        AffinityEntry, AffinityMapKey, FailureHint, HealthProbe, HealthStatus, HealthStatusCell,
+        StickySessionConfig, StickySessionState, StickyShard, apply_upstream_timeouts,
+        failure_body, failure_status, health_response, is_cookie_safe_affinity_key,
+        proxy_error_response, resolve_route, strip_first_path_segment,
     };
     use crate::lb::TransportKind;
     use crate::options::ProxyTimeoutOptionsParsed;
@@ -1332,6 +1477,87 @@ mod tests {
         assert_eq!(
             resp.headers.get("access-control-expose-headers").unwrap(),
             "Retry-After"
+        );
+    }
+
+    #[test]
+    fn health_status_starts_healthy_and_not_ready() {
+        let cell = HealthStatusCell::new();
+        assert_eq!(
+            cell.load(),
+            HealthStatus {
+                healthy: true,
+                ready: false
+            }
+        );
+
+        for healthy in [false, true] {
+            for ready in [false, true] {
+                let status = HealthStatus { healthy, ready };
+                cell.store(status);
+                assert_eq!(cell.load(), status);
+            }
+        }
+    }
+
+    #[test]
+    fn health_responses_follow_the_probed_flag() {
+        let status = HealthStatus {
+            healthy: true,
+            ready: false,
+        };
+
+        let (resp, body) =
+            health_response(HealthProbe::Health, status, &http::Method::GET).unwrap();
+        assert_eq!(resp.status.as_u16(), 200);
+        assert_eq!(
+            body.as_ref(),
+            br#"{"ok":true,"healthy":true,"ready":false}"#
+        );
+        assert_eq!(
+            resp.headers.get("cache-control").unwrap().to_str().unwrap(),
+            "no-store"
+        );
+
+        let (resp, body) = health_response(HealthProbe::Ready, status, &http::Method::GET).unwrap();
+        assert_eq!(resp.status.as_u16(), 503);
+        assert_eq!(
+            body.as_ref(),
+            br#"{"ok":false,"healthy":true,"ready":false}"#
+        );
+    }
+
+    #[test]
+    fn head_health_responses_keep_headers_without_body() {
+        let status = HealthStatus {
+            healthy: true,
+            ready: true,
+        };
+        let (resp, body) =
+            health_response(HealthProbe::Ready, status, &http::Method::HEAD).unwrap();
+        assert_eq!(resp.status.as_u16(), 200);
+        assert!(body.is_empty());
+        assert_eq!(
+            resp.headers
+                .get("content-length")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            r#"{"ok":true,"healthy":true,"ready":true}"#.len().to_string()
+        );
+    }
+
+    #[test]
+    fn health_paths_reject_other_methods() {
+        let status = HealthStatus {
+            healthy: true,
+            ready: true,
+        };
+        let (resp, _) = health_response(HealthProbe::Health, status, &http::Method::POST).unwrap();
+        assert_eq!(resp.status.as_u16(), 405);
+        assert_eq!(
+            resp.headers.get("allow").unwrap().to_str().unwrap(),
+            "GET, HEAD"
         );
     }
 
