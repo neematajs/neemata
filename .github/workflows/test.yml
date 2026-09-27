@@ -40,7 +40,7 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm check
-      - run: pnpm run test:benchmark-tools
+      - run: pnpm run test:scripts
 
   tests:
     needs: [lint]
