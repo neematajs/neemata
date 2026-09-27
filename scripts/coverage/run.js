@@ -54,7 +54,7 @@ const RUNS = [
   },
 ]
 
-export async function collectCoverage({ root, output }) {
+async function collectCoverage({ root, output }) {
   const runsDirectory = `${output}.runs`
   await rm(runsDirectory, { force: true, recursive: true })
 
@@ -142,7 +142,7 @@ async function packageName(root, file, cache) {
 // Merges Istanbul coverage maps from separate runs by source location rather
 // than by id, so a file instrumented by differently configured projects still
 // lines up.
-export function mergeCoverageMaps(maps) {
+function mergeCoverageMaps(maps) {
   const files = new Map()
   for (const map of maps) {
     for (const coverage of Object.values(map)) {
@@ -173,7 +173,7 @@ export function mergeCoverageMaps(maps) {
   return files
 }
 
-export function summarizeCoverage(files) {
+function summarizeCoverage(files) {
   const summaries = new Map()
   for (const [path, merged] of [...files].sort(([left], [right]) =>
     left.localeCompare(right),

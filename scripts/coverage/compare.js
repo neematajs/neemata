@@ -25,7 +25,7 @@ export async function compareReports(options) {
   return { comparison, summary }
 }
 
-export function compareCoverage({ base, head }) {
+function compareCoverage({ base, head }) {
   const packageNames = new Set(
     [base, head].flatMap((report) =>
       report ? Object.values(report.files).map((file) => file.package) : [],
@@ -81,7 +81,7 @@ export function compareCoverage({ base, head }) {
   }
 }
 
-export function renderSummary(comparison) {
+function renderSummary(comparison) {
   const lines = [
     comparison.baseAvailable ? '# Coverage report' : '# Coverage baseline',
     '',
