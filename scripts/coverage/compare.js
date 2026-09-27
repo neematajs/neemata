@@ -51,13 +51,11 @@ export function compareCoverage({ base, head }) {
       const deltas = Object.fromEntries(
         METRICS.map((metric) => [
           metric,
-          percent(headFile?.[metric]) - percent(baseFile?.[metric]),
+          percentDelta(headFile?.[metric], baseFile?.[metric]),
         ]),
       )
       const changed =
-        !baseFile ||
-        !headFile ||
-        METRICS.some((metric) => Math.abs(deltas[metric]) >= 0.01)
+        !baseFile || !headFile || METRICS.some((metric) => deltas[metric] !== 0)
       if (changed) files.push({ path, base: baseFile, head: headFile })
     }
     // Largest line-coverage drops first, since those are what a reviewer acts on.
@@ -184,8 +182,8 @@ function formatCell(entry, metric) {
   const value = formatPercent(head)
   if (!base || !hasPercent(base) || !hasPercent(head)) return value
 
-  const delta = percent(head) - percent(base)
-  if (Math.abs(delta) < 0.01) return value
+  const delta = percentDelta(head, base)
+  if (delta === 0) return value
   return `${value} (${delta > 0 ? '▲' : '▼'} ${Math.abs(delta).toFixed(2)})`
 }
 
@@ -200,6 +198,14 @@ function lineDelta(file) {
 function percent(counts) {
   if (!counts || counts.total === 0) return 100
   return (counts.covered / counts.total) * 100
+}
+
+// Compares the two-decimal values the report shows, so a visible change is
+// never hidden and an invisible one is never listed.
+function percentDelta(head, base) {
+  return (
+    (Math.round(percent(head) * 100) - Math.round(percent(base) * 100)) / 100
+  )
 }
 
 function hasPercent(counts) {

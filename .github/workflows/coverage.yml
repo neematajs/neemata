@@ -27,6 +27,7 @@ jobs:
         ports:
           - 6379:6379
         options: >-
+          --restart always
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
@@ -36,6 +37,7 @@ jobs:
         ports:
           - 6380:6379
         options: >-
+          --restart always
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
@@ -128,6 +130,8 @@ jobs:
       - name: Collect paired coverage
         shell: bash
         env:
+          NMTJS_ALLOW_REDIS_MEMORY_PRESSURE_TESTS: '1'
+          NMTJS_ALLOW_REDIS_SERVICE_RESTARTS: '1'
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
           REDIS_URL: redis://localhost:6379

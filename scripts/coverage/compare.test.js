@@ -75,6 +75,21 @@ void test('renders package deltas and lists files with dropped coverage first', 
   assert.doesNotMatch(summary, /z\.ts/)
 })
 
+void test('reports changes that are visible at two decimals', () => {
+  const base = report('base', {
+    'packages/a/src/x.ts': file('@nmtjs/a', [99, 100]),
+  })
+  const head = report('head', {
+    'packages/a/src/x.ts': file('@nmtjs/a', [100, 101]),
+  })
+
+  const comparison = compareCoverage({ base, head })
+  const summary = renderSummary(comparison)
+
+  assert.equal(comparison.files.length, 1)
+  assert.match(summary, /\| @nmtjs\/a \| 99\.01% \(▲ 0\.01\) \|/)
+})
+
 void test('renders a baseline without deltas when no base exists', () => {
   const head = report('head', {
     'packages/a/src/x.ts': file('@nmtjs/a', [1, 2]),
