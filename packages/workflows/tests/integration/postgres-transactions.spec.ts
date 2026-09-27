@@ -81,6 +81,111 @@ describe.skipIf(!postgresTarget.url)(
         )
       ).rows[0]!.count
 
+    it('replaces a pooled session after rollback fails without hiding the original error', async () => {
+      const isolated = new pg.Pool({
+        ...sessionOptions('transactions-failed-rollback'),
+        max: 1,
+      })
+      closers.push(() => isolated.end())
+      const original = new Error('handler failed')
+      const sampleId = Math.floor(Math.random() * 2 ** 31)
+      const before = await isolated.query<{ pid: number }>(
+        'SELECT pg_backend_pid() AS pid',
+      )
+      const wrappedPool = {
+        get totalCount() {
+          return isolated.totalCount
+        },
+        query: isolated.query.bind(isolated),
+        async connect() {
+          const client = await isolated.connect()
+          return {
+            async query<T extends Record<string, unknown>>(
+              sql: string,
+              params: readonly unknown[] = [],
+            ) {
+              // Leave a real transaction open: returning this client to the
+              // pool would make the next borrower's writes join it silently.
+              if (sql === 'ROLLBACK') throw new Error('rollback failed')
+              return client.query<T>(sql, [...params])
+            },
+            release(destroy?: boolean) {
+              client.release(destroy)
+            },
+          }
+        },
+      }
+      const connection = createPostgresWorkflowConnection(wrappedPool)
+
+      await expect(
+        connection.transaction(async (tx) => {
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+          throw original
+        }),
+      ).rejects.toBe(original)
+      expect(isolated.totalCount).toBe(0)
+
+      const after = await isolated.query<{ pid: number }>(
+        'SELECT pg_backend_pid() AS pid',
+      )
+      expect(after.rows[0]!.pid).not.toBe(before.rows[0]!.pid)
+      expect(await count('sample', `id = ${sampleId}`)).toBe(0)
+      await isolated.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+      expect(await count('sample', `id = ${sampleId}`)).toBe(1)
+    })
+
+    it("bounds dead-command pruning while skipping another session's locked row", async () => {
+      const connection = createPostgresWorkflowConnection(pool)
+      const runtime = createPostgresWorkflowRuntime({ connection })
+      const run = await runtime.store.createRun({
+        workflowName: 'prune-locked-commands',
+        input: {},
+      })
+      const ids = [randomUUID(), randomUUID(), randomUUID()].sort()
+      await pool.query(
+        `INSERT INTO workflow_commands (id, kind, run_id, dead_at, reaped_at)
+         SELECT id, 'activity', $1, '2020-01-01'::timestamptz, '2020-01-01'::timestamptz
+         FROM unnest($2::uuid[]) AS id`,
+        [run.id, ids],
+      )
+      const params = {
+        olderThan: Date.parse('2020-01-02T00:00:00Z'),
+        statuses: [],
+        batchSize: 1,
+      }
+      const holder = await pool.connect()
+      try {
+        await holder.query('BEGIN')
+        await holder.query(
+          'SELECT id FROM workflow_commands WHERE id = $1 FOR UPDATE',
+          [ids[0]],
+        )
+        await expect(
+          connection.transaction(async (tx) => {
+            // A missing SKIP LOCKED must fail, rather than hang the test.
+            await tx.query("SET LOCAL statement_timeout = '2s'")
+            const scoped = createPostgresWorkflowRuntime({ connection: tx })
+            return scoped.retentionPruner!.pruneTerminalRuns(params)
+          }),
+        ).resolves.toStrictEqual({ deleted: 0 })
+        const remaining = await pool.query<{ id: string }>(
+          'SELECT id FROM workflow_commands WHERE run_id = $1 ORDER BY id',
+          [run.id],
+        )
+        expect(remaining.rows.map(({ id }) => id)).toEqual([ids[0], ids[2]])
+      } finally {
+        await holder.query('ROLLBACK')
+        holder.release()
+      }
+
+      await runtime.retentionPruner!.pruneTerminalRuns(params)
+      const remaining = await pool.query<{ id: string }>(
+        'SELECT id FROM workflow_commands WHERE run_id = $1',
+        [run.id],
+      )
+      expect(remaining.rows).toEqual([{ id: ids[2] }])
+    })
+
     it('has the foreign keys and the claim index in its own schema', async () => {
       // The shared `public` schema holds the same names, which the installer
       // once took for this schema's: the specs here then ran without them.

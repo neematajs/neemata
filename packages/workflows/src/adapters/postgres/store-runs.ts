@@ -243,15 +243,16 @@ export const createStoredRun = async (
   options: CreateStoredRunOptions = {},
 ) => (await createStoredRunWithState(connection, input, options)).run
 
-export const pruneTerminalRunsInTransaction = async (
+export async function pruneTerminalRunsInTransaction(
   connection: WorkflowPostgresConnection,
   params: PruneTerminalRunsParams,
-): Promise<PruneTerminalRunsResult> => {
+): Promise<PruneTerminalRunsResult> {
   const batchSize = normalizePruneBatchSize(params.batchSize)
+  if (batchSize < 1) return { deleted: 0 }
   const statuses = normalizePruneStatuses(params.statuses)
   let deleted = 0
 
-  if (batchSize > 0 && statuses.length > 0) {
+  if (statuses.length > 0) {
     const queryParams: unknown[] = [
       timestampParam(params.olderThan),
       ...statuses,
@@ -307,14 +308,22 @@ export const pruneTerminalRunsInTransaction = async (
   // An unreaped dead command is the only thing that still settles its run,
   // and maintenance prunes before it reaps: after downtime longer than the
   // retention window, age alone would strand the run as active.
+  // Bound this sweep independently of root deletion and skip active writers,
+  // so a dead-letter backlog cannot monopolize the pruning transaction.
   await connection.query(
     `
       DELETE FROM workflow_commands
-      WHERE dead_at IS NOT NULL
-        AND reaped_at IS NOT NULL
-        AND dead_at < $1
+      WHERE id IN (
+        SELECT id FROM workflow_commands
+        WHERE dead_at IS NOT NULL
+          AND reaped_at IS NOT NULL
+          AND dead_at < $1
+        ORDER BY dead_at, id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
     `,
-    [timestampParam(params.olderThan)],
+    [timestampParam(params.olderThan), batchSize],
   )
 
   return { deleted }

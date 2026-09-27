@@ -519,6 +519,12 @@ const runtime = createPostgresWorkflowRuntime({ connection })
 
 Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
 
+When a pooled transaction fails, the adapter rolls it back before releasing the
+session. If rollback also fails, it calls `release(true)` to discard the session
+and rethrows the original transaction error. Custom pool wrappers must honor that
+destroy argument; plain clients and clients with their own transaction API keep
+ownership of their sessions.
+
 A transaction's connection, such as the `connection` passed to
 `atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work
 on it inside the handler. Once the handler settles, the connection rejects further
@@ -531,6 +537,13 @@ through whatever parser the client has, so that parser must return a `Date` (the
 such as a `Temporal` object, fails the read with a `TypeError` instead of reaching a
 record. Timestamps are written as `Date` parameters, which drivers serialize the same
 way regardless of parsers.
+
+PostgreSQL retention applies `batchSize` separately to terminal root families and
+old, reaped dead commands. A zero or invalid batch size disables the pass. The
+dead-command sweep skips locked rows and preserves unreaped commands so the reaper
+can still settle their runs. The result's `deleted` field counts root families;
+dead-command cleanup advances by one batch per store call, including calls with
+`statuses: []`. Run retention periodically to clear a backlog over multiple passes.
 
 ## Wake Events (LISTEN/NOTIFY)
 

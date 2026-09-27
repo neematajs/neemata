@@ -90,6 +90,54 @@ test('postgres retention pruning removes terminal roots after descendants finish
 })
 
 describe('retention with unreaped dead commands', () => {
+  test('bounds each dead-command sweep and keeps unreaped, recent, and live commands', async () => {
+    const { db, connection, store } = await createPostgresHarness()
+    try {
+      const run = await store.createRun({
+        workflowName: 'dead-backlog',
+        input: {},
+      })
+      const old = '2020-01-01T00:00:00Z'
+      const cutoff = '2020-01-02T00:00:00Z'
+      const eligible = [randomUUID(), randomUUID(), randomUUID()].sort()
+      const protectedIds = [randomUUID(), randomUUID(), randomUUID()]
+      const records = [
+        ...eligible.map((id) => ({ id, deadAt: old, reapedAt: old })),
+        { id: protectedIds[0], deadAt: old, reapedAt: null },
+        { id: protectedIds[1], deadAt: cutoff, reapedAt: cutoff },
+        { id: protectedIds[2], deadAt: null, reapedAt: null },
+      ]
+      for (const record of records) {
+        await connection.query(
+          `INSERT INTO workflow_commands (id, kind, run_id, dead_at, reaped_at)
+           VALUES ($1, 'activity', $2, $3, $4)`,
+          [record.id, run.id, record.deadAt, record.reapedAt],
+        )
+      }
+      async function remaining() {
+        const { rows } = await connection.query<{ id: string }>(
+          'SELECT id FROM workflow_commands ORDER BY id',
+        )
+        return rows.map(({ id }) => id)
+      }
+      const params = { olderThan: Date.parse(cutoff), statuses: [] }
+      for (const batchSize of [0, -1, 1.5, Number.NaN, Infinity]) {
+        await store.pruneTerminalRuns({ ...params, batchSize })
+        expect(await remaining()).toHaveLength(records.length)
+      }
+
+      await expect(
+        store.pruneTerminalRuns({ ...params, batchSize: 2 }),
+      ).resolves.toStrictEqual({ deleted: 0 })
+      expect(await remaining()).toEqual([eligible[2], ...protectedIds].sort())
+      await store.pruneTerminalRuns({ ...params, batchSize: 2 })
+      expect(await remaining()).toEqual(protectedIds.sort())
+      await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+    } finally {
+      await db.close()
+    }
+  })
+
   test('retention keeps an unreaped dead command so its run still settles', async () => {
     const { runtime } = await createPostgresHarness(1)
     const workflow = defineWorkflow({
