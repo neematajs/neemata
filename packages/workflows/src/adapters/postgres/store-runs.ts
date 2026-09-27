@@ -30,6 +30,7 @@ import {
   mapNodeSummary,
   mapRun,
   mapRunSummary,
+  DEFAULT_PRUNE_BATCH_SIZE,
   DEFAULT_PRUNE_STATUSES,
   emitStatusChangeNotifySql,
   normalizePruneBatchSize,
@@ -248,11 +249,10 @@ export async function pruneTerminalRunsInTransaction(
   params: PruneTerminalRunsParams,
 ): Promise<PruneTerminalRunsResult> {
   const batchSize = normalizePruneBatchSize(params.batchSize)
-  if (batchSize < 1) return { deleted: 0 }
   const statuses = normalizePruneStatuses(params.statuses)
   let deleted = 0
 
-  if (statuses.length > 0) {
+  if (batchSize > 0 && statuses.length > 0) {
     const queryParams: unknown[] = [
       timestampParam(params.olderThan),
       ...statuses,
@@ -310,6 +310,8 @@ export async function pruneTerminalRunsInTransaction(
   // retention window, age alone would strand the run as active.
   // Bound this sweep independently of root deletion and skip active writers,
   // so a dead-letter backlog cannot monopolize the pruning transaction.
+  // Disabling root pruning must still allow bounded command cleanup.
+  const commandBatchSize = batchSize || DEFAULT_PRUNE_BATCH_SIZE
   await connection.query(
     `
       DELETE FROM workflow_commands
@@ -323,7 +325,7 @@ export async function pruneTerminalRunsInTransaction(
         FOR UPDATE SKIP LOCKED
       )
     `,
-    [timestampParam(params.olderThan), batchSize],
+    [timestampParam(params.olderThan), commandBatchSize],
   )
 
   return { deleted }

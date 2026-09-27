@@ -539,11 +539,13 @@ record. Timestamps are written as `Date` parameters, which drivers serialize the
 way regardless of parsers.
 
 PostgreSQL retention applies `batchSize` separately to terminal root families and
-old, reaped dead commands. A zero or invalid batch size disables the pass. The
-dead-command sweep skips locked rows and preserves unreaped commands so the reaper
-can still settle their runs. The result's `deleted` field counts root families;
-dead-command cleanup advances by one batch per store call, including calls with
-`statuses: []`. Run retention periodically to clear a backlog over multiple passes.
+old, reaped dead commands. A zero or invalid batch size disables root pruning, while
+dead-command cleanup continues with the default limit of 100 commands per call.
+The dead-command sweep skips locked rows and preserves unreaped commands so the
+reaper can still settle their runs. The result's `deleted` field counts root
+families; dead-command cleanup advances by one batch per store call, including calls
+with `statuses: []`. Run retention periodically to clear a backlog over multiple
+passes.
 
 ## Wake Events (LISTEN/NOTIFY)
 

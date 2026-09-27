@@ -121,10 +121,6 @@ describe('retention with unreaped dead commands', () => {
         return rows.map(({ id }) => id)
       }
       const params = { olderThan: Date.parse(cutoff), statuses: [] }
-      for (const batchSize of [0, -1, 1.5, Number.NaN, Infinity]) {
-        await store.pruneTerminalRuns({ ...params, batchSize })
-        expect(await remaining()).toHaveLength(records.length)
-      }
 
       await expect(
         store.pruneTerminalRuns({ ...params, batchSize: 2 }),
@@ -133,6 +129,46 @@ describe('retention with unreaped dead commands', () => {
       await store.pruneTerminalRuns({ ...params, batchSize: 2 })
       expect(await remaining()).toEqual(protectedIds.sort())
       await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+    } finally {
+      await db.close()
+    }
+  })
+
+  test('bounds dead-command cleanup when zero or invalid batch sizes disable root pruning', async () => {
+    const { db, connection, store } = await createPostgresHarness()
+    try {
+      const run = await store.createRun({
+        workflowName: 'disabled-root-pruning',
+        input: {},
+      })
+      await store.completeRun({ runId: run.id, output: {} })
+      const olderThan = Date.now() + 1_000
+
+      for (const batchSize of [0, -1, 1.5, Number.NaN, Infinity]) {
+        const commandIds = Array.from({ length: 101 }, () =>
+          randomUUID(),
+        ).sort()
+        await connection.query(
+          `INSERT INTO workflow_commands (id, kind, run_id, dead_at, reaped_at)
+           SELECT id, 'activity', $1, '2020-01-01', '2020-01-01'
+           FROM unnest($2::uuid[]) AS id`,
+          [run.id, commandIds],
+        )
+
+        await expect(
+          store.pruneTerminalRuns({ olderThan, batchSize }),
+        ).resolves.toStrictEqual({ deleted: 0 })
+        const { rows } = await connection.query<{ id: string }>(
+          'SELECT id FROM workflow_commands ORDER BY id',
+        )
+        expect(rows).toStrictEqual([{ id: commandIds[100] }])
+        await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+
+        await expect(
+          store.pruneTerminalRuns({ olderThan, batchSize }),
+        ).resolves.toStrictEqual({ deleted: 0 })
+        await expect(store.listDeadCommands()).resolves.toStrictEqual([])
+      }
     } finally {
       await db.close()
     }

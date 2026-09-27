@@ -123,6 +123,7 @@ export type RunFamilyEntry = {
 export type PruneTerminalRunsParams = {
   readonly olderThan: Timestamp
   readonly statuses?: readonly TerminalRunStatus[]
+  /** Zero or invalid values disable root pruning, but still clean up old, reaped dead commands. */
   readonly batchSize?: number
 }
 
