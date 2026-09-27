@@ -12,6 +12,10 @@ import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import {
+  DEFAULT_PRUNE_BATCH_SIZE,
+  normalizePruneBatchSize,
+} from '../../runtime/store.ts'
+import {
   id,
   isUuid,
   json,
@@ -30,10 +34,8 @@ import {
   mapNodeSummary,
   mapRun,
   mapRunSummary,
-  DEFAULT_PRUNE_BATCH_SIZE,
   DEFAULT_PRUNE_STATUSES,
   emitStatusChangeNotifySql,
-  normalizePruneBatchSize,
   normalizePruneStatuses,
   notifyRunStatusEventColumnsSql,
   one,
@@ -246,9 +248,9 @@ export const createStoredRun = async (
 
 export async function pruneTerminalRunsInTransaction(
   connection: WorkflowPostgresConnection,
-  params: PruneTerminalRunsParams,
+  params: PruneTerminalRunsParams & { readonly batchSize: number },
 ): Promise<PruneTerminalRunsResult> {
-  const batchSize = normalizePruneBatchSize(params.batchSize)
+  const { batchSize } = params
   const statuses = normalizePruneStatuses(params.statuses)
   let deleted = 0
 
@@ -597,8 +599,11 @@ export const createPostgresWorkflowRunStore = (
       }
     },
     async pruneTerminalRuns(params) {
+      const batchSize = normalizePruneBatchSize(params.batchSize)
       await ready
-      return db.transaction((tx) => pruneTerminalRunsInTransaction(tx, params))
+      return db.transaction((tx) =>
+        pruneTerminalRunsInTransaction(tx, { ...params, batchSize }),
+      )
     },
     async deleteRun(runId) {
       await ready

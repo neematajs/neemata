@@ -47,6 +47,7 @@ import {
   type WorkflowRuntimeRegistry,
 } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
+import { normalizePruneBatchSize } from './store.ts'
 import { wakeParentRun } from './wake.ts'
 
 export type WorkflowRuntimeStartOptions<Connection = never> = {
@@ -561,12 +562,6 @@ async function restartRun<Connection>(
       )
     }
   }
-}
-
-function normalizePruneBatchSize(batchSize: number | undefined): number {
-  if (batchSize === undefined) return 100
-  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-  return batchSize
 }
 
 function normalizeDebounce(debounceMs: number | undefined): number {

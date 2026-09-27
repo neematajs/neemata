@@ -539,15 +539,19 @@ record. Timestamps are written as `Date` parameters, which drivers serialize the
 way regardless of parsers.
 
 PostgreSQL retention applies `batchSize` separately to terminal root families and
-old, reaped dead commands. A zero or invalid batch size disables root pruning, while
-dead-command cleanup continues with the default limit of 100 commands per call.
+old, reaped dead commands. `batchSize` must be a non-negative safe integer and
+defaults to 100 when omitted. Zero disables root pruning, while dead-command
+cleanup continues with the default limit of 100 commands per call. Negative,
+fractional, non-finite, or unsafe integer values throw `RangeError` before cleanup
+starts; workers reject invalid retention settings at startup. `batchSize` is a
+query limit, not a stored database field.
 The dead-command sweep skips locked rows and preserves unreaped commands so the
 reaper can still settle their runs. The result's `deleted` field counts root
 families; `hasMore` indicates that either cleanup filled its batch and another pass
 may make progress. Each store call and worker retention interval performs one
 bounded pass. `client.pruneRuns()` repeats those passes in separate transactions
-until neither cleanup fills its batch, including with `statuses: []` or zero or
-invalid batch sizes. Locked rows remain for a later retention pass.
+until neither cleanup fills its batch, including with `statuses: []` or a zero
+batch size. Locked rows remain for a later retention pass.
 
 ## Wake Events (LISTEN/NOTIFY)
 

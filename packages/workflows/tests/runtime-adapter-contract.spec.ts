@@ -64,6 +64,30 @@ function workflowRuntimeAdapterContract(
       return runtime
     }
 
+    async function createDeadCommandRun() {
+      const runtime = await createRuntime({ maxDeliveries: 1 })
+      const run = await runtime.store.createRun({
+        workflowName: 'dead-command-sweep-workflow',
+        input: {},
+      })
+      await runtime.runCoordinationExecutor.enqueue({
+        kind: 'continueRun',
+        runId: run.id,
+        workflowName: run.workflowName,
+      })
+      const claimed = await runtime.runCoordinationExecutor.claim({
+        workerId: 'dead-command-sweeper',
+        workflowNames: [run.workflowName],
+        leaseMs: 30_000,
+      })
+      await runtime.runCoordinationExecutor.release(claimed!, {
+        error: new Error('dead command'),
+      })
+      const [dead] = await runtime.store.listDeadCommands()
+      expect(dead).toBeDefined()
+      return { runtime, run, dead: dead! }
+    }
+
     afterEach(async () => {
       vi.restoreAllMocks()
       await Promise.allSettled(
@@ -1513,39 +1537,15 @@ function workflowRuntimeAdapterContract(
         client: true,
         params: { batchSize: 0 },
       },
-      {
-        label: 'client with invalid batch size',
-        client: true,
-        params: { batchSize: -1 },
-      },
     ])(
       'sweeps old reaped dead commands through $label',
       async ({ client: useClient, params }) => {
-        const runtime = await createRuntime({ maxDeliveries: 1 })
-        const run = await runtime.store.createRun({
-          workflowName: 'dead-command-sweep-workflow',
-          input: {},
-        })
+        const { runtime, run, dead } = await createDeadCommandRun()
         const terminalRun = await runtime.store.createRun({
           workflowName: 'dead-command-sweep-terminal-workflow',
           input: {},
         })
         await runtime.store.completeRun({ runId: terminalRun.id, output: {} })
-        await runtime.runCoordinationExecutor.enqueue({
-          kind: 'continueRun',
-          runId: run.id,
-          workflowName: run.workflowName,
-        })
-        const claimed = await runtime.runCoordinationExecutor.claim({
-          workerId: 'dead-command-sweeper',
-          workflowNames: [run.workflowName],
-          leaseMs: 30_000,
-        })
-        await runtime.runCoordinationExecutor.release(claimed!, {
-          error: new Error('dead command'),
-        })
-        const [dead] = await runtime.store.listDeadCommands()
-        expect(dead).toBeDefined()
         const client = createWorkflowRuntimeClient(runtime)
         function prune() {
           const input = {
@@ -1560,7 +1560,7 @@ function workflowRuntimeAdapterContract(
         await expect(prune()).resolves.toMatchObject({ deleted: 0 })
         await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
 
-        await runtime.store.markDeadCommandReaped(dead!.id)
+        await runtime.store.markDeadCommandReaped(dead.id)
         await expect(prune()).resolves.toMatchObject({ deleted: 0 })
         await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual(
           [],
@@ -1573,6 +1573,34 @@ function workflowRuntimeAdapterContract(
         ).resolves.toBeDefined()
       },
     )
+
+    it('rejects invalid retention batch sizes without deleting runs or commands', async () => {
+      const { runtime, run, dead } = await createDeadCommandRun()
+      await runtime.store.markDeadCommandReaped(dead.id)
+      await runtime.store.completeRun({ runId: run.id, output: {} })
+      const client = createWorkflowRuntimeClient(runtime)
+
+      for (const batchSize of [
+        -1,
+        1.5,
+        Number.NaN,
+        Infinity,
+        -Infinity,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]) {
+        const params = { olderThan: Date.now() + 1_000, batchSize }
+        await expect(runtime.store.pruneTerminalRuns(params)).rejects.toThrow(
+          RangeError,
+        )
+        await expect(client.pruneRuns(params)).rejects.toThrow(RangeError)
+        await expect(
+          runtime.retentionPruner!.pruneTerminalRuns(params),
+        ).rejects.toThrow(RangeError)
+      }
+
+      await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+    })
 
     it('batches store pruning and drains via the runtime client helper', async () => {
       const runtime = await createRuntime()

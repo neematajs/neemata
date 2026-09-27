@@ -8,6 +8,7 @@ import type {
 } from '../../runtime/worker.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { SELF_CHILD_KEY } from '../../runtime/child-key.ts'
+import { normalizePruneBatchSize } from '../../runtime/store.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
 import { createPostgresWorkflowScheduler } from './schedules.ts'
@@ -152,8 +153,9 @@ export function createPostgresWorkflowRuntime(params: {
   }
 
   const retentionPruner = {
-    pruneTerminalRuns: (params: PruneTerminalRunsParams) =>
-      db.transaction(async (tx) => {
+    async pruneTerminalRuns(params: PruneTerminalRunsParams) {
+      const batchSize = normalizePruneBatchSize(params.batchSize)
+      return db.transaction(async (tx) => {
         const lock = await one<{ acquired: boolean }>(
           tx,
           `
@@ -161,8 +163,9 @@ export function createPostgresWorkflowRuntime(params: {
           `,
         )
         if (!lock?.acquired) return { deleted: 0 }
-        return pruneTerminalRunsInTransaction(tx, params)
-      }),
+        return pruneTerminalRunsInTransaction(tx, { ...params, batchSize })
+      })
+    },
   }
 
   const scheduler = createPostgresWorkflowScheduler({

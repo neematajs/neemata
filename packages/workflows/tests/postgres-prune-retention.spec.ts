@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import { PGlite } from '@electric-sql/pglite'
 import * as Schema from 'effect/Schema'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -152,7 +152,34 @@ describe('retention with unreaped dead commands', () => {
     }
   })
 
-  test('bounds dead-command cleanup when zero or invalid batch sizes disable root pruning', async () => {
+  test('rejects invalid batch sizes before opening a PostgreSQL transaction', async () => {
+    const { db, connection, runtime, store } = await createPostgresHarness()
+    const transaction = vi.spyOn(connection, 'transaction')
+    try {
+      for (const batchSize of [
+        -1,
+        1.5,
+        Number.NaN,
+        Infinity,
+        -Infinity,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]) {
+        const params = { olderThan: Date.now(), batchSize }
+        await expect(store.pruneTerminalRuns(params)).rejects.toThrow(
+          RangeError,
+        )
+        await expect(
+          runtime.retentionPruner!.pruneTerminalRuns(params),
+        ).rejects.toThrow(RangeError)
+      }
+      expect(transaction).not.toHaveBeenCalled()
+    } finally {
+      transaction.mockRestore()
+      await db.close()
+    }
+  })
+
+  test('bounds dead-command cleanup when a zero batch size disables root pruning', async () => {
     const { db, connection, store } = await createPostgresHarness()
     try {
       const run = await store.createRun({
@@ -161,24 +188,22 @@ describe('retention with unreaped dead commands', () => {
       })
       await store.completeRun({ runId: run.id, output: {} })
       const olderThan = Date.now() + 1_000
+      const batchSize = 0
+      const commandIds = await seedReapedCommands(connection, run.id, 101)
 
-      for (const batchSize of [0, -1, 1.5, Number.NaN, Infinity]) {
-        const commandIds = await seedReapedCommands(connection, run.id, 101)
+      await expect(
+        store.pruneTerminalRuns({ olderThan, batchSize }),
+      ).resolves.toStrictEqual({ deleted: 0, hasMore: true })
+      const { rows } = await connection.query<{ id: string }>(
+        'SELECT id FROM workflow_commands ORDER BY id',
+      )
+      expect(rows).toStrictEqual([{ id: commandIds[100] }])
+      await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
 
-        await expect(
-          store.pruneTerminalRuns({ olderThan, batchSize }),
-        ).resolves.toStrictEqual({ deleted: 0, hasMore: true })
-        const { rows } = await connection.query<{ id: string }>(
-          'SELECT id FROM workflow_commands ORDER BY id',
-        )
-        expect(rows).toStrictEqual([{ id: commandIds[100] }])
-        await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
-
-        await expect(
-          store.pruneTerminalRuns({ olderThan, batchSize }),
-        ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
-        await expect(store.listDeadCommands()).resolves.toStrictEqual([])
-      }
+      await expect(
+        store.pruneTerminalRuns({ olderThan, batchSize }),
+      ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
+      await expect(store.listDeadCommands()).resolves.toStrictEqual([])
     } finally {
       await db.close()
     }
@@ -189,7 +214,6 @@ describe('retention with unreaped dead commands', () => {
     { label: 'small batch size', params: { batchSize: 2 } },
     { label: 'empty statuses', params: { statuses: [] } },
     { label: 'zero batch size', params: { batchSize: 0 } },
-    { label: 'invalid batch size', params: { batchSize: -1 } },
   ])(
     'client drains the command backlog with $label and no old terminal runs',
     async ({ params }) => {

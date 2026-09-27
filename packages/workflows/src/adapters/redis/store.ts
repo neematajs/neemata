@@ -44,7 +44,10 @@ import {
   toStoredError,
 } from '../../runtime/errors.ts'
 import { isTerminalRunStatus } from '../../runtime/status.ts'
-import { validateFailedRunRetry } from '../../runtime/store.ts'
+import {
+  normalizePruneBatchSize,
+  validateFailedRunRetry,
+} from '../../runtime/store.ts'
 import {
   RUN_TRANSITIONS,
   transitionSources,
@@ -63,7 +66,6 @@ import {
 import { StoreScripts, type ScriptName } from './store-scripts.ts'
 
 const READ_BATCH_SIZE = 128
-const DEFAULT_PRUNE_BATCH_SIZE = 100
 const DEFAULT_PRUNE_STATUSES = [
   'completed',
   'cancelled',
@@ -1678,12 +1680,6 @@ const nodeChildrenMatch = (
     }
   }
   return true
-}
-
-const normalizePruneBatchSize = (batchSize: number | undefined) => {
-  if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
-  if (Number.isInteger(batchSize) && batchSize > 0) return batchSize
-  return 0
 }
 
 const normalizePruneStatuses = (

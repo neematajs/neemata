@@ -9,6 +9,7 @@ import type {
 } from '../store.ts'
 import { parseDurationMs } from '../duration.ts'
 import { WorkflowCleanupTimeoutError } from '../handler.ts'
+import { normalizePruneBatchSize } from '../store.ts'
 
 export { DEFAULT_LEASE_MS } from '../executors.ts'
 
@@ -228,6 +229,7 @@ async function runWorkerPool<Claimed>(
 function resolvePeriodicTasks(options: WorkerLoopOptions): PeriodicTask[] {
   const tasks: PeriodicTask[] = []
   if (options.retention && options.retentionPruner) {
+    const batchSize = normalizePruneBatchSize(options.retention.batchSize)
     const everyMs = options.retention.everyMs ?? 60_000
     assertNonNegative(everyMs, 'Retention everyMs')
     const olderThanMs = parseDurationMs(options.retention.olderThan)
@@ -243,7 +245,7 @@ function resolvePeriodicTasks(options: WorkerLoopOptions): PeriodicTask[] {
         options
           .retentionPruner!.pruneTerminalRuns({
             olderThan: now - olderThanMs,
-            batchSize: options.retention!.batchSize,
+            batchSize,
             statuses: options.retention!.statuses,
           })
           .then(() => undefined),
