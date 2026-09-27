@@ -23,7 +23,7 @@ describe('Neem recovery stress', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_PROXY_PORT: String(proxyPort),
+          NEEM_SERVER_PORT: String(proxyPort),
           NEEM_RECOVERY_PROXY_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_PROXY_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_PROXY_MARKER: markerFile,

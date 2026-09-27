@@ -17,7 +17,7 @@ describe('Neem proxy with a shared server', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_PROXY_PORT: String(proxyPort),
+          NEEM_SERVER_PORT: String(proxyPort),
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },

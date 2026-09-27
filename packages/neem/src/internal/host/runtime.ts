@@ -53,6 +53,8 @@ export type RuntimeControllerOptions = {
   onRecovered?: (runtime: RuntimeController) => MaybePromise<void>
   // Runs when failed or cleaned-up workers stop advertising upstreams.
   onUpstreamsChange?: (runtime: RuntimeController) => MaybePromise<void>
+  // Runtime state feeds the host's readiness, which is pushed to the proxy.
+  onStateChange?: (runtime: RuntimeController) => void
 }
 
 // The host runner and threads of one start attempt. Events carry the id of the
@@ -508,6 +510,7 @@ export class RuntimeController {
     this.state = state
     this.lastError = error
     this.logger.trace({ state, err: error }, 'Neem runtime state')
+    this.options.onStateChange?.(this)
   }
 
   private createStopScope(): OperationScope {

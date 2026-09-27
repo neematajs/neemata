@@ -303,7 +303,7 @@ async function createThreadFixture(
     outDir,
   }
   const manifest: Manifest = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     runtime: {
       entry: 'start.js',
       start: {

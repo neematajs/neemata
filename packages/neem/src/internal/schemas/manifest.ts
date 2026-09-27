@@ -4,7 +4,7 @@ import * as z from 'zod/mini'
 
 import type { Manifest } from '../manifest/manifest.ts'
 
-export const NEEM_MANIFEST_SCHEMA_VERSION = 3
+export const NEEM_MANIFEST_SCHEMA_VERSION = 4
 
 // Strict objects throughout: the manifest is written and read by the same
 // schema version, so unknown keys mean corruption, not forward compatibility.
@@ -79,10 +79,20 @@ const manifestRuntimeProxySchema = z.strictObject({
   maxRequestBodySize: manifestProxyLimitSchema,
 })
 
-const manifestProxyConfigSchema = z.strictObject({
-  hostname: stringSchema,
-  port: z.number(),
-  healthChecks: z.optional(
+const manifestServerConfigSchema = z.strictObject({
+  hostname: z.optional(stringSchema),
+  port: z.optional(z.number()),
+  health: z.optional(
+    z.strictObject({
+      paths: z.optional(
+        z.strictObject({
+          health: z.optional(stringSchema),
+          ready: z.optional(stringSchema),
+        }),
+      ),
+    }),
+  ),
+  upstreamChecks: z.optional(
     z.strictObject({ interval: z.optional(z.number()) }),
   ),
   stickySessions: z.optional(
@@ -110,17 +120,6 @@ const manifestProxyConfigSchema = z.strictObject({
   ),
 })
 
-const manifestHealthConfigSchema = z.strictObject({
-  hostname: z.optional(stringSchema),
-  port: z.number(),
-  paths: z.optional(
-    z.strictObject({
-      health: z.optional(stringSchema),
-      ready: z.optional(stringSchema),
-    }),
-  ),
-})
-
 const timeoutMsSchema = z.number().check(z.int(), z.gt(0))
 
 const manifestLifecycleConfigSchema = z.strictObject({
@@ -144,8 +143,7 @@ const manifestConfigSchema = z.strictObject({
   ),
   logger: z.optional(manifestLoggerSchema),
   env: z.optional(manifestEnvSchema),
-  proxy: z.optional(manifestProxyConfigSchema),
-  health: z.optional(manifestHealthConfigSchema),
+  server: z.optional(manifestServerConfigSchema),
   lifecycle: z.optional(manifestLifecycleConfigSchema),
   runtimes: z.record(stringSchema, manifestRuntimeConfigSchema),
 })

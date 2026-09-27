@@ -48,15 +48,15 @@ describe('Neem manifest', () => {
     )
   })
 
-  it('validates proxy request limits', () => {
-    const proxy = { hostname: '127.0.0.1', port: 8080 }
+  it('validates server request limits', () => {
+    const server = { hostname: '127.0.0.1', port: 8080 }
     const withLimits = (
       limits: unknown,
       maxRequestBodySize?: unknown,
     ): Manifest =>
       createManifest({
         config: {
-          proxy: { ...proxy, limits },
+          server: { ...server, limits },
           runtimes: { api: { proxy: { maxRequestBodySize } }, jobs: {} },
         },
       } as Partial<Manifest>)
@@ -87,7 +87,7 @@ describe('Neem manifest', () => {
     )
 
     await expect(readManifest(manifestFile)).rejects.toThrow(
-      /schema version \[1\], expected \[3\]; rebuild it with `neem build`/,
+      /schema version \[1\], expected \[4\]; rebuild it with `neem build`/,
     )
   })
 

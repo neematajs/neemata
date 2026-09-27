@@ -1,9 +1,9 @@
 import { createFuture } from '@nmtjs/common'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { ResolvedServerConfig } from '../../src/internal/host/proxy.ts'
 import type { RuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import type {
-  NeemProxyConfig,
   NeemProxyUpstream,
   NeemRuntimeUpstream,
 } from '../../src/shared/types.ts'
@@ -13,12 +13,14 @@ import {
   formatProxyListenUrl,
   normalizeRuntimeUpstream,
   ProxyController,
+  resolveServerConfig,
   toProxyUpstream,
 } from '../../src/internal/host/proxy.ts'
 
 // Mirrors the native registry, which rejects repeated adds and removals.
 const native = vi.hoisted(() => ({
   registered: new Set<string>(),
+  health: [] as { healthy: boolean; ready: boolean }[],
   beforeMutation: async (_operation: 'add' | 'remove', _key: string) => {},
 }))
 
@@ -45,12 +47,16 @@ vi.mock('@nmtjs/proxy', () => {
         await native.beforeMutation('remove', id)
         if (!native.registered.delete(id)) throw new Error('Upstream not found')
       }
+      setHealth(status: { healthy: boolean; ready: boolean }) {
+        native.health.push(status)
+      }
     },
   }
 })
 
 beforeEach(() => {
   native.registered.clear()
+  native.health.length = 0
   native.beforeMutation = async () => {}
 })
 
@@ -134,10 +140,10 @@ describe('Neem proxy helpers', () => {
   })
 
   it('creates native proxy options from active manifest runtimes', () => {
-    const config: NeemProxyConfig = {
+    const config: ResolvedServerConfig = {
       hostname: '127.0.0.1',
       port: 8080,
-      healthChecks: { interval: 250 },
+      upstreamChecks: { interval: 250 },
       stickySessions: { enabled: true, cookieName: 'sid' },
       limits: { maxRequestBodySize: 64 * 1024 * 1024, maxUriSize: null },
       tls: { keyPath: '/certs/key.pem', certPath: '/certs/cert.pem' },
@@ -176,7 +182,22 @@ describe('Neem proxy helpers', () => {
       healthCheckIntervalMs: 250,
       stickySessions: { enabled: true, cookieName: 'sid' },
       limits: { maxRequestBodySize: 64 * 1024 * 1024, maxUriSize: null },
+      health: { healthPath: '/health', readyPath: '/ready' },
     })
+  })
+
+  it('defaults the server address by mode', () => {
+    expect(resolveServerConfig(undefined, 'production')).toEqual({
+      hostname: '0.0.0.0',
+      port: 3000,
+    })
+    expect(resolveServerConfig(undefined, 'development')).toEqual({
+      hostname: '127.0.0.1',
+      port: 3000,
+    })
+    expect(
+      resolveServerConfig({ hostname: '::', port: 0 }, 'production'),
+    ).toMatchObject({ hostname: '::', port: 0 })
   })
 
   it('does not expose runtimes without explicit runtime proxy config', () => {
@@ -217,7 +238,7 @@ describe('Neem proxy helpers', () => {
     const controller = new ProxyController({
       logger,
       config: {
-        proxy: { hostname: '0.0.0.0', port: 0 },
+        server: { hostname: '0.0.0.0', port: 0 },
         runtimes: { api: { proxy: { routing: { type: 'default' } } } },
       },
     } as unknown as RuntimeSnapshot)
@@ -231,8 +252,21 @@ describe('Neem proxy helpers', () => {
     await controller.stop()
 
     expect(messages).toContain(
-      'Neem proxy listening on [http://127.0.0.1:54321]',
+      'Neem server listening on [http://127.0.0.1:54321]',
     )
+  })
+
+  it('serves the configured health paths', () => {
+    expect(
+      createNativeProxyOptions(
+        {
+          hostname: '0.0.0.0',
+          port: 80,
+          health: { paths: { health: 'healthz', ready: '/readyz' } },
+        },
+        { api: {} },
+      ).health,
+    ).toEqual({ healthPath: '/healthz', readyPath: '/readyz' })
   })
 
   it('rejects multiple default proxy routes', () => {
@@ -263,13 +297,22 @@ describe('ProxyController upstream reconciliation', () => {
       warn: noop,
       child: (): unknown => logger,
     }
-    const controller = new ProxyController({
-      logger,
-      config: {
-        proxy: { hostname: '127.0.0.1', port: 0 },
-        runtimes: { api: { proxy: {} } },
+    // Stands in for the host, whose readiness includes the proxy's own.
+    const controller: ProxyController = new ProxyController(
+      {
+        logger,
+        config: {
+          server: { hostname: '127.0.0.1', port: 0 },
+          runtimes: { api: { proxy: {} } },
+        },
+      } as unknown as RuntimeSnapshot,
+      {
+        getHealthStatus: () => ({
+          healthy: true,
+          ready: controller.getHealth().ready,
+        }),
       },
-    } as unknown as RuntimeSnapshot)
+    )
     await controller.start([{ runtimeName: 'api', upstreams }])
     return controller
   }
@@ -322,6 +365,72 @@ describe('ProxyController upstream reconciliation', () => {
       failedUpstreams: [],
       ready: true,
     })
+    await controller.stop()
+  })
+
+  it('publishes readiness changes to the native health endpoints', async () => {
+    const controller = await startController([first])
+    controller.publishHealth()
+    controller.publishHealth()
+    expect(native.health).toEqual([{ healthy: true, ready: true }])
+
+    native.beforeMutation = async (operation) => {
+      if (operation === 'add') throw new Error('native add failed')
+    }
+    await expect(
+      controller.setUpstreams([{ runtimeName: 'api', upstreams: [second] }]),
+    ).rejects.toThrow('native add failed')
+    expect(native.health.at(-1)).toEqual({ healthy: true, ready: false })
+
+    native.beforeMutation = async () => {}
+    await controller.setUpstreams([{ runtimeName: 'api', upstreams: [] }])
+    expect(native.health.at(-1)).toEqual({ healthy: true, ready: true })
+    await controller.stop()
+  })
+
+  it('reports not ready while a native mutation is in flight', async () => {
+    const controller = await startController([first])
+    controller.publishHealth()
+    const removing = createFuture<void>()
+    const release = createFuture<void>()
+    native.beforeMutation = async (operation) => {
+      if (operation !== 'remove') return
+      removing.resolve()
+      await release.promise
+    }
+
+    const replacing = controller.setUpstreams([
+      { runtimeName: 'api', upstreams: [second] },
+    ])
+    expect(native.health.at(-1)).toEqual({ healthy: true, ready: false })
+    await removing.promise
+    // Asking for the old upstream again matches what is applied, but the
+    // removal already under way still changes native routing.
+    const restoring = controller.setUpstreams([
+      { runtimeName: 'api', upstreams: [first] },
+    ])
+    expect(controller.getHealth().ready).toBe(false)
+    expect(native.health.at(-1)).toEqual({ healthy: true, ready: false })
+
+    release.resolve()
+    await replacing
+    await restoring
+    expect([...native.registered]).toEqual(['api:http:127.0.0.1:4101'])
+    expect(native.health.at(-1)).toEqual({ healthy: true, ready: true })
+    await controller.stop()
+  })
+
+  it('republishes health to a restarted native proxy', async () => {
+    const controller = await startController([first])
+    controller.publishHealth()
+    await controller.stop()
+    native.registered.clear()
+    await controller.start([{ runtimeName: 'api', upstreams: [first] }])
+    controller.publishHealth()
+    expect(native.health).toEqual([
+      { healthy: true, ready: true },
+      { healthy: true, ready: true },
+    ])
     await controller.stop()
   })
 

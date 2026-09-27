@@ -37,13 +37,12 @@ export function createRuntimeSnapshot(options: {
   // Snapshot creation is the single choke point shared by `neem start`,
   // standalone start.js, and reloads, so deploy-time env overrides applied
   // here reach every consumer of the effective host config.
-  const { config, applied, warnings } = applyHostConfigEnvOverrides(
+  const { config, applied } = applyHostConfigEnvOverrides(
     options.manifest.config,
     { ...process.env, ...options.env },
   )
   for (const override of applied)
     logger.info(formatAppliedEnvOverride(override))
-  for (const warning of warnings) logger.warn(warning)
 
   return {
     mode: options.mode,

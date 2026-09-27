@@ -13,8 +13,7 @@ export default defineConfig({
   logger: { pinoOptions: { level: 'info' } },
   env: { NODE_ENV: 'production' },
   outDir: 'dist',
-  proxy: { hostname: '127.0.0.1', port: 3000 },
-  health: { hostname: '127.0.0.1', port: 3001 },
+  server: { port: 3000, health: { paths: { ready: '/readyz' } } },
   runtimes: [
     './src/runtimes/**/neem.runtime.ts',
     '!./src/runtimes/experimental/**',
@@ -23,7 +22,7 @@ export default defineConfig({
 ```
 
 `NeemConfig` requires `runtimes`. Its optional fields are `env`, `logger`,
-`build`, `proxy`, `health`, `plugins`, and `outDir`:
+`build`, `server` (see [Server and Health](#server-and-health)), `plugins`, and `outDir`:
 
 - `env`: `Record<string, string>` baked into the manifest, not env-file paths.
 - `logger`: `NeemLoggerOptions` or a string/file URL module entry; see below.
@@ -104,12 +103,17 @@ controller plugin's process environment.
 Use [`neem dev --env-files`](cli.md#environment-files) for files loaded before
 config evaluation. `envFiles` is not a config property.
 
-## Proxy and Health
+## Server and Health
 
-Install Neem's optional peer `@nmtjs/proxy@1.0.0-beta.9` when enabling `proxy`.
-The controller config takes required `hostname` and `port`, plus optional
-`healthChecks: { interval? }`, `stickySessions: { enabled?, cookieName?,
-headerName?, ttlMs?, maxEntries? }`, `limits`, and `tls: { keyPath, certPath }`.
+Neem always runs its native server (`@nmtjs/proxy`, a regular dependency). It
+answers the health probes on every deployment and routes traffic only to the
+runtimes that opt in with their own `proxy`. `NeemConfig.server` is optional:
+`hostname` (default `0.0.0.0` in production, `127.0.0.1` in development),
+`port` (default `3000`), `health: { paths?: { health?, ready? } }`,
+`upstreamChecks: { interval? }` (routed upstream check interval in
+milliseconds), `stickySessions: { enabled?, cookieName?, headerName?, ttlMs?,
+maxEntries? }`, `limits`, and `tls: { keyPath, certPath }`. The server listens
+before runtimes start and stops after they stop.
 
 `limits` takes `maxUriSize` (default 8 KiB), `maxRequestHeaders` (100),
 `maxSingleHeaderSize` (8 KiB), `maxRequestHeaderSize` (64 KiB), and
@@ -117,7 +121,7 @@ headerName?, ttlMs?, maxEntries? }`, `limits`, and `tls: { keyPath, certPath }`.
 `limits: null` disables all of them. The body limit is checked against the
 declared `Content-Length` only, so chunked uploads are not limited by the proxy.
 
-Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
+Routing belongs on each runtime's `proxy`, not on `NeemConfig.server`:
 
 - Omit runtime `proxy` to exclude that runtime from proxy routing.
 - `proxy: {}` defaults to path routing with the runtime name.
@@ -136,27 +140,26 @@ Routing belongs on each runtime's `proxy`, not `NeemConfig.proxy.runtimes`:
   CORS headers so browser clients can read them. Application responses pass
   through unchanged.
 
-`health` enables a separate HTTP probe server. It requires `port`, defaults
-`hostname` to `127.0.0.1`, and accepts `paths: { health?, ready? }` (defaults
-`/health`, `/ready`). GET and HEAD are supported:
+The server answers the health paths itself (defaults `/health` and `/ready`,
+set with `server.health.paths`), before routing, so they never reach a runtime:
 
-- `/health` returns 503 for server state `failed` or `stopped`, otherwise 200.
+- `/health` returns 503 once the server failed or began stopping, otherwise 200.
 - `/ready` returns 200 only when the server is running, every runtime pool is
-  ready, and an enabled proxy is ready; otherwise 503. Use readiness during
-  startup, reload, and recovery. Responses include the health snapshot.
+  ready, and proxy routing has converged; otherwise 503. Use readiness during
+  startup, reload, and recovery.
+- Bodies are only `{ ok, healthy, ready }`, where `ok` is the probed flag. The
+  detailed health report stays in-process: plugins read it with `getHealth()`.
 
 Deploy-time process variables override built networking values:
 
-| Setting              | Environment variable                                  |
-| -------------------- | ----------------------------------------------------- |
-| Proxy port           | `NEEM_PROXY_PORT`, then `PORT`                        |
-| Proxy hostname       | `NEEM_PROXY_HOSTNAME`                                 |
-| TLS paths            | `NEEM_PROXY_TLS_KEY_PATH`, `NEEM_PROXY_TLS_CERT_PATH` |
-| Health port/hostname | `NEEM_HEALTH_PORT`, `NEEM_HEALTH_HOSTNAME`            |
+| Setting         | Environment variable                                    |
+| --------------- | ------------------------------------------------------- |
+| Server port     | `NEEM_SERVER_PORT`, then `PORT`                         |
+| Server hostname | `NEEM_SERVER_HOSTNAME`                                  |
+| TLS paths       | `NEEM_SERVER_TLS_KEY_PATH`, `NEEM_SERVER_TLS_CERT_PATH` |
 
 Empty values are ignored. Port overrides must be integers from 0 to 65535.
-These variables do not enable absent proxy/health servers. Enabling TLS on an
-existing proxy with no built TLS config requires both paths. With built TLS,
+Enabling TLS with no built TLS config requires both paths. With built TLS,
 either path can be overridden separately.
 
 ## Logger and Plugins

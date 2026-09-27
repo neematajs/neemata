@@ -206,7 +206,6 @@ export type NeemProxyUpstreamSnapshot = {
 }
 
 export type NeemProxyHealth = {
-  enabled: boolean
   running: boolean
   ready: boolean
   upstreams: readonly NeemProxyUpstreamSnapshot[]
@@ -312,17 +311,17 @@ export type NeemRuntimeProxyConfig = {
   sni?: string
   /**
    * Maximum declared `Content-Length` for requests routed to this runtime, in
-   * bytes. Overrides `proxy.limits.maxRequestBodySize`; `null` lets any size
+   * bytes. Overrides `server.limits.maxRequestBodySize`; `null` lets any size
    * through so the runtime can enforce its own limit.
    */
   maxRequestBodySize?: number | null
 }
 
 /**
- * Proxy-wide request limits. Sizes are bytes; `null` disables a single check,
+ * Server-wide request limits. Sizes are bytes; `null` disables a single check,
  * and `limits: null` disables them all.
  */
-export type NeemProxyLimits = {
+export type NeemServerLimits = {
   /** @default 8192 */
   maxUriSize?: number | null
   /** @default 100 */
@@ -340,16 +339,30 @@ export type NeemProxyLimits = {
 }
 
 /**
+ * The native server neem always runs. It answers the health probe on every
+ * deployment and routes to the runtimes that opt in with their own `proxy`
+ * config.
+ *
  * Values are baked into the manifest at build time. Deploy-time env vars,
- * resolved when the server starts, override them: `NEEM_PROXY_PORT` (or the
- * platform-conventional `PORT` as a fallback), `NEEM_PROXY_HOSTNAME`,
- * `NEEM_PROXY_TLS_KEY_PATH` and `NEEM_PROXY_TLS_CERT_PATH` (both required to
+ * resolved when the server starts, override them: `NEEM_SERVER_PORT` (or the
+ * platform-conventional `PORT` as a fallback), `NEEM_SERVER_HOSTNAME`,
+ * `NEEM_SERVER_TLS_KEY_PATH` and `NEEM_SERVER_TLS_CERT_PATH` (both required to
  * enable TLS when not configured here).
  */
-export type NeemProxyConfig = {
-  hostname: string
-  port: number
-  healthChecks?: { interval?: number }
+export type NeemServerConfig = {
+  /** @default '0.0.0.0' in production, '127.0.0.1' in development */
+  hostname?: string
+  /** @default 3000 */
+  port?: number
+  /**
+   * The server answers these paths itself, before routing, so they never
+   * reach a runtime. `health` answers 503 once the server failed or began
+   * stopping; `ready` answers 503 until every runtime is ready and routed.
+   * Bodies carry only `{ ok, healthy, ready }`.
+   */
+  health?: { paths?: { health?: string; ready?: string } }
+  /** How often routed upstreams are checked, in milliseconds. */
+  upstreamChecks?: { interval?: number }
   stickySessions?: {
     enabled?: boolean
     cookieName?: string
@@ -357,19 +370,8 @@ export type NeemProxyConfig = {
     ttlMs?: number
     maxEntries?: number
   }
-  limits?: NeemProxyLimits | null
+  limits?: NeemServerLimits | null
   tls?: { keyPath: string; certPath: string }
-}
-
-/**
- * Values are baked into the manifest at build time. Deploy-time env vars,
- * resolved when the server starts, override them: `NEEM_HEALTH_PORT` and
- * `NEEM_HEALTH_HOSTNAME`.
- */
-export type NeemHealthConfig = {
-  hostname?: string
-  port: number
-  paths?: { health?: string; ready?: string }
 }
 
 /**
@@ -406,8 +408,7 @@ export type NeemConfig = {
   env?: NeemEnv
   build?: NeemBuildConfig
   runtimes: NeemRuntimeProjectEntries
-  proxy?: NeemProxyConfig
-  health?: NeemHealthConfig
+  server?: NeemServerConfig
   lifecycle?: NeemLifecycleConfig
   // commands?: Record<string, NeemCommandInput>
   plugins?: readonly NeemPluginInput[]

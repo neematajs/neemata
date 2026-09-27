@@ -94,7 +94,6 @@ const testHealth = {
     },
   ],
   proxy: {
-    enabled: false,
     running: false,
     ready: false,
     upstreams: [],
