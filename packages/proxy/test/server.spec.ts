@@ -903,6 +903,168 @@ describe('Proxy wiring', () => {
     }
   })
 
+  describe('health endpoints', () => {
+    async function startDefaultProxy(health: {
+      healthPath?: string
+      readyPath?: string
+    }) {
+      const port = await getFreePort()
+      const proxy = new NeemataProxy({
+        listen: `127.0.0.1:${port}`,
+        applications: [{ name: 'app', routing: { type: 'default' } }],
+        health,
+      })
+      await proxy.addUpstream('app', {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: upstreamHttp1Port,
+      })
+      await proxy.start()
+      return { port, proxy }
+    }
+
+    it('answers health paths itself from the status set by setHealth()', async () => {
+      const { port, proxy } = await startDefaultProxy({})
+      try {
+        const health = await httpGet(port, '/health')
+        expect(health.status).toBe(200)
+        expect(health.headers['cache-control']).toBe('no-store')
+        expect(JSON.parse(health.body)).toEqual({
+          ok: true,
+          healthy: true,
+          ready: false,
+        })
+        expect((await httpGet(port, '/ready')).status).toBe(503)
+
+        proxy.setHealth({ healthy: true, ready: true })
+        const ready = await httpGet(port, '/ready?probe=1')
+        expect(ready.status).toBe(200)
+        expect(JSON.parse(ready.body)).toEqual({
+          ok: true,
+          healthy: true,
+          ready: true,
+        })
+
+        proxy.setHealth({ healthy: false, ready: false })
+        expect((await httpGet(port, '/health')).status).toBe(503)
+        expect((await httpGet(port, '/ready')).status).toBe(503)
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('forwards everything but the exact health paths', async () => {
+      const { port, proxy } = await startDefaultProxy({
+        healthPath: '/healthz',
+        readyPath: '/readyz',
+      })
+      try {
+        expect((await httpGet(port, '/healthz')).status).toBe(200)
+        for (const path of ['/health', '/healthz/deep', '/ready']) {
+          const res = await httpGet(port, path)
+          expect(res.status).toBe(200)
+          expect(res.body).toBe(`h1:${path}`)
+        }
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('serves HEAD without a body and rejects other methods', async () => {
+      const { port, proxy } = await startDefaultProxy({})
+      const request = (method: string) =>
+        new Promise<http.IncomingMessage & { body: string }>(
+          (resolve, reject) => {
+            const req = http.request(
+              {
+                host: '127.0.0.1',
+                port,
+                method,
+                path: '/health',
+                agent: false,
+              },
+              (res) => {
+                let body = ''
+                res.on('data', (chunk) => (body += chunk))
+                res.on('end', () => resolve(Object.assign(res, { body })))
+              },
+            )
+            req.on('error', reject)
+            req.end()
+          },
+        )
+      try {
+        const head = await request('HEAD')
+        expect(head.statusCode).toBe(200)
+        expect(head.body).toBe('')
+
+        const post = await request('POST')
+        expect(post.statusCode).toBe(405)
+        expect(post.headers.allow).toBe('GET, HEAD')
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('leaves health paths to applications when not configured', async () => {
+      const port = await getFreePort()
+      const proxy = new NeemataProxy({
+        listen: `127.0.0.1:${port}`,
+        applications: [{ name: 'app', routing: { type: 'default' } }],
+      })
+      await proxy.addUpstream('app', {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port: upstreamHttp1Port,
+      })
+      await proxy.start()
+      try {
+        expect((await httpGet(port, '/health')).body).toBe('h1:/health')
+      } finally {
+        await proxy.stop()
+      }
+    })
+
+    it('rejects invalid or conflicting health paths with stable code', async () => {
+      const port = await getFreePort()
+      const create = (
+        health: { healthPath?: string; readyPath?: string },
+        pathRoute = 'auth',
+      ) =>
+        new NeemataProxy({
+          listen: `127.0.0.1:${port}`,
+          applications: [
+            { name: 'auth', routing: { type: 'path', name: pathRoute } },
+          ],
+          health,
+        })
+
+      await expectRejectCode(
+        () => create({ healthPath: 'health' }),
+        'InvalidProxyOptions',
+      )
+      await expectRejectCode(
+        () => create({ readyPath: '/ready?x=1' }),
+        'InvalidProxyOptions',
+      )
+      for (const healthPath of ['/health check', '/health\n', '/здоровье']) {
+        await expectRejectCode(
+          () => create({ healthPath }),
+          'InvalidProxyOptions',
+        )
+      }
+      await expectRejectCode(
+        () => create({ healthPath: '/probe', readyPath: '/probe' }),
+        'InvalidProxyOptions',
+      )
+      await expectRejectCode(() => create({}, 'ready'), 'InvalidProxyOptions')
+    })
+  })
+
   it('rejects URI over configured maxUriSize with 414', async () => {
     const port = await getFreePort()
     const proxy = new NeemataProxy({

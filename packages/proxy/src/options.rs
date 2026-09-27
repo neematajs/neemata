@@ -31,6 +31,16 @@ pub struct ProxyOptions {
     pub limits: Option<Either<ProxyLimitsOptions, Null>>,
     /// Downstream and upstream timeout configuration. Values are milliseconds except downstreamKeepAlive, which is seconds.
     pub timeouts: Option<ProxyTimeoutOptions>,
+    /// Health endpoints the proxy answers itself, before routing, from the status set with `setHealth()`.
+    pub health: Option<ProxyHealthOptions>,
+}
+
+#[napi(object)]
+pub struct ProxyHealthOptions {
+    /// Exact path answering 200 while healthy, 503 otherwise (default: "/health").
+    pub health_path: Option<String>,
+    /// Exact path answering 200 while ready, 503 otherwise (default: "/ready").
+    pub ready_path: Option<String>,
 }
 
 #[napi(object)]
@@ -110,6 +120,13 @@ pub struct ProxyOptionsParsed {
     pub sticky_sessions: StickySessionOptionsParsed,
     pub limits: ProxyLimitsOptionsParsed,
     pub timeouts: ProxyTimeoutOptionsParsed,
+    pub health: Option<ProxyHealthOptionsParsed>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProxyHealthOptionsParsed {
+    pub health_path: String,
+    pub ready_path: String,
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +212,7 @@ pub fn parse_proxy_options(env: &Env, options: ProxyOptions) -> Result<ProxyOpti
 
     let sticky_sessions = parse_sticky_session_options(env, options.sticky_sessions)?;
     let timeouts = parse_timeout_options(env, options.timeouts)?;
+    let health = parse_health_options(env, options.health, &applications)?;
 
     Ok(ProxyOptionsParsed {
         listen,
@@ -204,7 +222,81 @@ pub fn parse_proxy_options(env: &Env, options: ProxyOptions) -> Result<ProxyOpti
         sticky_sessions,
         limits,
         timeouts,
+        health,
     })
+}
+
+fn parse_health_options(
+    env: &Env,
+    health: Option<ProxyHealthOptions>,
+    applications: &[ApplicationOptionsParsed],
+) -> Result<Option<ProxyHealthOptionsParsed>> {
+    let Some(health) = health else {
+        return Ok(None);
+    };
+
+    let health_path = parse_health_path(env, "health.healthPath", health.health_path, "/health")?;
+    let ready_path = parse_health_path(env, "health.readyPath", health.ready_path, "/ready")?;
+
+    if health_path == ready_path {
+        return errors::throw_type_error(
+            env,
+            errors::codes::INVALID_PROXY_OPTIONS,
+            "health.healthPath and health.readyPath must differ",
+        );
+    }
+
+    // Health paths are answered before routing, so a path route with the same name
+    // would silently lose its root path.
+    for app in applications {
+        let ApplicationRoutingParsed::Path { name } = &app.routing else {
+            continue;
+        };
+        let route = format!("/{name}");
+        if route == health_path || route == ready_path {
+            return errors::throw_type_error(
+                env,
+                errors::codes::INVALID_PROXY_OPTIONS,
+                format!(
+                    "Health path '{route}' conflicts with the path route of application '{}'",
+                    app.name
+                ),
+            );
+        }
+    }
+
+    Ok(Some(ProxyHealthOptionsParsed {
+        health_path,
+        ready_path,
+    }))
+}
+
+fn parse_health_path(
+    env: &Env,
+    field: &str,
+    value: Option<String>,
+    default: &str,
+) -> Result<String> {
+    let Some(value) = value else {
+        return Ok(default.to_string());
+    };
+
+    // Requests carry only visible ASCII in their path, so anything else could never match.
+    let valid = value.starts_with('/')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && byte != b'?' && byte != b'#');
+    if !valid {
+        return errors::throw_type_error(
+            env,
+            errors::codes::INVALID_PROXY_OPTIONS,
+            format!(
+                "{field} must be an absolute path of visible ASCII characters without query or fragment"
+            ),
+        );
+    }
+
+    Ok(value)
 }
 
 fn parse_limits_options(

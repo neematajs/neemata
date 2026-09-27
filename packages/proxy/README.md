@@ -58,6 +58,22 @@ with:
 }
 ```
 
+## Health endpoints
+
+With the `health` option, the proxy answers two exact paths itself, before routing, so platforms that probe the public port (Railway, Render, Fly) reach a probe that no application can shadow:
+
+```ts
+const proxy = new Proxy({
+  listen: '0.0.0.0:8080',
+  applications,
+  health: { healthPath: '/health', readyPath: '/ready' }, // the defaults
+})
+
+proxy.setHealth({ healthy: true, ready: true })
+```
+
+The proxy holds no health logic of its own: its owner pushes status with `setHealth()` whenever it changes. Until then the proxy reports healthy and not ready. `GET` and `HEAD` answer `200` when the probed flag is true and `503` otherwise, with a `no-store` JSON body of `{ ok, healthy, ready }`; other methods get `405`. Query strings are ignored and every other path, including sub-paths, is routed as usual. A health path that equals a path route's root is rejected as `InvalidProxyOptions`.
+
 ## Related projects
 
 - Neemata framework: https://github.com/neematajs/neemata
