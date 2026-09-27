@@ -543,9 +543,11 @@ old, reaped dead commands. A zero or invalid batch size disables root pruning, w
 dead-command cleanup continues with the default limit of 100 commands per call.
 The dead-command sweep skips locked rows and preserves unreaped commands so the
 reaper can still settle their runs. The result's `deleted` field counts root
-families; dead-command cleanup advances by one batch per store call, including calls
-with `statuses: []`. Run retention periodically to clear a backlog over multiple
-passes.
+families; `hasMore` indicates that either cleanup filled its batch and another pass
+may make progress. Each store call and worker retention interval performs one
+bounded pass. `client.pruneRuns()` repeats those passes in separate transactions
+until neither cleanup fills its batch, including with `statuses: []` or zero or
+invalid batch sizes. Locked rows remain for a later retention pass.
 
 ## Wake Events (LISTEN/NOTIFY)
 

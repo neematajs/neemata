@@ -18,6 +18,7 @@ import {
   WORKFLOW_POSTGRES_SCHEMA_MANIFEST,
 } from '../../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
+import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
 import { postgresTarget, requireServiceEnv, wait } from './helpers.ts'
 
 requireServiceEnv(postgresTarget)
@@ -137,6 +138,7 @@ describe.skipIf(!postgresTarget.url)(
     it("bounds dead-command pruning while skipping another session's locked row", async () => {
       const connection = createPostgresWorkflowConnection(pool)
       const runtime = createPostgresWorkflowRuntime({ connection })
+      const client = createWorkflowRuntimeClient(runtime)
       const run = await runtime.store.createRun({
         workflowName: 'prune-locked-commands',
         input: {},
@@ -167,23 +169,33 @@ describe.skipIf(!postgresTarget.url)(
             const scoped = createPostgresWorkflowRuntime({ connection: tx })
             return scoped.retentionPruner!.pruneTerminalRuns(params)
           }),
-        ).resolves.toStrictEqual({ deleted: 0 })
+        ).resolves.toStrictEqual({ deleted: 0, hasMore: true })
         const remaining = await pool.query<{ id: string }>(
           'SELECT id FROM workflow_commands WHERE run_id = $1 ORDER BY id',
           [run.id],
         )
         expect(remaining.rows.map(({ id }) => id)).toEqual([ids[0], ids[2]])
+
+        // The client drains unlocked commands, then stops when only locked work remains.
+        await expect(client.pruneRuns(params)).resolves.toStrictEqual({
+          deleted: 0,
+        })
+        const locked = await pool.query<{ id: string }>(
+          'SELECT id FROM workflow_commands WHERE run_id = $1',
+          [run.id],
+        )
+        expect(locked.rows).toEqual([{ id: ids[0] }])
       } finally {
         await holder.query('ROLLBACK')
         holder.release()
       }
 
-      await runtime.retentionPruner!.pruneTerminalRuns(params)
+      await client.pruneRuns(params)
       const remaining = await pool.query<{ id: string }>(
         'SELECT id FROM workflow_commands WHERE run_id = $1',
         [run.id],
       )
-      expect(remaining.rows).toEqual([{ id: ids[2] }])
+      expect(remaining.rows).toEqual([])
     })
 
     it('has the foreign keys and the claim index in its own schema', async () => {

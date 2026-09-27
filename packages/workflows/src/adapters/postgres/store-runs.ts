@@ -312,7 +312,8 @@ export async function pruneTerminalRunsInTransaction(
   // so a dead-letter backlog cannot monopolize the pruning transaction.
   // Disabling root pruning must still allow bounded command cleanup.
   const commandBatchSize = batchSize || DEFAULT_PRUNE_BATCH_SIZE
-  await connection.query(
+  const commands = await many<{ id: string }>(
+    connection,
     `
       DELETE FROM workflow_commands
       WHERE id IN (
@@ -324,11 +325,16 @@ export async function pruneTerminalRunsInTransaction(
         LIMIT $2
         FOR UPDATE SKIP LOCKED
       )
+      RETURNING id
     `,
     [timestampParam(params.olderThan), commandBatchSize],
   )
 
-  return { deleted }
+  const hasMore =
+    (batchSize > 0 && deleted === batchSize) ||
+    commands.length === commandBatchSize
+
+  return { deleted, hasMore }
 }
 
 export const deleteRunInTransaction = async (

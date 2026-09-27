@@ -436,13 +436,15 @@ async function pruneRuns(
   params: PruneTerminalRunsParams,
 ): Promise<PruneTerminalRunsResult> {
   const batchSize = normalizePruneBatchSize(params.batchSize)
-  if (batchSize < 1) return { deleted: 0 }
   let deleted = 0
 
   while (true) {
     const result = await store.pruneTerminalRuns({ ...params, batchSize })
     deleted += result.deleted
-    if (result.deleted < batchSize) return { deleted }
+    // Command cleanup can fill a batch even when no terminal roots were deleted.
+    const hasMore =
+      result.hasMore ?? (batchSize > 0 && result.deleted >= batchSize)
+    if (!hasMore) return { deleted }
   }
 }
 

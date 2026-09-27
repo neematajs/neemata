@@ -1208,7 +1208,7 @@ function workflowRuntimeAdapterContract(
         batchSize: 1,
       })
 
-      expect(result).toStrictEqual({ deleted: 1 })
+      expect(result).toMatchObject({ deleted: 1 })
       await expect(
         runtime.store.loadRunSnapshot(root.id),
       ).resolves.toBeUndefined()
@@ -1253,7 +1253,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({ olderThan: 0 }),
-      ).resolves.toStrictEqual({ deleted: 0 })
+      ).resolves.toMatchObject({ deleted: 0 })
       await expect(
         runtime.store.loadRunSnapshot(queuedRoot.id),
       ).resolves.toBeDefined()
@@ -1293,7 +1293,7 @@ function workflowRuntimeAdapterContract(
         runtime.store.pruneTerminalRuns({
           olderThan: Date.now() + 1_000,
         }),
-      ).resolves.toStrictEqual({ deleted: 1 })
+      ).resolves.toMatchObject({ deleted: 1 })
       await expect(
         runtime.store.loadRunSnapshot(liveParent.id),
       ).resolves.toBeDefined()
@@ -1355,7 +1355,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
-      ).resolves.toStrictEqual({ deleted: 0 })
+      ).resolves.toMatchObject({ deleted: 0 })
       await expect(
         runtime.store.loadRunSnapshot(parent.id),
       ).resolves.toBeDefined()
@@ -1367,7 +1367,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
-      ).resolves.toStrictEqual({ deleted: 1 })
+      ).resolves.toMatchObject({ deleted: 1 })
       await expect(
         runtime.store.loadRunSnapshot(parent.id),
       ).resolves.toBeUndefined()
@@ -1493,52 +1493,86 @@ function workflowRuntimeAdapterContract(
     })
 
     it.each([
-      { label: 'empty statuses', params: { statuses: [] } },
-      { label: 'zero batch size', params: { batchSize: 0 } },
-    ])('sweeps old reaped dead commands with $label', async ({ params }) => {
-      const runtime = await createRuntime({ maxDeliveries: 1 })
-      const run = await runtime.store.createRun({
-        workflowName: 'dead-command-sweep-workflow',
-        input: {},
-      })
-      const terminalRun = await runtime.store.createRun({
-        workflowName: 'dead-command-sweep-terminal-workflow',
-        input: {},
-      })
-      await runtime.store.completeRun({ runId: terminalRun.id, output: {} })
-      await runtime.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: run.id,
-        workflowName: run.workflowName,
-      })
-      const claimed = await runtime.runCoordinationExecutor.claim({
-        workerId: 'dead-command-sweeper',
-        workflowNames: [run.workflowName],
-        leaseMs: 30_000,
-      })
-      await runtime.runCoordinationExecutor.release(claimed!, {
-        error: new Error('dead command'),
-      })
-      const [dead] = await runtime.store.listDeadCommands()
-      expect(dead).toBeDefined()
-      const prune = () =>
-        runtime.store.pruneTerminalRuns({
-          olderThan: Date.now() + 1_000,
-          ...params,
+      {
+        label: 'store with empty statuses',
+        client: false,
+        params: { statuses: [] },
+      },
+      {
+        label: 'store with zero batch size',
+        client: false,
+        params: { batchSize: 0 },
+      },
+      {
+        label: 'client with empty statuses',
+        client: true,
+        params: { statuses: [] },
+      },
+      {
+        label: 'client with zero batch size',
+        client: true,
+        params: { batchSize: 0 },
+      },
+      {
+        label: 'client with invalid batch size',
+        client: true,
+        params: { batchSize: -1 },
+      },
+    ])(
+      'sweeps old reaped dead commands through $label',
+      async ({ client: useClient, params }) => {
+        const runtime = await createRuntime({ maxDeliveries: 1 })
+        const run = await runtime.store.createRun({
+          workflowName: 'dead-command-sweep-workflow',
+          input: {},
         })
+        const terminalRun = await runtime.store.createRun({
+          workflowName: 'dead-command-sweep-terminal-workflow',
+          input: {},
+        })
+        await runtime.store.completeRun({ runId: terminalRun.id, output: {} })
+        await runtime.runCoordinationExecutor.enqueue({
+          kind: 'continueRun',
+          runId: run.id,
+          workflowName: run.workflowName,
+        })
+        const claimed = await runtime.runCoordinationExecutor.claim({
+          workerId: 'dead-command-sweeper',
+          workflowNames: [run.workflowName],
+          leaseMs: 30_000,
+        })
+        await runtime.runCoordinationExecutor.release(claimed!, {
+          error: new Error('dead command'),
+        })
+        const [dead] = await runtime.store.listDeadCommands()
+        expect(dead).toBeDefined()
+        const client = createWorkflowRuntimeClient(runtime)
+        function prune() {
+          const input = {
+            olderThan: Date.now() + 1_000,
+            ...params,
+          }
+          if (useClient) return client.pruneRuns(input)
+          return runtime.store.pruneTerminalRuns(input)
+        }
 
-      // Until it is reaped, the dead command is all that can settle its run.
-      await expect(prune()).resolves.toStrictEqual({ deleted: 0 })
-      await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+        // Until it is reaped, the dead command is all that can settle its run.
+        await expect(prune()).resolves.toMatchObject({ deleted: 0 })
+        await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
 
-      await runtime.store.markDeadCommandReaped(dead!.id)
-      await expect(prune()).resolves.toStrictEqual({ deleted: 0 })
-      await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual([])
-      await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeDefined()
-      await expect(
-        runtime.store.loadRunSnapshot(terminalRun.id),
-      ).resolves.toBeDefined()
-    })
+        await runtime.store.markDeadCommandReaped(dead!.id)
+        await expect(prune()).resolves.toMatchObject({ deleted: 0 })
+        await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual(
+          [],
+        )
+        await expect(
+          runtime.store.loadRunSnapshot(run.id),
+        ).resolves.toBeDefined()
+        await expect(
+          runtime.store.loadRunSnapshot(terminalRun.id),
+        ).resolves.toBeDefined()
+      },
+    )
 
     it('batches store pruning and drains via the runtime client helper', async () => {
       const runtime = await createRuntime()
@@ -1560,7 +1594,7 @@ function workflowRuntimeAdapterContract(
 
       await expect(
         runtime.store.pruneTerminalRuns({ olderThan, batchSize: 2 }),
-      ).resolves.toStrictEqual({ deleted: 2 })
+      ).resolves.toMatchObject({ deleted: 2 })
       await expect(
         client.pruneRuns({ olderThan, batchSize: 2 }),
       ).resolves.toStrictEqual({ deleted: 3 })

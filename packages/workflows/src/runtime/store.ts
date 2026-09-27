@@ -129,6 +129,11 @@ export type PruneTerminalRunsParams = {
 
 export type PruneTerminalRunsResult = {
   readonly deleted: number
+  /**
+   * Whether a cleanup batch filled and another pass may make progress.
+   * When omitted, the client infers this from the root deletion count.
+   */
+  readonly hasMore?: boolean
 }
 
 export type DeleteRunResult = { readonly deleted: boolean }

@@ -7,6 +7,7 @@ import { describe, expect, test } from 'vitest'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
+  type WorkflowPostgresConnection,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import { defineWorkflow } from '../src/effect/index.ts'
@@ -24,6 +25,21 @@ async function createPostgresHarness(maxDeliveries?: number) {
 async function createRuntime() {
   const { runtime } = await createPostgresHarness()
   return runtime
+}
+
+async function seedReapedCommands(
+  connection: WorkflowPostgresConnection,
+  runId: string,
+  count: number,
+) {
+  const ids = Array.from({ length: count }, () => randomUUID()).sort()
+  await connection.query(
+    `INSERT INTO workflow_commands (id, kind, run_id, dead_at, reaped_at)
+     SELECT id, 'activity', $1, '2020-01-01', '2020-01-01'
+     FROM unnest($2::uuid[]) AS id`,
+    [runId, ids],
+  )
+  return ids
 }
 
 async function createRootWithChild() {
@@ -63,7 +79,7 @@ test('postgres retention pruning preserves terminal roots with live descendants'
     runtime.store.pruneTerminalRuns({
       olderThan: Date.now() + 1_000,
     }),
-  ).resolves.toStrictEqual({ deleted: 0 })
+  ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
   await expect(runtime.store.loadRunSnapshot(root.id)).resolves.toBeDefined()
   await expect(
     runtime.store.loadRunSnapshot(childRun.id),
@@ -82,7 +98,7 @@ test('postgres retention pruning removes terminal roots after descendants finish
     runtime.store.pruneTerminalRuns({
       olderThan: Date.now() + 1_000,
     }),
-  ).resolves.toStrictEqual({ deleted: 1 })
+  ).resolves.toStrictEqual({ deleted: 1, hasMore: false })
   await expect(runtime.store.loadRunSnapshot(root.id)).resolves.toBeUndefined()
   await expect(
     runtime.store.loadRunSnapshot(childRun.id),
@@ -124,9 +140,11 @@ describe('retention with unreaped dead commands', () => {
 
       await expect(
         store.pruneTerminalRuns({ ...params, batchSize: 2 }),
-      ).resolves.toStrictEqual({ deleted: 0 })
+      ).resolves.toStrictEqual({ deleted: 0, hasMore: true })
       expect(await remaining()).toEqual([eligible[2], ...protectedIds].sort())
-      await store.pruneTerminalRuns({ ...params, batchSize: 2 })
+      await expect(
+        store.pruneTerminalRuns({ ...params, batchSize: 2 }),
+      ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
       expect(await remaining()).toEqual(protectedIds.sort())
       await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
     } finally {
@@ -145,19 +163,11 @@ describe('retention with unreaped dead commands', () => {
       const olderThan = Date.now() + 1_000
 
       for (const batchSize of [0, -1, 1.5, Number.NaN, Infinity]) {
-        const commandIds = Array.from({ length: 101 }, () =>
-          randomUUID(),
-        ).sort()
-        await connection.query(
-          `INSERT INTO workflow_commands (id, kind, run_id, dead_at, reaped_at)
-           SELECT id, 'activity', $1, '2020-01-01', '2020-01-01'
-           FROM unnest($2::uuid[]) AS id`,
-          [run.id, commandIds],
-        )
+        const commandIds = await seedReapedCommands(connection, run.id, 101)
 
         await expect(
           store.pruneTerminalRuns({ olderThan, batchSize }),
-        ).resolves.toStrictEqual({ deleted: 0 })
+        ).resolves.toStrictEqual({ deleted: 0, hasMore: true })
         const { rows } = await connection.query<{ id: string }>(
           'SELECT id FROM workflow_commands ORDER BY id',
         )
@@ -166,13 +176,78 @@ describe('retention with unreaped dead commands', () => {
 
         await expect(
           store.pruneTerminalRuns({ olderThan, batchSize }),
-        ).resolves.toStrictEqual({ deleted: 0 })
+        ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
         await expect(store.listDeadCommands()).resolves.toStrictEqual([])
       }
     } finally {
       await db.close()
     }
   })
+
+  test.each([
+    { label: 'default batch size', params: {} },
+    { label: 'small batch size', params: { batchSize: 2 } },
+    { label: 'empty statuses', params: { statuses: [] } },
+    { label: 'zero batch size', params: { batchSize: 0 } },
+    { label: 'invalid batch size', params: { batchSize: -1 } },
+  ])(
+    'client drains the command backlog with $label and no old terminal runs',
+    async ({ params }) => {
+      const { db, connection, runtime, store } = await createPostgresHarness()
+      try {
+        const run = await store.createRun({
+          workflowName: 'client-prune',
+          input: {},
+        })
+        await seedReapedCommands(connection, run.id, 201)
+        const client = createWorkflowRuntimeClient(runtime)
+
+        await expect(
+          client.pruneRuns({ olderThan: Date.now(), ...params }),
+        ).resolves.toStrictEqual({ deleted: 0 })
+        await expect(store.listDeadCommands()).resolves.toStrictEqual([])
+        await expect(store.loadRunSnapshot(run.id)).resolves.toBeDefined()
+      } finally {
+        await db.close()
+      }
+    },
+  )
+
+  test.each([
+    { roots: 3, commands: 7 },
+    { roots: 7, commands: 3 },
+  ])(
+    'client drains $roots roots and $commands dead commands when one backlog finishes first',
+    async ({ roots, commands }) => {
+      const { db, connection, runtime, store } = await createPostgresHarness()
+      try {
+        const active = await store.createRun({
+          workflowName: 'active',
+          input: {},
+        })
+        await seedReapedCommands(connection, active.id, commands)
+        for (let index = 0; index < roots; index++) {
+          const root = await store.createRun({
+            workflowName: 'terminal',
+            input: {},
+          })
+          await store.completeRun({ runId: root.id, output: {} })
+        }
+        const client = createWorkflowRuntimeClient(runtime)
+
+        await expect(
+          client.pruneRuns({ olderThan: Date.now() + 1_000, batchSize: 2 }),
+        ).resolves.toStrictEqual({ deleted: roots })
+        await expect(store.listDeadCommands()).resolves.toStrictEqual([])
+        await expect(
+          store.listRuns({ name: 'terminal' }),
+        ).resolves.toStrictEqual({ runs: [] })
+        await expect(store.loadRunSnapshot(active.id)).resolves.toBeDefined()
+      } finally {
+        await db.close()
+      }
+    },
+  )
 
   test('retention keeps an unreaped dead command so its run still settles', async () => {
     const { runtime } = await createPostgresHarness(1)
@@ -248,7 +323,7 @@ describe('postgres pruning of families linked outside the root id', () => {
 
     await expect(
       store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
-    ).resolves.toStrictEqual({ deleted: 0 })
+    ).resolves.toStrictEqual({ deleted: 0, hasMore: false })
     await expect(
       store.loadRuns([root.id, child.id, grandchild.id]),
     ).resolves.toHaveLength(3)
@@ -260,7 +335,7 @@ describe('postgres pruning of families linked outside the root id', () => {
 
     await expect(
       store.pruneTerminalRuns({ olderThan: Date.now() + 1_000 }),
-    ).resolves.toStrictEqual({ deleted: 1 })
+    ).resolves.toStrictEqual({ deleted: 1, hasMore: false })
     await expect(
       store.loadRuns([root.id, child.id, grandchild.id]),
     ).resolves.toStrictEqual([])
