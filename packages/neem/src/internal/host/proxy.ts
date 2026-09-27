@@ -533,8 +533,19 @@ function upstreamKey(upstream: NeemProxyUpstreamSnapshot): string {
   return `${upstream.runtimeName}:${upstream.upstream.type}:${upstream.upstream.url}`
 }
 
+// Built host code runs from the app's output directory, so the native package
+// must resolve from the app itself; neem declares it as a peer for that reason.
 async function loadProxyPackage(): Promise<{ Proxy: NativeProxyConstructor }> {
-  return (await import(
-    process.env.NEEM_INTERNAL_PROXY_MODULE || '@nmtjs/proxy'
-  )) as { Proxy: NativeProxyConstructor }
+  const specifier = process.env.NEEM_INTERNAL_PROXY_MODULE || '@nmtjs/proxy'
+  try {
+    return (await import(specifier)) as { Proxy: NativeProxyConstructor }
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 'ERR_MODULE_NOT_FOUND') {
+      throw error
+    }
+    throw new Error(
+      `Neem cannot load its server package [${specifier}]; add @nmtjs/proxy to your app's dependencies`,
+      { cause: error },
+    )
+  }
 }

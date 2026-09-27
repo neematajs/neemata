@@ -105,7 +105,7 @@ config evaluation. `envFiles` is not a config property.
 
 ## Server and Health
 
-Neem always runs its native server (`@nmtjs/proxy`, a regular dependency). It
+Neem always runs its native server from `@nmtjs/proxy`, a required peer dependency: install it in your app (npm and pnpm do so automatically). It
 answers the health probes on every deployment and routes traffic only to the
 runtimes that opt in with their own `proxy`. `NeemConfig.server` is optional:
 `hostname` (default `0.0.0.0` in production, `127.0.0.1` in development),
