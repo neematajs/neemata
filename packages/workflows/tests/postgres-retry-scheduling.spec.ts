@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PGlite } from '@electric-sql/pglite'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
@@ -51,6 +53,73 @@ async function waitForTaskCommandRunAt(
 }
 
 describe('postgres retry scheduling', () => {
+  it('keeps released commands unavailable until their stored deadline', async () => {
+    const database = new PGlite()
+    const connection = createPostgresWorkflowConnection(database)
+    try {
+      await installPostgresWorkflowSchemaForTesting(connection)
+      // PostgreSQL now() is fixed throughout this transaction, so even a slow
+      // claim cannot accidentally cross the release backoff's deadline.
+      await connection.transaction(async (tx) => {
+        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        const run = await runtime.store.createRun({
+          workflowName: 'release-backoff',
+          input: {},
+        })
+        const continueCommand = {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+        }
+        const activityCommand = {
+          kind: 'activityAttempt' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+          activityName: 'step',
+          nodeName: 'step',
+          childKey: '$self',
+          attemptId: randomUUID(),
+          leaseToken: randomUUID(),
+          input: {},
+        }
+        const worker = {
+          workerId: 'release-worker',
+          workflowNames: [run.workflowName],
+          taskNames: [],
+          leaseMs: 30_000,
+        }
+        await runtime.runCoordinationExecutor.enqueue(continueCommand)
+        await runtime.attemptExecutor.dispatchActivity(activityCommand)
+        const continuation = await runtime.runCoordinationExecutor.claim(worker)
+        const activity = await runtime.attemptExecutor.claim(worker)
+        expect(continuation?.command).toEqual(continueCommand)
+        expect(activity?.command).toEqual(activityCommand)
+
+        await runtime.runCoordinationExecutor.release(continuation!)
+        await runtime.attemptExecutor.release(activity!)
+        const { rows } = await tx.query<{ delay_ms: number }>(`
+          SELECT (extract(epoch FROM run_at - now()) * 1000)::int AS delay_ms
+          FROM workflow_commands
+        `)
+        expect(rows).toEqual([{ delay_ms: 50 }, { delay_ms: 50 }])
+        await expect(
+          runtime.runCoordinationExecutor.claim(worker),
+        ).resolves.toBeNull()
+        await expect(runtime.attemptExecutor.claim(worker)).resolves.toBeNull()
+
+        await tx.query('UPDATE workflow_commands SET run_at = now()')
+        expect(
+          (await runtime.runCoordinationExecutor.claim(worker))?.command,
+        ).toEqual(continueCommand)
+        expect((await runtime.attemptExecutor.claim(worker))?.command).toEqual(
+          activityCommand,
+        )
+      })
+    } finally {
+      await database.close()
+    }
+  })
+
   const createTestContext = () => {
     return Context.empty()
   }

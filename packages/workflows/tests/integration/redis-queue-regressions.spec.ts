@@ -32,6 +32,11 @@ const targets: readonly Target[] = [
   },
 ]
 
+async function serverTime(client: Redis | Valkey) {
+  const [seconds, microseconds] = await client.time()
+  return Number(seconds) * 1_000 + Math.floor(Number(microseconds) / 1_000)
+}
+
 for (const target of targets) {
   describe.skipIf(!target.url)(
     `Redis queue regressions against ${target.name}`,
@@ -77,6 +82,48 @@ for (const target of targets) {
           runtime,
         }
       }
+
+      it('stores the release backoff relative to the server clock', async () => {
+        const { client, keys, runtime } = createHarness()
+        const run = await runtime.store.createRun({
+          workflowName: 'release-backoff',
+          input: null,
+        })
+        const continuationCommand = {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: run.workflowName,
+        }
+        const attemptCommand = activityCommand(run.id, run.workflowName, 'step')
+        const worker = {
+          workerId: 'release-worker',
+          workflowNames: [run.workflowName],
+          taskNames: [],
+          leaseMs: 30_000,
+        }
+        await runtime.runCoordinationExecutor.enqueue(continuationCommand)
+        await runtime.attemptExecutor.dispatchActivity(attemptCommand)
+        const continuation = await runtime.runCoordinationExecutor.claim(worker)
+        const attempt = await runtime.attemptExecutor.claim(worker)
+        expect(continuation?.command).toEqual(continuationCommand)
+        expect(attempt?.command).toEqual(attemptCommand)
+
+        // Stored deadlines remain observable after they pass. Comparing with
+        // the server clock avoids racing a claim against a 50 ms wall-time window.
+        const before = await serverTime(client)
+        await runtime.runCoordinationExecutor.release(continuation!)
+        await runtime.attemptExecutor.release(attempt!)
+        const after = await serverTime(client)
+        for (const [kind, claim] of [
+          ['continue', continuation],
+          ['attempt', attempt],
+        ] as const) {
+          const score = await client.zscore(keys.queue(kind).ready, claim!.id)
+          expect(score).not.toBeNull()
+          expect(Number(score)).toBeGreaterThanOrEqual(before + 50)
+          expect(Number(score)).toBeLessThanOrEqual(after + 50)
+        }
+      })
 
       it('batches empty route recovery and returns heartbeat status in one call', async () => {
         const { client, runtime } = createHarness()

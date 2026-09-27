@@ -1,35 +1,23 @@
-import { spawn } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
-import {
-  cp,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rename,
-  rm,
-  writeFile,
-} from 'node:fs/promises'
+import { cp, readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
+
+import type { SpawnedNeem } from '../../neem/tests/e2e/support/e2e.ts'
+import {
+  editWorkerFile,
+  spawnNeem,
+  waitFor,
+} from '../../neem/tests/e2e/support/e2e.ts'
+import { createTempDir } from '../../neem/tests/support/temp.ts'
 
 type RuntimeEvent = { event: string; [key: string]: unknown }
-type SpawnedNeem = ReturnType<typeof spawnNeem>
 
 const runtimeEventPrefix = 'NEEM_RUNTIME_EVENT '
-const fixtures: Array<{ cleanup: () => Promise<void> }> = []
-const spawned: SpawnedNeem[] = []
-
-afterEach(async () => {
-  await Promise.all(spawned.splice(0).map((neem) => neem.stop()))
-  await Promise.all(fixtures.splice(0).map((fixture) => fixture.cleanup()))
-})
 
 describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
   it('rotates worker generations without rebuilding planner topology', async () => {
     const fixture = await createFixture(mode)
-    fixtures.push(fixture)
     const neem = spawnNeem([
       'dev',
       '--config',
@@ -37,36 +25,58 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
       '--outDir',
       fixture.outDir,
     ])
-    spawned.push(neem)
+    const initial = await waitForGeneration('v1', 1, neem)
+    const threads = new Set(initial.map((event) => event.threadId))
+    expect(threads.size).toBe(2)
 
-    await waitForGeneration('v1', 1, 2, neem)
-    await replaceInFile(fixture.markerFile, "'v1'", "'v2'")
-    await waitForGeneration('v2', 2, 2, neem)
-    await waitFor(() => (neem.updates() >= 1 ? true : undefined), 30_000, neem)
-
-    const events = readRuntimeEvents(neem)
-    const updatedStarts = events.filter(
-      (event) => event.event === 'workflows:start' && event.marker === 'v2',
-    )
-    expect(updatedStarts).toHaveLength(2)
-    expect(updatedStarts.map((event) => event.generation)).toStrictEqual([2, 2])
-    for (const start of updatedStarts) {
-      const previous = events.findIndex(
-        (event) =>
-          event.event === 'workflows:stop' &&
-          event.threadId === start.threadId &&
-          event.generation === 1,
+    for (const generation of [2, 3]) {
+      const previous = `'v${generation - 1}'`
+      const marker = `v${generation}`
+      // Wait for the watcher to acknowledge each edit. An edit missed while
+      // its watch is restarting must not look like a worker rotation failure.
+      await editWorkerFile(neem, fixture.markerFile, (content) => {
+        expect(content).toContain(previous)
+        return content.replace(previous, `'${marker}'`)
+      })
+      const starts = await waitForGeneration(marker, generation, neem)
+      await waitFor(
+        () => {
+          const patches = neem
+            .events()
+            .filter((event) => event.event === 'runtime:patch-applied')
+          return patches.length >= generation - 1
+        },
+        30_000,
+        () => diagnostics(neem),
       )
-      expect(previous).toBeGreaterThanOrEqual(0)
-      expect(previous).toBeLessThan(events.indexOf(start))
+
+      expect(starts).toHaveLength(2)
+      expect(new Set(starts.map((event) => event.threadId))).toEqual(threads)
+      const events = readRuntimeEvents(neem)
+      for (const start of starts) {
+        const stopped = events.findIndex(
+          (event) =>
+            event.event === 'workflows:stop' &&
+            event.threadId === start.threadId &&
+            event.generation === generation - 1,
+        )
+        const started = events.findIndex(
+          (event) =>
+            event.event === 'workflows:start' &&
+            event.threadId === start.threadId &&
+            event.generation === generation,
+        )
+        expect(stopped).toBeGreaterThanOrEqual(0)
+        expect(stopped).toBeLessThan(started)
+      }
     }
-    await replaceInFile(fixture.markerFile, "'v2'", "'v3'")
-    await waitForGeneration('v3', 3, 2, neem)
+    expect(
+      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
+    ).toHaveLength(0)
   }, 60_000)
 
   it('omits DevEngine instrumentation from production worker artifacts', async () => {
     const fixture = await createFixture(mode)
-    fixtures.push(fixture)
     const neem = spawnNeem([
       'build',
       '--config',
@@ -74,10 +84,8 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
       '--outDir',
       fixture.outDir,
     ])
-    spawned.push(neem)
-
     const exit = await neem.waitForExit()
-    expect(exit.code, neem.diagnostics()).toBe(0)
+    expect(exit.code, diagnostics(neem)).toBe(0)
 
     // The shared Neem bootstrap keeps its receive path in all modes; only
     // the application worker artifact receives DevEngine instrumentation.
@@ -99,8 +107,7 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
 
 async function createFixture(mode: string) {
   const tempRoot = resolve(import.meta.dirname, '.tmp')
-  await mkdir(tempRoot, { recursive: true })
-  const dir = await mkdtemp(resolve(tempRoot, 'restart-'))
+  const dir = await createTempDir('restart-', tempRoot)
   const fixtureDir = resolve(dir, 'fixture')
   await cp(resolve(import.meta.dirname, 'fixtures/restart'), fixtureDir, {
     recursive: true,
@@ -113,31 +120,17 @@ async function createFixture(mode: string) {
     )
   }
 
-  return {
-    configFile: resolve(fixtureDir, 'neem.config.ts'),
-    markerFile: resolve(fixtureDir, 'marker.ts'),
-    outDir: resolve(dir, '.neem'),
-    cleanup: () => rm(dir, { recursive: true, force: true }),
-  }
-}
-
-async function replaceInFile(
-  file: string,
-  search: string,
-  replacement: string,
-): Promise<void> {
-  await updateFileAtomically(file, (content) => {
-    expect(content).toContain(search)
-    return content.replace(search, replacement)
-  })
+  const configFile = resolve(fixtureDir, 'neem.config.ts')
+  const markerFile = resolve(fixtureDir, 'marker.ts')
+  const outDir = resolve(dir, '.neem')
+  return { configFile, markerFile, outDir }
 }
 
 async function waitForGeneration(
   marker: string,
   generation: number,
-  count: number,
   neem: SpawnedNeem,
-): Promise<RuntimeEvent[]> {
+) {
   return waitFor(
     () => {
       const events = readRuntimeEvents(neem).filter(
@@ -146,56 +139,11 @@ async function waitForGeneration(
           event.marker === marker &&
           event.generation === generation,
       )
-      return events.length >= count ? events : undefined
+      return events.length >= 2 ? events : undefined
     },
     30_000,
-    neem,
+    () => diagnostics(neem),
   )
-}
-
-function spawnNeem(args: readonly string[]) {
-  const child = spawn(
-    process.execPath,
-    [resolve(import.meta.dirname, '../../neem/bin/neem.js'), ...args],
-    {
-      env: { ...process.env, NODE_ENV: 'test', NEEM_TEST_PROBE: '1' },
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-    },
-  )
-  const probes: string[] = []
-  child.on('message', (message: { event?: string }) => {
-    if (message.event) probes.push(message.event)
-  })
-  let stdout = ''
-  let stderr = ''
-  let exitState:
-    | { code: number | null; signal: NodeJS.Signals | null }
-    | undefined
-  child.stdout?.on('data', (chunk) => (stdout += String(chunk)))
-  child.stderr?.on('data', (chunk) => (stderr += String(chunk)))
-  const exit = new Promise<NonNullable<typeof exitState>>((resolveExit) => {
-    child.once('exit', (code, signal) => {
-      exitState = { code, signal }
-      resolveExit(exitState)
-    })
-  })
-
-  return {
-    diagnostics: () =>
-      `stdout:\n${stdout}\nstderr:\n${stderr}\nprobes:\n${probes.join('\n')}`,
-    updates: () =>
-      probes.filter((event) => event === 'runtime:patch-applied').length,
-    exited: () => exitState,
-    stdout: () => stdout,
-    waitForExit: () => exit,
-    async stop() {
-      if (!exitState) child.kill('SIGTERM')
-      if (!(await settlesWithin(exit, 2_000)) && !exitState) {
-        child.kill('SIGKILL')
-      }
-      await exit
-    },
-  }
 }
 
 async function listJavaScriptFiles(dir: string): Promise<string[]> {
@@ -220,49 +168,6 @@ function readRuntimeEvents(neem: SpawnedNeem): RuntimeEvent[] {
     )
 }
 
-async function updateFileAtomically(
-  file: string,
-  update: (content: string) => string,
-): Promise<void> {
-  const temporary = `${file}.${randomUUID()}.tmp`
-  await writeFile(temporary, update(await readFile(file, 'utf8')))
-  await rename(temporary, file)
-}
-
-async function waitFor<T>(
-  operation: () => T | undefined | Promise<T | undefined>,
-  timeoutMs: number,
-  neem: SpawnedNeem,
-): Promise<T> {
-  const started = Date.now()
-  while (Date.now() - started < timeoutMs) {
-    const value = await operation()
-    if (value !== undefined) return value
-    if (neem.exited()) {
-      throw new Error(
-        `Neem exited before the expected event\n${neem.diagnostics()}`,
-      )
-    }
-    await new Promise((resolve) => setTimeout(resolve, 25))
-  }
-  throw new Error(`Timed out after ${timeoutMs}ms\n${neem.diagnostics()}`)
-}
-
-async function settlesWithin(
-  promise: Promise<unknown>,
-  timeoutMs: number,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(false), timeoutMs)
-    void promise.then(
-      () => {
-        clearTimeout(timer)
-        resolve(true)
-      },
-      () => {
-        clearTimeout(timer)
-        resolve(true)
-      },
-    )
-  })
+function diagnostics(neem: SpawnedNeem) {
+  return `stdout:\n${neem.stdout()}\nstderr:\n${neem.stderr()}\nprobes:\n${JSON.stringify(neem.events())}`
 }
