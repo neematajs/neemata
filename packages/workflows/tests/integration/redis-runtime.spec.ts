@@ -632,18 +632,21 @@ for (const target of targets) {
             })
           }),
         )
-        await Promise.all(
-          runs.map(async (run) => {
-            await runtime.store.completeRun({ runId: run.id, output: null })
-          }),
-        )
 
+        // Count the seeded state while runs are active. Once completion starts,
+        // early families may expire before all 250 completions have finished.
         const familyPattern = `${keyPrefix}family:*`
         const rootPattern = `${keyPrefix}run-root:*`
         expect(await countMatchingKeys(client, familyPattern)).toBeGreaterThan(
           500,
         )
         expect(await countMatchingKeys(client, rootPattern)).toBe(runs.length)
+
+        await Promise.all(
+          runs.map(async (run) => {
+            await runtime.store.completeRun({ runId: run.id, output: null })
+          }),
+        )
 
         await waitForAsync(async () => {
           return (await countMatchingKeys(client, familyPattern)) === 0
