@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInMemoryWorkflowRuntime,
@@ -7,8 +7,7 @@ import {
   SELF_CHILD_KEY,
 } from '../src/runtime/index.ts'
 
-const waitForReleaseBackoff = () =>
-  new Promise((resolve) => setTimeout(resolve, 60))
+afterEach(() => vi.useRealTimers())
 
 describe('in-memory workflow store', () => {
   it('creates runs, leases one coordinator at a time, and releases leases', async () => {
@@ -911,6 +910,8 @@ describe('in-memory workflow store', () => {
   })
 
   it('queues, claims, acknowledges, and releases run and attempt commands', async () => {
+    // Only the adapter's clock is frozen; asynchronous test machinery stays real.
+    vi.useFakeTimers({ toFake: ['Date'] })
     const runtime = createInMemoryWorkflowRuntime()
     const continueCommand = {
       kind: 'continueRun' as const,
@@ -971,6 +972,7 @@ describe('in-memory workflow store', () => {
     await runtime.runCoordinationExecutor.release(releasedRun!)
     expect(runtime.inspect().continueRunCommands).toHaveLength(2)
 
+    vi.setSystemTime(Date.now() + 49)
     const requeuedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
       workflowNames: ['case-generation'],
@@ -978,7 +980,7 @@ describe('in-memory workflow store', () => {
     })
     expect(requeuedRun).toBeNull()
 
-    await waitForReleaseBackoff()
+    vi.setSystemTime(Date.now() + 1)
 
     const delayedRequeuedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
@@ -1019,6 +1021,7 @@ describe('in-memory workflow store', () => {
     await runtime.attemptExecutor.release(claimedActivity!)
     expect(runtime.inspect().activityCommands).toHaveLength(1)
 
+    vi.setSystemTime(Date.now() + 49)
     const releasedActivity = await runtime.attemptExecutor.claim({
       taskNames: [],
       workerId: 'worker-1',
@@ -1028,7 +1031,7 @@ describe('in-memory workflow store', () => {
     })
     expect(releasedActivity).toBeNull()
 
-    await waitForReleaseBackoff()
+    vi.setSystemTime(Date.now() + 1)
 
     const delayedReleasedActivity = await runtime.attemptExecutor.claim({
       taskNames: [],

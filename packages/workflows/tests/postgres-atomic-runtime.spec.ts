@@ -1,7 +1,7 @@
 import { PGlite, type Transaction } from '@electric-sql/pglite'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import type { ClaimedAttempt } from '../src/runtime/index.ts'
 import {
@@ -22,6 +22,19 @@ import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 type Row = Record<string, unknown>
+
+afterEach(() => vi.restoreAllMocks())
+
+function claimOnce<Params, Claim>(executor: {
+  claim: (params: Params) => Promise<Claim | null>
+}) {
+  // Inspect the failed transaction before a released command can be retried,
+  // regardless of how much time passes between claims under test load.
+  const claim = executor.claim.bind(executor)
+  vi.spyOn(executor, 'claim')
+    .mockImplementationOnce(claim)
+    .mockResolvedValue(null)
+}
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
@@ -138,6 +151,7 @@ test('rolls back empty workflow completion when command ack fails', async () => 
   const failingRuntime = createPostgresWorkflowRuntime({
     connection: failNextCommandAck(connection),
   })
+  claimOnce(failingRuntime.runCoordinationExecutor)
   const workflow = defineWorkflow({
     name: 'atomic-continuation-empty-workflow',
     input: Schema.Struct({ value: Schema.String }),
@@ -175,6 +189,7 @@ test('rolls back workflow continuation when command ack lease is stale', async (
   const staleRuntime = createPostgresWorkflowRuntime({
     connection: staleNextCommandAckLease(connection),
   })
+  claimOnce(staleRuntime.runCoordinationExecutor)
   const workflow = defineWorkflow({
     name: 'stale-continuation-empty-workflow',
     input: Schema.Struct({ value: Schema.String }),
@@ -209,6 +224,7 @@ test('rolls back activity dispatch when command ack fails', async () => {
   const failingRuntime = createPostgresWorkflowRuntime({
     connection: failNextCommandAck(connection),
   })
+  claimOnce(failingRuntime.runCoordinationExecutor)
   const workflow = defineWorkflow({
     name: 'atomic-continuation-activity-workflow',
     input: Schema.Struct({ value: Schema.String }),
@@ -257,6 +273,7 @@ test('rolls back standalone task completion when command ack fails', async () =>
   const failingRuntime = createPostgresWorkflowRuntime({
     connection: failNextCommandAck(connection),
   })
+  claimOnce(failingRuntime.attemptExecutor)
   const task = defineTask({
     name: 'atomic-completion-task',
     input: Schema.Struct({ text: Schema.String }),
@@ -297,6 +314,7 @@ test('rolls back standalone task failure when command ack fails', async () => {
   const failingRuntime = createPostgresWorkflowRuntime({
     connection: failNextCommandAck(connection),
   })
+  claimOnce(failingRuntime.attemptExecutor)
   const task = defineTask({
     name: 'atomic-failure-task',
     input: Schema.Struct({ text: Schema.String }),
@@ -343,6 +361,7 @@ test('rolls back activity completion when command ack fails', async () => {
   const failingRuntime = createPostgresWorkflowRuntime({
     connection: failNextCommandAck(connection),
   })
+  claimOnce(failingRuntime.attemptExecutor)
   const workflow = defineWorkflow({
     name: 'atomic-completion-workflow',
     input: Schema.Struct({ value: Schema.String }),
@@ -405,6 +424,7 @@ test('rolls back activity completion when command ack lease is stale', async () 
   const staleRuntime = createPostgresWorkflowRuntime({
     connection: staleNextCommandAckLease(connection),
   })
+  claimOnce(staleRuntime.attemptExecutor)
   const workflow = defineWorkflow({
     name: 'stale-completion-workflow',
     input: Schema.Struct({ value: Schema.String }),
