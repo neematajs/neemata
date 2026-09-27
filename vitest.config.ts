@@ -8,7 +8,9 @@ export default defineConfig({
     projects: ['./packages/*', '!./packages/proxy'],
     coverage: {
       enabled: false,
-      include: ['packages/*/src/**'],
+      // Vitest 5 matches coverage paths relative to the project root, which is
+      // the package directory when a single project is selected via --project.
+      include: ['packages/*/src/**', 'src/**'],
       reporter: ['text', 'text-summary', 'html'],
     },
   },
