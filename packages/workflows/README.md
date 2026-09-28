@@ -706,6 +706,13 @@ business rejections belong in typed task outputs; thrown errors remain runtime
 failures. Consumers of `start-only` now wait for child completion, and consumers
 of `wait-settled` must stop reading per-item runtime status from successful output.
 
+A task's `retry` is its default policy. A `retry` declared on a node replaces it
+whole, including delay and backoff. On a `mapTask` node that policy applies to
+each item on its own: every mapped child gets its own automatic budget, so N
+failing items can make up to N × `attempts` handler calls. Keep `attempts` low
+on maps whose items call metered services. The 0.17 betas ignored map-node
+`retry` overrides.
+
 After retry, refresh the same run and open a new `watch()` iterator: the previous
 iterator ended when the run failed. A retry is rejected while a coordinator or
 attempt still holds a live lease; allow it to settle before retrying. This avoids
