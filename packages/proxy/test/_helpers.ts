@@ -21,6 +21,24 @@ export async function getFreePort(): Promise<number> {
   })
 }
 
+// Binding to port 0 lets the OS reserve the port, unlike probing with getFreePort.
+export async function listenOnEphemeralPort(
+  server: net.Server,
+): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      const addr = server.address()
+      if (!addr || typeof addr === 'string') {
+        reject(new Error('Failed to read listener port'))
+        return
+      }
+      resolve(addr.port)
+    })
+  })
+}
+
 export async function httpGet(
   port: number,
   path: string,

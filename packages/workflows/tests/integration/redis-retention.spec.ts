@@ -171,9 +171,19 @@ for (const target of redisTargets) {
           return run
         }
 
+        // Ages every expiry entry past due instead of waiting out a short
+        // retention window, which slow setup could overrun on its own.
+        async function expireTerminalEntries(
+          client: Redis | Valkey,
+          terminal: string,
+        ) {
+          const ids = await client.zrange(terminal, '-inf', '+inf', 'BYSCORE')
+          await client.zadd(terminal, 'XX', ...ids.flatMap((id) => ['1', id]))
+        }
+
         it('drops expired run ids from the chronological index while a run stays active', async () => {
           const { client, runtime, ordered, terminal } = createHarness({
-            terminalRetentionMs: 100,
+            terminalRetentionMs: 60_000,
           })
           const active = await runtime.store.createRun({
             workflowName: 'long',
@@ -183,7 +193,7 @@ for (const target of redisTargets) {
             await completeFamily(runtime.store)
           }
           expect(await client.zcard(ordered)).toBe(21)
-          await wait(160)
+          await expireTerminalEntries(client, terminal)
           // No listing or pruning runs here: the next terminal transition alone
           // has to bring the index back to the retention window.
           const latest = await completeFamily(runtime.store)
@@ -197,7 +207,7 @@ for (const target of redisTargets) {
 
         it('keeps expiry entries until their ids left the chronological index', async () => {
           const { client, runtime, ordered, terminal } = createHarness({
-            terminalRetentionMs: 100,
+            terminalRetentionMs: 60_000,
           })
           // Completing with nothing active arms a TTL on both indexes; new work
           // then has to disarm the terminal one along with the ordered one.
@@ -211,17 +221,22 @@ for (const target of redisTargets) {
           expect(await client.pttl(terminal)).toBe(-1)
           await completeFamily(runtime.store)
           expect(await client.pttl(terminal)).toBe(-1)
-          await wait(160)
+          await expireTerminalEntries(client, terminal)
           expect(await client.zcard(terminal)).toBe(2)
           const latest = await completeFamily(runtime.store)
           expect(
             await client.zrange(ordered, '-inf', '+inf', 'BYSCORE'),
           ).toEqual([active.id, latest.id])
           await runtime.store.completeRun({ runId: active.id, output: null })
-          expect(await client.pttl(ordered)).toBeGreaterThan(0)
-          expect(await client.pttl(terminal)).toBeGreaterThan(0)
-          await wait(160)
-          expect(await client.exists(ordered, terminal)).toBe(0)
+          // Both indexes expire exactly when their last expiry entry falls due.
+          const [, lastExpiry] = await client.zrevrange(
+            terminal,
+            0,
+            0,
+            'WITHSCORES',
+          )
+          expect(await client.pexpiretime(ordered)).toBe(Number(lastExpiry))
+          expect(await client.pexpiretime(terminal)).toBe(Number(lastExpiry))
         })
 
         it('bounds the expired ids one terminal transition removes', async () => {

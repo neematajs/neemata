@@ -16,16 +16,32 @@ const RUNNER_ENTRY = new URL(
   import.meta.url,
 )
 
+// Host factories wait for the given runner command so it always arrives while
+// they are still being created, however late the test sends it.
+const UNTIL_COMMAND = `
+  import { parentPort } from 'node:worker_threads'
+  const untilCommand = (type) =>
+    new Promise((resolve) => {
+      const onMessage = (message) => {
+        if (message?.type !== type) return
+        parentPort.off('message', onMessage)
+        resolve()
+      }
+      parentPort.on('message', onMessage)
+    })
+`
+
 describe('host runner entry', () => {
   it('stops a host whose factory resolves after stop was requested', async () => {
     const runner = await createRunner(`
       import { appendFileSync } from 'node:fs'
+      ${UNTIL_COMMAND}
       const record = (event) =>
         appendFileSync(process.env.EVENTS_FILE, event + '\\n')
       export default Object.assign(
         async () => {
           record('create')
-          await new Promise((resolve) => setTimeout(resolve, 150))
+          await untilCommand('stop')
           record('created')
           return {
             start() { record('start') },
@@ -70,12 +86,13 @@ describe('host runner entry', () => {
   it('stops a host still being created when shut down without a stop', async () => {
     const runner = await createRunner(`
       import { appendFileSync } from 'node:fs'
+      ${UNTIL_COMMAND}
       const record = (event) =>
         appendFileSync(process.env.EVENTS_FILE, event + '\\n')
       export default Object.assign(
         async () => {
           record('create')
-          await new Promise((resolve) => setTimeout(resolve, 150))
+          await untilCommand('shutdown')
           return { async stop() { record('stop') } }
         },
         { [Symbol.for('neem:runtime-host')]: true },

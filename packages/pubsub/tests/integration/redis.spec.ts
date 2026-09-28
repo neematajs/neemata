@@ -11,9 +11,11 @@ import type { RedisPubSubClient } from '../../src/redis.ts'
 import {
   createTestLogger,
   createTestName,
+  createTrafficGate,
   requireServiceEnv,
   serviceTargets,
   waitFor,
+  type TrafficGate,
 } from './helpers.ts'
 
 for (const target of serviceTargets) {
@@ -24,6 +26,7 @@ for (const target of serviceTargets) {
     () => {
       const clients: RedisPubSubClient[] = []
       const adapters: RedisPubSubAdapter[] = []
+      const gates: TrafficGate[] = []
 
       afterEach(async () => {
         await Promise.allSettled(
@@ -32,6 +35,7 @@ for (const target of serviceTargets) {
         await Promise.allSettled(
           clients.splice(0).map((client) => client.quit()),
         )
+        await Promise.allSettled(gates.splice(0).map((gate) => gate.close()))
       })
 
       it('publishes typed events to all subscribers', async () => {
@@ -205,7 +209,12 @@ for (const target of serviceTargets) {
 
       it('leaves no broker subscription behind a SUBSCRIBE that timed out', async () => {
         const channel = createTestName('pubsub-timed-out')
-        const client = target.createClient({ commandTimeout: 150 })
+        const gate = await createTrafficGate(target.url!)
+        gates.push(gate)
+        const client = target.createClient({
+          commandTimeout: 150,
+          url: gate.url,
+        })
         const admin = target.createClient()
         const adapter = new RedisPubSubAdapter(
           client,
@@ -215,9 +224,22 @@ for (const target of serviceTargets) {
         adapters.push(adapter)
         await adapter.initialize()
 
-        // The broker holds the SUBSCRIBE past its timeout, then runs it.
-        await admin.call('CLIENT', 'PAUSE', '400', 'ALL')
-        await expect(adapter.subscribe(channel)).rejects.toThrow(/timed out/i)
+        // The SUBSCRIBE reaches the broker only after it timed out, and is
+        // then run.
+        gate.hold()
+        try {
+          await expect(adapter.subscribe(channel)).rejects.toThrow(/timed out/i)
+        } finally {
+          gate.release()
+        }
+        // The broker ran the late SUBSCRIBE, so NUMSUB can't read 0 before it.
+        await waitFor(() =>
+          gate
+            .received()
+            .includes(
+              `$9\r\nsubscribe\r\n$${channel.length}\r\n${channel}\r\n`,
+            ),
+        )
 
         await waitFor(async () => {
           const [, receivers] = (await admin.call(
@@ -227,11 +249,6 @@ for (const target of serviceTargets) {
           )) as [string, number]
           return receivers === 0
         })
-        await new Promise((resolve) => setTimeout(resolve, 200))
-        expect(await admin.call('PUBSUB', 'NUMSUB', channel)).toEqual([
-          channel,
-          0,
-        ])
       })
 
       it('filters selected events and unsubscribes from channels', async () => {

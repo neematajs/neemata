@@ -278,6 +278,72 @@ export async function editWorkerFile(
   )
 }
 
+/**
+ * Resolves with the patch probe proving a runtime's threads are registered
+ * patch clients. Threads register only after they report started, and an edit
+ * processed before that falls back to replacing them. A whitespace-only edit
+ * to `path` is a Noop update that rotates no generation, so it is repeated,
+ * once each fallback's replacement threads start, until one applies. With
+ * `failOnFallback`, a fallback throws instead: the replacements would prove
+ * nothing about the threads that were meant to register.
+ */
+export async function waitForPatchClients(
+  neem: SpawnedNeem,
+  options: {
+    // A module of the runtime's worker graph.
+    path: string
+    threads: number
+    runtimeName?: string
+    // Counts only threads started after this probe sequence.
+    since?: number
+    failOnFallback?: boolean
+  },
+): Promise<NeemProbeEvent> {
+  const { path, threads, runtimeName } = options
+  const ofRuntime = (event: NeemProbeEvent) =>
+    !runtimeName || event.runtimeName === runtimeName
+  const details = () =>
+    formatProcessDiagnostics(
+      neem.events(),
+      neem.stdout(),
+      neem.stderr(),
+      undefined,
+    )
+  let since = options.since ?? 0
+  for (;;) {
+    await waitFor(
+      () =>
+        neem
+          .events()
+          .filter(
+            (event) =>
+              event.sequence > since &&
+              event.event === 'runtime:thread-started' &&
+              ofRuntime(event),
+          ).length >= threads,
+      30_000,
+      details,
+    )
+    const sequence = neem.events().length
+    await editWorkerFile(neem, path, (content) => `${content}\n`)
+    const outcome = await neem.waitForEvent(
+      (event) =>
+        event.sequence > sequence &&
+        (event.event === 'runtime:patch-applied' ||
+          event.event === 'runtime:patch-fallback') &&
+        ofRuntime(event),
+      30_000,
+    )
+    if (outcome.event === 'runtime:patch-applied') return outcome
+    if (options.failOnFallback) {
+      throw new Error(
+        `Patch clients were not registered: ${String(outcome.reason)}\n${details()}`,
+      )
+    }
+    since = outcome.sequence
+  }
+}
+
 export async function writeFileAtomically(
   path: string,
   content: string,

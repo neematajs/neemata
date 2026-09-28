@@ -3,15 +3,12 @@ import http from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Proxy as NeemataProxy } from '../dist/index.js'
-import { getFreePort, httpGet, waitFor } from './_helpers'
+import { httpGet, listenOnEphemeralPort, waitFor } from './_helpers'
 
 describe('Proxy sticky sessions', () => {
   it('supports sticky sessions with cookie precedence over x-nmt-affinity-key', async () => {
     const stickyA = vi.fn()
     const stickyB = vi.fn()
-
-    const stickyAPort = await getFreePort()
-    const stickyBPort = await getFreePort()
 
     const serverA = http.createServer((_req, res) => {
       stickyA()
@@ -24,16 +21,11 @@ describe('Proxy sticky sessions', () => {
       res.end('sticky-b')
     })
 
-    await new Promise<void>((resolve) =>
-      serverA.listen(stickyAPort, '127.0.0.1', resolve),
-    )
-    await new Promise<void>((resolve) =>
-      serverB.listen(stickyBPort, '127.0.0.1', resolve),
-    )
+    const stickyAPort = await listenOnEphemeralPort(serverA)
+    const stickyBPort = await listenOnEphemeralPort(serverB)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: {
         enabled: true,
@@ -59,6 +51,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const first = await httpGet(port, '/sticky', {
         'x-nmt-affinity-key': 'client-a',
@@ -92,19 +85,15 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('issues affinity cookie when neither cookie nor header is provided', async () => {
-    const upstreamPort = await getFreePort()
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-generated')
     })
 
-    await new Promise<void>((resolve) =>
-      upstream.listen(upstreamPort, '127.0.0.1', resolve),
-    )
+    const upstreamPort = await listenOnEphemeralPort(upstream)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true, cookieName: 'nmt_affinity' },
     })
@@ -118,6 +107,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const first = await httpGet(port, '/sticky-generated')
       expect(first.status).toBe(200)
@@ -141,19 +131,15 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('uses sticky ttlMs to set cookie Max-Age', async () => {
-    const upstreamPort = await getFreePort()
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-ttl')
     })
 
-    await new Promise<void>((resolve) =>
-      upstream.listen(upstreamPort, '127.0.0.1', resolve),
-    )
+    const upstreamPort = await listenOnEphemeralPort(upstream)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true, ttlMs: 120000 },
     })
@@ -167,6 +153,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const res = await httpGet(port, '/sticky-ttl', {
         'x-nmt-affinity-key': 'ttl-check',
@@ -183,19 +170,15 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('ignores oversized affinity header and issues generated cookie key', async () => {
-    const upstreamPort = await getFreePort()
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-oversized-header')
     })
 
-    await new Promise<void>((resolve) =>
-      upstream.listen(upstreamPort, '127.0.0.1', resolve),
-    )
+    const upstreamPort = await listenOnEphemeralPort(upstream)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true },
     })
@@ -209,6 +192,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const oversized = 'x'.repeat(512)
       const res = await httpGet(port, '/sticky-oversized-header', {
@@ -227,19 +211,15 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('ignores unsafe affinity header values when issuing sticky cookies', async () => {
-    const upstreamPort = await getFreePort()
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-unsafe-header')
     })
 
-    await new Promise<void>((resolve) =>
-      upstream.listen(upstreamPort, '127.0.0.1', resolve),
-    )
+    const upstreamPort = await listenOnEphemeralPort(upstream)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true },
     })
@@ -253,6 +233,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const res = await httpGet(port, '/sticky-unsafe-header', {
         'x-nmt-affinity-key': 'unsafe; Domain=evil.test',
@@ -273,19 +254,15 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('ignores oversized affinity cookie and falls back to header key', async () => {
-    const upstreamPort = await getFreePort()
     const upstream = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-oversized-cookie')
     })
 
-    await new Promise<void>((resolve) =>
-      upstream.listen(upstreamPort, '127.0.0.1', resolve),
-    )
+    const upstreamPort = await listenOnEphemeralPort(upstream)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true },
     })
@@ -299,6 +276,7 @@ describe('Proxy sticky sessions', () => {
     })
 
     await proxy.start()
+    const port = proxy.address()!.port
     try {
       const oversized = 'y'.repeat(512)
       const res = await httpGet(port, '/sticky-oversized-cookie', {
@@ -317,9 +295,6 @@ describe('Proxy sticky sessions', () => {
   })
 
   it('remaps sticky session when mapped upstream is removed', async () => {
-    const aPort = await getFreePort()
-    const bPort = await getFreePort()
-
     const serverA = http.createServer((_req, res) => {
       res.statusCode = 200
       res.end('sticky-remap-a')
@@ -329,16 +304,11 @@ describe('Proxy sticky sessions', () => {
       res.end('sticky-remap-b')
     })
 
-    await new Promise<void>((resolve) =>
-      serverA.listen(aPort, '127.0.0.1', resolve),
-    )
-    await new Promise<void>((resolve) =>
-      serverB.listen(bPort, '127.0.0.1', resolve),
-    )
+    const aPort = await listenOnEphemeralPort(serverA)
+    const bPort = await listenOnEphemeralPort(serverB)
 
-    const port = await getFreePort()
     const proxy = new NeemataProxy({
-      listen: `127.0.0.1:${port}`,
+      listen: '127.0.0.1:0',
       applications: [{ name: 'app', routing: { type: 'default' } }],
       stickySessions: { enabled: true },
       healthCheckIntervalMs: 200,
@@ -362,6 +332,7 @@ describe('Proxy sticky sessions', () => {
     await proxy.addUpstream('app', u1)
     await proxy.addUpstream('app', u2)
     await proxy.start()
+    const port = proxy.address()!.port
 
     try {
       const first = await httpGet(port, '/sticky-remap', {

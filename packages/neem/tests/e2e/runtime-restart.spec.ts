@@ -11,12 +11,18 @@ import {
   spawnNeem,
   updateFileAtomically,
   waitFor,
+  waitForPatchClients,
 } from './support/e2e.ts'
+
+// These tests prove that threads started after a recovery register as patch
+// clients, so their warm-up must not fall back onto replacement threads. An
+// edit can still beat registration, which fails only that attempt.
+const recoveredClients = { timeout: 60_000, retry: 2 }
 
 describe('Neem runtime restart', () => {
   it('patches both threads in place after a leaf edit', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     const initial = await generations(fixture, neem, 'v1', 1)
 
     await editMarker(fixture, neem, 'v1', 'v2')
@@ -51,7 +57,7 @@ describe('Neem runtime restart', () => {
 
   it('restarts both threads from fresh output when upstreams change', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     const initial = await generations(fixture, neem, 'v1', 1)
 
     await replaceInFile(
@@ -85,7 +91,7 @@ describe('Neem runtime restart', () => {
 
   it('starts the patched marker after a planner-only reload', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
@@ -105,7 +111,7 @@ describe('Neem runtime restart', () => {
       'defineConfig({',
       'defineConfig({ build: { updates: { maxPatches: 2 } },',
     )
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
 
     for (let patch = 1; patch <= 2; patch++) {
@@ -129,28 +135,39 @@ describe('Neem runtime restart', () => {
     ).toHaveLength(2)
   }, 60_000)
 
-  it('refreshes a stale bundle after host-internal crash recovery', async () => {
-    const fixture = await createFixture()
-    const crashFile = resolve(fixture.dir, 'crash')
-    const neem = start(fixture, { NEEM_RESTART_CRASH_FILE: crashFile })
-    await generations(fixture, neem, 'v1', 1)
-    await editMarker(fixture, neem, 'v1', 'v2')
-    await generations(fixture, neem, 'v2', 2)
-    await applied(neem, 1)
+  it(
+    'refreshes a stale bundle after host-internal crash recovery',
+    recoveredClients,
+    async () => {
+      const fixture = await createFixture()
+      const crashFile = resolve(fixture.dir, 'crash')
+      const neem = await startWithPatchClients(fixture, {
+        NEEM_RESTART_CRASH_FILE: crashFile,
+      })
+      await generations(fixture, neem, 'v1', 1)
+      await editMarker(fixture, neem, 'v1', 'v2')
+      await generations(fixture, neem, 'v2', 2)
+      await applied(neem, 1)
 
-    await writeFile(crashFile, '')
-    await generations(fixture, neem, 'v2', 1)
-    // Recovery-created threads must also be registered as patch clients.
-    await editMarker(fixture, neem, 'v2', 'v3')
-    await generations(fixture, neem, 'v3', 2)
-    await applied(neem, 2)
-  }, 60_000)
+      const crashed = neem.events().length
+      await writeFile(crashFile, '')
+      await generations(fixture, neem, 'v2', 1)
+      // Recovery-created threads must also be registered as patch clients.
+      await patchClients(fixture, neem, {
+        since: crashed,
+        failOnFallback: true,
+      })
+      await editMarker(fixture, neem, 'v2', 'v3')
+      await generations(fixture, neem, 'v3', 2)
+      await applied(neem, 1)
+    },
+  )
 
   it('recovers a crashed runtime from output that includes accepted patches', async () => {
     const fixture = await createFixture()
     const crashFile = resolve(fixture.dir, 'crash')
     const retiredFile = resolve(fixture.dir, 'retired')
-    const neem = start(fixture, {
+    const neem = await startWithPatchClients(fixture, {
       NEEM_RESTART_CRASH_FILE: crashFile,
       NEEM_RESTART_RETIRED_FILE: retiredFile,
     })
@@ -168,7 +185,9 @@ describe('Neem runtime restart', () => {
   it('loads an edit to a lazily imported module that has not run yet', async () => {
     const fixture = await createFixture()
     const lazyFile = resolve(fixture.dir, 'lazy')
-    const neem = start(fixture, { NEEM_RESTART_LAZY_FILE: lazyFile })
+    const neem = await startWithPatchClients(fixture, {
+      NEEM_RESTART_LAZY_FILE: lazyFile,
+    })
     await generations(fixture, neem, 'v1', 1)
     await replaceInFile(
       resolve(fixture.caseDir, 'lazy-value.ts'),
@@ -202,7 +221,7 @@ describe('Neem runtime restart', () => {
       "runtimes: ['./api.runtime.ts']",
       "runtimes: ['./api.runtime.ts', './aux.runtime.ts']",
     )
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await auxStarted(fixture, 'one')
 
@@ -231,7 +250,7 @@ describe('Neem runtime restart', () => {
 
   it('runs dispose callbacks of replaced modules with their hot data', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
@@ -277,7 +296,7 @@ describe('Neem runtime restart', () => {
 
   it('keeps the last generation on a syntax error and patches after repair', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await replaceInFile(fixture.valueFile, "marker: 'v1'", 'marker: !!!', neem)
     await neem.waitForEvent(
@@ -295,7 +314,7 @@ describe('Neem runtime restart', () => {
 
   it('defers a restart while the worker source fails to build', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
@@ -326,32 +345,42 @@ describe('Neem runtime restart', () => {
     expect(v1Starts).toHaveLength(2)
   }, 60_000)
 
-  it('restarts from current output when a patch retires the generation', async () => {
-    const fixture = await createFixture()
-    const neem = start(fixture)
-    await generations(fixture, neem, 'v1', 1)
+  it(
+    'restarts from current output when a patch retires the generation',
+    recoveredClients,
+    async () => {
+      const fixture = await createFixture()
+      const neem = await startWithPatchClients(fixture)
+      await generations(fixture, neem, 'v1', 1)
 
-    await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'patched'])
-    const unavailable = await neem.waitForEvent(
-      (event) => event.event === 'runtime:patch-unavailable',
-      30_000,
-    )
-    expect(unavailable.reason).toContain('Worker start failed for v2')
-    // Recovery starts fresh threads from output that includes the edit.
-    await generations(fixture, neem, 'v2', 1)
-    expect(
-      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
-    ).toHaveLength(2)
+      await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'patched'])
+      const unavailable = await neem.waitForEvent(
+        (event) => event.event === 'runtime:patch-unavailable',
+        30_000,
+      )
+      expect(unavailable.reason).toContain('Worker start failed for v2')
+      // Recovery starts fresh threads from output that includes the edit.
+      await generations(fixture, neem, 'v2', 1)
+      expect(
+        neem
+          .events()
+          .filter((event) => event.event === 'runtime:thread-stopped'),
+      ).toHaveLength(2)
 
-    // The recovered threads are patch clients again.
-    await editDefinition(fixture, neem, ['v2', 'v3'], ['patched', 'never'])
-    await generations(fixture, neem, 'v3', 2)
-    await applied(neem, 1)
-  }, 60_000)
+      // The recovered threads are patch clients again.
+      await patchClients(fixture, neem, {
+        since: unavailable.sequence,
+        failOnFallback: true,
+      })
+      await editDefinition(fixture, neem, ['v2', 'v3'], ['patched', 'never'])
+      await generations(fixture, neem, 'v3', 2)
+      await applied(neem, 1)
+    },
+  )
 
   it('waits for the next successful build when the restarted output also fails', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
 
     await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'always'])
@@ -371,29 +400,39 @@ describe('Neem runtime restart', () => {
     await generations(fixture, neem, 'v3', 1)
   }, 60_000)
 
-  it('restarts a crashed watcher and applies patches afterwards', async () => {
-    const fixture = await createFixture()
-    const crashFile = resolve(fixture.dir, 'watcher-crash')
-    const neem = start(fixture, { NEEM_TEST_WATCHER_CRASH_FILE: crashFile })
-    await generations(fixture, neem, 'v1', 1)
+  it(
+    'restarts a crashed watcher and applies patches afterwards',
+    recoveredClients,
+    async () => {
+      const fixture = await createFixture()
+      const crashFile = resolve(fixture.dir, 'watcher-crash')
+      const neem = await startWithPatchClients(fixture, {
+        NEEM_TEST_WATCHER_CRASH_FILE: crashFile,
+      })
+      await generations(fixture, neem, 'v1', 1)
 
-    await writeFile(crashFile, '')
-    await neem.waitForEvent(
-      (event) => event.event === 'watcher:restarted',
-      30_000,
-    )
-    // The new watcher's build restarts the runtime, whose threads register
-    // with it as patch clients.
-    await generations(fixture, neem, 'v1', 1, 4)
+      await writeFile(crashFile, '')
+      const restarted = await neem.waitForEvent(
+        (event) => event.event === 'watcher:restarted',
+        30_000,
+      )
+      // The new watcher's build restarts the runtime, whose threads register
+      // with it as patch clients.
+      await generations(fixture, neem, 'v1', 1, 4)
+      await patchClients(fixture, neem, {
+        since: restarted.sequence,
+        failOnFallback: true,
+      })
 
-    await editMarker(fixture, neem, 'v1', 'v2')
-    await generations(fixture, neem, 'v2', 2)
-    await applied(neem, 1)
-  }, 60_000)
+      await editMarker(fixture, neem, 'v1', 'v2')
+      await generations(fixture, neem, 'v2', 2)
+      await applied(neem, 1)
+    },
+  )
 
   it('honors thread reload on the next worker definition', async () => {
     const fixture = await createFixture()
-    const neem = start(fixture)
+    const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
     await replaceInFile(
       resolve(fixture.caseDir, 'api.worker.ts'),
@@ -442,6 +481,44 @@ function start(
       env: { NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile, ...env },
     },
   )
+}
+
+// Edits made before the threads register as patch clients fall back to a
+// restart, so tests that expect patches start from registered threads. A
+// warm-up that already fell back is retried in a fresh process, which keeps
+// thread, generation and event counts exact.
+async function startWithPatchClients(
+  fixture: Awaited<ReturnType<typeof createFixture>>,
+  env: NodeJS.ProcessEnv = {},
+) {
+  for (;;) {
+    const neem = start(fixture, env)
+    await patchClients(fixture, neem)
+    if (
+      !neem.events().some((event) => event.event === 'runtime:patch-fallback')
+    ) {
+      return neem
+    }
+    await neem.stop()
+    await writeFile(fixture.eventsFile, '')
+  }
+}
+
+// The latest warm-up per process; applied() counts only later patches.
+const warmUps = new WeakMap<SpawnedNeem, number>()
+
+async function patchClients(
+  fixture: { valueFile: string },
+  neem: SpawnedNeem,
+  options: { since?: number; failOnFallback?: boolean } = {},
+) {
+  const warmUp = await waitForPatchClients(neem, {
+    path: fixture.valueFile,
+    threads: 2,
+    runtimeName: 'api',
+    ...options,
+  })
+  warmUps.set(neem, warmUp.sequence)
 }
 
 function editMarker(
@@ -527,10 +604,15 @@ async function auxStarted(fixture: { eventsFile: string }, label: string) {
 }
 
 async function applied(neem: SpawnedNeem, count: number) {
+  const since = warmUps.get(neem) ?? 0
   await waitFor(
     () =>
-      neem.events().filter((event) => event.event === 'runtime:patch-applied')
-        .length >= count,
+      neem
+        .events()
+        .filter(
+          (event) =>
+            event.sequence > since && event.event === 'runtime:patch-applied',
+        ).length >= count,
     30_000,
     () => JSON.stringify(neem.events()) + '\n' + neem.stderr(),
   )

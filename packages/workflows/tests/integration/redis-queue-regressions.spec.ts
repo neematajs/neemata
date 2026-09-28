@@ -956,7 +956,7 @@ for (const target of targets) {
 
       it('bounds a late start marker by the terminal family retention window', async () => {
         const { client, keys, runtime } = createHarness({
-          terminalRetentionMs: 300,
+          terminalRetentionMs: 60_000,
         })
         const runInput = {
           workflowName: 'terminal-repair',
@@ -988,9 +988,9 @@ for (const target of targets) {
         expect(markerTtl).toBeGreaterThan(0)
         expect(markerTtl).toBeLessThanOrEqual(familyTtl + 10)
 
-        await waitUntil(
-          async () => (await client.exists(keys.family(run.id))) === 0,
-        )
+        // The long retention keeps the family alive until its TTL is read;
+        // expiring both stands in for the window elapsing.
+        await client.del(keys.family(run.id), markerKey)
         await queue.enqueueWithMarker(command, markerKey)
         expect(await client.exists(markerKey)).toBe(0)
       })

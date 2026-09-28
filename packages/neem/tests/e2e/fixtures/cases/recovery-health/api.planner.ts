@@ -12,5 +12,7 @@ export default defineRuntimePlanner(() => {
     10,
   )
 
-  return { workers: [{ attempt, marker, port, recoveryDelayMs: 1_500 }] }
+  const release = process.env.NEEM_RECOVERY_HEALTH_RELEASE ?? ''
+
+  return { workers: [{ attempt, marker, port, release }] }
 })

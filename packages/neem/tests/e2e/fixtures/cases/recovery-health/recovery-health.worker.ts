@@ -1,5 +1,5 @@
 import type { Server } from 'node:http'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -10,8 +10,13 @@ type RecoveryHealthData = {
   attempt: number
   marker: string
   port: number
-  recoveryDelayMs: number
+  release: string
 }
+
+// Bounded below Neem's 30 s worker startup deadline so a test that never
+// releases fails on its own assertions instead of hanging. Starting without
+// the release would end the window the test observes, so the deadline fails.
+const RELEASE_TIMEOUT_MS = 20_000
 
 export default defineRuntimeWorker<RecoveryHealthData>({
   definition: { fixture: 'recovery-health' },
@@ -28,7 +33,13 @@ export default defineRuntimeWorker<RecoveryHealthData>({
             name: ctx.name,
             port: ctx.data.port,
           })
-          await wait(ctx.data.recoveryDelayMs)
+          const deadline = Date.now() + RELEASE_TIMEOUT_MS
+          while (!existsSync(ctx.data.release)) {
+            if (Date.now() >= deadline) {
+              throw new Error('recovery health fixture was never released')
+            }
+            await wait(25)
+          }
         }
 
         server = createServer((request, response) => {

@@ -484,6 +484,33 @@ function rejectClientClockCommandParams(
   return wrap(connection)
 }
 
+/**
+ * Brackets `operation` with database clock reads. A deadline it stores must
+ * fall inside the bracket shifted by its delay, however late it is read back;
+ * comparing against `now()` at read time charges that latency to the delay.
+ */
+async function databaseClockBracket<Result>(
+  connection: WorkflowPostgresConnection,
+  operation: () => Promise<Result>,
+) {
+  const read = async () => {
+    const result = await connection.query<{ now: Date }>(
+      'SELECT clock_timestamp() AS now',
+    )
+    return result.rows[0]!.now.getTime()
+  }
+  const before = await read()
+  const result = await operation()
+  const after = await read()
+  return {
+    result,
+    expectDeadline(deadline: Date, delayMs: number) {
+      expect(deadline.getTime()).toBeGreaterThanOrEqual(before + delayMs)
+      expect(deadline.getTime()).toBeLessThanOrEqual(after + delayMs)
+    },
+  }
+}
+
 async function installChildAttemptUpdateFailure(
   connection: WorkflowPostgresConnection,
 ) {
@@ -1505,22 +1532,20 @@ test('postgres error releases record delivery metadata and cap exponential backo
     leaseMs: 30_000,
   })
 
-  await runtime.attemptExecutor.release(claimed!, {
-    error: new Error('first poison'),
-  })
+  const firstReleaseClock = await databaseClockBracket(connection, () =>
+    runtime.attemptExecutor.release(claimed!, {
+      error: new Error('first poison'),
+    }),
+  )
 
   const firstRelease = await connection.query<{
     delivery_count: number
     last_error: { message: string }
-    delay_ms: number
+    run_at: Date
     dead_at: Date | null
   }>(
     `
-      SELECT
-        delivery_count,
-        last_error,
-        EXTRACT(EPOCH FROM (run_at - now())) * 1000 AS delay_ms,
-        dead_at
+      SELECT delivery_count, last_error, run_at, dead_at
       FROM workflow_commands
       WHERE attempt_id = $1
     `,
@@ -1530,8 +1555,8 @@ test('postgres error releases record delivery metadata and cap exponential backo
   expect(firstRelease.rows[0]?.last_error).toMatchObject({
     message: 'first poison',
   })
-  expect(Number(firstRelease.rows[0]?.delay_ms)).toBeGreaterThanOrEqual(50)
-  expect(Number(firstRelease.rows[0]?.delay_ms)).toBeLessThan(500)
+  // First error release: 2 * the 50 ms release backoff.
+  firstReleaseClock.expectDeadline(firstRelease.rows[0]!.run_at, 100)
   expect(firstRelease.rows[0]?.dead_at).toBeNull()
 
   await connection.query(
@@ -1672,68 +1697,45 @@ test('uses postgres-side timestamps for command claim, heartbeat, and release', 
   }
 
   await runtime.attemptExecutor.dispatchActivity(command)
-  const claimed = await runtime.attemptExecutor.claim({
-    taskNames: [],
-    workerId: 'activity-worker-1',
-    workflowNames: [command.workflowName],
-    activityNames: [command.activityName],
-    leaseMs: 1000,
-  })
+  const claimClock = await databaseClockBracket(connection, () =>
+    runtime.attemptExecutor.claim({
+      taskNames: [],
+      workerId: 'activity-worker-1',
+      workflowNames: [command.workflowName],
+      activityNames: [command.activityName],
+      leaseMs: 1000,
+    }),
+  )
+  const claimed = claimClock.result
   expect(claimed).not.toBeNull()
+  const readCommand = async () => {
+    const result = await connection.query<{
+      lease_expires_at: Date | null
+      run_at: Date
+    }>(
+      `
+        SELECT lease_expires_at, run_at
+        FROM workflow_commands
+        WHERE attempt_id = $1
+      `,
+      [command.attemptId],
+    )
+    return result.rows[0]!
+  }
+  claimClock.expectDeadline((await readCommand()).lease_expires_at!, 1000)
 
-  const claimedLease = await connection.query<{
-    lease_expires_at: Date
-    db_now: Date
-  }>(
-    `
-      SELECT lease_expires_at, now() AS db_now
-      FROM workflow_commands
-      WHERE attempt_id = $1
-    `,
-    [command.attemptId],
+  const heartbeatClock = await databaseClockBracket(connection, () =>
+    runtime.attemptExecutor.heartbeat(claimed!, 2000),
   )
-  const claimedDelta =
-    claimedLease.rows[0]!.lease_expires_at.getTime() -
-    claimedLease.rows[0]!.db_now.getTime()
-  expect(claimedDelta).toBeGreaterThan(800)
-  expect(claimedDelta).toBeLessThan(1200)
+  heartbeatClock.expectDeadline((await readCommand()).lease_expires_at!, 2000)
 
-  await runtime.attemptExecutor.heartbeat(claimed!, 2000)
-  const heartbeatLease = await connection.query<{
-    lease_expires_at: Date
-    db_now: Date
-  }>(
-    `
-      SELECT lease_expires_at, now() AS db_now
-      FROM workflow_commands
-      WHERE attempt_id = $1
-    `,
-    [command.attemptId],
+  const releaseClock = await databaseClockBracket(connection, () =>
+    runtime.attemptExecutor.release(claimed!),
   )
-  const heartbeatDelta =
-    heartbeatLease.rows[0]!.lease_expires_at.getTime() -
-    heartbeatLease.rows[0]!.db_now.getTime()
-  expect(heartbeatDelta).toBeGreaterThan(1800)
-  expect(heartbeatDelta).toBeLessThan(2200)
-
-  await runtime.attemptExecutor.release(claimed!)
-  const released = await connection.query<{
-    run_at: Date
-    db_now: Date
-    lease_expires_at: Date | null
-  }>(
-    `
-      SELECT run_at, lease_expires_at, now() AS db_now
-      FROM workflow_commands
-      WHERE attempt_id = $1
-    `,
-    [command.attemptId],
-  )
-  const releaseDelta =
-    released.rows[0]!.run_at.getTime() - released.rows[0]!.db_now.getTime()
-  expect(released.rows[0]!.lease_expires_at).toBeNull()
-  expect(releaseDelta).toBeGreaterThanOrEqual(0)
-  expect(releaseDelta).toBeLessThan(500)
+  const released = await readCommand()
+  expect(released.lease_expires_at).toBeNull()
+  // The plain release backoff.
+  releaseClock.expectDeadline(released.run_at, 50)
 })
 
 test('renews run leases', async () => {

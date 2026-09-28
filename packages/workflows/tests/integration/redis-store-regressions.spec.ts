@@ -20,6 +20,7 @@ import {
   runWorkflowWorker,
 } from '../../src/runtime/index.ts'
 import { reapDeadWorkflowCommands } from '../../src/runtime/worker.ts'
+import { matchingKeys } from './helpers.ts'
 
 const targets = [
   { name: 'Redis', url: process.env.REDIS_URL, Client: Redis },
@@ -742,7 +743,7 @@ for (const target of targets) {
       })
 
       it('keeps chronological pages alive when new work outlives retained history', async () => {
-        const { client, keyPrefix, runtime } = createHarness(100)
+        const { client, keyPrefix, runtime } = createHarness(60_000)
         const old = await runtime.store.createRun({
           workflowName: 'old',
           input: null,
@@ -754,7 +755,7 @@ for (const target of targets) {
           input: null,
         })
         expect(await client.pttl(`${keyPrefix}runs:ordered`)).toBe(-1)
-        await new Promise((resolve) => setTimeout(resolve, 160))
+        await expireRetainedKeys(client, keyPrefix)
         expect(
           (await runtime.store.listRuns()).runs.map((run) => run.id),
         ).toEqual([active.id])
@@ -765,7 +766,7 @@ for (const target of targets) {
       })
 
       it('expires the terminal index without requiring a reader or pruner', async () => {
-        const { client, keyPrefix, runtime } = createHarness(100)
+        const { client, keyPrefix, runtime } = createHarness(60_000)
         const run = await runtime.store.createRun({
           workflowName: 'retention',
           input: null,
@@ -774,13 +775,13 @@ for (const target of targets) {
         expect(await client.pttl(`${keyPrefix}runs:terminal`)).toBeGreaterThan(
           0,
         )
-        await new Promise((resolve) => setTimeout(resolve, 160))
+        await expireRetainedKeys(client, keyPrefix)
         expect(await client.exists(`${keyPrefix}runs:terminal`)).toBe(0)
         expect(await client.exists(`${keyPrefix}runs:ordered`)).toBe(0)
       })
 
       it('removes family retention on retry and rearms it after completion', async () => {
-        const { client, keyPrefix, runtime } = createHarness(250)
+        const { client, keyPrefix, runtime } = createHarness(60_000)
         const workflows = createWorkflowRuntimeClient(runtime)
         const run = await runtime.store.createRun({
           workflowName: 'retry-retention',
@@ -812,7 +813,7 @@ for (const target of targets) {
         expect(
           await client.zscore(`${keyPrefix}runs:active`, run.id),
         ).not.toBeNull()
-        await new Promise((resolve) => setTimeout(resolve, 300))
+        await expireRetainedKeys(client, keyPrefix)
         expect(
           (await runtime.store.loadRunSnapshot(run.id))?.run.input,
         ).toStrictEqual(payload)
@@ -820,7 +821,7 @@ for (const target of targets) {
         expect(
           await client.pttl(`${keyPrefix}family:${run.id}`),
         ).toBeGreaterThan(0)
-        await new Promise((resolve) => setTimeout(resolve, 300))
+        await expireRetainedKeys(client, keyPrefix)
         expect(await runtime.store.loadRunSnapshot(run.id)).toBeUndefined()
       })
 
@@ -905,7 +906,7 @@ for (const target of targets) {
       })
 
       it('keeps late terminal leases inside the family retention window', async () => {
-        const { client, keyPrefix, runtime } = createHarness(100)
+        const { client, keyPrefix, runtime } = createHarness(60_000)
         const run = await runtime.store.createRun({
           workflowName: 'terminal-lease',
           input: null,
@@ -913,16 +914,17 @@ for (const target of targets) {
         await runtime.store.completeRun({ runId: run.id, output: null })
         const lease = await runtime.store.acquireRunLease({
           runId: run.id,
-          leaseMs: 30_000,
+          leaseMs: 600_000,
         })
         expect(lease).toBeDefined()
-        expect(
-          await client.pttl(`${keyPrefix}family:${run.id}:leases`),
-        ).toBeGreaterThan(0)
-        await new Promise((resolve) => setTimeout(resolve, 160))
-        expect(await client.exists(`${keyPrefix}family:${run.id}:leases`)).toBe(
-          0,
+        // Read the family first: the lease expiry is copied from it and may
+        // only have counted down since.
+        const familyTtl = await client.pttl(`${keyPrefix}family:${run.id}`)
+        const leasesTtl = await client.pttl(
+          `${keyPrefix}family:${run.id}:leases`,
         )
+        expect(leasesTtl).toBeGreaterThan(0)
+        expect(leasesTtl).toBeLessThanOrEqual(familyTtl)
       })
 
       it('does not prune live terminal indexes using a skewed client clock', async () => {
@@ -1073,4 +1075,12 @@ for (const target of targets) {
       })
     },
   )
+}
+
+// Stands in for the retention window elapsing without racing it: only keys
+// that carry an expiry disappear, so anything whose retention was lifted stays.
+async function expireRetainedKeys(client: Redis | Valkey, keyPrefix: string) {
+  for (const key of await matchingKeys(client, `${keyPrefix}*`)) {
+    if ((await client.pttl(key)) > 0) await client.del(key)
+  }
 }

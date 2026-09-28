@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite'
 import * as Context from 'effect/Context'
 import * as Schema from 'effect/Schema'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -29,6 +29,8 @@ const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
 
 const testContext = Context.empty()
+
+afterEach(() => vi.useRealTimers())
 
 function schedulerContract(name: string, createRuntime: RuntimeFactory) {
   describe(`${name} workflow scheduler`, () => {
@@ -143,7 +145,11 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
         output: Schema.Struct({ caseId: Schema.String }),
       }).build()
       const runtime = await createRuntime()
-      const before = Date.now()
+      // Only the adapters' clock is frozen so reconcile time is exactly `now`
+      // and cannot cross a cron slot boundary; async machinery stays real.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      const now = Date.parse('2026-01-01T00:00:02.500Z')
+      vi.setSystemTime(now)
 
       await runtime.scheduler!.reconcile([
         defineSchedule({
@@ -164,10 +170,8 @@ function schedulerContract(name: string, createRuntime: RuntimeFactory) {
       const every = schedules.find((item) => item.name.endsWith('every-next'))
       const cron = schedules.find((item) => item.name.endsWith('cron-next'))
 
-      expect(every?.nextRunAt).toBeGreaterThanOrEqual(before + 4_000)
-      expect(every?.nextRunAt).toBeLessThanOrEqual(before + 6_000)
-      expect(cron?.nextRunAt).toBeGreaterThan(before)
-      expect(cron?.nextRunAt).toBeLessThanOrEqual(before + 5_000)
+      expect(every?.nextRunAt).toBe(now + 5_000)
+      expect(cron?.nextRunAt).toBe(Date.parse('2026-01-01T00:00:05.000Z'))
     })
 
     it('fires due schedules once per slot and advances past now while skipping missed slots', async () => {

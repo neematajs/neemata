@@ -8,6 +8,7 @@ import {
   editWorkerFile,
   spawnNeem,
   waitFor,
+  waitForPatchClients,
 } from '../../neem/tests/e2e/support/e2e.ts'
 import { createTempDir } from '../../neem/tests/support/temp.ts'
 
@@ -25,13 +26,21 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
       '--outDir',
       fixture.outDir,
     ])
-    const initial = await waitForGeneration('v1', 1, neem)
-    const threads = new Set(initial.map((event) => event.threadId))
-    expect(threads.size).toBe(2)
+    await waitForGeneration('v1', 1, neem)
+    const baseline = await waitForPatchClients(neem, {
+      path: fixture.markerFile,
+      threads: 2,
+      runtimeName: 'workflows',
+    })
 
+    // The warm-up may replace the initial threads, so the first rotation
+    // fixes the thread set; each rotation stopping the previous generation
+    // on the same thread proves it happened in place.
+    let threads: Set<unknown> | undefined
     for (const generation of [2, 3]) {
       const previous = `'v${generation - 1}'`
       const marker = `v${generation}`
+      const sequence = neem.events().length
       // Wait for the watcher to acknowledge each edit. An edit missed while
       // its watch is restarting must not look like a worker rotation failure.
       await editWorkerFile(neem, fixture.markerFile, (content) => {
@@ -39,19 +48,17 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
         return content.replace(previous, `'${marker}'`)
       })
       const starts = await waitForGeneration(marker, generation, neem)
-      await waitFor(
-        () => {
-          const patches = neem
-            .events()
-            .filter((event) => event.event === 'runtime:patch-applied')
-          return patches.length >= generation - 1
-        },
+      await neem.waitForEvent(
+        (event) =>
+          event.sequence > sequence && event.event === 'runtime:patch-applied',
         30_000,
-        () => diagnostics(neem),
       )
 
       expect(starts).toHaveLength(2)
-      expect(new Set(starts.map((event) => event.threadId))).toEqual(threads)
+      const rotated = new Set(starts.map((event) => event.threadId))
+      expect(rotated.size).toBe(2)
+      if (threads) expect(rotated).toEqual(threads)
+      threads = rotated
       const events = readRuntimeEvents(neem)
       for (const start of starts) {
         const stopped = events.findIndex(
@@ -71,7 +78,13 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
       }
     }
     expect(
-      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
+      neem
+        .events()
+        .filter(
+          (event) =>
+            event.sequence > baseline.sequence &&
+            event.event === 'runtime:thread-stopped',
+        ),
     ).toHaveLength(0)
   }, 60_000)
 

@@ -797,12 +797,21 @@ for (const target of targets) {
       )
 
       it('uses Pub/Sub only as a wake hint over durable queue state', async () => {
-        const { runtime } = createHarness()
+        const { client, keyPrefix, runtime } = createHarness()
         let wakes = 0
         const unsubscribe = runtime.wakeEvents!.onCommand('continue', () => {
           wakes += 1
         })
-        await wait(50)
+        // Command wakes have no catch-up emission, so a publication before the
+        // asynchronous SUBSCRIBE lands would be lost for good.
+        const channel = new Keys(keyPrefix).commandWake('continue')
+        await waitForAsync(async () => {
+          const [, subscribers] = (await client.pubsub('NUMSUB', channel)) as [
+            string,
+            number,
+          ]
+          return subscribers > 0
+        })
 
         await runtime.runCoordinationExecutor.enqueue({
           kind: 'continueRun',

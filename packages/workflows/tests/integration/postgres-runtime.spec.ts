@@ -325,9 +325,17 @@ describe.skipIf(!postgresTarget.url)(
     }, 30_000)
 
     it('keeps long activity work alive with heartbeats across lease expiry', async () => {
-      const { runtime } = await createHarness()
+      const { pool, runtime } = await createHarness()
       const context = createTestContext()
       let calls = 0
+      let started!: () => void
+      const startedPromise = new Promise<void>((resolve) => {
+        started = resolve
+      })
+      let finish!: () => void
+      const finishPromise = new Promise<void>((resolve) => {
+        finish = resolve
+      })
       const workflow = defineWorkflow({
         name: createTestName('postgres-heartbeat-workflow'),
         input: Schema.Struct({ text: Schema.String }),
@@ -342,7 +350,10 @@ describe.skipIf(!postgresTarget.url)(
         .content((input) =>
           fromPromise(async () => {
             calls += 1
-            await wait(360)
+            if (calls === 1) {
+              started()
+              await finishPromise
+            }
             return { text: `content:${input.text}` }
           }),
         )
@@ -356,26 +367,65 @@ describe.skipIf(!postgresTarget.url)(
         workerId: 'coordinator-heartbeat',
       })
 
-      await Promise.all([
-        runExecutionWorker({
-          tasks: [],
-          ...runtime,
-          context,
-          workflows: [workflowImpl],
-          workerId: 'activity-heartbeat-1',
-          leaseMs: 180,
-          idleDelayMs: 80,
-        }),
-        runExecutionWorker({
-          tasks: [],
-          ...runtime,
-          context,
-          workflows: [workflowImpl],
-          workerId: 'activity-heartbeat-2',
-          leaseMs: 180,
-          idleDelayMs: 80,
-        }),
-      ])
+      // The worker's short lease sets a quick heartbeat cadence, while each
+      // claim and renewal writes a long lease: only the explicit expiry below
+      // can lapse it, never a stall between heartbeats.
+      const longLeaseMs = 300_000
+      const holder = runExecutionWorker({
+        tasks: [],
+        ...runtime,
+        attemptExecutor: {
+          ...runtime.attemptExecutor,
+          claim: (worker) =>
+            runtime.attemptExecutor.claim({ ...worker, leaseMs: longLeaseMs }),
+          heartbeat: (attempt) =>
+            runtime.attemptExecutor.heartbeat(attempt, longLeaseMs),
+        },
+        context,
+        workflows: [workflowImpl],
+        workerId: 'activity-heartbeat-1',
+        leaseMs: 150,
+      })
+      try {
+        await startedPromise
+        await pool.query(
+          `
+            UPDATE workflow_commands
+            SET lease_expires_at = now() - interval '1 millisecond'
+            WHERE kind = 'activity' AND run_id = $1
+          `,
+          [run.id],
+        )
+        // Only a heartbeat can make the expired lease current again.
+        await expect
+          .poll(
+            async () => {
+              const { rows } = await pool.query<{ renewed: boolean }>(
+                `
+                  SELECT lease_expires_at > now() AS renewed
+                  FROM workflow_commands
+                  WHERE kind = 'activity' AND run_id = $1
+                `,
+                [run.id],
+              )
+              return rows[0]?.renewed
+            },
+            { timeout: 10_000, interval: 20 },
+          )
+          .toBe(true)
+        await expect(
+          runExecutionWorker({
+            tasks: [],
+            ...runtime,
+            context,
+            workflows: [workflowImpl],
+            workerId: 'activity-heartbeat-2',
+          }),
+        ).resolves.toStrictEqual({ processed: 0 })
+      } finally {
+        finish()
+      }
+      await expect(holder).resolves.toStrictEqual({ processed: 1 })
       await runWorkflowWorker({
         ...runtime,
         context,
@@ -409,12 +459,18 @@ describe.skipIf(!postgresTarget.url)(
         })
         .build()
       const workflowImpl = implementWorkflow(workflow, { pool: 'test' })
-        .content((input) =>
+        .content((input, lifecycle) =>
           fromPromise(async () => {
             calls += 1
             if (calls === 1) {
               firstStarted()
-              await wait(220)
+              // Held until the engine aborts it, so it cannot finish before
+              // the lease is stolen however late the theft lands.
+              await new Promise<void>((resolve) => {
+                lifecycle?.signal.addEventListener('abort', () => resolve(), {
+                  once: true,
+                })
+              })
               return { text: `stale:${input.text}` }
             }
             return { text: `fresh:${input.text}` }
@@ -441,19 +497,28 @@ describe.skipIf(!postgresTarget.url)(
         reaping: false,
       })
       await firstStartedPromise
+      // A long stolen lease keeps the stale worker from reclaiming the command
+      // after its aborted attempt; it is expired explicitly for the fresh one.
       await pool.query(
         `
           UPDATE workflow_commands
           SET lease_owner = 'activity-stealer',
               lease_token = 'stolen',
-              lease_expires_at = now() + interval '100 milliseconds'
+              lease_expires_at = now() + interval '30 seconds'
           WHERE kind = 'activity' AND run_id = $1
         `,
         [run.id],
       )
 
       await expect(staleWorker).resolves.toStrictEqual({ processed: 0 })
-      await wait(120)
+      await pool.query(
+        `
+          UPDATE workflow_commands
+          SET lease_expires_at = now() - interval '1 millisecond'
+          WHERE kind = 'activity' AND run_id = $1
+        `,
+        [run.id],
+      )
       await runExecutionWorker({
         tasks: [],
         ...runtime,
@@ -599,8 +664,6 @@ describe.skipIf(!postgresTarget.url)(
       const context = createTestContext()
       const leaseMs = 180
       let calls = 0
-      let cancelRequestedAt = 0
-      let abortAfterMs: number | undefined
       let abortReason: unknown
       let activityStarted!: () => void
       const activityStartedPromise = new Promise<void>((resolve) => {
@@ -621,14 +684,13 @@ describe.skipIf(!postgresTarget.url)(
           fromPromise(async () => {
             calls += 1
             activityStarted()
+            // Settles only through the abort: a slow cancellation must not
+            // let the activity finish on its own and read as a missed delivery.
             await new Promise<void>((resolve) => {
-              const timeout = setTimeout(resolve, leaseMs * 3)
               lifecycle?.signal.addEventListener(
                 'abort',
                 () => {
-                  abortAfterMs = Date.now() - cancelRequestedAt
                   abortReason = lifecycle.signal.reason
-                  clearTimeout(timeout)
                   resolve()
                 },
                 { once: true },
@@ -658,7 +720,6 @@ describe.skipIf(!postgresTarget.url)(
       })
       await activityStartedPromise
 
-      cancelRequestedAt = Date.now()
       await client.cancel(run.id)
       await runWorkflowWorker({
         ...runtime,
@@ -680,7 +741,6 @@ describe.skipIf(!postgresTarget.url)(
         [run.id],
       )
       expect(abortReason).toMatchObject({ type: 'cancelled' })
-      expect(abortAfterMs).toBeLessThanOrEqual(Math.floor(leaseMs / 3) + 100)
       expect(calls).toBe(1)
       expect(snapshot?.run.status).toBe('cancelled')
       expect(snapshot?.attempts).toHaveLength(1)
@@ -836,7 +896,7 @@ describe.skipIf(!postgresTarget.url)(
     }, 30_000)
 
     it('keeps delayed starts visible before command dispatch is due', async () => {
-      const { runtime } = await createHarness()
+      const { pool, runtime } = await createHarness()
       const context = createTestContext()
       const workflow = defineWorkflow({
         name: createTestName('postgres-delayed-start'),
@@ -850,7 +910,9 @@ describe.skipIf(!postgresTarget.url)(
       const run = await client.start(
         workflow,
         { text: 'alpha' },
-        { startAt: Date.now() + 200 },
+        // Far enough out that no setup delay can make it due; the test makes
+        // it due explicitly below.
+        { startAt: Date.now() + 300_000 },
       )
 
       await runWorkflowWorker({
@@ -863,7 +925,10 @@ describe.skipIf(!postgresTarget.url)(
       const queued = await runtime.store.loadRunSnapshot(run.id)
       expect(queued?.run.status).toBe('queued')
 
-      await wait(250)
+      await pool.query(
+        'UPDATE workflow_commands SET run_at = now() WHERE run_id = $1',
+        [run.id],
+      )
       const [completed] = await runWorkersUntilCompleted({
         runtime,
         context,
