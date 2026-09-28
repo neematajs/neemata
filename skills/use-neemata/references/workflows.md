@@ -110,6 +110,10 @@ Builder rules:
   `.mapWorkflow(name, workflow, { item, concurrency?, cancellation? })` fan
   out to child runs. Supplied concurrency must be a positive integer. Successful
   output is `{ items: { item, index, runId, output }[] }` in input order.
+- A `mapTask` `retry` replaces the task's default policy for every item, and
+  each item has its own budget: N failing items can make up to N × `attempts`
+  handler calls. Keep it low for metered per-item calls. The 0.17 betas
+  ignored this override.
 - Parallel and map nodes wait for all children. Failure does not cancel siblings
   or stop pending map admission; the node fails after settlement. No map `mode`.
 - Tasks/workflows, nodes and case helpers accept `title` / `description`;
