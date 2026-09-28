@@ -24,12 +24,19 @@ export type WorkflowPostgresQueryClient = {
 export type WorkflowPostgresPoolClient = WorkflowPostgresQueryClient & {
   /** Discard the session instead of returning it to the pool when true. */
   release(destroy?: boolean): void
-  /** `pg`'s session events: a failed socket discards the session. */
+  /** `pg`'s session events: a failed or ended socket discards the session. */
   on?(event: 'error', listener: (error: Error) => void): unknown
+  on?(event: 'end', listener: () => void): unknown
   removeListener?(event: 'error', listener: (error: Error) => void): unknown
+  removeListener?(event: 'end', listener: () => void): unknown
 }
 
 export type WorkflowPostgresPool = WorkflowPostgresQueryClient & {
+  /**
+   * Called as `connect(callback)` first, which pg-pool answers in the same
+   * tick it hands the session over; a pool that ignores the callback and
+   * returns the session's promise works too.
+   */
   connect(): Promise<WorkflowPostgresPoolClient>
 }
 
@@ -90,14 +97,14 @@ const queryPostgresClient = <T extends JsonRecord>(
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
 
-// Only an error the server sent proves the session answered and is back in
-// sync. A driver's read timeout or a lost socket may leave the statement in
-// flight, with anything sent after it queued behind.
-const isServerError = (error: unknown) =>
-  typeof error === 'object' &&
-  error !== null &&
-  'severity' in error &&
-  typeof error.severity === 'string'
+// `pg` keeps a statement as its active query until the statement's answer
+// arrives, and its read timeout rejects the caller while leaving it active.
+// Nothing public tells the two apart: `readyForQuery` also stays false between
+// an error response and the ReadyForQuery Postgres flushes after it, and the
+// public `activeQuery` getter is deprecated for removal. A client without this
+// method is taken at its word that a failed statement was answered.
+const hasStatementInFlight = (client: WorkflowPostgresPoolClient) =>
+  (client as { _getActiveQuery?: () => unknown })._getActiveQuery?.() != null
 
 type BorrowedSession = {
   readonly session: WorkflowPostgresQueryClient
@@ -105,16 +112,20 @@ type BorrowedSession = {
   readonly release: (destroy: boolean) => void
 }
 
-// A session that became unusable is discarded at once rather than when its
-// owner finishes: a handler that catches the failure and carries on would
-// otherwise hold the unanswered statement, its locks and the pool slot. Every
-// later statement on it fails at once; a ROLLBACK would only queue behind the
-// unanswered statement.
+// A session is unusable once its answer deadline passed, its socket failed or
+// ended, or a statement failed while still in flight (a driver read timeout).
+// The failure's shape says nothing: `pg` also
+// rejects a statement whose type parser threw after a complete answer, and
+// that session is fine. An unusable session is discarded at once rather than
+// when its owner finishes: a handler that catches the failure and carries on
+// would otherwise hold the unanswered statement, its locks and the pool slot.
+// Every later statement on it fails at once; a ROLLBACK would only queue
+// behind the unanswered statement.
 const borrowPooledSession = async (
   pool: WorkflowPostgresPool,
   answerTimeoutMs: number | undefined,
 ): Promise<BorrowedSession> => {
-  const client = await pool.connect()
+  let client!: WorkflowPostgresPoolClient
   let released = false
   let unusable: { readonly error: unknown } | undefined
   const release = (destroy: boolean) => {
@@ -123,15 +134,45 @@ const borrowPooledSession = async (
     client.release(destroy)
     // Removed only after the pool took the session back and attached its own.
     client.removeListener?.('error', onError)
+    client.removeListener?.('end', onEnd)
   }
   const discard = (error: unknown) => {
     unusable ??= { error }
     release(true)
   }
-  // A checked-out `pg` client has no error listener of its own, so a socket
-  // failure would otherwise be an unhandled `error` event.
-  const onError = (error: unknown) => discard(error)
-  client.on?.('error', onError)
+  const onError = (error: Error) => discard(error)
+  const onEnd = () => discard(new Error('The PostgreSQL session ended'))
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    // pg-pool drops its own error listener right before handing a session
+    // over, and the socket data that completed the checkout may carry an error
+    // right behind it. Listening from inside the pool's callback, as its own
+    // `query()` does, leaves no tick for that `error` event to go unhandled.
+    const checkout = (error: unknown, session?: WorkflowPostgresPoolClient) => {
+      if (settled) return
+      settled = true
+      if (!session) return reject(error)
+      client = session
+      session.on?.('error', onError)
+      session.on?.('end', onEnd)
+      resolve()
+    }
+    const pending = (pool.connect as (callback: typeof checkout) => unknown)(
+      checkout,
+    )
+    if (
+      typeof pending === 'object' &&
+      pending !== null &&
+      'then' in pending &&
+      typeof pending.then === 'function'
+    ) {
+      ;(pending as Promise<WorkflowPostgresPoolClient>).then(
+        (session) => checkout(undefined, session),
+        checkout,
+      )
+    }
+  })
 
   const query = <T extends JsonRecord>(
     sql: string,
@@ -157,7 +198,7 @@ const borrowPooledSession = async (
         },
         (error: unknown) => {
           clearTimeout(timer)
-          if (!isServerError(error)) discard(error)
+          if (hasStatementInFlight(client)) discard(error)
           reject(error)
         },
       )

@@ -521,14 +521,15 @@ Other clients can pass a custom object that satisfies `WorkflowPostgresConnectio
 
 When a pooled transaction fails, the adapter rolls it back before releasing the
 session. If rollback also fails, it calls `release(true)` to discard the session
-and rethrows the original transaction error. A statement that fails without an
-answer from the server, such as a driver's read timeout or a lost socket, may still
-be in flight, so its session is discarded at once, with no rollback queued behind
-it. The server's own errors are told apart by their `severity` field, as `pg`
-reports them. The adapter also handles a borrowed `pg` session's `error` event, so a
-socket failure discards the session instead of crashing the process. Custom pool
-wrappers must honor that destroy argument; plain clients and clients with their
-own transaction API keep ownership of their sessions.
+and rethrows the original transaction error. A session whose socket failed or
+ended, or whose failed statement `pg` still holds as in flight (as its read timeout
+leaves it), is discarded at once, with no rollback queued behind it. Other failures,
+such as a server error or a type parser that threw, leave the session usable, so a
+savepoint can recover from them. The adapter listens for a borrowed `pg` session's
+`error` event from the moment the pool hands it over, so a socket failure discards
+the session instead of crashing the process. Custom pool wrappers must honor that
+destroy argument; plain clients and clients with their own transaction API keep
+ownership of their sessions.
 
 `statement_timeout` only bounds a server that is still working. A stalled server,
 a network partition or a failover leaves a statement waiting for its answer

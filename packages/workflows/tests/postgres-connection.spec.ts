@@ -1,6 +1,9 @@
+import type { AddressInfo } from 'node:net'
 import { EventEmitter } from 'node:events'
+import { createServer } from 'node:net'
 
 import { PGlite } from '@electric-sql/pglite'
+import pg from 'pg'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import {
@@ -43,10 +46,6 @@ function deferred() {
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
-
-// Shaped like `pg`'s DatabaseError: the server answered, the session is in sync.
-const serverError = (message: string) =>
-  Object.assign(new Error(message), { severity: 'ERROR' })
 
 test('adapts pglite transaction API', async () => {
   const connection = createPostgresWorkflowConnection(new PGlite())
@@ -139,12 +138,12 @@ test('rolls back pg pool transactions and releases client', async () => {
 test.each(['BEGIN', 'handler', 'COMMIT'])(
   'discards a pooled session when rollback after %s failure fails',
   async (stage) => {
-    const failure = serverError(`${stage} failed`)
+    const failure = new Error(`${stage} failed`)
     const release = vi.fn()
     const client = {
       async query(sql: string) {
         if (sql === stage) throw failure
-        if (sql === 'ROLLBACK') throw serverError('rollback failed')
+        if (sql === 'ROLLBACK') throw new Error('rollback failed')
         return { rows: [] }
       },
       release,
@@ -250,7 +249,7 @@ test('releases pg pool client when begin fails', async () => {
   const client = {
     async query(sql: string) {
       log.push(sql)
-      throw serverError('begin failed')
+      throw new Error('begin failed')
     },
     release() {
       log.push('release')
@@ -571,11 +570,14 @@ describe.each([
 })
 
 // What a fake session does with a statement: answer it, never answer it (like
-// a server that stopped replying), or fail it.
-type FakeOutcome = 'answer' | 'never' | Error
+// a server that stopped replying), fail it once answered (a server error, a
+// throwing type parser), or fail it while it stays in flight (`pg`'s read
+// timeout).
+type FakeOutcome = 'answer' | 'never' | Error | { readonly inFlight: Error }
 
 // Sessions shaped like `pg`'s pool clients: an `error` event nobody listens
-// to throws, and a failed socket first fails the statements in flight.
+// to throws, a failed socket first fails the statements in flight, and the
+// statement awaiting its answer is the active query.
 function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
   const log: string[] = []
   const releases: (boolean | undefined)[] = []
@@ -587,20 +589,27 @@ function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
     },
     async connect() {
       log.push('connect')
-      const inFlight = new Set<(error: Error) => void>()
+      let active: string | null = null
+      const pending = new Set<(error: Error) => void>()
       const session = Object.assign(new EventEmitter(), {
         query(sql: string): Promise<{ rows: [] }> {
           log.push(sql)
           const result = outcome(sql)
-          if (result instanceof Error) return Promise.reject(result)
           if (result === 'answer') return Promise.resolve({ rows: [] })
-          return new Promise((_, reject) => inFlight.add(reject))
+          if (result instanceof Error) return Promise.reject(result)
+          active = sql
+          if (result === 'never') {
+            return new Promise((_, reject) => pending.add(reject))
+          }
+          return Promise.reject(result.inFlight)
         },
+        _getActiveQuery: () => active,
         release(destroy?: boolean) {
           releases.push(destroy)
         },
         fail(error: Error) {
-          for (const reject of inFlight) reject(error)
+          active = null
+          for (const reject of pending) reject(error)
           session.emit('error', error)
         },
       })
@@ -634,10 +643,10 @@ describe('borrowed pool sessions', () => {
     expect(sessions[0]!.listenerCount('error')).toBe(0)
   })
 
-  test('discards a transaction session whose statement failed without a server answer', async () => {
+  test('discards a transaction session whose failed statement is still in flight', async () => {
     const readTimeout = new Error('Query read timeout')
     const { pool, log, releases } = createPool((sql) =>
-      sql === 'SELECT 1' ? readTimeout : 'answer',
+      sql === 'SELECT 1' ? { inFlight: readTimeout } : 'answer',
     )
     const connection = createPostgresWorkflowConnection(pool)
 
@@ -652,7 +661,7 @@ describe('borrowed pool sessions', () => {
   })
 
   test('rolls back and returns a session whose statement the server rejected', async () => {
-    const rejected = serverError('duplicate key')
+    const rejected = new Error('duplicate key')
     const { pool, log, releases, sessions } = createPool((sql) =>
       sql === 'SELECT 1' ? rejected : 'answer',
     )
@@ -667,6 +676,88 @@ describe('borrowed pool sessions', () => {
     expect(releases).toStrictEqual([false])
     expect(sessions[0]!.listenerCount('error')).toBe(0)
   })
+
+  test('recovers in a savepoint from a statement that failed after its answer', async () => {
+    const { pool, log, releases } = createPool((sql) =>
+      sql === 'SELECT parsed' ? new Error('type parser failed') : 'answer',
+    )
+    const connection = createPostgresWorkflowConnection(pool)
+
+    await connection.transaction(async (tx) => {
+      await expect(
+        tx.transaction(async (nested) => {
+          await nested.query('SELECT parsed')
+        }),
+      ).rejects.toThrow('type parser failed')
+      await tx.query('INSERT')
+    })
+
+    expect(log).toStrictEqual([
+      'connect',
+      'BEGIN',
+      'SAVEPOINT workflow_savepoint_1',
+      'SELECT parsed',
+      'ROLLBACK TO SAVEPOINT workflow_savepoint_1',
+      'RELEASE SAVEPOINT workflow_savepoint_1',
+      'INSERT',
+      'COMMIT',
+    ])
+    expect(releases).toStrictEqual([false])
+  })
+})
+
+// A backend message: type byte, then a length that counts itself.
+const backendMessage = (type: string, body: Buffer) => {
+  const header = Buffer.alloc(5)
+  header.write(type, 0)
+  header.writeInt32BE(body.length + 4, 1)
+  return Buffer.concat([header, body])
+}
+
+test('handles a fatal error that arrives with the session’s checkout', async () => {
+  // One packet completes the startup and then kills the session, as a server
+  // shutting down right after accepting it does. `pg` handles both messages
+  // in one pass, so the session is checked out and failed in the same tick.
+  const server = createServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      const fields = [
+        'SFATAL',
+        'VFATAL',
+        'C57P01',
+        'Mterminating connection due to administrator command',
+      ]
+      socket.write(
+        Buffer.concat([
+          backendMessage('R', Buffer.alloc(4)),
+          backendMessage('Z', Buffer.from('I')),
+          backendMessage(
+            'E',
+            Buffer.concat([
+              ...fields.map((field) => Buffer.from(`${field}\0`)),
+              Buffer.from([0]),
+            ]),
+          ),
+        ]),
+      )
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const { port } = server.address() as AddressInfo
+  const pool = new pg.Pool({ host: '127.0.0.1', port, user: 'fake', max: 1 })
+  try {
+    const connection = createPostgresWorkflowConnection(pool)
+
+    await expect(
+      connection.transaction(async (tx) => {
+        await tx.query('SELECT 1')
+      }),
+    ).rejects.toThrow('terminating connection')
+    expect(pool.totalCount).toBe(0)
+  } finally {
+    await pool.end()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
 })
 
 describe('statement answer deadline', () => {
@@ -753,17 +844,21 @@ describe('statement answer deadline', () => {
   })
 
   test.each([
-    ['a driver read timeout', new Error('Query read timeout')],
-    ['a server error', serverError('division by zero')],
+    ['a driver read timeout', { inFlight: new Error('Query read timeout') }],
+    ['a server error', new Error('division by zero')],
   ])(
     'discards a top-level session whose statement failed with %s',
-    async (_name, failure) => {
+    async (_name, failure: FakeOutcome) => {
       const { pool, releases } = createPool(() => failure)
       const connection = createPostgresWorkflowConnection(pool, {
         answerTimeoutMs,
       })
 
-      await expect(connection.query('SELECT 1')).rejects.toBe(failure)
+      await expect(connection.query('SELECT 1')).rejects.toBe(
+        typeof failure === 'object' && 'inFlight' in failure
+          ? failure.inFlight
+          : failure,
+      )
       expect(releases).toStrictEqual([true])
       expect(vi.getTimerCount()).toBe(0)
     },

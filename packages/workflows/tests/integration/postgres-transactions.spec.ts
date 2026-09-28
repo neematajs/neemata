@@ -227,12 +227,13 @@ describe.skipIf(!postgresTarget.url)(
           stalling,
           connectionOptions,
         )
-        const before = await pid(connection)
 
-        // Only the deadlines' timers: the sockets stay real, and healthy
-        // statements cannot miss a deadline that time never reaches.
+        // Only the deadlines' timers, faked for every statement of the test:
+        // the sockets stay real, and a healthy statement cannot miss a
+        // deadline that time reaches only once the proxy dropped one.
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
         try {
+          const before = await pid(connection)
           const failed = run(connection, proxy, sampleId).catch(
             (error: unknown) => error,
           )
@@ -241,15 +242,58 @@ describe.skipIf(!postgresTarget.url)(
           expect(await failed).toMatchObject({
             message: expect.stringContaining(message),
           })
+
+          expect(sessions).toHaveLength(1)
+          expect(sessions[0]!.connection.stream.destroyed).toBe(true)
+          expect(stalling.totalCount).toBe(0)
+          expect(await pid(connection)).not.toBe(before)
         } finally {
           vi.useRealTimers()
         }
-
-        expect(sessions).toHaveLength(1)
-        expect(sessions[0]!.connection.stream.destroyed).toBe(true)
-        expect(stalling.totalCount).toBe(0)
-        expect(await pid(connection)).not.toBe(before)
         expect(await count('sample', `id = ${sampleId}`)).toBe(0)
+      },
+    )
+
+    it.each([
+      ['without', {}],
+      ['with', { answerTimeoutMs: 60_000 }],
+    ] as const)(
+      'recovers in a savepoint from a type parser that threw, %s an answer deadline',
+      async (_name, connectionOptions) => {
+        const [first, second] = [0, 1].map(() =>
+          Math.floor(Math.random() * 2 ** 31),
+        )
+        // `pg` rejects the statement only after its ReadyForQuery, so the
+        // session is in sync and its transaction can go on.
+        const parsing = new pg.Pool({
+          ...sessionOptions('transactions-type-parser'),
+          max: 1,
+          types: {
+            getTypeParser: ((oid: number, format?: 'text' | 'binary') =>
+              oid === pg.types.builtins.NUMERIC
+                ? () => {
+                    throw new Error('numeric parser failed')
+                  }
+                : pg.types.getTypeParser(oid, format)) as never,
+          },
+        })
+        closers.push(() => parsing.end())
+        const connection = createPostgresWorkflowConnection(
+          parsing,
+          connectionOptions,
+        )
+
+        await connection.transaction(async (tx) => {
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [first])
+          await expect(
+            tx.transaction(async (nested) => {
+              await nested.query('SELECT 1.5::numeric AS value')
+            }),
+          ).rejects.toThrow('numeric parser failed')
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [second])
+        })
+
+        expect(await count('sample', `id IN (${first}, ${second})`)).toBe(2)
       },
     )
 
