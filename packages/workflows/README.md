@@ -337,8 +337,9 @@ required by the adapter, task/activity handlers (including branch/parallel cases
 and finish. The Layer must not require external services. The worker supplies
 Scope for adapter acquisition, and each handler gets its own Scope.
 
-`layer` receives the Neem worker context once per thread, as `setup` does in the
-Promise worker. Build logging services from `ctx.logger`, the worker logger Neem
+`layer` receives the Neem worker context, as `setup` does in the Promise worker.
+It is called once per runtime start, after registry validation, so each
+development reload builds a fresh Layer in the same thread. Build logging services from `ctx.logger`, the worker logger Neem
 flushes on stop, rather than creating a second logger in the worker. `Effect.log*`
 is not bridged to it; configure Effect's logger in the Layer if you need that.
 

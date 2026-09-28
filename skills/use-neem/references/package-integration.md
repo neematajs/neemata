@@ -146,8 +146,9 @@ Promise `setup`/`env`/`dispose`:
 - `runtime` is an Effect yielding a `WorkflowRuntimeAdapter`; it may require
   services and `Scope.Scope`. It is an Effect value, not a Context service tag
   or already-open adapter. Acquire external clients in its scope or Layer.
-- `layer` is a function of the Neem worker context, called once per thread,
-  returning a Layer. It must supply all services required by handlers, workflow
+- `layer` is a function of the Neem worker context returning a Layer, called
+  once per runtime start after registry validation, including each dev reload
+  in the same thread. It must supply all services required by handlers, workflow
   finish, and the runtime Effect, excluding the provided scope; it must have no
   remaining inputs. It is required when services are needed, otherwise
   optional. Build logging services from `ctx.logger`, which Neem flushes on

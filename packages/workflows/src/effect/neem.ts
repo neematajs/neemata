@@ -35,8 +35,10 @@ export type WorkflowsRuntime<R = never> = Effect.Effect<
 >
 
 /**
- * Builds the Layer once per worker thread. `ctx.logger` is Neem's worker
- * logger, which Neem flushes on stop, and `ctx.data` names the role and pool.
+ * Builds the Layer once per runtime start, after registry validation; each
+ * development reload calls it again in the same thread. `ctx.logger` is Neem's
+ * worker logger, which Neem flushes on stop, and `ctx.data` names the role and
+ * pool.
  */
 export type WorkflowsLayer<R> = (
   ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>,

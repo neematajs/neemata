@@ -489,8 +489,8 @@ const worker = defineWorkflowsWorker({
 Effect workers use `defineWorkflowsWorker` from
 `@nmtjs/workflows/effect/neem` with the same registry factories and planner.
 `runtime` is an `Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`;
-`layer` is `(ctx) => Layer`, called once per thread with the Neem worker
-context; build logging services from `ctx.logger` rather than a second logger.
+`layer` is `(ctx) => Layer`, called with the Neem worker context once per
+runtime start (after registry validation, again on each dev reload); build logging services from `ctx.logger` rather than a second logger.
 `Effect.log*` is not bridged to it.
 The Layer must supply all handler and runtime requirements except `Scope`, which
 the worker provides. Layer is optional only when no services are needed.
