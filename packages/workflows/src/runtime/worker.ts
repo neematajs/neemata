@@ -3,16 +3,14 @@ export {
   type RunActivityAttemptInput,
 } from './worker/activity-attempt.ts'
 export {
-  collectChildWorkflowNames,
-  collectImplementationPools,
-  collectWorkflowTaskNames,
-  findConflictingDefinitions,
   runExecutionWorker,
   runWorkflowWorker,
   serveExecutionWorker,
   serveWorkflowWorker,
+  verifyWorkflowsRegistry,
   type RunExecutionWorkerInput,
   type RunWorkflowWorkerInput,
+  type VerifyWorkflowsRegistryInput,
   type WorkerHandlers,
   type WorkerReapingOptions,
   type WorkerRunTimeoutsOptions,

@@ -135,6 +135,7 @@ export {
   runWorkflowWorker,
   serveExecutionWorker,
   serveWorkflowWorker,
+  verifyWorkflowsRegistry,
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,
 } from './worker.ts'
@@ -145,6 +146,7 @@ export type {
   RunExecutionWorkerInput,
   RunTaskAttemptInput,
   RunWorkflowWorkerInput,
+  VerifyWorkflowsRegistryInput,
   WorkerHandlers,
   WorkerLoopOptions,
   WorkerLoopResult,
