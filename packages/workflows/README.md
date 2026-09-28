@@ -196,8 +196,15 @@ On stop the worker stops claiming, aborts attempts, joins the loops, waits for
 every handler to settle, and only then disposes the adapter and calls `dispose`.
 A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem
 recycles the thread, and the env is not disposed while that handler still runs. A
-stop during `setup` waits for it and disposes what it acquired. Effect
-applications use the worker in `@nmtjs/workflows/effect/neem`; see below.
+stop during `setup` waits for it and disposes what it acquired.
+
+Startup has no deadline of its own: Neem's `lifecycle.startTimeout` (default
+30,000 ms) bounds resolving the registry, `setup` and schedule reconciliation
+together, and terminates a thread that is not ready by then without further
+cleanup. A stop, including one during startup, is bounded by Neem's
+`lifecycle.stopTimeout` (default 15,000 ms, shared by a whole shutdown);
+`cleanupTimeoutMs` cannot extend it. Effect applications use the worker in
+`@nmtjs/workflows/effect/neem`; see below.
 
 ## Effect schemas
 
@@ -387,14 +394,19 @@ redelivered through the existing expired-lease path. Keep finalizers short and
 isolate handlers with risky cleanup in separate execution pools. Result commits
 still use the engine's attempt/run fencing even when a handler has already succeeded.
 
-On a requested stop, Neem enforces a separate hard 5,000 ms deadline for the whole
-worker. Setting `cleanupTimeoutMs` above 5,000 cannot extend that deadline, and
-`finished` failures after a stop request do not trigger recovery. Budget handler,
-adapter, and Layer cleanup together to finish within the host deadline; otherwise
-Neem terminates the thread, including on deploy. A stop during startup reaches
-`runtime.stop()` once the worker factory has resolved, without waiting for readiness.
-Factory completion and finalizers share the host deadline. Configurable host
-deadlines remain separate lifecycle work.
+On a requested stop, the worker gets what remains of Neem's shutdown budget
+(`lifecycle.stopTimeout`, default 15,000 ms, shared by the whole server).
+`cleanupTimeoutMs` cannot extend it, and `finished` failures after a stop request
+do not trigger recovery. Budget handler, adapter, and Layer cleanup together to
+finish within it; otherwise Neem terminates the thread, including on deploy. A stop
+during startup reaches `runtime.stop()` once the worker factory has resolved,
+without waiting for readiness. Factory completion and finalizers share the budget.
+
+Building the Layer, acquiring the adapter and reconciling schedules are bounded by
+Neem's `lifecycle.startTimeout` (default 30,000 ms); a thread that is not ready by
+then is terminated without further cleanup. A Layer that fails part-way closes its
+own scope inside the build, before the worker sees the failure, so a finalizer
+that hangs there looks like a slow startup and ends at that deadline as well.
 
 Interruption cannot stop Promise work that ignores cancellation. Such work can
 continue after its fiber exits, so integrate its AbortSignal or arrange explicit
