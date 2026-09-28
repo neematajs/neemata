@@ -254,19 +254,52 @@ describe.skipIf(!postgresTarget.url)(
       },
     )
 
-    it.each([
-      ['without', {}],
-      ['with', { answerTimeoutMs: 60_000 }],
-    ] as const)(
-      'recovers in a savepoint from a type parser that threw, %s an answer deadline',
-      async (_name, connectionOptions) => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    // Failures `pg` raises on its side of a session that stays usable: a type
+    // parser throws after the statement's ReadyForQuery, and a parameter that
+    // fails to serialize is rejected behind a `Sync` already sent.
+    const recoverableFailures = [
+      [
+        'a type parser that threw',
+        'SELECT 1.5::numeric AS value',
+        [],
+        'numeric parser failed',
+      ],
+      [
+        'a throwing toPostgres()',
+        'SELECT $1::text AS value',
+        [
+          {
+            toPostgres() {
+              throw new Error('toPostgres failed')
+            },
+          },
+        ],
+        'toPostgres failed',
+      ],
+      [
+        'a circular JSON parameter',
+        'SELECT $1::jsonb AS value',
+        [circular],
+        'circular',
+      ],
+    ] as const
+
+    it.each(
+      recoverableFailures.flatMap(([name, ...failure]) =>
+        (['without', 'with'] as const).map(
+          (deadline) => [name, deadline, ...failure] as const,
+        ),
+      ),
+    )(
+      'recovers in a savepoint from %s, %s an answer deadline',
+      async (_name, deadline, statement, params, message) => {
         const [first, second] = [0, 1].map(() =>
           Math.floor(Math.random() * 2 ** 31),
         )
-        // `pg` rejects the statement only after its ReadyForQuery, so the
-        // session is in sync and its transaction can go on.
         const parsing = new pg.Pool({
-          ...sessionOptions('transactions-type-parser'),
+          ...sessionOptions('transactions-recoverable'),
           max: 1,
           types: {
             getTypeParser: ((oid: number, format?: 'text' | 'binary') =>
@@ -280,20 +313,21 @@ describe.skipIf(!postgresTarget.url)(
         closers.push(() => parsing.end())
         const connection = createPostgresWorkflowConnection(
           parsing,
-          connectionOptions,
+          deadline === 'with' ? { answerTimeoutMs: 60_000 } : {},
         )
 
         await connection.transaction(async (tx) => {
           await tx.query('INSERT INTO sample (id) VALUES ($1)', [first])
           await expect(
             tx.transaction(async (nested) => {
-              await nested.query('SELECT 1.5::numeric AS value')
+              await nested.query(statement, params)
             }),
-          ).rejects.toThrow('numeric parser failed')
+          ).rejects.toThrow(message)
           await tx.query('INSERT INTO sample (id) VALUES ($1)', [second])
         })
 
         expect(await count('sample', `id IN (${first}, ${second})`)).toBe(2)
+        expect(parsing.totalCount).toBe(1)
       },
     )
 

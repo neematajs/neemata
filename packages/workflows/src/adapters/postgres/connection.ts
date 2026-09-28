@@ -97,14 +97,12 @@ const queryPostgresClient = <T extends JsonRecord>(
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
 
-// `pg` keeps a statement as its active query until the statement's answer
-// arrives, and its read timeout rejects the caller while leaving it active.
-// Nothing public tells the two apart: `readyForQuery` also stays false between
-// an error response and the ReadyForQuery Postgres flushes after it, and the
-// public `activeQuery` getter is deprecated for removal. A client without this
-// method is taken at its word that a failed statement was answered.
-const hasStatementInFlight = (client: WorkflowPostgresPoolClient) =>
-  (client as { _getActiveQuery?: () => unknown })._getActiveQuery?.() != null
+// `pg`'s `query_timeout` is the one rejection it makes with the statement left
+// unanswered, and it always creates exactly this error. Its other rejections
+// leave the session in sync, or behind a `Sync` it already sent (a parameter
+// that failed to serialize), or come with an `error` or `end` event.
+const isDriverReadTimeout = (error: unknown) =>
+  error instanceof Error && error.message === 'Query read timeout'
 
 type BorrowedSession = {
   readonly session: WorkflowPostgresQueryClient
@@ -113,14 +111,13 @@ type BorrowedSession = {
 }
 
 // A session is unusable once its answer deadline passed, its socket failed or
-// ended, or a statement failed while still in flight (a driver read timeout).
-// The failure's shape says nothing: `pg` also
-// rejects a statement whose type parser threw after a complete answer, and
-// that session is fine. An unusable session is discarded at once rather than
-// when its owner finishes: a handler that catches the failure and carries on
-// would otherwise hold the unanswered statement, its locks and the pool slot.
-// Every later statement on it fails at once; a ROLLBACK would only queue
-// behind the unanswered statement.
+// ended, or the driver's read timeout gave up on a statement. Any other failure,
+// such as a server error, a throwing type parser or a parameter that failed to
+// serialize, leaves it usable, so a savepoint can recover. An unusable session
+// is discarded at once rather than when its owner finishes: a handler that
+// catches the failure and carries on would otherwise hold the unanswered
+// statement, its locks and the pool slot. Every later statement on it fails at
+// once; a ROLLBACK would only queue behind the unanswered statement.
 const borrowPooledSession = async (
   pool: WorkflowPostgresPool,
   answerTimeoutMs: number | undefined,
@@ -198,7 +195,7 @@ const borrowPooledSession = async (
         },
         (error: unknown) => {
           clearTimeout(timer)
-          if (hasStatementInFlight(client)) discard(error)
+          if (isDriverReadTimeout(error)) discard(error)
           reject(error)
         },
       )

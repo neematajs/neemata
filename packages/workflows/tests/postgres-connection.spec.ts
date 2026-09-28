@@ -570,14 +570,14 @@ describe.each([
 })
 
 // What a fake session does with a statement: answer it, never answer it (like
-// a server that stopped replying), fail it once answered (a server error, a
-// throwing type parser), or fail it while it stays in flight (`pg`'s read
-// timeout).
-type FakeOutcome = 'answer' | 'never' | Error | { readonly inFlight: Error }
+// a server that stopped replying), or fail it.
+type FakeOutcome = 'answer' | 'never' | Error
+
+// Created exactly like this by `pg`'s `query_timeout`.
+const readTimeout = () => new Error('Query read timeout')
 
 // Sessions shaped like `pg`'s pool clients: an `error` event nobody listens
-// to throws, a failed socket first fails the statements in flight, and the
-// statement awaiting its answer is the active query.
+// to throws, and a failed socket first fails the statements in flight.
 function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
   const log: string[] = []
   const releases: (boolean | undefined)[] = []
@@ -589,7 +589,6 @@ function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
     },
     async connect() {
       log.push('connect')
-      let active: string | null = null
       const pending = new Set<(error: Error) => void>()
       const session = Object.assign(new EventEmitter(), {
         query(sql: string): Promise<{ rows: [] }> {
@@ -597,18 +596,12 @@ function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
           const result = outcome(sql)
           if (result === 'answer') return Promise.resolve({ rows: [] })
           if (result instanceof Error) return Promise.reject(result)
-          active = sql
-          if (result === 'never') {
-            return new Promise((_, reject) => pending.add(reject))
-          }
-          return Promise.reject(result.inFlight)
+          return new Promise((_, reject) => pending.add(reject))
         },
-        _getActiveQuery: () => active,
         release(destroy?: boolean) {
           releases.push(destroy)
         },
         fail(error: Error) {
-          active = null
           for (const reject of pending) reject(error)
           session.emit('error', error)
         },
@@ -643,10 +636,10 @@ describe('borrowed pool sessions', () => {
     expect(sessions[0]!.listenerCount('error')).toBe(0)
   })
 
-  test('discards a transaction session whose failed statement is still in flight', async () => {
-    const readTimeout = new Error('Query read timeout')
+  test('discards a transaction session whose statement hit the driver read timeout', async () => {
+    const timedOut = readTimeout()
     const { pool, log, releases } = createPool((sql) =>
-      sql === 'SELECT 1' ? { inFlight: readTimeout } : 'answer',
+      sql === 'SELECT 1' ? timedOut : 'answer',
     )
     const connection = createPostgresWorkflowConnection(pool)
 
@@ -654,7 +647,7 @@ describe('borrowed pool sessions', () => {
       connection.transaction(async (tx) => {
         await tx.query('SELECT 1')
       }),
-    ).rejects.toBe(readTimeout)
+    ).rejects.toBe(timedOut)
     // No ROLLBACK: it would only queue behind the statement still in flight.
     expect(log).toStrictEqual(['connect', 'BEGIN', 'SELECT 1'])
     expect(releases).toStrictEqual([true])
@@ -844,21 +837,17 @@ describe('statement answer deadline', () => {
   })
 
   test.each([
-    ['a driver read timeout', { inFlight: new Error('Query read timeout') }],
+    ['a driver read timeout', readTimeout()],
     ['a server error', new Error('division by zero')],
   ])(
     'discards a top-level session whose statement failed with %s',
-    async (_name, failure: FakeOutcome) => {
+    async (_name, failure) => {
       const { pool, releases } = createPool(() => failure)
       const connection = createPostgresWorkflowConnection(pool, {
         answerTimeoutMs,
       })
 
-      await expect(connection.query('SELECT 1')).rejects.toBe(
-        typeof failure === 'object' && 'inFlight' in failure
-          ? failure.inFlight
-          : failure,
-      )
+      await expect(connection.query('SELECT 1')).rejects.toBe(failure)
       expect(releases).toStrictEqual([true])
       expect(vi.getTimerCount()).toBe(0)
     },
