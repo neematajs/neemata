@@ -710,9 +710,10 @@ out of keyed input, or a retry carrying a fresh value becomes a conflict.
 
 When a key should allow at most one run whatever the input, use
 `unique: { key, behavior: 'join' }` instead: it returns the run holding the key
-without comparing inputs. The key is held while the run is active, or forever
-with `scope: 'all'`; the default `behavior: 'reject'` throws
-`WorkflowRunConflictError`.
+without comparing inputs. The key is held while the run is active, or with
+`scope: 'all'` for as long as the run is retained: pruning or deleting it, or
+Redis terminal-family retention expiring it, releases the key. The default
+`behavior: 'reject'` throws `WorkflowRunConflictError`.
 
 ## Retrying failed work
 

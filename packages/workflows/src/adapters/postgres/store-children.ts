@@ -231,32 +231,36 @@ export const createPostgresWorkflowChildStore = (
       // another coordinator rolls back our freshly created run instead of
       // persisting a duplicate child run.
       const linkRaced = Symbol('child-run-link-raced')
-      try {
-        return await db.transaction(async (tx) => {
-          const raced = await loadExistingChildRun(tx)
-          if (raced) return raced
+      // An insert conflict means a concurrent start committed the idempotency
+      // key after our precheck. One more pass lets that precheck see the
+      // holder, so it either joins it or throws the typed idempotency conflict.
+      for (let pass = 0; ; pass++) {
+        try {
+          return await db.transaction(async (tx) => {
+            const raced = await loadExistingChildRun(tx)
+            if (raced) return raced
 
-          const childRun = await createStoredRun(
-            tx,
-            {
-              kind: params.childKind,
-              name: params.childName,
-              workflowName: params.childName,
-              ...(params.childKind === 'task'
-                ? { taskName: params.childName }
-                : {}),
-              input: params.input,
-              parentRunId: runId,
-              parentNodeName: nodeName,
-              rootRunId: params.rootRunId,
-              tags: params.tags,
-              idempotencyKey: params.idempotencyKey,
-            },
-            { recoverUniqueViolation: false },
-          )
-          const updated = await one(
-            tx,
-            `
+            const childRun = await createStoredRun(
+              tx,
+              {
+                kind: params.childKind,
+                name: params.childName,
+                workflowName: params.childName,
+                ...(params.childKind === 'task'
+                  ? { taskName: params.childName }
+                  : {}),
+                input: params.input,
+                parentRunId: runId,
+                parentNodeName: nodeName,
+                rootRunId: params.rootRunId,
+                tags: params.tags,
+                idempotencyKey: params.idempotencyKey,
+              },
+              { recoverUniqueViolation: false },
+            )
+            const updated = await one(
+              tx,
+              `
             WITH candidate AS (
               SELECT c.run_id, c.node_name, c.child_key,
                 c.status::text AS old_status, r.root_run_id
@@ -283,30 +287,31 @@ export const createPostgresWorkflowChildStore = (
             SELECT updated.*${notifyRunStatusEventColumnsSql('child_run_linked')}
             FROM updated
           `,
-            [
-              runId,
-              nodeName,
-              childKey,
-              childRun.id,
-              params.cancellation ?? null,
-            ],
-          )
-          if (!updated) throw linkRaced
-          return { child: mapNodeChild(updated), childRun, created: true }
-        })
-      } catch (error) {
-        if (
-          error === linkRaced ||
-          error instanceof WorkflowRunInsertConflict ||
-          isUniqueViolation(error)
-        ) {
-          const raced = await loadExistingChildRun(db)
-          if (raced) return raced
-          throw new Error(
-            `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
-          )
+              [
+                runId,
+                nodeName,
+                childKey,
+                childRun.id,
+                params.cancellation ?? null,
+              ],
+            )
+            if (!updated) throw linkRaced
+            return { child: mapNodeChild(updated), childRun, created: true }
+          })
+        } catch (error) {
+          const insertConflict =
+            error instanceof WorkflowRunInsertConflict ||
+            isUniqueViolation(error)
+          if (error === linkRaced || insertConflict) {
+            const raced = await loadExistingChildRun(db)
+            if (raced) return raced
+            if (insertConflict && pass === 0) continue
+            throw new Error(
+              `Terminal node child [${childRef(runId, nodeName, childKey)}] cannot start child run`,
+            )
+          }
+          throw error
         }
-        throw error
       }
     },
     async ensureChildAttempt({

@@ -2993,6 +2993,75 @@ function workflowRuntimeAdapterContract(
       ).rejects.toThrow('Conflicting child run')
     })
 
+    it('rejects a sibling child start reusing an idempotency key with different input', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'keyed-children-parent',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: parent.id,
+        name: 'children',
+        kind: 'parallel',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: parent.id,
+        nodeName: 'children',
+        children: [
+          { childKey: 'first', kind: 'workflow' },
+          { childKey: 'second', kind: 'workflow' },
+        ],
+      })
+      const childParams = {
+        runId: parent.id,
+        nodeName: 'children',
+        childKind: 'workflow' as const,
+        childName: 'keyed-child',
+        rootRunId: parent.rootRunId,
+        idempotencyKey: ['keyed-child', 1],
+      }
+      const first = await runtime.store.ensureChildRun({
+        ...childParams,
+        childKey: 'first',
+        input: { value: 'alpha' },
+      })
+
+      const conflict = await runtime.store
+        .ensureChildRun({
+          ...childParams,
+          childKey: 'second',
+          input: { value: 'beta' },
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(conflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(conflict).toMatchObject({
+        runId: first.childRun.id,
+        status: 'queued',
+        key: ['keyed-child', 1],
+        runnableName: 'keyed-child',
+      })
+
+      // Replaying a linked child with other data is a replay mismatch, not a
+      // key conflict.
+      const replay = await runtime.store
+        .ensureChildRun({
+          ...childParams,
+          childKey: 'first',
+          input: { value: 'beta' },
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(replay).not.toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(replay).toMatchObject({
+        message: expect.stringContaining('Conflicting child run'),
+      })
+    })
+
     it('creates one successor for an attempt, however many workers retry it', async () => {
       const runtime = await createRuntime()
       const run = await runtime.store.createRun({
