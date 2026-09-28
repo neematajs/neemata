@@ -53,14 +53,22 @@ export class RedisPubSubAdapter implements PubSubAdapter {
     // subscribers must recover, and a command queued or resent for a later
     // connection would leave the broker out of step with the channel map, so
     // commands are only sent on a ready connection.
-    this.subClient = this.client.duplicate({
+    const subClient = (this.subClient = this.client.duplicate({
       lazyConnect: true,
       autoResubscribe: false,
       autoResendUnfulfilledCommands: false,
       enableOfflineQueue: false,
-    })
+    }))
 
-    await this.subClient.connect()
+    try {
+      await subClient.connect()
+    } catch (error) {
+      // The driver keeps reconnecting after a failed first connect, and a
+      // caller whose initialization failed has no adapter to dispose.
+      if (this.subClient === subClient) this.subClient = undefined
+      subClient.disconnect()
+      throw error
+    }
 
     this.controller = new AbortController()
     this.connection = new AbortController()
