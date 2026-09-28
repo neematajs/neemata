@@ -5,7 +5,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import { pino } from 'pino'
+import { pino, type Logger } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -426,30 +426,47 @@ it('builds the Layer from the worker context so services log through Neem', asyn
   })
   const adapter = createInMemoryWorkflowRuntime()
   await createWorkflowRuntimeClient(adapter).start(task, 3)
+  const layer = vi.fn((ctx: { logger: Logger }) =>
+    Layer.succeed(logs, { info: (message) => ctx.logger.info(message) }),
+  )
   const worker = defineWorkflowsWorker({
     workflows: () => [],
     tasks: () => [implementation],
-    layer: (ctx) =>
-      Layer.succeed(logs, { info: (message) => ctx.logger.info(message) }),
+    layer,
     runtime: Effect.succeed(adapter),
   })
   const logger = pino({ enabled: false })
   const info = vi.spyOn(logger, 'info')
   const channel = new MessageChannel()
-  const runtime = await worker.createRuntime({
-    mode: 'development',
-    name: 'logging',
-    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
-    definition: worker.definition,
-    logger,
-    port: channel.port1,
-  })
+  // A development reload creates and starts another runtime in the same thread.
+  const create = () =>
+    worker.createRuntime({
+      mode: 'development',
+      name: 'logging',
+      data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+      definition: worker.definition,
+      logger,
+      port: channel.port1,
+    })
   try {
-    await runtime.start()
-    await logged.promise
-    expect(info).toHaveBeenCalledWith('handled 3')
+    const first = await create()
+    try {
+      expect(layer).not.toHaveBeenCalled()
+      await first.start()
+      await logged.promise
+      expect(info).toHaveBeenCalledWith('handled 3')
+      expect(layer).toHaveBeenCalledOnce()
+    } finally {
+      await first.stop()
+    }
+    const reloaded = await create()
+    try {
+      await reloaded.start()
+      expect(layer).toHaveBeenCalledTimes(2)
+    } finally {
+      await reloaded.stop()
+    }
   } finally {
-    await runtime.stop()
     channel.port1.close()
     channel.port2.close()
   }
