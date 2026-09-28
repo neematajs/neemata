@@ -61,8 +61,6 @@ export type ThreadControllerOptions = {
   onFailure?: (error: Error, thread: ThreadController) => MaybePromise<void>
 }
 
-const REQUEST_TIMEOUT_MS = 30_000
-
 export class ThreadController {
   readonly id: string
   readonly runtimeName: string
@@ -120,7 +118,11 @@ export class ThreadController {
         }
         this.worker.postMessage(message)
       },
-      timeoutMs: () => REQUEST_TIMEOUT_MS,
+      // Only a patch waits on its reply (a stop waits on the exit). A patch
+      // retires the generation and starts its replacement, so it gets the
+      // deadline a fresh start has.
+      timeoutMs: () =>
+        resolveLifecycle(this.options.snapshot.config.lifecycle).startTimeout,
       timeoutMessage: (type, timeoutMs) =>
         `Worker [${this.name}] ${type === 'patch-update' ? 'patch' : type} timed out after ${timeoutMs}ms`,
     })
@@ -245,8 +247,10 @@ export class ThreadController {
       const failed = this.getState() === 'failed'
       const reported = failed && this.readyAt !== undefined
       if (!failed) this.markFailed(normalized)
-      if (!reported) await this.callWorkerFailHook(normalized)
+      // Neither waits on the hook: one that never settles would keep a failed
+      // thread running past the start deadline and leave startup unsettled.
       await this.terminateWorker()
+      if (!reported) void this.callWorkerFailHook(normalized)
       throw normalized
     } finally {
       clearTimeout(timer)

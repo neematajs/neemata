@@ -385,7 +385,11 @@ export type NeemLifecycleConfig = {
    * it runs out is terminated and the shutdown fails.
    */
   stopTimeout?: number
-  /** How long a worker may take to become ready (default `30000`). */
+  /**
+   * How long a worker may take to become ready (default `30000`). In
+   * development it also bounds a patch, which retires the running generation
+   * and starts its replacement.
+   */
   startTimeout?: number
 }
 
