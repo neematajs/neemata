@@ -3,6 +3,7 @@ import type { RunCoordinationExecutor } from '../../runtime/executors.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { QueueItem } from './commands.ts'
 import type { State } from './state.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import {
   claimQueued,
   matchesClaim,
@@ -180,6 +181,27 @@ export function createRunCoordinationExecutor(
       continueRunCommands[pendingIndex] = mergeContinueQueueItem(
         continueRunCommands[pendingIndex]!,
         released,
+      )
+    },
+    async listUnserved(query) {
+      const oldest = continueRunCommands
+        .filter(
+          (item) =>
+            item.deadAt === undefined &&
+            (item.runAt ?? item.createdAt) <= query.dueBefore,
+        )
+        .sort(
+          (left, right) =>
+            (left.runAt ?? left.createdAt) - (right.runAt ?? right.createdAt) ||
+            left.sequence - right.sequence,
+        )
+        .slice(0, query.limit)
+      return groupUnservedWorkflows(
+        query,
+        oldest.map((item) => ({
+          workflowName: item.payload.workflowName,
+          dueAt: item.runAt ?? item.createdAt,
+        })),
       )
     },
   }

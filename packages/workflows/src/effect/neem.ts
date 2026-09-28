@@ -128,6 +128,8 @@ export function defineWorkflowsWorker<
             signal: abort.signal,
             onError: (error) =>
               ctx.logger.error({ err: error }, 'Neem workflows worker error'),
+            onWarning: ({ message, ...fields }) =>
+              ctx.logger.warn(fields, message),
           })
           void loop.catch(() => {})
           yield* Effect.addFinalizer(() =>

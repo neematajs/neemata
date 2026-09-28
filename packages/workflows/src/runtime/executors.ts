@@ -41,6 +41,51 @@ export type AttemptDispatchOptions = {
   readonly runAt?: Timestamp
 }
 
+export type UnservedWorkflowQuery = {
+  /** The workflows the asking coordinator claims; their commands never count. */
+  readonly workflowNames: readonly string[]
+  /** Only commands due at or before this time count. */
+  readonly dueBefore: Timestamp
+  /** How many of the oldest queued commands to inspect at most. */
+  readonly limit: number
+}
+
+export type UnservedWorkflow = {
+  readonly workflowName: string
+  /** A lower bound when more than `limit` commands are queued. */
+  readonly count: number
+  readonly oldestDueAt: Timestamp
+}
+
+/** Groups inspected queue entries the way every adapter reports them. */
+export function groupUnservedWorkflows(
+  query: UnservedWorkflowQuery,
+  queued: Iterable<{
+    readonly workflowName: string
+    readonly dueAt: Timestamp
+  }>,
+): readonly UnservedWorkflow[] {
+  const served = new Set(query.workflowNames)
+  const groups = new Map<string, { count: number; oldestDueAt: Timestamp }>()
+  for (const { workflowName, dueAt } of queued) {
+    if (served.has(workflowName) || dueAt > query.dueBefore) continue
+    const group = groups.get(workflowName)
+    if (group === undefined) {
+      groups.set(workflowName, { count: 1, oldestDueAt: dueAt })
+      continue
+    }
+    group.count += 1
+    group.oldestDueAt = Math.min(group.oldestDueAt, dueAt)
+  }
+  return [...groups]
+    .map(([workflowName, group]) => ({ workflowName, ...group }))
+    .sort(
+      (left, right) =>
+        left.oldestDueAt - right.oldestDueAt ||
+        (left.workflowName < right.workflowName ? -1 : 1),
+    )
+}
+
 export type RunCoordinationExecutor = {
   enqueue(command: ContinueRunCommand): Promise<void>
   enqueueDelayed(command: ContinueRunCommand, runAt: Timestamp): Promise<void>
@@ -58,6 +103,17 @@ export type RunCoordinationExecutor = {
     command: ClaimedCommand,
     options?: CommandReleaseOptions,
   ): Promise<void>
+  /**
+   * Unclaimed continue commands for workflows outside the query's names,
+   * grouped by workflow. Coordinators claim only the names they serve, so a
+   * run nobody serves never reaches release or dead-lettering; this is how a
+   * coordinator notices it. Only the oldest commands are inspected, which keeps
+   * the diagnostic cheap on a large queue: those are the ones stuck longest.
+   * Ordered by the oldest due time.
+   */
+  listUnserved(
+    query: UnservedWorkflowQuery,
+  ): Promise<readonly UnservedWorkflow[]>
 }
 
 export type AttemptExecutor = {

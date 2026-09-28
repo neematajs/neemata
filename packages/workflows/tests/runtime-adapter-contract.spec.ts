@@ -821,6 +821,75 @@ function workflowRuntimeAdapterContract(
       expect(reclaimed?.command.runId).toBe(run.id)
     })
 
+    describe('unserved workflows', () => {
+      async function enqueueRun(
+        runtime: WorkflowRuntimeAdapter,
+        workflowName: string,
+        runAt: number,
+      ) {
+        const run = await runtime.store.createRun({ workflowName, input: {} })
+        await runtime.runCoordinationExecutor.enqueueDelayed(
+          { kind: 'continueRun', runId: run.id, workflowName },
+          runAt,
+        )
+      }
+
+      it('groups due unclaimed commands of workflows outside the served names', async () => {
+        const runtime = await createRuntime({ maxDeliveries: 1 })
+        const executor = runtime.runCoordinationExecutor
+        const now = Date.now()
+        await enqueueRun(runtime, 'unserved-a', now - 3_000)
+        await enqueueRun(runtime, 'unserved-b', now - 2_000)
+        await enqueueRun(runtime, 'unserved-a', now - 1_000)
+        await enqueueRun(runtime, 'served', now - 4_000)
+        await enqueueRun(runtime, 'unserved-later', now + 60_000)
+        // Claimed and dead-lettered commands are not waiting for a claimant.
+        await enqueueRun(runtime, 'unserved-claimed', now - 5_000)
+        await enqueueRun(runtime, 'unserved-dead', now - 5_000)
+        await executor.claim({
+          workerId: 'other-deployment',
+          workflowNames: ['unserved-claimed'],
+          leaseMs: 30_000,
+        })
+        const poisoned = await executor.claim({
+          workerId: 'other-deployment',
+          workflowNames: ['unserved-dead'],
+          leaseMs: 30_000,
+        })
+        await executor.release(poisoned!, { error: new Error('poison') })
+        await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
+
+        await expect(
+          executor.listUnserved({
+            workflowNames: ['served'],
+            dueBefore: now,
+            limit: 100,
+          }),
+        ).resolves.toStrictEqual([
+          { workflowName: 'unserved-a', count: 2, oldestDueAt: now - 3_000 },
+          { workflowName: 'unserved-b', count: 1, oldestDueAt: now - 2_000 },
+        ])
+      })
+
+      it('inspects only the oldest queued commands', async () => {
+        const runtime = await createRuntime()
+        const now = Date.now()
+        await enqueueRun(runtime, 'unserved', now - 3_000)
+        await enqueueRun(runtime, 'unserved', now - 2_000)
+        await enqueueRun(runtime, 'unserved', now - 1_000)
+
+        await expect(
+          runtime.runCoordinationExecutor.listUnserved({
+            workflowNames: [],
+            dueBefore: now,
+            limit: 2,
+          }),
+        ).resolves.toStrictEqual([
+          { workflowName: 'unserved', count: 2, oldestDueAt: now - 3_000 },
+        ])
+      })
+    })
+
     it('dead-letters attempt commands after max error deliveries and requeues them', async () => {
       const runtime = await createRuntime({ maxDeliveries: 1 })
       const run = await runtime.store.createRun({

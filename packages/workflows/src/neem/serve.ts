@@ -1,5 +1,6 @@
 import type { WorkflowRuntimeAdapter } from '../runtime/client.ts'
 import type { HandlerRunner } from '../runtime/handler.ts'
+import type { UnservedWorkflowWarning } from '../runtime/worker.ts'
 import type {
   ResolvedWorkflowsRegistry,
   WorkflowsWorkerData,
@@ -18,6 +19,7 @@ export async function runRoleLoop(input: {
   readonly workerId: string
   readonly signal: AbortSignal
   readonly onError: (error: unknown) => void
+  readonly onWarning: (warning: UnservedWorkflowWarning) => void
 }): Promise<void> {
   const loop = {
     ...input.runtime,
@@ -35,6 +37,7 @@ export async function runRoleLoop(input: {
     case 'coordinator':
       await serveWorkflowWorker({
         ...loop,
+        onWarning: input.onWarning,
         scheduling:
           input.registry.schedules.length === 0 ? undefined : { everyMs: 1000 },
       })

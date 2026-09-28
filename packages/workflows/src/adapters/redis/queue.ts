@@ -6,7 +6,11 @@ import type {
   ExecutionWorkerClaim,
   RunCoordinationWorkerClaim,
 } from '../../runtime/commands.ts'
-import type { CommandReleaseOptions } from '../../runtime/executors.ts'
+import type {
+  CommandReleaseOptions,
+  UnservedWorkflow,
+  UnservedWorkflowQuery,
+} from '../../runtime/executors.ts'
 import type { StoredError, StoredRun } from '../../runtime/state.ts'
 import type { DeadWorkflowCommand, WriteFence } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
@@ -18,6 +22,7 @@ import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import { UNFENCED, assertNotFenced, resolveWriteFence } from './fence.ts'
 import { QueueScripts } from './scripts.ts'
 import { decode, encode } from './state.ts'
@@ -239,6 +244,29 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
         released.dead ? '1' : '0',
       ],
     )
+  }
+
+  // The ready index holds unclaimed live commands scored by due time, so the
+  // oldest are one bounded range read.
+  async listUnserved(
+    query: UnservedWorkflowQuery,
+  ): Promise<readonly UnservedWorkflow[]> {
+    const queue = this.#keys.queue(this.#kind)
+    const result = scriptResult(
+      await this.#scripts.runRaw(
+        'listUnserved',
+        [queue.items, queue.ready],
+        [String(query.dueBefore), String(query.limit), this.#keys.prefix],
+      ),
+    )
+    const queued: { workflowName: string; dueAt: Timestamp }[] = []
+    for (let index = 0; index < result.length; index += 2) {
+      queued.push({
+        workflowName: result[index]!,
+        dueAt: Number(result[index + 1]),
+      })
+    }
+    return groupUnservedWorkflows(query, queued)
   }
 
   async listDead(runId?: string): Promise<readonly DeadWorkflowCommand[]> {

@@ -16,7 +16,9 @@ import {
   WORKFLOW_COMMANDS_CHANNEL,
   id,
   json,
+  many,
   one,
+  timestampColumn,
   timestampParam,
 } from './sql.ts'
 
@@ -366,7 +368,7 @@ export const createPostgresWorkflowCommandHelpers = (
 export const createRunCoordinationExecutor = (
   ctx: PostgresWorkflowCommandContext,
 ): RunCoordinationExecutor => {
-  const { ready } = ctx
+  const { db, ready } = ctx
   const {
     insertContinueCommand,
     releaseContinueCommand,
@@ -409,6 +411,44 @@ export const createRunCoordinationExecutor = (
     async release(command, options) {
       await ready
       await releaseContinueCommand(command.id, command.leaseToken, options)
+    },
+    async listUnserved(query) {
+      await ready
+      // The inner scan walks the claim index in claim order and stops after
+      // `limit` entries; filtering there would scan past every served or
+      // delayed command instead.
+      const rows = await many<{
+        workflow_name: string
+        count: number | string
+        oldest_due_at: unknown
+      }>(
+        db,
+        `
+        SELECT workflow_name, count(*) AS count, min(run_at) AS oldest_due_at
+        FROM (
+          SELECT workflow_name, run_at, lease_token
+          FROM workflow_commands
+          WHERE kind = 'continue' AND dead_at IS NULL
+          ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+          LIMIT $3
+        ) AS oldest
+        WHERE lease_token IS NULL
+          AND run_at <= $2
+          AND workflow_name <> ALL($1::text[])
+        GROUP BY workflow_name
+        ORDER BY oldest_due_at ASC, workflow_name ASC
+      `,
+        [
+          [...query.workflowNames],
+          timestampParam(query.dueBefore),
+          query.limit,
+        ],
+      )
+      return rows.map((row) => ({
+        workflowName: row.workflow_name,
+        count: Number(row.count),
+        oldestDueAt: timestampColumn(row.oldest_due_at),
+      }))
     },
   }
 }

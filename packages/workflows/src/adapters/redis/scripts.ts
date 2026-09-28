@@ -511,6 +511,24 @@ for _, id in ipairs(ids) do
 end
 return result
 `,
+  listUnserved: `
+${QUEUE_CLEANUP}
+-- Read-only: whatever this skips, claims and maintenance clean up.
+local entries = redis.call('ZRANGEBYSCORE', KEYS[2], '-inf', ARGV[1], 'WITHSCORES', 'LIMIT', 0, tonumber(ARGV[2]))
+local result = {}
+for index = 1, #entries, 2 do
+  local raw = redis.call('HGET', KEYS[1], entries[index])
+  if raw then
+    local item = cjson.decode(raw)
+    if not item.deadAt and not item.leaseToken and
+      not orphaned(item, ARGV[3]) and not unmapped(item, ARGV[3]) then
+      table.insert(result, item.payload.workflowName)
+      table.insert(result, entries[index + 1])
+    end
+  end
+end
+return result
+`,
   pruneDead: `
 ${QUEUE_CLEANUP}
 -- An unreaped dead command is the only thing left that can settle its run, so
