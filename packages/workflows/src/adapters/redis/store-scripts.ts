@@ -292,7 +292,7 @@ local created = true
 local idempotent = mappedRun(ARGV[8], ARGV[6])
 if idempotent then
   if idempotent[2] ~= requested.rootRunId or idempotent[4] ~= ARGV[3] then
-    return { 'conflict' }
+    return { 'idempotency-conflict', idempotent[3] }
   end
   runRaw = idempotent[3]
   requested = cjson.decode(runRaw)
