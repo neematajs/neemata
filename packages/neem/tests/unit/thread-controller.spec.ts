@@ -1,3 +1,4 @@
+import type { Worker } from 'node:worker_threads'
 import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
@@ -5,6 +6,7 @@ import { createFuture } from '@nmtjs/common'
 import { describe, expect, it, onTestFinished } from 'vitest'
 
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
+import type { NeemLifecycleConfig } from '../../src/shared/types.ts'
 import { ThreadController } from '../../src/internal/host/thread.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
@@ -214,6 +216,69 @@ describe('ThreadController', () => {
     await thread.stop().catch(() => undefined)
   })
 
+  it('terminates a worker that misses the start deadline while the fail hook hangs', async () => {
+    const fixture = await createThreadFixture(
+      `setInterval(() => {}, 1_000)`,
+      undefined,
+      { startTimeout: 100 },
+    )
+    const hooks = createHostHooks()
+    let failHookCalls = 0
+    hooks.hook('worker:fail', () => {
+      failHookCalls += 1
+      return new Promise<void>(() => {})
+    })
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact },
+      index: 0,
+      hooks,
+    })
+    onTestFinished(() => thread.stop())
+
+    await expect(thread.start()).rejects.toThrow(
+      'Worker [api:0] did not become ready within 100ms',
+    )
+    expect(failHookCalls).toBe(1)
+    expect(thread.getState()).toBe('failed')
+    const { worker } = thread as unknown as { worker: Worker }
+    // A thread that has exited reports -1.
+    expect(worker.threadId).toBe(-1)
+  })
+
+  it('bounds a patch by the configured start deadline', async () => {
+    const fixture = await createThreadFixture(
+      `
+      import { parentPort } from 'node:worker_threads'
+
+      // A patch never replies, like a replacement generation hanging in start.
+      parentPort.on('message', (message) => {
+        if (message.type === 'stop') process.exit(0)
+      })
+      parentPort.postMessage({
+        type: 'event',
+        event: { type: 'ready', data: { upstreams: [] } },
+      })
+      `,
+      undefined,
+      { startTimeout: 1_000 },
+    )
+    const thread = new ThreadController({
+      snapshot: fixture.snapshot,
+      runtimeName: 'api',
+      plan: { name: 'api:0', artifact: fixture.artifact },
+      index: 0,
+      hooks: createHostHooks(),
+    })
+    onTestFinished(() => thread.stop())
+
+    await thread.start()
+    await expect(thread.applyPatch({ type: 'Noop' })).rejects.toThrow(
+      'Worker [api:0] patch timed out after 1000ms',
+    )
+  })
+
   it('preserves structured non-Error rejections in worker crash reports', async () => {
     const rejection = {
       type: 'provider-error',
@@ -287,6 +352,7 @@ const REAL_WORKER_ENTRY = new URL(
 async function createThreadFixture(
   workerSource: string,
   runtimeWorkerSource = 'export default {}\n',
+  lifecycle?: NeemLifecycleConfig,
 ) {
   const outDir = await createTempDir('neem-thread-controller-')
 
@@ -328,7 +394,7 @@ async function createThreadFixture(
         outDir: '.',
       },
     },
-    config: { runtimes: { api: {} } },
+    config: { runtimes: { api: {} }, lifecycle },
     runtimes: {
       api: {
         name: 'api',
