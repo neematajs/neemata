@@ -5,6 +5,7 @@ import { defineWorkflow, implementWorkflow } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,
+  runWorkflowWorker,
   serveWorkflowWorker,
   type UnservedWorkflowWarning,
 } from '../src/runtime/index.ts'
@@ -133,5 +134,36 @@ describe('unserved workflow warnings', () => {
 
     // A finished pass over the queue starts the next one from the beginning.
     expect(cursors).toStrictEqual([undefined, 'second', undefined])
+  })
+
+  it('never checks from a one-shot drain', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.parse('2026-01-01T00:00:00.000Z'))
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    await client.start(unserved, {})
+    vi.setSystemTime(Date.parse('2026-01-02T00:00:00.000Z'))
+    let checks = 0
+
+    // Each drain would start over at the first page, which could hold only
+    // other workflows forever.
+    for (let drain = 0; drain < 3; drain++) {
+      await runWorkflowWorker({
+        ...runtime,
+        runCoordinationExecutor: {
+          ...runtime.runCoordinationExecutor,
+          listUnserved: async (query) => {
+            checks += 1
+            return await runtime.runCoordinationExecutor.listUnserved(query)
+          },
+        },
+        workflows: [servedImplementation],
+        workerId: 'coordinator',
+        onWarning: () => {},
+        unservedWorkflows: { everyMs: 0, afterMs: 0 },
+      })
+    }
+
+    expect(checks).toBe(0)
   })
 })

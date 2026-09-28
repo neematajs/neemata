@@ -186,9 +186,10 @@ holding it. Every five minutes, coordinators inspect the next page of up to
 runs have been claimable for over five minutes: since due, or since the lease
 expired. Pages resume where the last one ended, so a large queue takes several
 checks to cover. The runs are left alone, since another deployment may still
-serve them. A standalone
-coordinator reports them to `runWorkflowWorker({ onWarning })` and runs no check
-without it; `unservedWorkflows` takes `everyMs` and `afterMs`, or `false`.
+serve them. A standalone coordinator reports them to
+`serveWorkflowWorker({ onWarning })` and runs no check without it;
+`unservedWorkflows` takes `everyMs` and `afterMs`, or `false`. A one-shot
+`runWorkflowWorker` drain never checks.
 
 On stop the worker stops claiming, aborts attempts, joins the loops, waits for
 every handler to settle, and only then disposes the adapter and calls `dispose`.

@@ -126,7 +126,10 @@ export type RunWorkflowWorkerInput<
      * Observes workflows whose queued runs no coordinator claims, such as a
      * run started by name for a workflow no worker implements. Such a run is
      * never released, so it would otherwise wait silently. Only a warning:
-     * another deployment may still serve it. Without a listener, no check runs.
+     * another deployment may still serve it. The check pages through the
+     * queue over a coordinator's lifetime, so only `serveWorkflowWorker` runs
+     * it, and only with a listener: a one-shot `runWorkflowWorker` drain
+     * would reread the first page every time.
      */
     readonly onWarning?: (warning: UnservedWorkflowWarning) => void
     readonly unservedWorkflows?: false | WorkerUnservedWorkflowsOptions
@@ -273,7 +276,7 @@ export async function runWorkflowWorker<W extends AnyWorkflowImplementation>(
   input: RunWorkflowWorkerInput<W>,
 ): Promise<WorkerLoopResult> {
   return drainWorkerPool(
-    workflowWorkerOptions(input),
+    workflowWorkerOptions(input, 'drain'),
     workflowDriver(input, resolveHandlers(input)),
   )
 }
@@ -282,16 +285,18 @@ export async function serveWorkflowWorker<W extends AnyWorkflowImplementation>(
   input: RunWorkflowWorkerInput<W> & { readonly signal: AbortSignal },
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
-    { ...workflowWorkerOptions(input), signal: input.signal },
+    { ...workflowWorkerOptions(input, 'serve'), signal: input.signal },
     workflowDriver(input, resolveHandlers(input)),
   )
 }
 
-function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
-  const maintenance = withUnservedWorkflowsHook(
-    input,
-    withRunTimeoutsHook(input, withReapingHook(input)),
-  )
+function workflowWorkerOptions(
+  input: RunWorkflowWorkerInput,
+  mode: 'drain' | 'serve',
+) {
+  const hooks = withRunTimeoutsHook(input, withReapingHook(input))
+  const maintenance =
+    mode === 'serve' ? withUnservedWorkflowsHook(input, hooks) : hooks
   return withDefaultRetentionPruner({
     ...input,
     maintenance,
