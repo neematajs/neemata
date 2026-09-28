@@ -142,7 +142,33 @@ describe.skipIf(!postgresTarget.url)(
       expect(await count('sample', `id = ${sampleId}`)).toBe(1)
     })
 
-    it.each([
+    // A one-session pool behind a proxy that can stop forwarding.
+    async function createStallingPool(options: pg.PoolConfig = {}) {
+      const proxy = await createStallingProxy(postgresTarget.url!)
+      closers.push(() => proxy.close())
+      const stalling = new pg.Pool({
+        ...sessionOptions('transactions-unanswered'),
+        connectionString: proxy.url,
+        max: 1,
+        idleTimeoutMillis: 0,
+        ...options,
+      })
+      closers.push(() => stalling.end())
+      const sessions: pg.Client[] = []
+      stalling.on('connect', (session) => {
+        sessions.push(session as unknown as pg.Client)
+      })
+      return { proxy, stalling, sessions }
+    }
+
+    const pid = async (connection: WorkflowPostgresConnection) =>
+      (
+        await connection.query<{ pid: number }>(
+          'SELECT pg_backend_pid() AS pid',
+        )
+      ).rows[0]!.pid
+
+    const stallingRuns = [
       [
         'a transaction',
         (
@@ -163,36 +189,47 @@ describe.skipIf(!postgresTarget.url)(
           return connection.query('SELECT 1')
         },
       ],
-    ] as const)(
-      'fails %s the server stops answering and discards its session',
-      async (_name, run) => {
-        const sampleId = Math.floor(Math.random() * 2 ** 31)
-        const proxy = await createStallingProxy(postgresTarget.url!)
-        closers.push(() => proxy.close())
-        const stalling = new pg.Pool({
-          ...sessionOptions('transactions-unanswered'),
-          connectionString: proxy.url,
-          max: 1,
-          idleTimeoutMillis: 0,
-        })
-        closers.unshift(() => stalling.end())
-        const sessions: pg.Client[] = []
-        stalling.on('connect', (session) => {
-          sessions.push(session as unknown as pg.Client)
-        })
-        const answerTimeoutMs = 1_000
-        const connection = createPostgresWorkflowConnection(stalling, {
-          answerTimeoutMs,
-        })
-        const pid = async () =>
-          (
-            await connection.query<{ pid: number }>(
-              'SELECT pg_backend_pid() AS pid',
-            )
-          ).rows[0]!.pid
-        const before = await pid()
+    ] as const
 
-        // Only the deadline's timers: the sockets stay real, and healthy
+    const answerDeadline = {
+      bound: 'the answer deadline',
+      poolOptions: {},
+      connectionOptions: { answerTimeoutMs: 1_000 },
+      message: 'did not answer',
+    }
+    // The driver's read timeout fails the statement first but leaves it in
+    // flight on the session.
+    const driverTimeout = {
+      bound: "the driver's earlier read timeout",
+      poolOptions: { query_timeout: 1_000 },
+      connectionOptions: { answerTimeoutMs: 60_000 },
+      message: 'Query read timeout',
+    }
+
+    it.each(
+      stallingRuns.flatMap(([name, run]) =>
+        [answerDeadline, driverTimeout].map(
+          (bound) => [name, bound.bound, run, bound] as const,
+        ),
+      ),
+    )(
+      'fails %s the server stops answering at %s and discards its session',
+      async (
+        _name,
+        _bound,
+        run,
+        { poolOptions, connectionOptions, message },
+      ) => {
+        const sampleId = Math.floor(Math.random() * 2 ** 31)
+        const { proxy, stalling, sessions } =
+          await createStallingPool(poolOptions)
+        const connection = createPostgresWorkflowConnection(
+          stalling,
+          connectionOptions,
+        )
+        const before = await pid(connection)
+
+        // Only the deadlines' timers: the sockets stay real, and healthy
         // statements cannot miss a deadline that time never reaches.
         vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
         try {
@@ -200,9 +237,9 @@ describe.skipIf(!postgresTarget.url)(
             (error: unknown) => error,
           )
           await proxy.swallowed
-          await vi.advanceTimersByTimeAsync(answerTimeoutMs)
+          await vi.advanceTimersByTimeAsync(1_000)
           expect(await failed).toMatchObject({
-            message: expect.stringContaining('did not answer'),
+            message: expect.stringContaining(message),
           })
         } finally {
           vi.useRealTimers()
@@ -211,10 +248,36 @@ describe.skipIf(!postgresTarget.url)(
         expect(sessions).toHaveLength(1)
         expect(sessions[0]!.connection.stream.destroyed).toBe(true)
         expect(stalling.totalCount).toBe(0)
-        expect(await pid()).not.toBe(before)
+        expect(await pid(connection)).not.toBe(before)
         expect(await count('sample', `id = ${sampleId}`)).toBe(0)
       },
     )
+
+    it('discards a pooled session whose socket fails mid-transaction', async () => {
+      const sampleId = Math.floor(Math.random() * 2 ** 31)
+      const { proxy, stalling, sessions } = await createStallingPool()
+      const connection = createPostgresWorkflowConnection(stalling)
+
+      const failed = connection
+        .transaction(async (tx) => {
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+          proxy.stall()
+          await tx.query('SELECT 1')
+        })
+        .catch((error: unknown) => error)
+      await proxy.swallowed
+      // The checked-out client reports the lost socket as an `error` event,
+      // which would crash the process with nobody listening.
+      await proxy.close()
+
+      expect(await failed).toMatchObject({
+        message: expect.stringContaining('Connection terminated'),
+      })
+      expect(sessions).toHaveLength(1)
+      expect(sessions[0]!.connection.stream.destroyed).toBe(true)
+      expect(stalling.totalCount).toBe(0)
+      expect(await count('sample', `id = ${sampleId}`)).toBe(0)
+    })
 
     it("bounds dead-command pruning while skipping another session's locked row", async () => {
       const connection = createPostgresWorkflowConnection(pool)

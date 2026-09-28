@@ -118,6 +118,43 @@ test('dispose destroys a listener connection that does not close in time', async
   }
 })
 
+test('a listener connected after dispose is closed within the deadline too', async () => {
+  vi.useFakeTimers()
+  try {
+    const destroy = vi.fn()
+    const onError = vi.fn()
+    let handOver!: (client: WorkflowPostgresListenerClient) => void
+    const wakeEvents = createPostgresWorkflowWakeEvents({
+      connect: () =>
+        new Promise((resolve) => {
+          handOver = resolve
+        }),
+      closeTimeoutMs: 500,
+      onError,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    await wakeEvents.dispose()
+
+    handOver({
+      ...createFakeListenerClient(),
+      end: () => new Promise<void>(() => {}),
+      connection: { stream: { destroy } },
+    })
+    await vi.advanceTimersByTimeAsync(499)
+    expect(destroy).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        message: expect.stringContaining('did not close within 500 ms'),
+      }),
+    )
+  } finally {
+    vi.useRealTimers()
+    await flush()
+  }
+})
+
 test('dispose keeps a listener connection that closes in time', async () => {
   vi.useFakeTimers()
   try {

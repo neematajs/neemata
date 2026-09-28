@@ -521,9 +521,14 @@ Other clients can pass a custom object that satisfies `WorkflowPostgresConnectio
 
 When a pooled transaction fails, the adapter rolls it back before releasing the
 session. If rollback also fails, it calls `release(true)` to discard the session
-and rethrows the original transaction error. Custom pool wrappers must honor that
-destroy argument; plain clients and clients with their own transaction API keep
-ownership of their sessions.
+and rethrows the original transaction error. A statement that fails without an
+answer from the server, such as a driver's read timeout or a lost socket, may still
+be in flight, so its session is discarded at once, with no rollback queued behind
+it. The server's own errors are told apart by their `severity` field, as `pg`
+reports them. The adapter also handles a borrowed `pg` session's `error` event, so a
+socket failure discards the session instead of crashing the process. Custom pool
+wrappers must honor that destroy argument; plain clients and clients with their
+own transaction API keep ownership of their sessions.
 
 `statement_timeout` only bounds a server that is still working. A stalled server,
 a network partition or a failover leaves a statement waiting for its answer
@@ -536,26 +541,29 @@ const connection = createPostgresWorkflowConnection(pool, {
 ```
 
 Each statement the engine sends must then be answered within `answerTimeoutMs`.
-One that is not fails, and its session is discarded with `release(true)` rather
-than returned to the pool: the statement may still run and its reply may still
-arrive. No `ROLLBACK` is sent on that session, since it would only queue behind the
-unanswered statement, and a `COMMIT` that missed the deadline may still have
-committed. `pg`'s own `query_timeout` is no substitute: it fails the call but leaves
-the statement in flight on the session. Idle sessions wait without limit, and so
-does waiting for a free session; bound that with the pool's
-`connectionTimeoutMillis`. A statement waiting on a row lock is unanswered too, so
-keep the deadline above the lock waits you expect. With a deadline, top-level
-statements run on a session taken with `connect()` instead of `pool.query()`, so
-the adapter can discard it. The value must be a positive integer of at most
-2147483647 ms, or the adapter throws `RangeError`. Plain clients and clients with
-their own transaction API reject it with `TypeError`: the adapter cannot discard
-their sessions.
+One that is not fails, and its session is discarded with `release(true)` right
+away, even while a transaction handler that caught the failure carries on: the
+statement may still run and its reply may still arrive. No `ROLLBACK` is sent on
+that session, since it would only queue behind the unanswered statement, and a
+`COMMIT` that missed the deadline may still have committed. `pg`'s `query_timeout`
+fails the call but leaves the statement in flight on the session; the adapter
+discards such a session too, but `query_timeout` also bounds the app's own queries
+on that pool, while `answerTimeoutMs` bounds only the engine's statements and works
+with any pool. Idle sessions wait without limit, and so does waiting for a free
+session; bound that with the pool's `connectionTimeoutMillis`. A statement waiting
+on a row lock is unanswered too, so keep the deadline above the lock waits you
+expect. With a deadline, top-level statements run on a session taken with
+`connect()` instead of `pool.query()`, so the adapter can discard it; like
+`pool.query()`, it discards that session whenever the statement fails. The value
+must be a positive integer of at most 2147483647 ms, or the adapter throws
+`RangeError`. Plain clients and clients with their own transaction API reject it
+with `TypeError`: the adapter cannot discard their sessions.
 
-Closing the pool stays the app's call. `pool.end()` waits for the server to
-acknowledge each idle session's goodbye, which a stalled server never does. Under
-Neem, `cleanupTimeoutMs` does not interrupt a `dispose` that hangs this way; on a
-requested stop, Neem's host stop deadline (`lifecycle.stopTimeout`) terminates the
-thread instead.
+Closing the pool stays the app's call. `pool.end()` waits for checked-out sessions
+to be released, then drops idle ones without waiting for the server to
+acknowledge; their sockets may outlive it. Under Neem, `cleanupTimeoutMs` does not
+interrupt a `dispose` that hangs; on a requested stop, Neem's host stop deadline
+(`lifecycle.stopTimeout`) terminates the thread instead.
 
 A transaction's connection, such as the `connection` passed to
 `atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work

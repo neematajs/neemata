@@ -1,3 +1,5 @@
+import { EventEmitter } from 'node:events'
+
 import { PGlite } from '@electric-sql/pglite'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -41,6 +43,10 @@ function deferred() {
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 20))
+
+// Shaped like `pg`'s DatabaseError: the server answered, the session is in sync.
+const serverError = (message: string) =>
+  Object.assign(new Error(message), { severity: 'ERROR' })
 
 test('adapts pglite transaction API', async () => {
   const connection = createPostgresWorkflowConnection(new PGlite())
@@ -133,12 +139,12 @@ test('rolls back pg pool transactions and releases client', async () => {
 test.each(['BEGIN', 'handler', 'COMMIT'])(
   'discards a pooled session when rollback after %s failure fails',
   async (stage) => {
-    const failure = new Error(`${stage} failed`)
+    const failure = serverError(`${stage} failed`)
     const release = vi.fn()
     const client = {
       async query(sql: string) {
         if (sql === stage) throw failure
-        if (sql === 'ROLLBACK') throw new Error('rollback failed')
+        if (sql === 'ROLLBACK') throw serverError('rollback failed')
         return { rows: [] }
       },
       release,
@@ -244,7 +250,7 @@ test('releases pg pool client when begin fails', async () => {
   const client = {
     async query(sql: string) {
       log.push(sql)
-      throw new Error('begin failed')
+      throw serverError('begin failed')
     },
     release() {
       log.push('release')
@@ -564,6 +570,105 @@ describe.each([
   })
 })
 
+// What a fake session does with a statement: answer it, never answer it (like
+// a server that stopped replying), or fail it.
+type FakeOutcome = 'answer' | 'never' | Error
+
+// Sessions shaped like `pg`'s pool clients: an `error` event nobody listens
+// to throws, and a failed socket first fails the statements in flight.
+function createPool(outcome: (sql: string) => FakeOutcome = () => 'answer') {
+  const log: string[] = []
+  const releases: (boolean | undefined)[] = []
+  const sessions: (EventEmitter & { fail(error: Error): void })[] = []
+  const pool = {
+    totalCount: 1,
+    async query(): Promise<never> {
+      throw new Error('pool.query picks a session the adapter cannot discard')
+    },
+    async connect() {
+      log.push('connect')
+      const inFlight = new Set<(error: Error) => void>()
+      const session = Object.assign(new EventEmitter(), {
+        query(sql: string): Promise<{ rows: [] }> {
+          log.push(sql)
+          const result = outcome(sql)
+          if (result instanceof Error) return Promise.reject(result)
+          if (result === 'answer') return Promise.resolve({ rows: [] })
+          return new Promise((_, reject) => inFlight.add(reject))
+        },
+        release(destroy?: boolean) {
+          releases.push(destroy)
+        },
+        fail(error: Error) {
+          for (const reject of inFlight) reject(error)
+          session.emit('error', error)
+        },
+      })
+      sessions.push(session)
+      return session
+    },
+  }
+  return { pool, log, releases, sessions }
+}
+
+describe('borrowed pool sessions', () => {
+  test('discards a transaction session whose socket fails mid-statement', async () => {
+    const { pool, log, releases, sessions } = createPool((sql) =>
+      sql === 'SELECT 1' ? 'never' : 'answer',
+    )
+    const connection = createPostgresWorkflowConnection(pool)
+    const lost = new Error('Connection terminated unexpectedly')
+
+    const failed = connection
+      .transaction(async (tx) => {
+        await tx.query('SELECT 1')
+      })
+      .catch((error: unknown) => error)
+    await vi.waitFor(() => expect(log).toContain('SELECT 1'))
+    // Without a listener, this `error` event would throw.
+    sessions[0]!.fail(lost)
+
+    expect(await failed).toBe(lost)
+    expect(log).toStrictEqual(['connect', 'BEGIN', 'SELECT 1'])
+    expect(releases).toStrictEqual([true])
+    expect(sessions[0]!.listenerCount('error')).toBe(0)
+  })
+
+  test('discards a transaction session whose statement failed without a server answer', async () => {
+    const readTimeout = new Error('Query read timeout')
+    const { pool, log, releases } = createPool((sql) =>
+      sql === 'SELECT 1' ? readTimeout : 'answer',
+    )
+    const connection = createPostgresWorkflowConnection(pool)
+
+    await expect(
+      connection.transaction(async (tx) => {
+        await tx.query('SELECT 1')
+      }),
+    ).rejects.toBe(readTimeout)
+    // No ROLLBACK: it would only queue behind the statement still in flight.
+    expect(log).toStrictEqual(['connect', 'BEGIN', 'SELECT 1'])
+    expect(releases).toStrictEqual([true])
+  })
+
+  test('rolls back and returns a session whose statement the server rejected', async () => {
+    const rejected = serverError('duplicate key')
+    const { pool, log, releases, sessions } = createPool((sql) =>
+      sql === 'SELECT 1' ? rejected : 'answer',
+    )
+    const connection = createPostgresWorkflowConnection(pool)
+
+    await expect(
+      connection.transaction(async (tx) => {
+        await tx.query('SELECT 1')
+      }),
+    ).rejects.toBe(rejected)
+    expect(log).toStrictEqual(['connect', 'BEGIN', 'SELECT 1', 'ROLLBACK'])
+    expect(releases).toStrictEqual([false])
+    expect(sessions[0]!.listenerCount('error')).toBe(0)
+  })
+})
+
 describe('statement answer deadline', () => {
   const answerTimeoutMs = 1_000
   const missedDeadline = {
@@ -578,33 +683,8 @@ describe('statement answer deadline', () => {
     vi.useRealTimers()
   })
 
-  // A pool whose sessions never answer the chosen statements, like a server
-  // that stopped replying.
-  function createPool(unanswered: (sql: string) => boolean = () => false) {
-    const log: string[] = []
-    const releases: (boolean | undefined)[] = []
-    const pool = {
-      totalCount: 1,
-      async query(): Promise<never> {
-        throw new Error('pool.query picks a session the adapter cannot discard')
-      },
-      async connect() {
-        log.push('connect')
-        return {
-          query(sql: string): Promise<{ rows: [] }> {
-            log.push(sql)
-            return unanswered(sql)
-              ? new Promise(() => {})
-              : Promise.resolve({ rows: [] })
-          },
-          release(destroy?: boolean) {
-            releases.push(destroy)
-          },
-        }
-      },
-    }
-    return { pool, log, releases }
-  }
+  const unanswered = (statement: string) => (sql: string) =>
+    sql === statement ? 'never' : 'answer'
 
   test.each([
     ['BEGIN', ['connect', 'BEGIN']],
@@ -613,7 +693,7 @@ describe('statement answer deadline', () => {
   ])(
     'fails a transaction whose %s goes unanswered and discards its session',
     async (stage, expectedLog) => {
-      const { pool, log, releases } = createPool((sql) => sql === stage)
+      const { pool, log, releases } = createPool(unanswered(stage))
       const connection = createPostgresWorkflowConnection(pool, {
         answerTimeoutMs,
       })
@@ -632,29 +712,34 @@ describe('statement answer deadline', () => {
     },
   )
 
-  test('fails later statements on a session that missed the deadline', async () => {
-    const { pool, log, releases } = createPool((sql) => sql === 'SELECT 1')
+  test('discards the session when the deadline passes, not when the handler ends', async () => {
+    const { pool, log, releases } = createPool(unanswered('SELECT 1'))
     const connection = createPostgresWorkflowConnection(pool, {
       answerTimeoutMs,
     })
+    const resume = deferred()
     let later: unknown
 
     const failed = connection
       .transaction(async (tx) => {
         await tx.query('SELECT 1').catch(() => {})
+        await resume.promise
         later = await tx.query('SELECT 2').catch((error: unknown) => error)
       })
       .catch((error: unknown) => error)
     await vi.advanceTimersByTimeAsync(answerTimeoutMs)
 
-    expect(later).toMatchObject(missedDeadline)
+    // The handler caught the failure and is still paused.
+    expect(releases).toStrictEqual([true])
+    resume.resolve()
     expect(await failed).toMatchObject(missedDeadline)
+    expect(later).toMatchObject(missedDeadline)
     expect(log).toStrictEqual(['connect', 'BEGIN', 'SELECT 1'])
     expect(releases).toStrictEqual([true])
   })
 
   test('runs a top-level statement on a session it can discard', async () => {
-    const { pool, log, releases } = createPool((sql) => sql === 'SELECT 1')
+    const { pool, log, releases } = createPool(unanswered('SELECT 1'))
     const connection = createPostgresWorkflowConnection(pool, {
       answerTimeoutMs,
     })
@@ -665,6 +750,41 @@ describe('statement answer deadline', () => {
     expect(await failed).toMatchObject(missedDeadline)
     expect(log).toStrictEqual(['connect', 'SELECT 1'])
     expect(releases).toStrictEqual([true])
+  })
+
+  test.each([
+    ['a driver read timeout', new Error('Query read timeout')],
+    ['a server error', serverError('division by zero')],
+  ])(
+    'discards a top-level session whose statement failed with %s',
+    async (_name, failure) => {
+      const { pool, releases } = createPool(() => failure)
+      const connection = createPostgresWorkflowConnection(pool, {
+        answerTimeoutMs,
+      })
+
+      await expect(connection.query('SELECT 1')).rejects.toBe(failure)
+      expect(releases).toStrictEqual([true])
+      expect(vi.getTimerCount()).toBe(0)
+    },
+  )
+
+  test('discards a top-level session whose socket fails mid-statement', async () => {
+    const { pool, log, releases, sessions } = createPool(unanswered('SELECT 1'))
+    const connection = createPostgresWorkflowConnection(pool, {
+      answerTimeoutMs,
+    })
+    const lost = new Error('Connection terminated unexpectedly')
+
+    const failed = connection.query('SELECT 1').catch((error: unknown) => error)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(log).toStrictEqual(['connect', 'SELECT 1'])
+    // Without a listener, this `error` event would throw.
+    sessions[0]!.fail(lost)
+
+    expect(await failed).toBe(lost)
+    expect(releases).toStrictEqual([true])
+    expect(sessions[0]!.listenerCount('error')).toBe(0)
   })
 
   test('returns answered sessions to the pool with no deadline left armed', async () => {

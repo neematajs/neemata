@@ -105,6 +105,30 @@ export function createPostgresWorkflowWakeEvents(
     }
   }
 
+  // A graceful close waits for the server to acknowledge it, which a stalled
+  // server or a partition never does.
+  const close = async (listener: WorkflowPostgresListenerClient) => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<void>((resolve) => {
+      timer = setTimeout(() => {
+        listener.connection?.stream.destroy()
+        params.onError?.(
+          new Error(
+            `The workflow wake-event listener did not close within ${closeTimeoutMs} ms`,
+          ),
+        )
+        resolve()
+      }, closeTimeoutMs)
+    })
+    try {
+      await Promise.race([(async () => listener.end())(), deadline])
+    } catch (error) {
+      params.onError?.(error)
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   const scheduleReconnect = () => {
     if (disposed || reconnectTimer) return
     reconnectTimer = setTimeout(() => {
@@ -123,7 +147,7 @@ export function createPostgresWorkflowWakeEvents(
     try {
       connected = await params.connect()
       if (disposed) {
-        await connected.end()
+        await close(connected)
         return
       }
       client = connected
@@ -196,28 +220,7 @@ export function createPostgresWorkflowWakeEvents(
       runEventListeners.clear()
       const current = client
       client = undefined
-      if (!current) return
-      // A graceful close waits for the server to acknowledge it, which a
-      // stalled server or a partition never does.
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const deadline = new Promise<void>((resolve) => {
-        timer = setTimeout(() => {
-          current.connection?.stream.destroy()
-          params.onError?.(
-            new Error(
-              `The workflow wake-event listener did not close within ${closeTimeoutMs} ms`,
-            ),
-          )
-          resolve()
-        }, closeTimeoutMs)
-      })
-      try {
-        await Promise.race([(async () => current.end())(), deadline])
-      } catch (error) {
-        params.onError?.(error)
-      } finally {
-        clearTimeout(timer)
-      }
+      if (current) await close(current)
     },
   }
 }
