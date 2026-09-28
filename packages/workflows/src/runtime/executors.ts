@@ -44,44 +44,57 @@ export type AttemptDispatchOptions = {
 export type UnservedWorkflowQuery = {
   /** The workflows the asking coordinator claims; their commands never count. */
   readonly workflowNames: readonly string[]
-  /** Only commands due at or before this time count. */
-  readonly dueBefore: Timestamp
-  /** How many of the oldest queued commands to inspect at most. */
+  /** Only commands claimable since at or before this time count. */
+  readonly claimableBefore: Timestamp
+  /** Roughly how many commands one call inspects. */
   readonly limit: number
+  /** Where the previous page ended; omitted, inspection starts over. */
+  readonly cursor?: string
 }
 
 export type UnservedWorkflow = {
   readonly workflowName: string
-  /** A lower bound when more than `limit` commands are queued. */
+  /** Counts only the commands this page inspected. */
   readonly count: number
-  readonly oldestDueAt: Timestamp
+  /** A due time, or the lease expiry of a command whose claimer is gone. */
+  readonly oldestClaimableAt: Timestamp
 }
 
-/** Groups inspected queue entries the way every adapter reports them. */
+export type UnservedWorkflowPage = {
+  readonly workflows: readonly UnservedWorkflow[]
+  /** Where the next page starts; absent once the whole queue was inspected. */
+  readonly cursor?: string
+}
+
+/** Groups inspected commands the way every adapter reports them. */
 export function groupUnservedWorkflows(
   query: UnservedWorkflowQuery,
-  queued: Iterable<{
+  inspected: Iterable<{
     readonly workflowName: string
-    readonly dueAt: Timestamp
+    readonly claimableAt: Timestamp
   }>,
 ): readonly UnservedWorkflow[] {
   const served = new Set(query.workflowNames)
-  const groups = new Map<string, { count: number; oldestDueAt: Timestamp }>()
-  for (const { workflowName, dueAt } of queued) {
-    if (served.has(workflowName) || dueAt > query.dueBefore) continue
+  const groups = new Map<
+    string,
+    { count: number; oldestClaimableAt: Timestamp }
+  >()
+  for (const { workflowName, claimableAt } of inspected) {
+    if (served.has(workflowName) || claimableAt > query.claimableBefore)
+      continue
     const group = groups.get(workflowName)
     if (group === undefined) {
-      groups.set(workflowName, { count: 1, oldestDueAt: dueAt })
+      groups.set(workflowName, { count: 1, oldestClaimableAt: claimableAt })
       continue
     }
     group.count += 1
-    group.oldestDueAt = Math.min(group.oldestDueAt, dueAt)
+    group.oldestClaimableAt = Math.min(group.oldestClaimableAt, claimableAt)
   }
   return [...groups]
     .map(([workflowName, group]) => ({ workflowName, ...group }))
     .sort(
       (left, right) =>
-        left.oldestDueAt - right.oldestDueAt ||
+        left.oldestClaimableAt - right.oldestClaimableAt ||
         (left.workflowName < right.workflowName ? -1 : 1),
     )
 }
@@ -104,16 +117,16 @@ export type RunCoordinationExecutor = {
     options?: CommandReleaseOptions,
   ): Promise<void>
   /**
-   * Unclaimed continue commands for workflows outside the query's names,
-   * grouped by workflow. Coordinators claim only the names they serve, so a
-   * run nobody serves never reaches release or dead-lettering; this is how a
-   * coordinator notices it. Only the oldest commands are inspected, which keeps
-   * the diagnostic cheap on a large queue: those are the ones stuck longest.
-   * Ordered by the oldest due time.
+   * Live continue commands for workflows outside the query's names that
+   * nobody holds, grouped by workflow: unclaimed ones by due time, and claimed
+   * ones by lease expiry, since only a serving coordinator reclaims an expired
+   * lease. Coordinators claim only the names they serve, so a run nobody
+   * serves never reaches release or dead-lettering; this is how a coordinator
+   * notices it. Each call inspects one bounded page and never modifies the
+   * queue; following the cursor covers the whole queue over several calls.
+   * Workflows are ordered by the oldest claimable time.
    */
-  listUnserved(
-    query: UnservedWorkflowQuery,
-  ): Promise<readonly UnservedWorkflow[]>
+  listUnserved(query: UnservedWorkflowQuery): Promise<UnservedWorkflowPage>
 }
 
 export type AttemptExecutor = {

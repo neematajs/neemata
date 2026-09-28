@@ -9,6 +9,7 @@ import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import {
   MAX_ERROR_BACKOFF_MS,
   RELEASE_BACKOFF_MS,
@@ -365,6 +366,47 @@ export const createPostgresWorkflowCommandHelpers = (
   }
 }
 
+type UnservedRow = {
+  readonly id: string
+  readonly priority: number
+  readonly workflow_name: string
+  readonly run_at_key: string
+  readonly created_at_key: string
+  readonly claimable_at: unknown
+}
+
+// Microsecond UTC text: a millisecond timestamp would lose the position.
+type UnservedCursor = readonly [
+  priority: number,
+  runAt: string,
+  createdAt: string,
+  id: string,
+]
+
+const microsecondKey = (column: string) =>
+  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+
+// Pages through the claim index in claim order. An expired lease counts from
+// its expiry and a live one is never claimable yet, so the claimable-time
+// cutoff excludes held commands without a separate predicate.
+const unservedPageSql = (position: string) => `
+  SELECT
+    id,
+    priority,
+    run_at,
+    created_at,
+    workflow_name,
+    ${microsecondKey('run_at')} AS run_at_key,
+    ${microsecondKey('created_at')} AS created_at_key,
+    CASE
+      WHEN lease_token IS NULL THEN run_at
+      ELSE lease_expires_at
+    END AS claimable_at
+  FROM workflow_commands
+  WHERE kind = 'continue' AND dead_at IS NULL ${position}
+  ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+`
+
 export const createRunCoordinationExecutor = (
   ctx: PostgresWorkflowCommandContext,
 ): RunCoordinationExecutor => {
@@ -414,41 +456,47 @@ export const createRunCoordinationExecutor = (
     },
     async listUnserved(query) {
       await ready
-      // The inner scan walks the claim index in claim order and stops after
-      // `limit` entries; filtering there would scan past every served or
-      // delayed command instead.
-      const rows = await many<{
-        workflow_name: string
-        count: number | string
-        oldest_due_at: unknown
-      }>(
+      const after =
+        query.cursor === undefined
+          ? undefined
+          : (JSON.parse(query.cursor) as UnservedCursor)
+      const rows = await many<UnservedRow>(
         db,
-        `
-        SELECT workflow_name, count(*) AS count, min(run_at) AS oldest_due_at
-        FROM (
-          SELECT workflow_name, run_at, lease_token
-          FROM workflow_commands
-          WHERE kind = 'continue' AND dead_at IS NULL
-          ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
-          LIMIT $3
-        ) AS oldest
-        WHERE lease_token IS NULL
-          AND run_at <= $2
-          AND workflow_name <> ALL($1::text[])
-        GROUP BY workflow_name
-        ORDER BY oldest_due_at ASC, workflow_name ASC
-      `,
-        [
-          [...query.workflowNames],
-          timestampParam(query.dueBefore),
-          query.limit,
-        ],
+        after === undefined
+          ? `${unservedPageSql('')} LIMIT $1`
+          : // Row comparison follows the claim index only within one priority,
+            // so lower priorities are a second ordered probe.
+            `
+            SELECT * FROM (
+              (${unservedPageSql(
+                `AND priority = $2
+                 AND (run_at, created_at, id)
+                   > ($3::timestamptz, $4::timestamptz, $5::uuid)`,
+              )} LIMIT $1)
+              UNION ALL
+              (${unservedPageSql('AND priority < $2')} LIMIT $1)
+            ) AS page
+            ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+            LIMIT $1
+          `,
+        after === undefined ? [query.limit] : [query.limit, ...after],
       )
-      return rows.map((row) => ({
-        workflowName: row.workflow_name,
-        count: Number(row.count),
-        oldestDueAt: timestampColumn(row.oldest_due_at),
-      }))
+      const workflows = groupUnservedWorkflows(
+        query,
+        rows.map((row) => ({
+          workflowName: row.workflow_name,
+          claimableAt: timestampColumn(row.claimable_at),
+        })),
+      )
+      const last = rows.at(-1)
+      if (rows.length < query.limit || last === undefined) return { workflows }
+      const cursor: UnservedCursor = [
+        last.priority,
+        last.run_at_key,
+        last.created_at_key,
+        last.id,
+      ]
+      return { workflows, cursor: JSON.stringify(cursor) }
     },
   }
 }

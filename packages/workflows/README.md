@@ -180,9 +180,13 @@ needs different resources per pool.
 
 Startup cannot see runs started by name, such as a `client.start` from another
 deployment. A run of a workflow that no coordinator implements is never claimed
-and stays `queued`, so coordinators check every five minutes for runs due and
-unclaimed for over five minutes, and log one warning per such workflow. The runs
-are left alone, since another deployment may still serve them. A standalone
+and stays `queued`; neither is one whose only serving coordinator crashed while
+holding it. Every five minutes, coordinators inspect the next page of up to
+1000 queued runs and log one warning per workflow they do not implement whose
+runs have been claimable for over five minutes: since due, or since the lease
+expired. Pages resume where the last one ended, so a large queue takes several
+checks to cover. The runs are left alone, since another deployment may still
+serve them. A standalone
 coordinator reports them to `runWorkflowWorker({ onWarning })` and runs no check
 without it; `unservedWorkflows` takes `everyMs` and `afterMs`, or `false`.
 

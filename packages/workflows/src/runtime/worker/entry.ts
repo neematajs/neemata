@@ -55,8 +55,7 @@ const DEFAULT_REAPING_EVERY_MS = 30_000
 const DEFAULT_RUN_TIMEOUTS_EVERY_MS = 60_000
 const DEFAULT_UNSERVED_WORKFLOWS_EVERY_MS = 300_000
 const DEFAULT_UNSERVED_WORKFLOWS_AFTER_MS = 300_000
-// Runs nobody claims stay at the head of the queue, so the oldest few find them.
-const UNSERVED_WORKFLOWS_INSPECT_LIMIT = 1_000
+const UNSERVED_WORKFLOWS_PAGE_SIZE = 1_000
 
 export type WorkerReapingOptions = {
   readonly everyMs?: number
@@ -69,11 +68,15 @@ export type WorkerRunTimeoutsOptions = {
 }
 
 export type WorkerUnservedWorkflowsOptions = {
-  /** How often to check; each unserved workflow is reported once per check. */
+  /**
+   * How often to inspect the next page of the queue; each unserved workflow
+   * is reported at most once per check.
+   */
   readonly everyMs?: number
   /**
-   * How long a run must have been due, and unclaimed, to count. A coordinator
-   * serving its workflow elsewhere would have claimed it by then.
+   * How long a run must have been claimable, unclaimed, to count: since it
+   * was due, or since its claimer's lease expired. A coordinator serving its
+   * workflow elsewhere would have claimed it by then.
    */
   readonly afterMs?: number
 }
@@ -218,20 +221,25 @@ function withUnservedWorkflowsHook(
     (implementation) => implementation.workflow.name,
   )
   const afterMs = options?.afterMs ?? DEFAULT_UNSERVED_WORKFLOWS_AFTER_MS
+  // One bounded page per check, resuming where the last one stopped: a fixed
+  // sample would keep rereading whatever sits at its head.
+  let cursor: string | undefined
   return [
     ...hooks,
     {
       everyMs: options?.everyMs ?? DEFAULT_UNSERVED_WORKFLOWS_EVERY_MS,
       run: async (now: Timestamp) => {
-        const unserved = await input.runCoordinationExecutor.listUnserved({
+        const page = await input.runCoordinationExecutor.listUnserved({
           workflowNames,
-          dueBefore: now - afterMs,
-          limit: UNSERVED_WORKFLOWS_INSPECT_LIMIT,
+          claimableBefore: now - afterMs,
+          limit: UNSERVED_WORKFLOWS_PAGE_SIZE,
+          ...(cursor === undefined ? {} : { cursor }),
         })
-        for (const workflow of unserved) {
+        cursor = page.cursor
+        for (const workflow of page.workflows) {
           onWarning({
             ...workflow,
-            message: `Workflow [${workflow.workflowName}] has ${workflow.count} queued run(s) unclaimed for ${Math.round((now - workflow.oldestDueAt) / 1000)}s: this worker does not implement it, and no worker that does has claimed them`,
+            message: `Workflow [${workflow.workflowName}] has ${workflow.count} queued run(s) unclaimed for ${Math.round((now - workflow.oldestClaimableAt) / 1000)}s: this worker does not implement it, and no worker that does has claimed them`,
           })
         }
       },

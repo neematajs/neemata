@@ -36,6 +36,7 @@ export type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
   UnservedWorkflow,
+  UnservedWorkflowPage,
   UnservedWorkflowQuery,
 } from './executors.ts'
 export { StaleWriteFenceError, WorkflowRunConflictError } from './errors.ts'

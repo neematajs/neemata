@@ -184,25 +184,33 @@ export function createRunCoordinationExecutor(
       )
     },
     async listUnserved(query) {
-      const oldest = continueRunCommands
+      const after = query.cursor === undefined ? 0 : Number(query.cursor)
+      // Not a production adapter: sorting a copy per page stands in for the
+      // index the other adapters page through.
+      const live = [
+        ...continueRunCommands.map((item) => ({
+          item,
+          claimableAt: item.runAt ?? item.createdAt,
+        })),
+        ...Array.from(claimedContinueRunCommands.values(), (item) => ({
+          item,
+          claimableAt: item.leaseExpiresAt,
+        })),
+      ]
         .filter(
-          (item) =>
-            item.deadAt === undefined &&
-            (item.runAt ?? item.createdAt) <= query.dueBefore,
+          ({ item }) => item.deadAt === undefined && item.sequence > after,
         )
-        .sort(
-          (left, right) =>
-            (left.runAt ?? left.createdAt) - (right.runAt ?? right.createdAt) ||
-            left.sequence - right.sequence,
-        )
-        .slice(0, query.limit)
-      return groupUnservedWorkflows(
+        .sort((left, right) => left.item.sequence - right.item.sequence)
+      const page = live.slice(0, query.limit)
+      const workflows = groupUnservedWorkflows(
         query,
-        oldest.map((item) => ({
+        page.map(({ item, claimableAt }) => ({
           workflowName: item.payload.workflowName,
-          dueAt: item.runAt ?? item.createdAt,
+          claimableAt,
         })),
       )
+      if (live.length <= query.limit) return { workflows }
+      return { workflows, cursor: String(page.at(-1)!.item.sequence) }
     },
   }
 }

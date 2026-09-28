@@ -86,7 +86,7 @@ describe('unserved workflow warnings', () => {
       {
         workflowName: unserved.name,
         count: 1,
-        oldestDueAt: startedAt,
+        oldestClaimableAt: startedAt,
         message: expect.stringContaining(`[${unserved.name}]`),
       },
     ])
@@ -100,5 +100,38 @@ describe('unserved workflow warnings', () => {
 
     abort.abort()
     await serving
+  })
+
+  it('resumes each check where the previous page ended', async () => {
+    vi.useFakeTimers()
+    const runtime = createInMemoryWorkflowRuntime()
+    const cursors: (string | undefined)[] = []
+    const pages = ['second', undefined, 'second']
+    const abort = new AbortController()
+
+    const serving = serveWorkflowWorker({
+      ...runtime,
+      runCoordinationExecutor: {
+        ...runtime.runCoordinationExecutor,
+        listUnserved: async (query) => {
+          cursors.push(query.cursor)
+          const cursor = pages.shift()
+          return cursor === undefined
+            ? { workflows: [] }
+            : { workflows: [], cursor }
+        },
+      },
+      workflows: [servedImplementation],
+      workerId: 'coordinator',
+      signal: abort.signal,
+      onWarning: () => {},
+      unservedWorkflows: { everyMs: 60_000 },
+    })
+    await vi.advanceTimersByTimeAsync(120_000)
+    abort.abort()
+    await serving
+
+    // A finished pass over the queue starts the next one from the beginning.
+    expect(cursors).toStrictEqual([undefined, 'second', undefined])
   })
 })

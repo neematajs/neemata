@@ -834,7 +834,7 @@ function workflowRuntimeAdapterContract(
         )
       }
 
-      it('groups due unclaimed commands of workflows outside the served names', async () => {
+      it('groups claimable commands of workflows outside the served names', async () => {
         const runtime = await createRuntime({ maxDeliveries: 1 })
         const executor = runtime.runCoordinationExecutor
         const now = Date.now()
@@ -843,12 +843,12 @@ function workflowRuntimeAdapterContract(
         await enqueueRun(runtime, 'unserved-a', now - 1_000)
         await enqueueRun(runtime, 'served', now - 4_000)
         await enqueueRun(runtime, 'unserved-later', now + 60_000)
-        // Claimed and dead-lettered commands are not waiting for a claimant.
-        await enqueueRun(runtime, 'unserved-claimed', now - 5_000)
+        // Held and dead-lettered commands are not waiting for a claimant.
+        await enqueueRun(runtime, 'unserved-held', now - 5_000)
         await enqueueRun(runtime, 'unserved-dead', now - 5_000)
         await executor.claim({
           workerId: 'other-deployment',
-          workflowNames: ['unserved-claimed'],
+          workflowNames: ['unserved-held'],
           leaseMs: 30_000,
         })
         const poisoned = await executor.claim({
@@ -862,31 +862,97 @@ function workflowRuntimeAdapterContract(
         await expect(
           executor.listUnserved({
             workflowNames: ['served'],
-            dueBefore: now,
+            claimableBefore: now,
             limit: 100,
           }),
-        ).resolves.toStrictEqual([
-          { workflowName: 'unserved-a', count: 2, oldestDueAt: now - 3_000 },
-          { workflowName: 'unserved-b', count: 1, oldestDueAt: now - 2_000 },
-        ])
+        ).resolves.toStrictEqual({
+          workflows: [
+            {
+              workflowName: 'unserved-a',
+              count: 2,
+              oldestClaimableAt: now - 3_000,
+            },
+            {
+              workflowName: 'unserved-b',
+              count: 1,
+              oldestClaimableAt: now - 2_000,
+            },
+          ],
+        })
       })
 
-      it('inspects only the oldest queued commands', async () => {
+      it('counts a claimed command from its lease expiry without touching it', async () => {
+        const runtime = await createRuntime()
+        const executor = runtime.runCoordinationExecutor
+        const now = Date.now()
+        await enqueueRun(runtime, 'unserved-crashed', now - 5_000)
+        await enqueueRun(runtime, 'unserved-held', now - 5_000)
+        // The claimer of the first crashed; no coordinator left serves it.
+        await executor.claim({
+          workerId: 'crashed-deployment',
+          workflowNames: ['unserved-crashed'],
+          leaseMs: 1,
+        })
+        await executor.claim({
+          workerId: 'live-deployment',
+          workflowNames: ['unserved-held'],
+          leaseMs: 60_000,
+        })
+        const query = {
+          workflowNames: [],
+          // Past the 1 ms lease, well before the live one expires.
+          claimableBefore: now + 10_000,
+          limit: 100,
+        }
+
+        const first = await executor.listUnserved(query)
+        expect(first).toStrictEqual({
+          workflows: [
+            {
+              workflowName: 'unserved-crashed',
+              count: 1,
+              oldestClaimableAt: expect.any(Number),
+            },
+          ],
+        })
+        expect(
+          Math.abs(first.workflows[0]!.oldestClaimableAt - now),
+        ).toBeLessThan(10_000)
+        await expect(executor.listUnserved(query)).resolves.toStrictEqual(first)
+        await expect(runtime.store.listDeadCommands()).resolves.toStrictEqual(
+          [],
+        )
+      })
+
+      it('reaches workflows behind an unchanged head by following the cursor', async () => {
         const runtime = await createRuntime()
         const now = Date.now()
-        await enqueueRun(runtime, 'unserved', now - 3_000)
-        await enqueueRun(runtime, 'unserved', now - 2_000)
-        await enqueueRun(runtime, 'unserved', now - 1_000)
+        await enqueueRun(runtime, 'unserved-head', now - 4_000)
+        await enqueueRun(runtime, 'unserved-head', now - 3_000)
+        await enqueueRun(runtime, 'unserved-head', now - 2_000)
+        await enqueueRun(runtime, 'unserved-behind', now - 1_000)
+        const counts = new Map<string, number>()
+        let cursor: string | undefined
+        let pages = 0
 
-        await expect(
-          runtime.runCoordinationExecutor.listUnserved({
+        do {
+          const page = await runtime.runCoordinationExecutor.listUnserved({
             workflowNames: [],
-            dueBefore: now,
+            claimableBefore: now,
             limit: 2,
-          }),
-        ).resolves.toStrictEqual([
-          { workflowName: 'unserved', count: 2, oldestDueAt: now - 3_000 },
-        ])
+            ...(cursor === undefined ? {} : { cursor }),
+          })
+          for (const { workflowName, count } of page.workflows)
+            counts.set(workflowName, (counts.get(workflowName) ?? 0) + count)
+          cursor = page.cursor
+          pages += 1
+        } while (cursor !== undefined && pages < 10)
+
+        expect(cursor).toBeUndefined()
+        expect(Object.fromEntries(counts)).toStrictEqual({
+          'unserved-head': 3,
+          'unserved-behind': 1,
+        })
       })
     })
 
