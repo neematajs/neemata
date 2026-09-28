@@ -525,6 +525,38 @@ and rethrows the original transaction error. Custom pool wrappers must honor tha
 destroy argument; plain clients and clients with their own transaction API keep
 ownership of their sessions.
 
+`statement_timeout` only bounds a server that is still working. A stalled server,
+a network partition or a failover leaves a statement waiting for its answer
+forever, so give a pool an answer deadline:
+
+```ts
+const connection = createPostgresWorkflowConnection(pool, {
+  answerTimeoutMs: 30_000,
+})
+```
+
+Each statement the engine sends must then be answered within `answerTimeoutMs`.
+One that is not fails, and its session is discarded with `release(true)` rather
+than returned to the pool: the statement may still run and its reply may still
+arrive. No `ROLLBACK` is sent on that session, since it would only queue behind the
+unanswered statement, and a `COMMIT` that missed the deadline may still have
+committed. `pg`'s own `query_timeout` is no substitute: it fails the call but leaves
+the statement in flight on the session. Idle sessions wait without limit, and so
+does waiting for a free session; bound that with the pool's
+`connectionTimeoutMillis`. A statement waiting on a row lock is unanswered too, so
+keep the deadline above the lock waits you expect. With a deadline, top-level
+statements run on a session taken with `connect()` instead of `pool.query()`, so
+the adapter can discard it. The value must be a positive integer of at most
+2147483647 ms, or the adapter throws `RangeError`. Plain clients and clients with
+their own transaction API reject it with `TypeError`: the adapter cannot discard
+their sessions.
+
+Closing the pool stays the app's call. `pool.end()` waits for the server to
+acknowledge each idle session's goodbye, which a stalled server never does. Under
+Neem, `cleanupTimeoutMs` does not interrupt a `dispose` that hangs this way; on a
+requested stop, Neem's host stop deadline (`lifecycle.stopTimeout`) terminates the
+thread instead.
+
 A transaction's connection, such as the `connection` passed to
 `atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work
 on it inside the handler. Once the handler settles, the connection rejects further
@@ -572,7 +604,10 @@ import {
 const wakeEvents = createPostgresWorkflowWakeEvents({
   // dedicated LISTEN connection, one per worker process
   connect: async () => {
-    const client = new Client({ connectionString })
+    const client = new Client({
+      connectionString,
+      connectionTimeoutMillis: 5_000,
+    })
     await client.connect()
     return client
   },
@@ -580,6 +615,12 @@ const wakeEvents = createPostgresWorkflowWakeEvents({
 
 const runtime = createPostgresWorkflowRuntime({ connection, wakeEvents })
 ```
+
+The adapter cannot interrupt `connect`, and a connect that never settles stops the
+listener from reconnecting, so bound it there, as `connectionTimeoutMillis` does.
+`wakeEvents.dispose()` waits up to `closeTimeoutMs` (default 1,000 ms) for the
+listener to close. Past that, it destroys the socket of a `pg` Client
+(`client.connection.stream`), reports the overrun to `onError`, and returns.
 
 Notifications are fire-and-forget hints: a missed one (disconnect, restart)
 degrades to the existing polling behavior, never to lost work. With wake

@@ -9,6 +9,7 @@ import {
 } from './sql.ts'
 
 const DEFAULT_RECONNECT_DELAY_MS = 1_000
+const DEFAULT_CLOSE_TIMEOUT_MS = 1_000
 
 export type WorkflowPostgresNotification = {
   readonly channel: string
@@ -26,6 +27,11 @@ export type WorkflowPostgresListenerClient = {
     listener: (arg?: any) => void,
   ): unknown
   end(): Promise<void> | void
+  /**
+   * `pg` Client's connection. Its socket is destroyed when `end()` misses
+   * `closeTimeoutMs`; without it, `dispose()` stops waiting at the deadline.
+   */
+  readonly connection?: { readonly stream: { destroy(): void } }
 }
 
 export type CreatePostgresWorkflowWakeEventsParams = {
@@ -35,6 +41,11 @@ export type CreatePostgresWorkflowWakeEventsParams = {
    */
   readonly connect: () => Promise<WorkflowPostgresListenerClient>
   readonly reconnectDelayMs?: number
+  /**
+   * How long `dispose()` waits for the listener to close gracefully before
+   * destroying its connection.
+   */
+  readonly closeTimeoutMs?: number
   readonly onError?: (error: unknown) => void
 }
 
@@ -51,6 +62,7 @@ export function createPostgresWorkflowWakeEvents(
   params: CreatePostgresWorkflowWakeEventsParams,
 ): PostgresWorkflowWakeEvents {
   const reconnectDelayMs = params.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS
+  const closeTimeoutMs = params.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   const commandListeners = new Map<WorkflowCommandWakeKind, Set<() => void>>()
   const cancellationListeners = new Map<string, Set<() => void>>()
   const runEventListeners = new Map<string, Set<() => void>>()
@@ -184,10 +196,27 @@ export function createPostgresWorkflowWakeEvents(
       runEventListeners.clear()
       const current = client
       client = undefined
+      if (!current) return
+      // A graceful close waits for the server to acknowledge it, which a
+      // stalled server or a partition never does.
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const deadline = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          current.connection?.stream.destroy()
+          params.onError?.(
+            new Error(
+              `The workflow wake-event listener did not close within ${closeTimeoutMs} ms`,
+            ),
+          )
+          resolve()
+        }, closeTimeoutMs)
+      })
       try {
-        await current?.end()
+        await Promise.race([(async () => current.end())(), deadline])
       } catch (error) {
         params.onError?.(error)
+      } finally {
+        clearTimeout(timer)
       }
     },
   }

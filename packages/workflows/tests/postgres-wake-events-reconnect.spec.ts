@@ -77,6 +77,73 @@ test('retries after a LISTEN failure that never drops the connection', async () 
   }
 })
 
+test('dispose destroys a listener connection that does not close in time', async () => {
+  vi.useFakeTimers()
+  try {
+    const destroy = vi.fn()
+    const onError = vi.fn()
+    const client = {
+      ...createFakeListenerClient(),
+      // A stalled server never acknowledges the goodbye.
+      end: () => new Promise<void>(() => {}),
+      connection: { stream: { destroy } },
+    }
+    const wakeEvents = createPostgresWorkflowWakeEvents({
+      connect: async () => client,
+      closeTimeoutMs: 500,
+      onError,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    let disposed = false
+    const disposing = (async () => {
+      await wakeEvents.dispose()
+      disposed = true
+    })()
+    await vi.advanceTimersByTimeAsync(499)
+    expect(disposed).toBe(false)
+    expect(destroy).not.toHaveBeenCalled()
+
+    await vi.advanceTimersByTimeAsync(1)
+    await disposing
+    expect(destroy).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        message: expect.stringContaining('did not close within 500 ms'),
+      }),
+    )
+  } finally {
+    vi.useRealTimers()
+    await flush()
+  }
+})
+
+test('dispose keeps a listener connection that closes in time', async () => {
+  vi.useFakeTimers()
+  try {
+    const destroy = vi.fn()
+    const onError = vi.fn()
+    const client = {
+      ...createFakeListenerClient(),
+      connection: { stream: { destroy } },
+    }
+    const wakeEvents = createPostgresWorkflowWakeEvents({
+      connect: async () => client,
+      closeTimeoutMs: 500,
+      onError,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    await wakeEvents.dispose()
+    expect(vi.getTimerCount()).toBe(0)
+    expect(destroy).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+    await flush()
+  }
+})
+
 test('fires a synthetic wake to all listeners on reconnect, not on first connect', async () => {
   vi.useFakeTimers()
   try {

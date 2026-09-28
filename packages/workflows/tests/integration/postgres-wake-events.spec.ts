@@ -1,7 +1,7 @@
 import type { Pool as PgPool } from 'pg'
 import * as Schema from 'effect/Schema'
 import pg from 'pg'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -9,6 +9,7 @@ import {
   createPostgresWorkflowWakeEvents,
   type PostgresWorkflowWakeEvents,
 } from '../../src/adapters/postgres.ts'
+import { WORKFLOW_COMMANDS_CHANNEL } from '../../src/adapters/postgres/sql.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
 import {
   defineWorkflow,
@@ -19,6 +20,7 @@ import {
 import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
 import { fromPromise } from '../support/effect.ts'
 import {
+  createStallingProxy,
   createTestContext,
   createTestName,
   postgresTarget,
@@ -350,6 +352,65 @@ describe.skipIf(!postgresTarget.url)(
       } finally {
         abort.abort()
         await workers
+      }
+    })
+
+    it('disposes a listener whose server stopped answering', async () => {
+      const proxy = await createStallingProxy(postgresTarget.url!)
+      try {
+        const pool = new Pool({ connectionString: postgresTarget.url, max: 1 })
+        pools.push(pool)
+        const closeTimeoutMs = 1_000
+        const onError = vi.fn()
+        const listeners: InstanceType<typeof Client>[] = []
+        const wakeEvents = createPostgresWorkflowWakeEvents({
+          connect: async () => {
+            const client = new Client({ connectionString: proxy.url })
+            listeners.push(client)
+            await client.connect()
+            return client
+          },
+          closeTimeoutMs,
+          onError,
+        })
+        wakeEventHubs.push(wakeEvents)
+        let woke = false
+        wakeEvents.onCommand('continue', () => {
+          woke = true
+        })
+        // A delivered notification proves LISTEN runs through the proxy.
+        await vi.waitFor(
+          async () => {
+            await pool.query(`SELECT pg_notify($1, 'continue')`, [
+              WORKFLOW_COMMANDS_CHANNEL,
+            ])
+            expect(woke).toBe(true)
+          },
+          { timeout: 10_000, interval: 100 },
+        )
+
+        proxy.stall()
+        // Only the deadline's timers: the sockets stay real.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        try {
+          const disposing = wakeEvents.dispose()
+          // The goodbye reached the partition and will never be answered.
+          await proxy.swallowed
+          await vi.advanceTimersByTimeAsync(closeTimeoutMs)
+          await disposing
+        } finally {
+          vi.useRealTimers()
+        }
+
+        expect(listeners).toHaveLength(1)
+        expect(listeners[0]!.connection.stream.destroyed).toBe(true)
+        expect(onError).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({
+            message: expect.stringContaining('did not close'),
+          }),
+        )
+      } finally {
+        await proxy.close()
       }
     })
   },

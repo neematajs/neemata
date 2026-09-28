@@ -16,10 +16,17 @@ import {
   createPostgresWorkflowRuntime,
   verifyPostgresWorkflowSchema,
   WORKFLOW_POSTGRES_SCHEMA_MANIFEST,
+  type WorkflowPostgresConnection,
 } from '../../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
 import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
-import { postgresTarget, requireServiceEnv, wait } from './helpers.ts'
+import {
+  createStallingProxy,
+  postgresTarget,
+  requireServiceEnv,
+  type StallingProxy,
+  wait,
+} from './helpers.ts'
 
 requireServiceEnv(postgresTarget)
 
@@ -134,6 +141,80 @@ describe.skipIf(!postgresTarget.url)(
       await isolated.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
       expect(await count('sample', `id = ${sampleId}`)).toBe(1)
     })
+
+    it.each([
+      [
+        'a transaction',
+        (
+          connection: WorkflowPostgresConnection,
+          proxy: StallingProxy,
+          sampleId: number,
+        ) =>
+          connection.transaction(async (tx) => {
+            await tx.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+            proxy.stall()
+            await tx.query('SELECT 1')
+          }),
+      ],
+      [
+        'a top-level statement',
+        (connection: WorkflowPostgresConnection, proxy: StallingProxy) => {
+          proxy.stall()
+          return connection.query('SELECT 1')
+        },
+      ],
+    ] as const)(
+      'fails %s the server stops answering and discards its session',
+      async (_name, run) => {
+        const sampleId = Math.floor(Math.random() * 2 ** 31)
+        const proxy = await createStallingProxy(postgresTarget.url!)
+        closers.push(() => proxy.close())
+        const stalling = new pg.Pool({
+          ...sessionOptions('transactions-unanswered'),
+          connectionString: proxy.url,
+          max: 1,
+          idleTimeoutMillis: 0,
+        })
+        closers.unshift(() => stalling.end())
+        const sessions: pg.Client[] = []
+        stalling.on('connect', (session) => {
+          sessions.push(session as unknown as pg.Client)
+        })
+        const answerTimeoutMs = 1_000
+        const connection = createPostgresWorkflowConnection(stalling, {
+          answerTimeoutMs,
+        })
+        const pid = async () =>
+          (
+            await connection.query<{ pid: number }>(
+              'SELECT pg_backend_pid() AS pid',
+            )
+          ).rows[0]!.pid
+        const before = await pid()
+
+        // Only the deadline's timers: the sockets stay real, and healthy
+        // statements cannot miss a deadline that time never reaches.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        try {
+          const failed = run(connection, proxy, sampleId).catch(
+            (error: unknown) => error,
+          )
+          await proxy.swallowed
+          await vi.advanceTimersByTimeAsync(answerTimeoutMs)
+          expect(await failed).toMatchObject({
+            message: expect.stringContaining('did not answer'),
+          })
+        } finally {
+          vi.useRealTimers()
+        }
+
+        expect(sessions).toHaveLength(1)
+        expect(sessions[0]!.connection.stream.destroyed).toBe(true)
+        expect(stalling.totalCount).toBe(0)
+        expect(await pid()).not.toBe(before)
+        expect(await count('sample', `id = ${sampleId}`)).toBe(0)
+      },
+    )
 
     it("bounds dead-command pruning while skipping another session's locked row", async () => {
       const connection = createPostgresWorkflowConnection(pool)
