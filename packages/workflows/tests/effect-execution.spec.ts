@@ -313,7 +313,7 @@ it.each([false, true])(
     }
     const worker = defineWorkflowsWorker({
       ...config,
-      layer,
+      layer: () => layer,
       runtime: Effect.succeed(adapter),
     })
     const channel = new MessageChannel()
@@ -378,7 +378,7 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   )
   const worker = defineWorkflowsWorker({
     workflows: () => [],
-    layer,
+    layer: () => layer,
     runtime: Effect.sync(createInMemoryWorkflowRuntime),
   })
   const channel = new MessageChannel()
@@ -406,6 +406,50 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   } finally {
     release.resolve()
     await stopping
+    channel.port1.close()
+    channel.port2.close()
+  }
+})
+
+it('builds the Layer from the worker context so services log through Neem', async () => {
+  const logs = Context.Service<{ info: (message: string) => void }>('test-logs')
+  const logged = Promise.withResolvers<void>()
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) =>
+      Effect.gen(function* () {
+        const log = yield* logs
+        log.info(`handled ${input}`)
+        logged.resolve()
+        return input
+      }),
+  })
+  const adapter = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(adapter).start(task, 3)
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    layer: (ctx) =>
+      Layer.succeed(logs, { info: (message) => ctx.logger.info(message) }),
+    runtime: Effect.succeed(adapter),
+  })
+  const logger = pino({ enabled: false })
+  const info = vi.spyOn(logger, 'info')
+  const channel = new MessageChannel()
+  const runtime = await worker.createRuntime({
+    mode: 'development',
+    name: 'logging',
+    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+    definition: worker.definition,
+    logger,
+    port: channel.port1,
+  })
+  try {
+    await runtime.start()
+    await logged.promise
+    expect(info).toHaveBeenCalledWith('handled 3')
+  } finally {
+    await runtime.stop()
     channel.port1.close()
     channel.port2.close()
   }
