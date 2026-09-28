@@ -33,16 +33,33 @@ export class WorkflowRunConflictError extends Error {
 }
 
 /**
- * A start reused an idempotency key that already belongs to a run with a
- * different target or input, so the key cannot return that run.
+ * A start reused an `idempotencyKey` already held by a run that was started
+ * with a different input or for a different target. Idempotency keys only
+ * dedupe retries of the same request; `unique` with `behavior: 'join'` is the
+ * tool for "at most one run per key" when inputs may differ.
  */
 export class WorkflowIdempotencyConflictError extends Error {
-  readonly workflowName: string
+  /** The run that already holds the key. */
+  readonly runId: string
+  readonly status: RuntimeRunStatus
+  readonly key: readonly unknown[]
+  /** The workflow or task the rejected start targeted. */
+  readonly runnableName: string
 
-  constructor(workflowName: string) {
-    super(`Conflicting idempotent run [${workflowName}]`)
+  constructor(details: {
+    readonly runId: string
+    readonly status: RuntimeRunStatus
+    readonly key: readonly unknown[]
+    readonly runnableName: string
+  }) {
+    super(
+      `Run [${details.runId}] already holds idempotency key for a different start [${details.runnableName}]`,
+    )
     this.name = 'WorkflowIdempotencyConflictError'
-    this.workflowName = workflowName
+    this.runId = details.runId
+    this.status = details.status
+    this.key = details.key
+    this.runnableName = details.runnableName
   }
 }
 

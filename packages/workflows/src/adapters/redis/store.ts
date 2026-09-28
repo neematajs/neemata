@@ -172,7 +172,12 @@ export class StoreRuntime {
       if (runMatchesCreateInput(stored, normalized)) {
         return { run: stored, created: false, startAt: storedStartAt }
       }
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+      throw new WorkflowIdempotencyConflictError({
+        runId: stored.id,
+        status: stored.status,
+        key: run.idempotencyKey!,
+        runnableName: runnableName(normalized),
+      })
     }
     if (result[0] === 'joined') {
       return { run: stored, created: false, startAt: storedStartAt }

@@ -126,7 +126,12 @@ export const createStoredRunWithState = async (
       ) {
         return run
       }
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+      throw new WorkflowIdempotencyConflictError({
+        runId: run.id,
+        status: run.status,
+        key: input.idempotencyKey,
+        runnableName: runnableName(input),
+      })
     }
     return undefined
   }
