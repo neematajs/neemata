@@ -61,7 +61,7 @@ const tasks = [timed, sibling].map((task) =>
 )
 
 export const services = {
-  layer,
+  layer: () => layer,
   runtime: Effect.gen(function* () {
     const pool = yield* Effect.acquireRelease(
       Effect.sync(

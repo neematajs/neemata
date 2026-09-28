@@ -1,3 +1,4 @@
+import type { Logger } from 'pino'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -5,6 +6,7 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
+import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
 import {
   createHandlerRuntime,
   defineTask,
@@ -33,7 +35,7 @@ class Service extends Context.Service<Service, { value: number }>()(
   'test/Service',
 ) {}
 class Missing extends Context.Service<Missing, string>()('test/Missing') {}
-const layer = Layer.succeed(Service, { value: 1 })
+const layer = () => Layer.succeed(Service, { value: 1 })
 const runtime = Effect.sync(createInMemoryWorkflowRuntime)
 const task = defineTask({
   name: 'typed',
@@ -78,13 +80,39 @@ it('requires the worker Layer to provide task and finish services', () => {
     ...finishOnly,
     runtime,
     // @ts-expect-error The empty Layer cannot provide Service.
-    layer: Layer.empty,
+    layer: () => Layer.empty,
   })
   defineWorkflowsWorker({
     workflows: () => [],
     runtime,
     // @ts-expect-error Worker Layers cannot require services outside the worker.
-    layer: Layer.effectDiscard(Missing),
+    layer: () => Layer.effectDiscard(Missing),
+  })
+})
+
+it('builds the worker Layer from the Neem worker context', () => {
+  const tasks = () => [implementation]
+  expect(
+    defineWorkflowsWorker({
+      workflows: () => [],
+      tasks,
+      runtime,
+      layer: (ctx) => {
+        expectTypeOf(ctx.logger).toEqualTypeOf<Logger>()
+        expectTypeOf(ctx.data).toEqualTypeOf<WorkflowsWorkerData>()
+        return Layer.sync(Service, () => {
+          ctx.logger.info('building')
+          return { value: 1 }
+        })
+      },
+    }),
+  ).toBeDefined()
+  defineWorkflowsWorker({
+    workflows: () => [],
+    tasks,
+    runtime,
+    // @ts-expect-error A Layer built from the context must still provide Service.
+    layer: (ctx) => Layer.succeed(Missing, ctx.name),
   })
 })
 
@@ -227,7 +255,7 @@ describe('core handlers in Effect workers', () => {
     ...io,
   }).build()
   const runtime = Effect.sync(createInMemoryWorkflowRuntime)
-  const layer = Layer.succeed(Service, { value: 1 })
+  const layer = () => Layer.succeed(Service, { value: 1 })
 
   const needsDb = implementCoreTask(task, {
     pool: 'test',
@@ -353,7 +381,7 @@ describe('core handler env subtypes in Effect workers', () => {
     ...io,
   }).build()
   const runtime = Effect.sync(createInMemoryWorkflowRuntime)
-  const layer = Layer.succeed(Service, { value: 1 })
+  const layer = () => Layer.succeed(Service, { value: 1 })
 
   const needsDbToo = implementCoreTask(task, {
     pool: 'test',
