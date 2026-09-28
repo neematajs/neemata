@@ -1,5 +1,5 @@
 import { PGlite } from '@electric-sql/pglite'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
 import {
   createPostgresWorkflowConnection,
@@ -70,7 +70,8 @@ test('adapts pg pool transactions with connect/release', async () => {
       log.push(sql)
       return { rows: [{ value: params[0] }] }
     },
-    release() {
+    release(destroy?: boolean) {
+      expect(destroy).not.toBe(true)
       log.push('release')
     },
   }
@@ -102,7 +103,8 @@ test('rolls back pg pool transactions and releases client', async () => {
       log.push(sql)
       return { rows: [] }
     },
-    release() {
+    release(destroy?: boolean) {
+      expect(destroy).not.toBe(true)
       log.push('release')
     },
   }
@@ -127,6 +129,37 @@ test('rolls back pg pool transactions and releases client', async () => {
 
   expect(log).toEqual(['connect', 'BEGIN', 'INSERT', 'ROLLBACK', 'release'])
 })
+
+test.each(['BEGIN', 'handler', 'COMMIT'])(
+  'discards a pooled session when rollback after %s failure fails',
+  async (stage) => {
+    const failure = new Error(`${stage} failed`)
+    const release = vi.fn()
+    const client = {
+      async query(sql: string) {
+        if (sql === stage) throw failure
+        if (sql === 'ROLLBACK') throw new Error('rollback failed')
+        return { rows: [] }
+      },
+      release,
+    }
+    const pool = {
+      totalCount: 1,
+      query: client.query.bind(client),
+      async connect() {
+        return client
+      },
+    }
+    const connection = createPostgresWorkflowConnection(pool)
+
+    await expect(
+      connection.transaction(async () => {
+        if (stage === 'handler') throw failure
+      }),
+    ).rejects.toBe(failure)
+    expect(release).toHaveBeenCalledExactlyOnceWith(true)
+  },
+)
 
 test('adapts pg client shape with connect method as plain query client', async () => {
   const log: string[] = []

@@ -123,11 +123,30 @@ export type RunFamilyEntry = {
 export type PruneTerminalRunsParams = {
   readonly olderThan: Timestamp
   readonly statuses?: readonly TerminalRunStatus[]
+  /** Non-negative safe integer; defaults to 100. Zero skips roots but still cleans up dead commands. */
   readonly batchSize?: number
+}
+
+export const DEFAULT_PRUNE_BATCH_SIZE = 100
+
+/** Reject invalid retention settings before an adapter can delete state. */
+export function normalizePruneBatchSize(batchSize: number | undefined): number {
+  if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
+  if (!Number.isSafeInteger(batchSize) || batchSize < 0) {
+    throw new RangeError(
+      'Retention batchSize must be a non-negative safe integer',
+    )
+  }
+  return batchSize
 }
 
 export type PruneTerminalRunsResult = {
   readonly deleted: number
+  /**
+   * Whether a cleanup batch filled and another pass may make progress.
+   * When omitted, the client infers this from the root deletion count.
+   */
+  readonly hasMore?: boolean
 }
 
 export type DeleteRunResult = { readonly deleted: boolean }

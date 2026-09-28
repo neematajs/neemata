@@ -47,6 +47,7 @@ import {
   type WorkflowRuntimeRegistry,
 } from './registry.ts'
 import { isTerminalRunStatus } from './status.ts'
+import { normalizePruneBatchSize } from './store.ts'
 import { wakeParentRun } from './wake.ts'
 
 export type WorkflowRuntimeStartOptions<Connection = never> = {
@@ -436,13 +437,15 @@ async function pruneRuns(
   params: PruneTerminalRunsParams,
 ): Promise<PruneTerminalRunsResult> {
   const batchSize = normalizePruneBatchSize(params.batchSize)
-  if (batchSize < 1) return { deleted: 0 }
   let deleted = 0
 
   while (true) {
     const result = await store.pruneTerminalRuns({ ...params, batchSize })
     deleted += result.deleted
-    if (result.deleted < batchSize) return { deleted }
+    // Command cleanup can fill a batch even when no terminal roots were deleted.
+    const hasMore =
+      result.hasMore ?? (batchSize > 0 && result.deleted >= batchSize)
+    if (!hasMore) return { deleted }
   }
 }
 
@@ -559,12 +562,6 @@ async function restartRun<Connection>(
       )
     }
   }
-}
-
-function normalizePruneBatchSize(batchSize: number | undefined): number {
-  if (batchSize === undefined) return 100
-  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-  return batchSize
 }
 
 function normalizeDebounce(debounceMs: number | undefined): number {

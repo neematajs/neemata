@@ -6,19 +6,13 @@ import type {
 import type { ClaimedQueueItem, QueueItem } from './commands.ts'
 import type { State } from './state.ts'
 import { isTerminalRunStatus } from '../../runtime/status.ts'
+import { normalizePruneBatchSize } from '../../runtime/store.ts'
 
-const DEFAULT_PRUNE_BATCH_SIZE = 100
 const DEFAULT_PRUNE_STATUSES = [
   'completed',
   'cancelled',
   'failed',
 ] as const satisfies readonly TerminalRunStatus[]
-
-function normalizePruneBatchSize(batchSize: number | undefined) {
-  if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
-  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-  return batchSize
-}
 
 function normalizePruneStatuses(
   statuses: PruneTerminalRunsParams['statuses'],

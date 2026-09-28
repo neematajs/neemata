@@ -510,6 +510,24 @@ describe('workflow worker runtime', () => {
     await expect(runtime.store.loadRunSnapshot(run.id)).resolves.toBeUndefined()
   })
 
+  it('rejects invalid retention configuration before workers claim or prune', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const claim = vi.spyOn(runtime.runCoordinationExecutor, 'claim')
+    const prune = vi.spyOn(runtime.store, 'pruneTerminalRuns')
+
+    await expect(
+      runWorkflowWorker({
+        ...runtime,
+        context: createTestContext(),
+        workflows: [],
+        workerId: 'invalid-retention',
+        retention: { olderThan: '0ms', batchSize: -1 },
+      }),
+    ).rejects.toThrow(RangeError)
+    expect(claim).not.toHaveBeenCalled()
+    expect(prune).not.toHaveBeenCalled()
+  })
+
   it('releases continuation commands when attempt dispatch fails', async () => {
     const workflow = defineWorkflow({
       name: 'worker.dispatch-failure-workflow',

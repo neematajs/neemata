@@ -22,7 +22,8 @@ export type WorkflowPostgresQueryClient = {
 }
 
 export type WorkflowPostgresPoolClient = WorkflowPostgresQueryClient & {
-  release(): void
+  /** Discard the session instead of returning it to the pool when true. */
+  release(destroy?: boolean): void
 }
 
 export type WorkflowPostgresPool = WorkflowPostgresQueryClient & {
@@ -151,12 +152,6 @@ const runTransactionScope = async <T>(
   }
 }
 
-const rollbackIgnoringFailure = async (client: WorkflowPostgresQueryClient) => {
-  try {
-    await client.query('ROLLBACK')
-  } catch {}
-}
-
 export function createPostgresWorkflowConnection(
   client: WorkflowPostgresExternalClient,
 ): WorkflowPostgresConnection {
@@ -166,18 +161,28 @@ export function createPostgresWorkflowConnection(
   // the transaction-scoped connection go straight to the client.
   const serializeClient = createSerializer().run
 
-  const runTransaction = async <T>(
+  async function runTransaction<T>(
     connection: WorkflowPostgresQueryClient,
     handler: (connection: WorkflowPostgresConnection) => Promise<T>,
-  ): Promise<T> => {
+    release?: (destroy: boolean) => void,
+  ): Promise<T> {
+    let destroy = false
     try {
       await connection.query('BEGIN')
       const result = await runTransactionScope(connection, handler)
       await connection.query('COMMIT')
       return result
     } catch (error) {
-      await rollbackIgnoringFailure(connection)
+      try {
+        await connection.query('ROLLBACK')
+      } catch {
+        // Its transaction state is unknown: never lend this session to another
+        // caller, but preserve the original failure for the transaction owner.
+        destroy = true
+      }
       throw error
+    } finally {
+      release?.(destroy)
     }
   }
 
@@ -195,11 +200,7 @@ export function createPostgresWorkflowConnection(
 
       if (hasConnectApi(client)) {
         const tx = await client.connect()
-        try {
-          return await runTransaction(tx, handler)
-        } finally {
-          tx.release()
-        }
+        return runTransaction(tx, handler, (destroy) => tx.release(destroy))
       }
 
       return serializeClient(() => runTransaction(client, handler))

@@ -12,6 +12,10 @@ import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import {
+  DEFAULT_PRUNE_BATCH_SIZE,
+  normalizePruneBatchSize,
+} from '../../runtime/store.ts'
+import {
   id,
   isUuid,
   json,
@@ -32,7 +36,6 @@ import {
   mapRunSummary,
   DEFAULT_PRUNE_STATUSES,
   emitStatusChangeNotifySql,
-  normalizePruneBatchSize,
   normalizePruneStatuses,
   notifyRunStatusEventColumnsSql,
   one,
@@ -243,11 +246,11 @@ export const createStoredRun = async (
   options: CreateStoredRunOptions = {},
 ) => (await createStoredRunWithState(connection, input, options)).run
 
-export const pruneTerminalRunsInTransaction = async (
+export async function pruneTerminalRunsInTransaction(
   connection: WorkflowPostgresConnection,
-  params: PruneTerminalRunsParams,
-): Promise<PruneTerminalRunsResult> => {
-  const batchSize = normalizePruneBatchSize(params.batchSize)
+  params: PruneTerminalRunsParams & { readonly batchSize: number },
+): Promise<PruneTerminalRunsResult> {
+  const { batchSize } = params
   const statuses = normalizePruneStatuses(params.statuses)
   let deleted = 0
 
@@ -307,17 +310,33 @@ export const pruneTerminalRunsInTransaction = async (
   // An unreaped dead command is the only thing that still settles its run,
   // and maintenance prunes before it reaps: after downtime longer than the
   // retention window, age alone would strand the run as active.
-  await connection.query(
+  // Bound this sweep independently of root deletion and skip active writers,
+  // so a dead-letter backlog cannot monopolize the pruning transaction.
+  // Disabling root pruning must still allow bounded command cleanup.
+  const commandBatchSize = batchSize || DEFAULT_PRUNE_BATCH_SIZE
+  const commands = await many<{ id: string }>(
+    connection,
     `
       DELETE FROM workflow_commands
-      WHERE dead_at IS NOT NULL
-        AND reaped_at IS NOT NULL
-        AND dead_at < $1
+      WHERE id IN (
+        SELECT id FROM workflow_commands
+        WHERE dead_at IS NOT NULL
+          AND reaped_at IS NOT NULL
+          AND dead_at < $1
+        ORDER BY dead_at, id
+        LIMIT $2
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id
     `,
-    [timestampParam(params.olderThan)],
+    [timestampParam(params.olderThan), commandBatchSize],
   )
 
-  return { deleted }
+  const hasMore =
+    (batchSize > 0 && deleted === batchSize) ||
+    commands.length === commandBatchSize
+
+  return { deleted, hasMore }
 }
 
 export const deleteRunInTransaction = async (
@@ -580,8 +599,11 @@ export const createPostgresWorkflowRunStore = (
       }
     },
     async pruneTerminalRuns(params) {
+      const batchSize = normalizePruneBatchSize(params.batchSize)
       await ready
-      return db.transaction((tx) => pruneTerminalRunsInTransaction(tx, params))
+      return db.transaction((tx) =>
+        pruneTerminalRunsInTransaction(tx, { ...params, batchSize }),
+      )
     },
     async deleteRun(runId) {
       await ready

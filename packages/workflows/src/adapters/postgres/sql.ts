@@ -35,7 +35,6 @@ export const RELEASE_BACKOFF_MS = 50
 export const UNROUTABLE_BACKOFF_MS = 1_000
 export const MAX_ERROR_BACKOFF_MS = 300_000
 export const DEFAULT_MAX_DELIVERIES = 20
-export const DEFAULT_PRUNE_BATCH_SIZE = 100
 export const DEFAULT_PRUNE_STATUSES = [
   'completed',
   'cancelled',
@@ -116,11 +115,6 @@ export const sameOptionalValue = (left: unknown, right: unknown) =>
   left === undefined && right === undefined
     ? true
     : left !== undefined && right !== undefined && sameValue(left, right)
-export const normalizePruneBatchSize = (batchSize: number | undefined) => {
-  if (batchSize === undefined) return DEFAULT_PRUNE_BATCH_SIZE
-  if (!Number.isInteger(batchSize) || batchSize < 1) return 0
-  return batchSize
-}
 export const normalizePruneStatuses = (
   statuses: PruneTerminalRunsParams['statuses'],
 ): readonly TerminalRunStatus[] => {
