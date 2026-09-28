@@ -145,7 +145,7 @@ node dist/runtimes/api/start.js
 ```
 
 Manifest settings/artifacts remain the source of truth, with the documented
-[network env overrides](runtimes.md#proxy-and-health) and
+[network env overrides](runtimes.md#server-and-health) and
 [metrics env overrides](metrics.md#deploy-time-overrides) resolved at start.
 
 - A worker start failure rejects initial boot, cleans up already-started
@@ -170,4 +170,4 @@ Manifest settings/artifacts remain the source of truth, with the documented
   be cooperative and bounded; shutdown does not promise finalizers past the
   thread deadline.
 
-Health and readiness are separate; see [probes](runtimes.md#proxy-and-health).
+Health and readiness are separate; see [probes](runtimes.md#server-and-health).

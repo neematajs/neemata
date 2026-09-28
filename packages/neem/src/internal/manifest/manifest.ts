@@ -5,10 +5,9 @@ import type {
   NeemArtifactKind,
   NeemBuildConfig,
   NeemEnv,
-  NeemHealthConfig,
   NeemLifecycleConfig,
   NeemLoggerOptions,
-  NeemProxyConfig,
+  NeemServerConfig,
   NeemResolvedArtifact,
   NeemRuntimeProxyConfig,
 } from '../../shared/types.ts'
@@ -48,8 +47,7 @@ export type ManifestConfig = {
   build?: Pick<NeemBuildConfig, 'updates'>
   logger?: ManifestLogger
   env?: NeemEnv
-  proxy?: NeemProxyConfig
-  health?: NeemHealthConfig
+  server?: NeemServerConfig
   lifecycle?: NeemLifecycleConfig
   runtimes: Record<string, ManifestRuntimeConfig>
 }
@@ -314,7 +312,7 @@ function getRequiredArtifact(
 }
 
 function createConfig(compiled: CompiledGraph): ManifestConfig {
-  const { proxy, health, lifecycle } = compiled.graph.config
+  const { server, lifecycle } = compiled.graph.config
   const updates = compiled.graph.config.build?.updates
   const build = updates ? { updates: { ...updates } } : undefined
   const logger = createLogger(compiled)
@@ -328,8 +326,7 @@ function createConfig(compiled: CompiledGraph): ManifestConfig {
     logger,
     build,
     env,
-    proxy,
-    health,
+    server,
     lifecycle: lifecycle ? { ...lifecycle } : undefined,
     runtimes: Object.fromEntries(runtimes),
   }

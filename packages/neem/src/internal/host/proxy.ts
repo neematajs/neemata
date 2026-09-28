@@ -1,17 +1,19 @@
 import { OperationQueue } from '@nmtjs/common'
 
 import type {
-  NeemProxyConfig,
   NeemProxyHealth,
   NeemProxyUpstream,
   NeemProxyUpstreamFailure,
   NeemProxyUpstreamSnapshot,
   NeemRuntimeProxyConfig,
   NeemRuntimeUpstream,
+  NeemServerConfig,
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
+import type { HealthStatus } from './health.ts'
 import { childLogger } from '../logger.ts'
 import { normalizeError } from '../utils.ts'
+import { resolveHealthPaths } from './health.ts'
 
 export type NativeProxy = {
   start: () => Promise<void>
@@ -25,6 +27,7 @@ export type NativeProxy = {
     runtimeName: string,
     upstream: NeemProxyUpstream,
   ) => Promise<void>
+  setHealth: (status: HealthStatus) => void
 }
 
 export type NativeProxyOptions = {
@@ -37,9 +40,17 @@ export type NativeProxyOptions = {
     maxRequestBodySize?: number | null
   }>
   healthCheckIntervalMs?: number
-  stickySessions?: NeemProxyConfig['stickySessions']
-  limits?: NeemProxyConfig['limits']
+  stickySessions?: NeemServerConfig['stickySessions']
+  limits?: NeemServerConfig['limits']
+  health: { healthPath: string; readyPath: string }
 }
+
+export type ResolvedServerConfig = NeemServerConfig & {
+  hostname: string
+  port: number
+}
+
+export const DEFAULT_SERVER_PORT = 3000
 
 type NativeProxyRouting =
   | { type: 'path'; name?: string }
@@ -55,8 +66,13 @@ type RuntimeProxyConfigs = Record<
   { proxy?: NeemRuntimeProxyConfig } | undefined
 >
 
+export type ProxyControllerOptions = {
+  // The host owns the health state; the proxy only serves what it is told.
+  getHealthStatus?: () => HealthStatus
+}
+
 export class ProxyController {
-  private readonly config: NeemProxyConfig
+  private readonly config: ResolvedServerConfig
   private readonly logger: RuntimeSnapshot['logger']
   private readonly mutations = new OperationQueue()
   private proxy: NativeProxy | undefined
@@ -66,18 +82,25 @@ export class ProxyController {
   private failures = new Map<string, NeemProxyUpstreamFailure>()
   private retryTimer: ReturnType<typeof setTimeout> | undefined
   private retryAttempt = 0
+  // Native routing is in flux while a reconcile adds or removes upstreams,
+  // even when desired and applied happen to match again.
+  private mutating = false
+  private publishedHealth: HealthStatus | undefined
 
-  constructor(private readonly snapshot: RuntimeSnapshot) {
-    const config = snapshot.config.proxy
-    if (!config) throw new Error('Cannot create Neem proxy without config')
-    this.config = config
-    this.logger = childLogger(snapshot.logger, 'neem:proxy')
+  constructor(
+    private readonly snapshot: RuntimeSnapshot,
+    private readonly options: ProxyControllerOptions = {},
+  ) {
+    this.config = resolveServerConfig(snapshot.config.server, snapshot.mode)
+    this.logger = childLogger(snapshot.logger, 'neem:server')
   }
 
   async start(upstreams: readonly RuntimeUpstreams[]): Promise<void> {
     if (this.proxy) return
 
     const ProxyConstructor = (await loadProxyPackage()).Proxy
+    // A new native instance starts from its default status.
+    this.publishedHealth = undefined
     this.proxy = new ProxyConstructor(
       createNativeProxyOptions(this.config, this.snapshot.config.runtimes),
     )
@@ -92,10 +115,10 @@ export class ProxyController {
       await this.proxy.start()
       this.running = true
       const listen = this.resolveListenUrl()
-      this.logger.info(`Neem proxy listening on [${listen}]`)
+      this.logger.info(`Neem server listening on [${listen}]`)
       this.logger.trace(
         { listen, upstreams: this.desired.size },
-        'Neem proxy upstreams',
+        'Neem server upstreams',
       )
     } catch (error) {
       const proxy = this.proxy
@@ -116,13 +139,13 @@ export class ProxyController {
     this.retryAttempt = 0
     if (!proxy) return
 
-    this.logger.info('Neem proxy stopping')
+    this.logger.info('Neem server stopping')
     await this.mutations.waitIdle()
     await proxy.stop()
     this.desired.clear()
     this.applied.clear()
     this.failures.clear()
-    this.logger.debug('Neem proxy stopped')
+    this.logger.debug('Neem server stopped')
   }
 
   /**
@@ -133,7 +156,39 @@ export class ProxyController {
     this.desired = createDesiredUpstreams(
       filterRuntimeUpstreams(upstreams, this.snapshot.config.runtimes),
     )
+    this.publishHealth()
     await this.reconcile()
+  }
+
+  /**
+   * Pushes the host's health to the proxy's health endpoints. Call it whenever
+   * an input of the host's health changes; unchanged status is not re-sent.
+   */
+  publishHealth(): void {
+    const proxy = this.proxy
+    const { getHealthStatus } = this.options
+    if (!proxy || !this.running || !getHealthStatus) return
+
+    const status = getHealthStatus()
+    const published = this.publishedHealth
+    if (
+      published?.healthy === status.healthy &&
+      published.ready === status.ready
+    ) {
+      return
+    }
+
+    try {
+      proxy.setHealth(status)
+      this.publishedHealth = status
+      this.logger.debug(status, 'Neem server health published')
+    } catch (error) {
+      this.logger.warn(
+        new Error('Failed to publish Neem server health', {
+          cause: normalizeError(error),
+        }),
+      )
+    }
   }
 
   getHealth(): NeemProxyHealth {
@@ -145,11 +200,11 @@ export class ProxyController {
       desired.every((upstream) => this.applied.has(upstreamKey(upstream)))
 
     return {
-      enabled: true,
       running: this.running,
+      // A queued reconcile that changes nothing must not flap readiness.
       ready:
         this.running &&
-        this.mutations.pending === 0 &&
+        !this.mutating &&
         failedUpstreams.length === 0 &&
         synced,
       upstreams: desired,
@@ -170,7 +225,9 @@ export class ProxyController {
       address = this.proxy?.address() ?? null
     } catch (error) {
       this.logger.debug(
-        new Error('Failed to read Neem proxy listen address', { cause: error }),
+        new Error('Failed to read Neem server listen address', {
+          cause: error,
+        }),
       )
     }
     return formatProxyListenUrl(
@@ -201,16 +258,22 @@ export class ProxyController {
         const additions = [...this.desired.values()].filter(
           (upstream) => !this.applied.has(upstreamKey(upstream)),
         )
+        if (removals.length === 0 && additions.length === 0) return
 
         // Upstreams are independent; one failure must not keep the rest stale.
         const errors: unknown[] = []
         const collect = (error: unknown) => {
           errors.push(error)
         }
-        for (const upstream of removals)
-          await this.removeUpstream(upstream).catch(collect)
-        for (const upstream of additions)
-          await this.addUpstream(upstream).catch(collect)
+        this.mutating = true
+        try {
+          for (const upstream of removals)
+            await this.removeUpstream(upstream).catch(collect)
+          for (const upstream of additions)
+            await this.addUpstream(upstream).catch(collect)
+        } finally {
+          this.mutating = false
+        }
         if (errors.length > 0) throw errors[0]
       })
       .then(
@@ -218,6 +281,7 @@ export class ProxyController {
           // A later reconcile converged, so any retry scheduled by an earlier one is moot.
           this.cancelRetry()
           this.retryAttempt = 0
+          this.publishHealth()
         },
         (error) => {
           const normalized = normalizeError(error)
@@ -227,6 +291,7 @@ export class ProxyController {
             }),
           )
           this.scheduleRetry()
+          this.publishHealth()
           throw normalized
         },
       )
@@ -375,8 +440,21 @@ export function formatProxyListenUrl(
   return `${secure ? 'https' : 'http'}://${hostname}:${address.port}`
 }
 
+export function resolveServerConfig(
+  config: NeemServerConfig | undefined,
+  mode: RuntimeSnapshot['mode'],
+): ResolvedServerConfig {
+  return {
+    ...config,
+    // Production must be reachable by platform probes and load balancers.
+    hostname:
+      config?.hostname ?? (mode === 'production' ? '0.0.0.0' : '127.0.0.1'),
+    port: config?.port ?? DEFAULT_SERVER_PORT,
+  }
+}
+
 export function createNativeProxyOptions(
-  config: NeemProxyConfig,
+  config: ResolvedServerConfig,
   runtimes: RuntimeProxyConfigs,
 ): NativeProxyOptions {
   const applications: NativeProxyOptions['applications'] = []
@@ -399,10 +477,18 @@ export function createNativeProxyOptions(
     listen: `${config.hostname}:${config.port}`,
     tls: config.tls,
     applications,
-    healthCheckIntervalMs: config.healthChecks?.interval,
+    healthCheckIntervalMs: config.upstreamChecks?.interval,
     stickySessions: config.stickySessions,
     limits: config.limits,
+    health: createNativeHealthOptions(config.health),
   }
+}
+
+function createNativeHealthOptions(
+  health: NeemServerConfig['health'],
+): NativeProxyOptions['health'] {
+  const paths = resolveHealthPaths(health)
+  return { healthPath: paths.health, readyPath: paths.ready }
 }
 
 function normalizeProxyRouting(
@@ -447,8 +533,19 @@ function upstreamKey(upstream: NeemProxyUpstreamSnapshot): string {
   return `${upstream.runtimeName}:${upstream.upstream.type}:${upstream.upstream.url}`
 }
 
+// Built host code runs from the app's output directory, so the native package
+// must resolve from the app itself; neem declares it as a peer for that reason.
 async function loadProxyPackage(): Promise<{ Proxy: NativeProxyConstructor }> {
-  return (await import(
-    process.env.NEEM_INTERNAL_PROXY_MODULE || '@nmtjs/proxy'
-  )) as { Proxy: NativeProxyConstructor }
+  const specifier = process.env.NEEM_INTERNAL_PROXY_MODULE || '@nmtjs/proxy'
+  try {
+    return (await import(specifier)) as { Proxy: NativeProxyConstructor }
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== 'ERR_MODULE_NOT_FOUND') {
+      throw error
+    }
+    throw new Error(
+      `Neem cannot load its server package [${specifier}]; add @nmtjs/proxy to your app's dependencies`,
+      { cause: error },
+    )
+  }
 }

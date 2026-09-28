@@ -20,7 +20,7 @@ import { childLogger } from '../logger.ts'
 import { PluginEnvironment } from '../plugins/environment.ts'
 import { callHostHook, createHostHooks } from '../plugins/hooks.ts'
 import { normalizeError, raceWithTimeout, throwCollected } from '../utils.ts'
-import { HealthProbe } from './health.ts'
+import { evaluateHealth } from './health.ts'
 import {
   isOperationAborted,
   OperationScope,
@@ -62,7 +62,6 @@ export class HostController {
   private abandonedBy: Promise<void> | undefined
   private runtimes = new Map<string, RuntimeController>()
   private proxy: ProxyController | undefined
-  private healthProbe: HealthProbe | undefined
   private plugins: PluginEnvironment | undefined
 
   constructor(readonly options: HostControllerOptions) {
@@ -94,7 +93,7 @@ export class HostController {
       ready:
         this.state === 'running' &&
         runtimes.every((runtime) => runtime.ready) &&
-        (!proxy.enabled || proxy.ready),
+        proxy.ready,
       runtimes,
       proxy,
     }
@@ -178,12 +177,14 @@ export class HostController {
       scope.throwIfAborted()
       await this.startPlugins()
       scope.throwIfAborted()
-      await this.syncHealthProbe()
+      // Listening before runtimes start lets probes see a 503 from /ready
+      // instead of a refused connection.
+      await this.startProxy()
       scope.throwIfAborted()
       await scope.wait(this.callServerHook('server:start'))
       await this.startRuntimes(scope)
       scope.throwIfAborted()
-      await this.startProxy()
+      await this.syncProxyUpstreams()
       scope.throwIfAborted()
       this.markSettled()
       await scope.wait(this.callServerHook(options.readyHook))
@@ -452,30 +453,15 @@ export class HostController {
   }
 
   private async startProxy(): Promise<void> {
-    if (!this.snapshot.config.proxy) return
-    const proxy = new ProxyController(this.snapshot)
+    const proxy = new ProxyController(this.snapshot, {
+      getHealthStatus: () => evaluateHealth(this.getHealth()),
+    })
     await proxy.start(this.collectRuntimeUpstreams())
     this.proxy = proxy
   }
 
   private async syncProxyUpstreams(): Promise<void> {
     await this.proxy?.setUpstreams(this.collectRuntimeUpstreams())
-  }
-
-  private async syncHealthProbe(): Promise<void> {
-    const config = this.snapshot.config.health
-    if (this.healthProbe?.matches(config)) return
-
-    await this.stopHealthProbe()
-    if (!config) return
-
-    const probe = new HealthProbe({
-      config,
-      logger: this.snapshot.logger,
-      getHealth: () => this.getHealth(),
-    })
-    await probe.start()
-    this.healthProbe = probe
   }
 
   // Runs every disposer even when an earlier one fails, then reports them all.
@@ -491,30 +477,22 @@ export class HostController {
     const collect = (error: unknown) => {
       errors.push(normalizeError(error))
     }
-    if (proxy) {
-      await scope.within(proxy.stop(), 'Neem proxy stop').catch(collect)
-    }
     const results = await Promise.allSettled(
       runtimes.map((runtime) => runtime.stop(scope)),
     )
     for (const result of results) {
       if (result.status === 'rejected') collect(result.reason)
     }
-    await scope
-      .within(this.stopHealthProbe(), 'Neem health probe stop')
-      .catch(collect)
+    // Stopped last so probes keep reporting the shutdown until the end.
+    if (proxy) {
+      await scope.within(proxy.stop(), 'Neem server stop').catch(collect)
+    }
     if (plugins) {
       await scope
         .within(plugins.dispose(), 'Neem plugin disposal')
         .catch(collect)
     }
     throwCollected(errors, 'Neem server subsystems did not stop cleanly')
-  }
-
-  private async stopHealthProbe(): Promise<void> {
-    const probe = this.healthProbe
-    this.healthProbe = undefined
-    await probe?.stop()
   }
 
   private createRuntime(runtimeName: string): RuntimeController {
@@ -528,6 +506,10 @@ export class HostController {
       prepareRecovery: prepareRecovery && (() => prepareRecovery(runtimeName)),
       onRecovered: () => this.refreshProxyUpstreams(),
       onUpstreamsChange: () => this.refreshProxyUpstreams(),
+      // Syncing upstreams publishes health too: a recovered runtime is ready
+      // before its new upstreams are routed, so publishing alone would
+      // report readiness the proxy cannot serve yet.
+      onStateChange: () => void this.refreshProxyUpstreams(),
       onFailure: (error) => {
         if (!this.failOnWorkerError()) return
         this.markState('failed', error)
@@ -581,6 +563,7 @@ export class HostController {
     this.state = state
     this.lastError = error
     this.revision++
+    this.proxy?.publishHealth()
     this.logger.debug(`Neem server state: ${previousState} -> ${state}`)
     this.logger.trace(
       { previousState, state, revision: this.revision, err: error },
@@ -616,7 +599,6 @@ export class HostController {
 
   private getDisabledProxyHealth(): NeemProxyHealth {
     return {
-      enabled: Boolean(this.snapshot.config.proxy),
       running: false,
       ready: false,
       upstreams: [],

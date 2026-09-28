@@ -26,7 +26,7 @@ describe('Neem recovery health and proxy behavior', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_PROXY_PORT: String(proxyPort),
+          NEEM_SERVER_PORT: String(proxyPort),
           NEEM_RECOVERY_PROXY_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_PROXY_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_PROXY_MARKER: markerFile,
@@ -53,6 +53,12 @@ describe('Neem recovery health and proxy behavior', () => {
       runtime: 'api',
       thread: 'api:0',
     })
+    // The proxy serves the probe itself, with no internal detail in the body.
+    const initialReady = await fetchJson(`http://127.0.0.1:${proxyPort}/ready`)
+    expect(initialReady).toEqual({
+      status: 200,
+      body: { ok: true, healthy: true, ready: true },
+    })
 
     const crash = await fetchJson(`http://127.0.0.1:${proxyPort}/api/crash`)
     expect(crash?.status).toBe(200)
@@ -71,6 +77,13 @@ describe('Neem recovery health and proxy behavior', () => {
     expect(restarting.status).toBe(503)
     expect(restarting.headers.get('retry-after')).toBe('1')
     expect(await restarting.text()).toBe('No upstream available\n')
+    expect(await fetchJson(`http://127.0.0.1:${proxyPort}/ready`)).toEqual({
+      status: 503,
+      body: { ok: false, healthy: true, ready: false },
+    })
+    expect(
+      (await fetchJson(`http://127.0.0.1:${proxyPort}/health`))?.status,
+    ).toBe(200)
     await writeFile(releaseFile, '')
 
     await waitForMatchingEventCount(
@@ -110,13 +123,19 @@ describe('Neem recovery health and proxy behavior', () => {
       runtime: 'api',
       thread: 'api:0',
     })
+    await waitForJson(
+      `http://127.0.0.1:${proxyPort}/ready`,
+      (response) => response.status === 200 && response.body.ready === true,
+      30_000,
+      () => formatSpawnedOutput(neem),
+    )
 
     await neem.stop()
   }, 60_000)
 
   it('reports /ready as unavailable during worker recovery and ready after recovery', async () => {
     const fixture = await createNeemFixture({ config: 'recovery-health' })
-    const [healthPort, firstPort, secondPort] = await getDistinctFreePorts(3)
+    const [serverPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-health-marker')
     await rm(markerFile, { force: true })
 
@@ -124,7 +143,7 @@ describe('Neem recovery health and proxy behavior', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_HEALTH_PORT: String(healthPort),
+          NEEM_SERVER_PORT: String(serverPort),
           NEEM_RECOVERY_HEALTH_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_HEALTH_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_HEALTH_MARKER: markerFile,
@@ -135,15 +154,12 @@ describe('Neem recovery health and proxy behavior', () => {
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     const initialReady = await waitForJson(
-      `http://127.0.0.1:${healthPort}/ready`,
+      `http://127.0.0.1:${serverPort}/ready`,
       (response) => response.status === 200 && response.body.ok === true,
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(initialReady.body).toMatchObject({
-      ok: true,
-      health: { ready: true },
-    })
+    expect(initialReady.body).toEqual({ ok: true, healthy: true, ready: true })
 
     const crash = await fetchJson(`http://127.0.0.1:${firstPort}/crash`)
     expect(crash?.status).toBe(200)
@@ -155,26 +171,23 @@ describe('Neem recovery health and proxy behavior', () => {
       1,
     )
 
-    const recovering = await fetchJson(`http://127.0.0.1:${healthPort}/ready`)
-    expect(recovering?.status).toBe(503)
-    expect(recovering?.body).toMatchObject({
-      ok: false,
-      health: { ready: false, state: 'running' },
-    })
-    expect(recovering?.body.health.runtimes[0].pool).toMatchObject({
-      state: 'starting',
-      starting: 1,
+    // The recovery delay event above proves the worker is mid-restart; the
+    // host itself stays healthy meanwhile.
+    expect(await fetchJson(`http://127.0.0.1:${serverPort}/ready`)).toEqual({
+      status: 503,
+      body: { ok: false, healthy: true, ready: false },
     })
 
     const recoveredReady = await waitForJson(
-      `http://127.0.0.1:${healthPort}/ready`,
+      `http://127.0.0.1:${serverPort}/ready`,
       (response) => response.status === 200 && response.body.ok === true,
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(recoveredReady.body).toMatchObject({
+    expect(recoveredReady.body).toEqual({
       ok: true,
-      health: { ready: true },
+      healthy: true,
+      ready: true,
     })
 
     const recoveredUpstream = await waitForJson(
@@ -198,7 +211,8 @@ describe('Neem recovery health and proxy behavior', () => {
 
   it('keeps health and proxy safe when a worker reload fails during start and recovers after a fix', async () => {
     const fixture = await createNeemFixture({ config: 'reload-start-failure' })
-    const [proxyPort, healthPort, upstreamPort] = await getDistinctFreePorts(3)
+    const [serverPort, upstreamPort] = await getDistinctFreePorts(2)
+    const logsFile = resolve(fixture.dir, 'reload-start-failure-logs.jsonl')
     const workerFile = resolve(
       fixture.fixtureDir,
       'cases/reload-start-failure/reload-start-failure.worker.ts',
@@ -221,10 +235,10 @@ describe('Neem recovery health and proxy behavior', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_RELOAD_START_FAILURE_PROXY_PORT: String(proxyPort),
-          NEEM_RELOAD_START_FAILURE_HEALTH_PORT: String(healthPort),
+          NEEM_SERVER_PORT: String(serverPort),
           NEEM_RELOAD_START_FAILURE_UPSTREAM_PORT: String(upstreamPort),
           NEEM_RELOAD_START_FAILURE_DELAY_MS: '2000',
+          NEEM_LOG_EVENTS_FILE: logsFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -232,7 +246,7 @@ describe('Neem recovery health and proxy behavior', () => {
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     const initial = await waitForJson(
-      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+      `http://127.0.0.1:${serverPort}/api/proxy-check`,
       (response) =>
         response.status === 200 && response.body.version === 'good-v1',
       30_000,
@@ -258,37 +272,44 @@ describe('Neem recovery health and proxy behavior', () => {
     )
 
     const reloadingReady = await fetchJson(
-      `http://127.0.0.1:${healthPort}/ready`,
+      `http://127.0.0.1:${serverPort}/ready`,
     )
-    expect(reloadingReady?.status).toBe(503)
-    expect(reloadingReady?.body).toMatchObject({
-      ok: false,
-      health: { ready: false },
+    expect(reloadingReady).toMatchObject({
+      status: 503,
+      body: { ok: false, ready: false },
     })
 
     const reloadingProxy = await fetchJson(
-      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+      `http://127.0.0.1:${serverPort}/api/proxy-check`,
     )
     expect(reloadingProxy?.body.version).not.toBe('bad-partial')
 
-    const failedReady = await waitForJson(
-      `http://127.0.0.1:${healthPort}/ready`,
-      (response) =>
-        response.status === 503 &&
-        response.body.health?.ready === false &&
-        response.body.health?.lastError?.message?.includes('bad-partial') ===
-          true,
+    await waitForJson(
+      `http://127.0.0.1:${serverPort}/health`,
+      (response) => response.status === 503,
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(failedReady.body.health).toMatchObject({
-      state: 'failed',
-      ready: false,
-      lastError: { message: expect.stringContaining('bad-partial') },
+    expect(await fetchJson(`http://127.0.0.1:${serverPort}/ready`)).toEqual({
+      status: 503,
+      body: { ok: false, healthy: false, ready: false },
+    })
+    // Probe bodies carry no error detail, so the log proves which failure took
+    // the server down.
+    const failureLog = await waitFor(
+      async () =>
+        (await readLogEvents(logsFile)).find(
+          (event) => event.msg === 'Failed to reload Neem runtime api',
+        ) ?? false,
+      30_000,
+      () => formatSpawnedOutput(neem),
+    )
+    expect(failureLog.err).toMatchObject({
+      message: expect.stringContaining('bad-partial'),
     })
 
     const failedProxy = await fetch(
-      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+      `http://127.0.0.1:${serverPort}/api/proxy-check`,
     )
     expect(failedProxy.status).toBe(503)
     expect(failedProxy.headers.get('retry-after')).toBe('1')
@@ -305,19 +326,19 @@ describe('Neem recovery health and proxy behavior', () => {
     )
 
     const recoveredReady = await waitForJson(
-      `http://127.0.0.1:${healthPort}/ready`,
+      `http://127.0.0.1:${serverPort}/ready`,
       (response) => response.status === 200 && response.body.ok === true,
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(recoveredReady.body).toMatchObject({
+    expect(recoveredReady.body).toEqual({
       ok: true,
-      health: { ready: true },
+      healthy: true,
+      ready: true,
     })
-    expect(recoveredReady.body.health.lastError).toBeUndefined()
 
     const recoveredProxy = await waitForJson(
-      `http://127.0.0.1:${proxyPort}/api/proxy-check`,
+      `http://127.0.0.1:${serverPort}/api/proxy-check`,
       (response) =>
         response.status === 200 && response.body.version === 'good-v2',
       30_000,
@@ -365,6 +386,19 @@ async function waitForProbeEventCount(
     30_000,
     () => formatSpawnedOutput(neem),
   )
+}
+
+async function readLogEvents(
+  file: string,
+): Promise<Array<Record<string, any>>> {
+  const content = await readFile(file, 'utf8').catch((error) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''
+    throw error
+  })
+  return content
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, any>)
 }
 
 type JsonResponse = { status: number; body: Record<string, any> }

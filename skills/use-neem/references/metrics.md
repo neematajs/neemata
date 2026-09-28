@@ -35,7 +35,7 @@ helpers. The endpoint combines the controller registry with worker registries.
 Lifecycle observations include `neem_lifecycle_events_total`,
 `neem_runtime_ready`, and `neem_runtime_pool_threads`. These record lifecycle
 hooks and pool health; the runtime-ready gauge is not a replacement for the
-server's [readiness probe](runtimes.md#proxy-and-health), which also checks proxy
+server's [readiness probe](runtimes.md#server-and-health), which also checks proxy
 readiness.
 
 ## Pushgateway

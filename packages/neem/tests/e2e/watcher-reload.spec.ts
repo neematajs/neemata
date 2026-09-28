@@ -29,7 +29,7 @@ describe('Neem watcher dev reload', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_PROXY_PORT: String(proxyPort),
+          NEEM_SERVER_PORT: String(proxyPort),
           NEEM_PROXY_UPSTREAM_PORT: String(upstreamPort),
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },

@@ -253,12 +253,14 @@ describe('Neem v2 services', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_HEALTH_PORT: String(port),
+          NEEM_SERVER_PORT: String(port),
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
     )
 
+    // The server listens before runtimes start, so a starting host is healthy
+    // but not ready.
     const notReady = await waitFor(
       async () => {
         const response = await fetchJson(`http://127.0.0.1:${port}/readyz`)
@@ -267,15 +269,14 @@ describe('Neem v2 services', () => {
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(notReady).toMatchObject({
-      ok: false,
-      health: { ready: false, state: 'starting' },
-    })
+    expect(notReady).toEqual({ ok: false, healthy: true, ready: false })
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     const ready = await fetchJson(`http://127.0.0.1:${port}/readyz`)
-    expect(ready?.status).toBe(200)
-    expect(ready?.body).toMatchObject({ ok: true, health: { ready: true } })
+    expect(ready).toEqual({
+      status: 200,
+      body: { ok: true, healthy: true, ready: true },
+    })
 
     await neem.stop()
   }, 60_000)
@@ -287,7 +288,7 @@ describe('Neem v2 services', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_HEALTH_PORT: String(port),
+          NEEM_SERVER_PORT: String(port),
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -301,16 +302,23 @@ describe('Neem v2 services', () => {
       30_000,
       () => formatSpawnedOutput(neem),
     )
-    expect(ready).toMatchObject({
-      ok: true,
-      health: { ready: true, runtimeNames: ['api'] },
-    })
+    expect(ready).toEqual({ ok: true, healthy: true, ready: true })
 
     const health = await fetchJson(`http://127.0.0.1:${port}/healthz`)
-    expect(health?.status).toBe(200)
-    expect(health?.body).toMatchObject({
-      ok: true,
-      health: { state: 'running' },
+    expect(health).toEqual({
+      status: 200,
+      body: { ok: true, healthy: true, ready: true },
+    })
+
+    // Probe bodies stay minimal; the detailed report is only in-process.
+    const readyEvent = await neem.waitForEvent(
+      (event) => event.event === 'runtime:ready',
+      30_000,
+    )
+    expect(readyEvent.health).toMatchObject({
+      state: 'running',
+      ready: true,
+      runtimeNames: ['api'],
     })
 
     await neem.stop()
@@ -383,7 +391,7 @@ describe('Neem v2 services', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_PROXY_PORT: String(proxyPort),
+          NEEM_SERVER_PORT: String(proxyPort),
           NEEM_PROXY_UPSTREAM_PORT: String(upstreamPort),
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },

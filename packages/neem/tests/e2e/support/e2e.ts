@@ -69,6 +69,9 @@ export function spawnNode(
       ...process.env,
       NODE_ENV: 'test',
       NEEM_TEST_PROBE: '1',
+      // Every neem host binds its server, and the default port would collide
+      // across tests; tests that probe the server pass their own port.
+      NEEM_SERVER_PORT: '0',
       ...options.env,
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],

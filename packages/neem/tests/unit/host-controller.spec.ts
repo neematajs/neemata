@@ -7,7 +7,6 @@ import type { OperationScope } from '../../src/internal/host/lifecycle.ts'
 import type { Manifest } from '../../src/internal/manifest/manifest.ts'
 import type { NeemRuntimeState } from '../../src/shared/types.ts'
 import { HostController } from '../../src/internal/host/controller.ts'
-import { HealthProbe } from '../../src/internal/host/health.ts'
 import { createRuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import { PluginEnvironment } from '../../src/internal/plugins/environment.ts'
 import { createHostHooks } from '../../src/internal/plugins/hooks.ts'
@@ -21,18 +20,29 @@ const runtime = vi.hoisted(() => ({
   state: 'idle' as NeemRuntimeState,
   lastError: undefined as Error | undefined,
   onFailure: undefined as undefined | ((error: Error) => void),
+  onStateChange: undefined as undefined | (() => void),
   ready: undefined as undefined | Future<void>,
 }))
 
 const proxy = vi.hoisted(() => ({
+  start: vi.fn<() => Promise<void>>(),
   stop: vi.fn<() => Promise<void>>(),
+  publishHealth: vi.fn<() => void>(),
+  setUpstreams: vi.fn<() => Promise<void>>(),
+  getHealthStatus: undefined as
+    | undefined
+    | (() => { healthy: boolean; ready: boolean }),
 }))
 
 vi.mock('../../src/internal/host/runtime.ts', () => ({
   RuntimeController: class {
     name = 'api'
-    constructor(options: { onFailure?: (error: Error) => void }) {
+    constructor(options: {
+      onFailure?: (error: Error) => void
+      onStateChange?: () => void
+    }) {
       runtime.onFailure = options.onFailure
+      runtime.onStateChange = options.onStateChange
     }
     async start(scope: OperationScope) {
       runtime.starts.push('start')
@@ -60,9 +70,16 @@ vi.mock('../../src/internal/host/runtime.ts', () => ({
 
 vi.mock('../../src/internal/host/proxy.ts', () => ({
   ProxyController: class {
-    async start() {}
+    constructor(
+      _snapshot: unknown,
+      options: { getHealthStatus?: () => { healthy: boolean; ready: boolean } },
+    ) {
+      proxy.getHealthStatus = options.getHealthStatus
+    }
+    start = proxy.start
     stop = proxy.stop
-    async setUpstreams() {}
+    publishHealth = proxy.publishHealth
+    setUpstreams = proxy.setUpstreams
     getHealth = () => ({ enabled: true, ready: true })
   },
 }))
@@ -71,11 +88,16 @@ afterEach(() => {
   runtime.starts.length = 0
   runtime.ready = undefined
   runtime.onFailure = undefined
+  runtime.onStateChange = undefined
   runtime.state = 'idle'
   runtime.lastError = undefined
   runtime.patch.mockReset()
   runtime.stop.mockReset()
+  proxy.start.mockReset()
   proxy.stop.mockReset()
+  proxy.publishHealth.mockReset()
+  proxy.setUpstreams.mockReset()
+  proxy.getHealthStatus = undefined
   vi.restoreAllMocks()
 })
 
@@ -88,7 +110,7 @@ const artifact = (id: string, kind: 'module' | 'worker') => ({
   outDir: '.',
 })
 const manifest: Manifest = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   runtime: {
     entry: 'start.js',
     start: artifact('start', 'module'),
@@ -208,27 +230,27 @@ describe('HostController stop during startup', () => {
     const events: string[] = []
     const listening = createFuture<void>()
     const release = createFuture<void>()
-    vi.spyOn(HealthProbe.prototype, 'start').mockImplementation(async () => {
-      events.push('probe:start')
+    proxy.start.mockImplementation(async () => {
+      events.push('server:start')
       listening.resolve()
       await release.promise
-      events.push('probe:started')
+      events.push('server:started')
     })
-    vi.spyOn(HealthProbe.prototype, 'stop').mockImplementation(async () => {
-      events.push('probe:stop')
+    proxy.stop.mockImplementation(async () => {
+      events.push('server:stop')
     })
-    const controller = createController({ config: { health: { port: 0 } } })
+    const controller = createController()
 
     const starting = controller.start().catch((error: unknown) => error)
     await listening.promise
     const stopping = controller.stop()
     await Promise.resolve()
-    expect(events).toEqual(['probe:start'])
+    expect(events).toEqual(['server:start'])
     release.resolve()
     await stopping
 
     expect(await starting).toMatchObject({ name: 'AbortError' })
-    expect(events).toEqual(['probe:start', 'probe:started', 'probe:stop'])
+    expect(events).toEqual(['server:start', 'server:started', 'server:stop'])
     expect(runtime.starts).toEqual([])
   })
 
@@ -266,6 +288,89 @@ describe('HostController stop during startup', () => {
   })
 })
 
+describe('HostController server health', () => {
+  it('pushes every host and runtime state change to the proxy', async () => {
+    readyRuntime()
+    proxy.setUpstreams.mockResolvedValue()
+    const controller = createController({
+      mode: 'production',
+      config: { server: { port: 0 } },
+    })
+    await controller.start()
+
+    expect(proxy.publishHealth).toHaveBeenCalled()
+    expect(proxy.getHealthStatus?.()).toEqual({ healthy: true, ready: true })
+
+    // Runtime changes go through an upstream sync, which publishes only once
+    // the proxy knows the runtime's current upstreams.
+    proxy.setUpstreams.mockClear()
+    runtime.state = 'recovering'
+    runtime.onStateChange?.()
+    expect(proxy.setUpstreams).toHaveBeenCalledOnce()
+    expect(proxy.getHealthStatus?.()).toEqual({ healthy: true, ready: false })
+
+    proxy.publishHealth.mockClear()
+    runtime.onFailure?.(new Error('worker failed'))
+    expect(proxy.publishHealth).toHaveBeenCalledOnce()
+    expect(proxy.getHealthStatus?.()).toEqual({ healthy: false, ready: false })
+
+    await controller.stop().catch(() => {})
+  })
+
+  // Probes must get an answer for the whole lifetime of the runtimes.
+  it('listens before runtimes start and stops after they stop', async () => {
+    readyRuntime()
+    const events: string[] = []
+    proxy.start.mockImplementation(async () => {
+      events.push('server:start')
+    })
+    proxy.stop.mockImplementation(async () => {
+      events.push('server:stop')
+    })
+    proxy.setUpstreams.mockImplementation(async () => {
+      events.push(`upstreams:${runtime.state}`)
+    })
+    runtime.stop.mockImplementation(async () => {
+      events.push('runtime:stop')
+    })
+    const controller = createController()
+
+    await controller.start()
+    await controller.stop()
+
+    expect(events).toEqual([
+      'server:start',
+      'upstreams:ready',
+      'runtime:stop',
+      'server:stop',
+    ])
+  })
+
+  it('reports a stopping server as unhealthy while stop hooks run', async () => {
+    readyRuntime()
+    const hooks = createHostHooks()
+    const release = createFuture<void>()
+    const stopHook = createFuture<void>()
+    hooks.hook('server:stop', async () => {
+      stopHook.resolve()
+      await release.promise
+    })
+    const controller = createController({
+      hooks,
+      config: { server: { port: 0 } },
+    })
+    await controller.start()
+    proxy.publishHealth.mockClear()
+
+    const stopping = controller.stop()
+    await stopHook.promise
+    expect(proxy.publishHealth).toHaveBeenCalledOnce()
+    expect(proxy.getHealthStatus?.()).toEqual({ healthy: false, ready: false })
+    release.resolve()
+    await stopping
+  })
+})
+
 describe('HostController shutdown', () => {
   it('runs every disposer when an earlier one fails and reports all errors', async () => {
     readyRuntime()
@@ -274,11 +379,11 @@ describe('HostController shutdown', () => {
       throw new Error('plugin dispose failed')
     })
     hooks.hook('dispose', disposed)
-    proxy.stop.mockRejectedValue(new Error('proxy stop failed'))
+    proxy.stop.mockRejectedValue(new Error('server stop failed'))
     runtime.stop.mockRejectedValue(new Error('runtime stop failed'))
     const controller = createController({
       hooks,
-      config: { proxy: { hostname: '127.0.0.1', port: 0 } },
+      config: { server: { port: 0 } },
     })
     await controller.start()
 
@@ -289,8 +394,8 @@ describe('HostController shutdown', () => {
     }
 
     expect(error.errors.map(({ message }) => message)).toEqual([
-      'proxy stop failed',
       'runtime stop failed',
+      'server stop failed',
       'plugin dispose failed',
     ])
     expect(runtime.stop).toHaveBeenCalledOnce()

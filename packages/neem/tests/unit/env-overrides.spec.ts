@@ -7,8 +7,7 @@ import {
 } from '../../src/internal/manifest/env-overrides.ts'
 
 const baseConfig: ManifestConfig = {
-  proxy: { hostname: '127.0.0.1', port: 8000 },
-  health: { hostname: '127.0.0.1', port: 8081 },
+  server: { hostname: '127.0.0.1', port: 8000 },
   runtimes: {},
 }
 
@@ -18,76 +17,74 @@ describe('Neem host config env overrides', () => {
 
     expect(result.config).toBe(baseConfig)
     expect(result.applied).toEqual([])
-    expect(result.warnings).toEqual([])
   })
 
-  it('overrides proxy port and hostname from NEEM_PROXY_* vars', () => {
+  it('overrides server port and hostname from NEEM_SERVER_* vars', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_PORT: '3000',
-      NEEM_PROXY_HOSTNAME: '0.0.0.0',
+      NEEM_SERVER_PORT: '3000',
+      NEEM_SERVER_HOSTNAME: '0.0.0.0',
     })
 
-    expect(result.config.proxy).toEqual({ hostname: '0.0.0.0', port: 3000 })
+    expect(result.config.server).toEqual({ hostname: '0.0.0.0', port: 3000 })
     expect(result.applied).toEqual([
       {
-        source: 'NEEM_PROXY_PORT',
-        path: 'proxy.port',
+        source: 'NEEM_SERVER_PORT',
+        path: 'server.port',
         from: 8000,
         to: 3000,
       },
       {
-        source: 'NEEM_PROXY_HOSTNAME',
-        path: 'proxy.hostname',
+        source: 'NEEM_SERVER_HOSTNAME',
+        path: 'server.hostname',
         from: '127.0.0.1',
         to: '0.0.0.0',
       },
     ])
   })
 
-  it('falls back to the platform PORT convention for the proxy port', () => {
+  it('falls back to the platform PORT convention for the server port', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, { PORT: '5000' })
 
-    expect(result.config.proxy?.port).toBe(5000)
+    expect(result.config.server?.port).toBe(5000)
     expect(result.applied).toEqual([
-      { source: 'PORT', path: 'proxy.port', from: 8000, to: 5000 },
+      { source: 'PORT', path: 'server.port', from: 8000, to: 5000 },
     ])
   })
 
-  it('prefers NEEM_PROXY_PORT over PORT', () => {
+  it('prefers NEEM_SERVER_PORT over PORT', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_PORT: '3000',
+      NEEM_SERVER_PORT: '3000',
       PORT: '5000',
     })
 
-    expect(result.config.proxy?.port).toBe(3000)
+    expect(result.config.server?.port).toBe(3000)
   })
 
-  it('overrides health port and hostname from NEEM_HEALTH_* vars', () => {
-    const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_HEALTH_PORT: '9000',
-      NEEM_HEALTH_HOSTNAME: '::',
+  // The server always runs, so a deploy can set it up without any config.
+  it('applies overrides when neem.config.ts configures no server', () => {
+    const config: ManifestConfig = { runtimes: {} }
+    const result = applyHostConfigEnvOverrides(config, {
+      PORT: '5000',
+      NEEM_SERVER_HOSTNAME: '::',
     })
 
-    expect(result.config.health).toEqual({ hostname: '::', port: 9000 })
+    expect(result.config.server).toEqual({ hostname: '::', port: 5000 })
+    expect(config.server).toBeUndefined()
   })
 
   it('does not mutate the input config', () => {
-    applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_PORT: '3000',
-      NEEM_HEALTH_PORT: '9000',
-    })
+    applyHostConfigEnvOverrides(baseConfig, { NEEM_SERVER_PORT: '3000' })
 
-    expect(baseConfig.proxy?.port).toBe(8000)
-    expect(baseConfig.health?.port).toBe(8081)
+    expect(baseConfig.server?.port).toBe(8000)
   })
 
-  it('enables proxy TLS when both path vars are set', () => {
+  it('enables server TLS when both path vars are set', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_TLS_KEY_PATH: '/secrets/key.pem',
-      NEEM_PROXY_TLS_CERT_PATH: '/secrets/cert.pem',
+      NEEM_SERVER_TLS_KEY_PATH: '/secrets/key.pem',
+      NEEM_SERVER_TLS_CERT_PATH: '/secrets/cert.pem',
     })
 
-    expect(result.config.proxy?.tls).toEqual({
+    expect(result.config.server?.tls).toEqual({
       keyPath: '/secrets/key.pem',
       certPath: '/secrets/cert.pem',
     })
@@ -96,17 +93,17 @@ describe('Neem host config env overrides', () => {
   it('overrides a single TLS path when TLS is already configured', () => {
     const config: ManifestConfig = {
       ...baseConfig,
-      proxy: {
+      server: {
         hostname: '127.0.0.1',
         port: 8000,
         tls: { keyPath: '/old/key.pem', certPath: '/old/cert.pem' },
       },
     }
     const result = applyHostConfigEnvOverrides(config, {
-      NEEM_PROXY_TLS_KEY_PATH: '/new/key.pem',
+      NEEM_SERVER_TLS_KEY_PATH: '/new/key.pem',
     })
 
-    expect(result.config.proxy?.tls).toEqual({
+    expect(result.config.server?.tls).toEqual({
       keyPath: '/new/key.pem',
       certPath: '/old/cert.pem',
     })
@@ -115,79 +112,57 @@ describe('Neem host config env overrides', () => {
   it('rejects enabling TLS with only one of the path vars', () => {
     expect(() =>
       applyHostConfigEnvOverrides(baseConfig, {
-        NEEM_PROXY_TLS_KEY_PATH: '/secrets/key.pem',
+        NEEM_SERVER_TLS_KEY_PATH: '/secrets/key.pem',
       }),
-    ).toThrow(/Both NEEM_PROXY_TLS_KEY_PATH and NEEM_PROXY_TLS_CERT_PATH/)
+    ).toThrow(/Both NEEM_SERVER_TLS_KEY_PATH and NEEM_SERVER_TLS_CERT_PATH/)
   })
 
   it('rejects non-numeric ports', () => {
     expect(() =>
-      applyHostConfigEnvOverrides(baseConfig, { NEEM_PROXY_PORT: 'nope' }),
-    ).toThrow(/Invalid NEEM_PROXY_PORT="nope"/)
+      applyHostConfigEnvOverrides(baseConfig, { NEEM_SERVER_PORT: 'nope' }),
+    ).toThrow(/Invalid NEEM_SERVER_PORT="nope"/)
     expect(() =>
-      applyHostConfigEnvOverrides(baseConfig, { NEEM_HEALTH_PORT: '70000' }),
-    ).toThrow(/Invalid NEEM_HEALTH_PORT="70000"/)
+      applyHostConfigEnvOverrides(baseConfig, { PORT: '70000' }),
+    ).toThrow(/Invalid PORT="70000"/)
   })
 
   it('treats empty values as unset', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_PORT: '',
+      NEEM_SERVER_PORT: '',
       PORT: '5000',
-      NEEM_PROXY_HOSTNAME: '',
+      NEEM_SERVER_HOSTNAME: '',
     })
 
-    expect(result.config.proxy).toEqual({ hostname: '127.0.0.1', port: 5000 })
+    expect(result.config.server).toEqual({ hostname: '127.0.0.1', port: 5000 })
   })
 
   it('skips no-op overrides matching the manifest value', () => {
     const result = applyHostConfigEnvOverrides(baseConfig, {
-      NEEM_PROXY_PORT: '8000',
+      NEEM_SERVER_PORT: '8000',
     })
 
     expect(result.config).toBe(baseConfig)
     expect(result.applied).toEqual([])
   })
 
-  it('warns about neem-specific vars when the target is not configured', () => {
-    const config: ManifestConfig = { runtimes: {} }
-    const result = applyHostConfigEnvOverrides(config, {
-      NEEM_PROXY_PORT: '3000',
-      NEEM_HEALTH_PORT: '9000',
-      PORT: '5000',
-    })
-
-    expect(result.config).toBe(config)
-    expect(result.warnings).toEqual([
-      'NEEM_PROXY_PORT ignored: no proxy is configured',
-      'NEEM_HEALTH_PORT ignored: no health server is configured',
-    ])
-  })
-
-  it('stays silent about a stray PORT when no proxy is configured', () => {
-    const config: ManifestConfig = { runtimes: {} }
-    const result = applyHostConfigEnvOverrides(config, { PORT: '5000' })
-
-    expect(result.warnings).toEqual([])
-  })
-
   it('formats applied overrides for logging', () => {
     expect(
       formatAppliedEnvOverride({
-        source: 'NEEM_PROXY_PORT',
-        path: 'proxy.port',
+        source: 'NEEM_SERVER_PORT',
+        path: 'server.port',
         from: 8000,
         to: 3000,
       }),
-    ).toBe('Env override NEEM_PROXY_PORT: proxy.port 8000 -> 3000')
+    ).toBe('Env override NEEM_SERVER_PORT: server.port 8000 -> 3000')
     expect(
       formatAppliedEnvOverride({
-        source: 'NEEM_PROXY_TLS_KEY_PATH',
-        path: 'proxy.tls.keyPath',
+        source: 'NEEM_SERVER_TLS_KEY_PATH',
+        path: 'server.tls.keyPath',
         from: undefined,
         to: '/secrets/key.pem',
       }),
     ).toBe(
-      'Env override NEEM_PROXY_TLS_KEY_PATH: proxy.tls.keyPath (unset) -> /secrets/key.pem',
+      'Env override NEEM_SERVER_TLS_KEY_PATH: server.tls.keyPath (unset) -> /secrets/key.pem',
     )
   })
 })
