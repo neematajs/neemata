@@ -202,9 +202,10 @@ Startup has no deadline of its own: Neem's `lifecycle.startTimeout` (default
 30,000 ms) bounds resolving the registry, `setup` and schedule reconciliation
 together. A fresh thread that is not ready by then is terminated without further
 cleanup. In development, a patch that replaces the worker must finish within the
-same deadline, including stopping the generation it replaces; one that overruns
-fails the thread, and recovery stops it, terminating it if that exceeds
-`lifecycle.stopTimeout`. A stop, including one during startup, is bounded by Neem's
+same deadline, including stopping the generation it replaces. One that overruns
+fails the thread while it keeps running: recovery stops it, and a stop that
+exceeds `lifecycle.stopTimeout` terminates it and leaves the runtime unready until
+the next successful build. A stop, including one during startup, is bounded by Neem's
 `lifecycle.stopTimeout` (default 15,000 ms, shared by a whole shutdown);
 `cleanupTimeoutMs` cannot extend it. Effect applications use the worker in
 `@nmtjs/workflows/effect/neem`; see below.
@@ -406,10 +407,12 @@ during startup reaches `runtime.stop()` once the worker factory has resolved,
 without waiting for readiness. Factory completion and finalizers share the budget.
 
 Building the Layer, acquiring the adapter and reconciling schedules are bounded by
-Neem's `lifecycle.startTimeout` like the worker above, for fresh threads and for
-development patches alike. A Layer that fails part-way closes its own scope inside
-the build, before the worker sees the failure, so a finalizer that hangs there
-looks like a slow startup and ends at that deadline as well.
+Neem's `lifecycle.startTimeout` like the worker above. A Layer that fails part-way
+closes its own scope inside the build, before the worker sees the failure, so a
+finalizer that hangs there looks like a slow startup. A fresh thread is terminated
+at that deadline. A development patch fails at it instead, but its thread keeps
+running while recovery stops it, so the finalizer hangs until the stop exceeds
+`lifecycle.stopTimeout` and the thread is terminated.
 
 Interruption cannot stop Promise work that ignores cancellation. Such work can
 continue after its fiber exits, so integrate its AbortSignal or arrange explicit
