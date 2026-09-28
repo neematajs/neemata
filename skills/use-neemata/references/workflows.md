@@ -237,8 +237,10 @@ Start options: `tags`, `idempotencyKey`, `unique`, `startAt`, and the
 PostgreSQL transaction `connection`. Explicit options override definition
 builders. Identity rules:
 
-- `idempotencyKey` is an array; replay joins a matching stored run and rejects
-  conflicting run data. It is distinct from uniqueness.
+- `idempotencyKey` is an array for retries of the same request; replay joins a
+  matching stored run. Input for one key must be deep-equal, so keep per-request
+  values such as timestamps out of keyed input. A different input or target
+  throws `WorkflowIdempotencyConflictError`. It is distinct from uniqueness.
 - `unique: { key, scope?, behavior? }` constrains root starts. Defaults:
   `scope: 'active'`, `behavior: 'reject'`. Active keys free on terminal
   settlement; `cancelling` still holds them. `'all'` includes retained terminal
@@ -246,7 +248,8 @@ builders. Identity rules:
 - Definition `unique` may be a key function or
   `{ key: (input) => [...], scope?, behavior? }`.
 - `WorkflowRunConflictError` from `/runtime` carries `runId`, `status`,
-  `key` and `scope`.
+  `key` and `scope`; `WorkflowIdempotencyConflictError` carries `runId`,
+  `status`, `key` and the rejected start's `runnableName`.
 
 Reads return stored JSON, except `start` / `restart`, which decode input and
 completed output with the definition:

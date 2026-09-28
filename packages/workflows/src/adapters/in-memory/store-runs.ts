@@ -16,7 +16,10 @@ import type {
   WorkflowStore,
 } from '../../runtime/store.ts'
 import type { State } from './state.ts'
-import { WorkflowRunConflictError } from '../../runtime/errors.ts'
+import {
+  WorkflowIdempotencyConflictError,
+  WorkflowRunConflictError,
+} from '../../runtime/errors.ts'
 import {
   compareAttempts,
   compareRunsOldest,
@@ -171,13 +174,18 @@ export function createRunWithState(
 
   if (input.idempotencyKey) {
     const existingRunId = runIdempotencyKeys.get(valueKey(input.idempotencyKey))
-    if (existingRunId) {
-      const existing = runs.get(existingRunId)
-      if (existing && runMatchesCreateInput(existing, input)) {
+    const existing =
+      existingRunId === undefined ? undefined : runs.get(existingRunId)
+    if (existing) {
+      if (runMatchesCreateInput(existing, input)) {
         return { run: existing, created: false }
       }
-
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      throw new WorkflowIdempotencyConflictError({
+        runId: existing.id,
+        status: existing.status,
+        key: input.idempotencyKey,
+        runnableName: runnableName(input),
+      })
     }
   }
 

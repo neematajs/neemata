@@ -23,6 +23,7 @@ import {
 import {
   createWorkflowRuntimeClient,
   StaleWriteFenceError,
+  WorkflowIdempotencyConflictError,
   type WorkflowRuntimeAdapter,
   type WorkflowStore,
   type WriteFence,
@@ -365,6 +366,52 @@ function workflowRuntimeAdapterContract(
         expect(claimed?.id).toMatch(uuidPattern)
         expect(claimed?.command.attemptId).toMatch(uuidPattern)
         expect(claimed?.command.leaseToken).toMatch(uuidPattern)
+      }
+    })
+
+    it('rejects keyed starts whose input differs from the key holder', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-keyed-workflow',
+        input: Schema.Struct({ queuedAt: Schema.Number }),
+        output: Schema.Struct({ caseId: Schema.String }),
+      }).build()
+      const task = defineTask({
+        name: 'adapter-keyed-task',
+        input: Schema.Struct({ queuedAt: Schema.Number }),
+        output: Schema.Struct({ id: Schema.String }),
+      })
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+
+      const starts = [
+        [
+          workflow.name,
+          (queuedAt: number, idempotencyKey: readonly unknown[]) =>
+            client.start(workflow, { queuedAt }, { idempotencyKey }),
+        ],
+        [
+          task.name,
+          (queuedAt: number, idempotencyKey: readonly unknown[]) =>
+            client.start(task, { queuedAt }, { idempotencyKey }),
+        ],
+      ] as const
+      for (const [runnableName, start] of starts) {
+        const idempotencyKey = ['keyed', runnableName]
+        const first = await start(1, idempotencyKey)
+        const retried = await start(1, idempotencyKey)
+        expect(retried.id).toBe(first.id)
+
+        const conflict = await start(2, idempotencyKey).then(
+          () => undefined,
+          (error) => error,
+        )
+        expect(conflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+        expect(conflict).toMatchObject({
+          runId: first.id,
+          status: 'queued',
+          key: idempotencyKey,
+          runnableName,
+        })
       }
     })
 
@@ -2298,24 +2345,43 @@ function workflowRuntimeAdapterContract(
 
       expect(sameStableKeyed.id).toBe(stableKeyed.id)
 
-      await expect(
-        runtime.store.createRun({
+      const inputConflict = await runtime.store
+        .createRun({
           kind: 'workflow',
           workflowName: 'idempotent-workflow',
           input: { scenario: 'beta' },
           idempotencyKey: ['workflow', 'alpha'],
-        }),
-      ).rejects.toThrow('Conflicting idempotent run')
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(inputConflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(inputConflict).toMatchObject({
+        runId: run.id,
+        status: 'queued',
+        key: ['workflow', 'alpha'],
+        runnableName: 'idempotent-workflow',
+      })
 
-      await expect(
-        runtime.store.createRun({
+      const targetConflict = await runtime.store
+        .createRun({
           kind: 'task',
           workflowName: 'idempotent-task',
           taskName: 'idempotent-task',
           input: { scenario: 'alpha' },
           idempotencyKey: ['workflow', 'alpha'],
-        }),
-      ).rejects.toThrow('Conflicting idempotent run')
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(targetConflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(targetConflict).toMatchObject({
+        runId: run.id,
+        key: ['workflow', 'alpha'],
+        runnableName: 'idempotent-task',
+      })
     })
 
     it('ignores stale completions and terminal state rewrites', async () => {

@@ -9,7 +9,10 @@ import {
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
 import { defineTask, defineWorkflow } from '../src/effect/index.ts'
-import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
+import {
+  createWorkflowRuntimeClient,
+  WorkflowIdempotencyConflictError,
+} from '../src/runtime/index.ts'
 
 const createPgliteConnection = () =>
   createPostgresWorkflowConnection(new PGlite())
@@ -138,7 +141,7 @@ test('a failed start leaves the caller transaction usable', async () => {
         { value: 'different' },
         { idempotencyKey: ['conflict-key'], connection: tx },
       ),
-    ).rejects.toThrow('Conflicting idempotent run')
+    ).rejects.toThrow(WorkflowIdempotencyConflictError)
     // the conflict never enters SQL error state, so the caller's
     // transaction continues and commits
     await tx.query(

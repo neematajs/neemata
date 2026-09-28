@@ -33,6 +33,37 @@ export class WorkflowRunConflictError extends Error {
 }
 
 /**
+ * A start reused an `idempotencyKey` already held by a run that was started
+ * with a different input or for a different target. Idempotency keys only
+ * dedupe retries of the same request; `unique` with `behavior: 'join'` is the
+ * tool for "at most one run per key" when inputs may differ.
+ */
+export class WorkflowIdempotencyConflictError extends Error {
+  /** The run that already holds the key. */
+  readonly runId: string
+  readonly status: RuntimeRunStatus
+  readonly key: readonly unknown[]
+  /** The workflow or task the rejected start targeted. */
+  readonly runnableName: string
+
+  constructor(details: {
+    readonly runId: string
+    readonly status: RuntimeRunStatus
+    readonly key: readonly unknown[]
+    readonly runnableName: string
+  }) {
+    super(
+      `Run [${details.runId}] already holds idempotency key for a different start [${details.runnableName}]`,
+    )
+    this.name = 'WorkflowIdempotencyConflictError'
+    this.runId = details.runId
+    this.status = details.status
+    this.key = details.key
+    this.runnableName = details.runnableName
+  }
+}
+
+/**
  * A write carried a `WriteFence` that no longer holds: its issuer lost the run
  * lease or the attempt it acted for, and the store wrote nothing.
  */
