@@ -27,6 +27,7 @@ import {
 import { serveRpc } from '../rpc.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { importDefault, normalizeError, serializeError } from '../utils.ts'
+import { importPatch } from './patch-import.ts'
 import { WORKER_SERIAL_COMMANDS } from './protocol.ts'
 import { ReloadableRuntime } from './reloadable-runtime.ts'
 
@@ -154,7 +155,7 @@ async function applyUpdate(
   // leaves the patch undelivered.
   const load = () =>
     url
-      ? import(url)
+      ? importPatch(url)
       : Promise.reject(new Error('Patch update carries no file URL'))
   let result: PatchClientResult
   try {
