@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 24
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
 
@@ -62,7 +62,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
       - name: Get pnpm store directory
@@ -90,7 +90,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
       - name: Use Node.js 22
@@ -121,7 +121,7 @@ jobs:
         with:
           bun-version: ${{ matrix.bun }}
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
       - name: Get pnpm store directory
@@ -185,7 +185,7 @@ jobs:
         with:
           node-version: 24
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
       - name: Get pnpm store directory

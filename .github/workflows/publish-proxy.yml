@@ -70,7 +70,7 @@ jobs:
       VERSION_TAG: proxy-v${{ needs.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6.1.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
