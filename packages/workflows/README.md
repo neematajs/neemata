@@ -118,6 +118,20 @@ work, so moving an implementation to another pool takes effect for already
 queued work on the next deploy. A standalone worker takes
 `runExecutionWorker({ pool: 'pdf', ... })`; without `pool` it serves everything.
 
+Standalone workers accept partial lists, since a coordinator needs no task
+handlers. A standalone host calls `verifyWorkflowsRegistry` from
+`@nmtjs/workflows/runtime` once at startup, with everything the deployment
+serves, to fail fast on the gaps the Neem worker rejects (see below):
+
+```ts
+verifyWorkflowsRegistry({
+  workflows: [checkoutImpl],
+  tasks: [renderPdfImpl],
+  schedules: [nightly],
+  pools: ['checkout', 'pdf'], // optional: rejects implementations naming another
+})
+```
+
 Pool `concurrency` is capacity per process, not a limit: three instances of a
 pool with two slots run six handlers. Cluster-wide limits are not implemented.
 

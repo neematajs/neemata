@@ -8,12 +8,7 @@ import type {
   AnyTaskDefinition,
   MaybePromise,
 } from '../types/index.ts'
-import {
-  collectChildWorkflowNames,
-  collectImplementationPools,
-  collectWorkflowTaskNames,
-  findConflictingDefinitions,
-} from '../runtime/worker.ts'
+import { verifyWorkflowsRegistry } from '../runtime/worker.ts'
 
 export type AnyWorkflowImplementation = WorkflowImplementation<
   AnyWorkflowDefinition,
@@ -121,10 +116,7 @@ function resolvePool(label: string, config: WorkflowsPoolConfig | undefined) {
   return { threads, ...resolveWorkerSettings(settings) }
 }
 
-/**
- * Instantiates what this thread serves and checks it is complete. A gap would
- * otherwise leave durable commands stalled forever, so it fails startup instead.
- */
+/** Instantiates what this thread serves and fails startup when it is incomplete. */
 export async function resolveWorkflowsRegistry(
   registry: WorkflowsRegistry,
   data: WorkflowsWorkerData,
@@ -133,108 +125,12 @@ export async function resolveWorkflowsRegistry(
   const workflows = [...new Set(await registry.workflows())]
   const tasks = [...new Set((await registry.tasks?.()) ?? [])]
   const schedules = (await registry.schedules?.()) ?? []
-
-  // The execution registry refuses a second implementation of a name only when
-  // it is built, at claim time, where it would fail unrelated work as well.
-  const duplicates = [
-    ...findDuplicateNames(
-      'workflow',
-      workflows.map(({ workflow }) => workflow.name),
-    ),
-    ...findDuplicateNames(
-      'task',
-      tasks.map(({ task }) => task.name),
-    ),
-  ]
-  if (duplicates.length > 0) {
-    throw new Error(
-      `Implementations [${duplicates.join(', ')}] are registered more than once; a workflow or task takes exactly one implementation`,
-    )
-  }
-
-  const registeredWorkflows = new Set(
-    workflows.map((implementation) => implementation.workflow.name),
-  )
-  const missingWorkflows = collectChildWorkflowNames(workflows).filter(
-    (name) => !registeredWorkflows.has(name),
-  )
-  if (missingWorkflows.length > 0) {
-    throw new Error(
-      `Workflows [${missingWorkflows.join(', ')}] referenced by registered workflows have no registered implementation`,
-    )
-  }
-  const registeredTasks = new Set(
-    tasks.map((implementation) => implementation.task.name),
-  )
-  const missingTasks = collectWorkflowTaskNames(workflows).filter(
-    (name) => !registeredTasks.has(name),
-  )
-  if (missingTasks.length > 0) {
-    throw new Error(
-      `Tasks [${missingTasks.join(', ')}] referenced by registered workflows have no registered implementation`,
-    )
-  }
-
-  // A schedule starts its target by name as well: an unregistered one would
-  // fire runs nobody can claim, and a same-named copy would encode its input
-  // with another schema than the implementation decodes with.
-  const registered = {
-    workflow: new Map(
-      workflows.map(({ workflow }) => [workflow.name, workflow]),
-    ),
-    task: new Map(tasks.map(({ task }) => [task.name, task])),
-  }
-  const targets = schedules.map(({ runnable }) => ({
-    runnable,
-    registered: registered[runnable.kind].get(runnable.name),
-  }))
-  const missingTargets = targets.filter((target) => !target.registered)
-  if (missingTargets.length > 0) {
-    const names = new Set(missingTargets.map(({ runnable }) => runnable.name))
-    throw new Error(
-      `Workflows or tasks [${[...names].join(', ')}] targeted by schedules have no registered implementation`,
-    )
-  }
-
-  const conflicts = [
-    ...new Set([
-      ...findConflictingDefinitions(workflows, tasks),
-      ...targets
-        .filter((target) => target.registered !== target.runnable)
-        .map(({ runnable }) => runnable.name),
-    ]),
-  ]
-  if (conflicts.length > 0) {
-    throw new Error(
-      `Definitions [${conflicts.join(', ')}] exist as more than one object; a reference and its registered implementation must share one definition`,
-    )
-  }
-
-  // Hand-written worker data without the planner's pools skips this check.
-  if (data.pools) {
-    const declared = new Set(data.pools)
-    const undeclared = [...collectImplementationPools(workflows, tasks)].filter(
-      (pool) => !declared.has(pool),
-    )
-    if (undeclared.length > 0) {
-      throw new Error(
-        `Execution pools [${undeclared.join(', ')}] named by implementations are not declared by the workflows planner`,
-      )
-    }
-  }
-
+  verifyWorkflowsRegistry({
+    workflows,
+    tasks,
+    schedules,
+    // Hand-written worker data without the planner's pools skips this check.
+    pools: data.pools,
+  })
   return { workflows, tasks, schedules }
-}
-
-function findDuplicateNames(
-  kind: 'workflow' | 'task',
-  names: readonly string[],
-) {
-  const seen = new Set<string>()
-  const duplicates = new Set<string>()
-  for (const name of names) {
-    if (seen.has(name)) duplicates.add(`${kind}:${name}`)
-    seen.add(name)
-  }
-  return duplicates
 }

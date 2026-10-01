@@ -169,7 +169,7 @@ describe('workflows Neem integration', () => {
         pools: ['light', 'heavvy'],
       }),
     ).rejects.toThrow(
-      'Execution pools [heavy] named by implementations are not declared by the workflows planner',
+      'Execution pools [heavy] named by implementations are not declared',
     )
     await expect(
       resolveWorkflowsRegistry(registry, {
@@ -205,94 +205,6 @@ describe('workflows Neem integration', () => {
     channel.port2.close()
   })
 
-  it('rejects child workflows without a registered implementation', async () => {
-    const child = defineWorkflow({
-      name: 'neem.integration.unregistered-child',
-      input: Schema.Struct({}),
-      output: Schema.Struct({}),
-    }).build()
-    const parent = defineWorkflow({
-      name: 'neem.integration.parent-with-unregistered-child',
-      input: Schema.Struct({}),
-      output: Schema.Struct({}),
-    })
-      .workflow('child', child)
-      .build()
-    const parentImpl = implementWorkflow(parent, { pool: 'test' })
-      .child(child)
-      .finish(() => fromPromise(() => ({})))
-
-    await expect(
-      resolveWorkflowsRegistry(
-        { workflows: () => [parentImpl] },
-        { role: 'coordinator' },
-      ),
-    ).rejects.toThrow(
-      `Workflows [${child.name}] referenced by registered workflows have no registered implementation`,
-    )
-  })
-
-  it('rejects a name carried by more than one definition object', async () => {
-    // Definitions cannot reference each other as objects, so a same-named copy
-    // is the only way to close a cycle; it would also decode with another schema.
-    const aCopy = defineWorkflow({
-      name: 'neem.integration.cycle.a',
-      input: io,
-      output: io,
-    }).build()
-    const b = defineWorkflow({
-      name: 'neem.integration.cycle.b',
-      input: io,
-      output: io,
-    })
-      .workflow('next', aCopy)
-      .build()
-    const a = defineWorkflow({
-      name: 'neem.integration.cycle.a',
-      input: io,
-      output: io,
-    })
-      .workflow('next', b)
-      .build()
-    const aImpl = implementWorkflow(a, { pool: 'test' })
-      .next(b, { input: (_outputs, input) => input })
-      .finish(({ next }) => Effect.succeed(next))
-    const bImpl = implementWorkflow(b, { pool: 'test' })
-      .next(aCopy, { input: (_outputs, input) => input })
-      .finish(({ next }) => Effect.succeed(next))
-
-    await expect(
-      resolveWorkflowsRegistry(
-        { workflows: () => [aImpl, bImpl] },
-        { role: 'coordinator' },
-      ),
-    ).rejects.toThrow(
-      'Definitions [neem.integration.cycle.a] exist as more than one object',
-    )
-
-    const taskCopy = defineTask({
-      name: pooledTask.name,
-      input: io,
-      output: io,
-    })
-    const parent = defineWorkflow({
-      name: 'neem.integration.task-copy',
-      input: io,
-      output: io,
-    })
-      .task('work', taskCopy)
-      .build()
-    const parentImpl = implementWorkflow(parent, { pool: 'test' })
-      .work(taskCopy, { input: (_outputs, input) => input })
-      .finish(({ work }) => Effect.succeed(work))
-    await expect(
-      resolveWorkflowsRegistry(
-        { workflows: () => [parentImpl], tasks: () => [pooledTaskImpl] },
-        { role: 'coordinator' },
-      ),
-    ).rejects.toThrow(`Definitions [${pooledTask.name}] exist as more than one`)
-  })
-
   it('deduplicates an implementation listed more than once', async () => {
     const resolved = await resolveWorkflowsRegistry(
       {
@@ -303,28 +215,6 @@ describe('workflows Neem integration', () => {
     )
     expect(resolved.workflows).toStrictEqual([workflowImpl])
     expect(resolved.tasks).toStrictEqual([pooledTaskImpl])
-  })
-
-  it('rejects workflow tasks without a registered implementation', async () => {
-    const parent = defineWorkflow({
-      name: 'neem.integration.parent-with-unregistered-task',
-      input: io,
-      output: io,
-    })
-      .task('work', pooledTask)
-      .build()
-    const parentImpl = implementWorkflow(parent, { pool: 'test' })
-      .work(pooledTask, { input: (_outputs, input) => input })
-      .finish(({ work }) => Effect.succeed(work))
-
-    await expect(
-      resolveWorkflowsRegistry(
-        { workflows: () => [parentImpl] },
-        { role: 'coordinator' },
-      ),
-    ).rejects.toThrow(
-      `Tasks [${pooledTask.name}] referenced by registered workflows have no registered implementation`,
-    )
   })
 
   it('creates and stops a worker runtime and disposes the adapter', async () => {
