@@ -7,7 +7,11 @@ import * as z from 'zod'
 import type { PubSubLogger } from '../src/utils.ts'
 import { defineChannel } from '../src/contract.ts'
 import { PubSubManager } from '../src/manager.ts'
-import { RedisPubSubAdapter, type RedisPubSubClient } from '../src/redis.ts'
+import {
+  createRedisAdapter,
+  RedisPubSubAdapter,
+  type RedisPubSubClient,
+} from '../src/redis.ts'
 import { PubSubConnectionLostError } from '../src/utils.ts'
 
 // Mirrors a Redis subscriber connection with the offline queue disabled:
@@ -17,11 +21,18 @@ class TestSubscriber extends EventEmitter {
   public readonly subscribed = new Set<string>()
   public subscribeCalls = 0
   public unsubscribeCalls = 0
+  public disconnectCalls = 0
   public status = 'wait'
+  public connectError?: Error
   public onSubscribe?: (channel: string) => unknown
   public onUnsubscribe?: (channel: string) => unknown
 
   async connect() {
+    if (this.connectError) {
+      // The driver schedules a reconnect after a failed first connect.
+      this.status = 'reconnecting'
+      throw this.connectError
+    }
     this.status = 'ready'
   }
 
@@ -53,6 +64,7 @@ class TestSubscriber extends EventEmitter {
   }
 
   disconnect() {
+    this.disconnectCalls++
     // Stopped while waiting to reconnect, the driver emits nothing more.
     if (this.status !== 'ready') return
     this.drop()
@@ -288,6 +300,17 @@ describe('RedisPubSubAdapter', () => {
 
     expect(subscriber.unsubscribeCalls).toBe(0)
     await adapter.dispose()
+  })
+
+  it('closes the subscriber connection when initialization fails', async () => {
+    const client = new TestClient()
+    client.subscriber.connectError = new Error('connect ECONNREFUSED')
+
+    await expect(
+      createRedisAdapter(client as unknown as RedisPubSubClient),
+    ).rejects.toThrow('ECONNREFUSED')
+
+    expect(client.subscriber.disconnectCalls).toBe(1)
   })
 
   it('ends live subscriptions cleanly when disposed', async () => {

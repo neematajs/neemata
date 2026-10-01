@@ -59,9 +59,6 @@ export class RedisPubSubAdapter implements PubSubAdapter {
       autoResendUnfulfilledCommands: false,
       enableOfflineQueue: false,
     })
-
-    await this.subClient.connect()
-
     this.controller = new AbortController()
     this.connection = new AbortController()
 
@@ -69,6 +66,15 @@ export class RedisPubSubAdapter implements PubSubAdapter {
     this.subClient.on('close', this.onClose)
     this.subClient.on('ready', this.onStatus)
     this.subClient.on('end', this.onStatus)
+
+    try {
+      await this.subClient.connect()
+    } catch (error) {
+      // The driver keeps reconnecting after a failed first connect, and a
+      // caller whose initialization failed has no adapter to dispose.
+      await this.dispose()
+      throw error
+    }
 
     this.logger?.trace('Adapter initialized')
   }
