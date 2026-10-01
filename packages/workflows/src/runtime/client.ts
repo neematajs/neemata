@@ -279,6 +279,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
     handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
   ): Promise<T> => {
     if (connection === undefined) return handler(input)
+
     if (!input.callerConnection) {
       return Promise.reject(
         new Error(
@@ -286,8 +287,10 @@ export function createWorkflowRuntimeClient<Connection = never>(
         ),
       )
     }
+
     return input.callerConnection.run(connection, handler)
   }
+
   const requireScheduler = () => {
     if (!input.scheduler) {
       throw new Error('Workflow runtime adapter does not support schedules')
@@ -355,6 +358,7 @@ async function cancelRun(
 ): Promise<StoredRun | undefined> {
   const run = await runtime.store.requestRunCancellation({ runId })
   if (!run) return undefined
+
   if (isTerminalRunStatus(run.status)) {
     // A cancelled queued task has no command left to replay its parent
     // wake, so a cancel whose wake failed is repaired by cancelling again.
@@ -365,6 +369,7 @@ async function cancelRun(
     })
     return run
   }
+
   if (run.kind === 'task') {
     // No coordinator owns task runs: a continuation carries the task
     // name, which no workflow worker claims, so the run would park in
@@ -377,6 +382,7 @@ async function cancelRun(
       runId: run.id,
     })
   }
+
   await runtime.runCoordinationExecutor.enqueue({
     kind: 'continueRun',
     runId: run.id,

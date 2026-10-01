@@ -107,6 +107,7 @@ const MAX_TIMER_MS = 2_147_483_647
 
 const normalizeAnswerTimeoutMs = (answerTimeoutMs: number | undefined) => {
   if (answerTimeoutMs === undefined) return undefined
+
   if (
     !Number.isSafeInteger(answerTimeoutMs) ||
     answerTimeoutMs <= 0 ||
@@ -116,6 +117,7 @@ const normalizeAnswerTimeoutMs = (answerTimeoutMs: number | undefined) => {
       `answerTimeoutMs must be a positive integer of at most ${MAX_TIMER_MS}`,
     )
   }
+
   return answerTimeoutMs
 }
 
@@ -126,6 +128,7 @@ const sessionClosedError = () =>
 
 const answerTimeoutError = (answerTimeoutMs: number) => {
   const message = `PostgreSQL did not answer a workflow statement within ${answerTimeoutMs} ms`
+
   return new SqlError.SqlError({
     reason: new SqlError.StatementTimeoutError({
       cause: new Error(message),
@@ -153,7 +156,9 @@ const createTransactionSession = (
       params: readonly unknown[] = [],
     ) {
       if (closed) return Promise.reject(sessionClosedError())
+
       const statement = client.unsafe<T>(text, params)
+
       const fiber = Effect.runForkWith(context)(
         answerTimeoutMs === undefined
           ? statement
@@ -164,7 +169,9 @@ const createTransactionSession = (
               }),
             ),
       )
+
       statements.add(fiber)
+
       return new Promise<WorkflowPostgresQueryResult<T>>((resolve, reject) => {
         fiber.addObserver((exit) => {
           statements.delete(fiber)
@@ -180,6 +187,7 @@ const createTransactionSession = (
     close: () => {
       closed = true
     },
+
     interrupt: Effect.suspend(() => {
       closed = true
       return Fiber.interruptAll(Array.from(statements))
@@ -213,8 +221,10 @@ export function createEffectSqlWorkflowClient(
     Effect.gen(function* () {
       const toFailure = (error: unknown): Effect.Effect<never, E> =>
         isFailure(error) ? Effect.fail(error) : Effect.die(error)
+
       const sql = yield* SqlClient.SqlClient
       const transaction = yield* Effect.serviceOption(sql.transactionService)
+
       if (Option.isNone(transaction)) {
         return yield* Effect.callback<A, E>((resume) => {
           operation().then(
@@ -237,15 +247,18 @@ export function createEffectSqlWorkflowClient(
               context,
               answerTimeoutMs,
             )
+
             const settled = operation(
               createPostgresWorkflowNestedConnection(
                 transactionSession.session,
               ),
             ).finally(transactionSession.close)
+
             settled.then(
               (value) => resume(Effect.succeed(value)),
               (error: unknown) => resume(toFailure(error)),
             )
+
             // The savepoint rolls back once this returns, so the operation
             // must have unwound by then: a statement still in flight would race
             // that rollback, and a later one would run outside the savepoint
@@ -273,12 +286,14 @@ export function createEffectSqlWorkflowClient(
           }),
         isStartError,
       )) as EffectSqlWorkflowClient['start'],
+
     restart: (runId, restartOptions) =>
       run(
         (connection) =>
           client.restart(runId, { ...restartOptions, connection }),
         isStartError,
       ),
+
     cancel: (runId) =>
       run(
         (connection) => client.cancel(runId, { connection }),

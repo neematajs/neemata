@@ -31,6 +31,7 @@ async function createHarness() {
     ...createPostgresWorkflowRuntime({ connection }),
     definitions: [workflow, task],
   })
+
   return { connection, client }
 }
 
@@ -49,6 +50,7 @@ test('cancel with a connection commits or rolls back with the caller', async () 
   await connection.transaction((tx) =>
     client.cancel(queued.id, { connection: tx }),
   )
+
   expect((await client.get(queued.id))?.run.status).toBe('cancelled')
 })
 
@@ -68,6 +70,7 @@ test('restart with a connection reads and starts inside the caller transaction',
   const restarted = await connection.transaction((tx) =>
     client.restart(original.id, { connection: tx }),
   )
+
   expect(restarted.id).not.toBe(original.id)
   expect((await client.list()).runs).toHaveLength(2)
 })
@@ -80,6 +83,7 @@ test('cancel rejects a connection the adapter cannot join', async () => {
   await expect(client.cancel(queued.id, { connection: {} })).rejects.toThrow(
     'does not support caller-provided connections',
   )
+
   expect((await client.get(queued.id))?.run.status).toBe('queued')
 })
 
@@ -87,6 +91,7 @@ test('the in-memory runtime ignores a caller connection on cancel', async () => 
   const client = createWorkflowRuntimeClient<object>(
     createInMemoryWorkflowRuntime() as never,
   )
+
   const queued = await client.start(task, { value: 'in-memory' })
 
   const cancelled = await client.cancel(queued.id, { connection: {} })

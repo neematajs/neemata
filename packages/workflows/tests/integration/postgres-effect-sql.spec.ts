@@ -116,11 +116,13 @@ describe.skipIf(!postgresTarget.url)(
       } finally {
         await admin.end()
       }
+
       pool = new pg.Pool({
         connectionString: postgresTarget.url,
         options: `-c search_path=${searchPath}`,
         max: 4,
       })
+
       const setup = createPostgresWorkflowConnection(pool)
       await installPostgresWorkflowSchemaForTesting(setup)
       await setup.query('CREATE TABLE sample (id integer PRIMARY KEY)')
@@ -142,6 +144,7 @@ describe.skipIf(!postgresTarget.url)(
         }),
         definitions: [workflow, task],
       })
+
       effectClient = createEffectSqlWorkflowClient(client)
       runtime = ManagedRuntime.make(
         PgClient.layer({
@@ -175,6 +178,7 @@ describe.skipIf(!postgresTarget.url)(
       listener.on('notification', (message) => {
         if (message.payload) wakes.push(message.payload)
       })
+
       await listener.query(`LISTEN ${WORKFLOW_RUN_EVENTS_CHANNEL}`)
       try {
         const id = sampleId()
@@ -189,6 +193,7 @@ describe.skipIf(!postgresTarget.url)(
                 const started = yield* effectClient.start(workflow, {
                   value: 'commit',
                 })
+
                 const inside = yield* sql<{
                   count: number
                 }>`SELECT count(*)::int AS count FROM workflow_runs WHERE id = ${started.id}`
@@ -202,6 +207,7 @@ describe.skipIf(!postgresTarget.url)(
                     started.id,
                   ])
                 })
+
                 return started
               }),
             )
@@ -237,6 +243,7 @@ describe.skipIf(!postgresTarget.url)(
               const started = yield* effectClient.start(task, {
                 value: 'rollback',
               })
+
               runId = started.id
               return yield* Effect.fail(new Abort())
             }),
@@ -263,6 +270,7 @@ describe.skipIf(!postgresTarget.url)(
               const started = yield* effectClient.start(workflow, {
                 value: 'later-failure',
               })
+
               runId = started.id
               yield* insertSample(id)
               yield* insertSample(id)
@@ -297,6 +305,7 @@ describe.skipIf(!postgresTarget.url)(
             )
           }),
         )
+
         await expect.poll(() => lockWaiters()).toBeGreaterThan(0)
 
         // Settles while the lock is still held: the start's statement was
@@ -307,6 +316,7 @@ describe.skipIf(!postgresTarget.url)(
             Effect.timeout('5 seconds'),
           ),
         )
+
         expect(Exit.hasInterrupts(exit)).toBe(true)
       } finally {
         await locker.query('ROLLBACK')
@@ -338,11 +348,13 @@ describe.skipIf(!postgresTarget.url)(
                 const fiber = yield* Effect.forkChild(
                   effectClient.start(workflow, { value: 'child-interrupted' }),
                 )
+
                 yield* Effect.promise(() =>
                   expect
                     .poll(() => lockWaiters('workflow_commands'))
                     .toBeGreaterThan(0),
                 )
+
                 yield* Fiber.interrupt(fiber)
                 yield* insertSample(id)
               }),
@@ -397,12 +409,14 @@ describe.skipIf(!postgresTarget.url)(
       const started = outcomes.filter(
         (outcome): outcome is string => typeof outcome === 'string',
       )
+
       expect(started).toHaveLength(3)
       for (const conflict of outcomes.filter(
         (outcome) => typeof outcome !== 'string',
       )) {
         expect(conflict).toBeInstanceOf(WorkflowRunConflictError)
       }
+
       expect(
         await count('workflow_runs', 'id = ANY($1::uuid[])', [started]),
       ).toBe(3)
@@ -418,6 +432,7 @@ describe.skipIf(!postgresTarget.url)(
         { value: 'holder' },
         { unique: { key } },
       )
+
       poolUses = 0
       const before = sampleId()
       const after = sampleId()
@@ -435,6 +450,7 @@ describe.skipIf(!postgresTarget.url)(
                   { unique: { key } },
                 ),
               )
+
               yield* insertSample(after)
               return error
             }),
@@ -469,6 +485,7 @@ describe.skipIf(!postgresTarget.url)(
                   { idempotencyKey },
                 ),
               )
+
               yield* insertSample(id)
               return error
             }),
@@ -485,6 +502,7 @@ describe.skipIf(!postgresTarget.url)(
       const bounded = createEffectSqlWorkflowClient(client, {
         answerTimeoutMs: 200,
       })
+
       const id = sampleId()
       const locker = await pool.connect()
       let error: unknown
@@ -499,6 +517,7 @@ describe.skipIf(!postgresTarget.url)(
                 const error = yield* Effect.flip(
                   bounded.start(workflow, { value: 'deadline' }),
                 )
+
                 yield* insertSample(id)
                 return error
               }),
@@ -514,6 +533,7 @@ describe.skipIf(!postgresTarget.url)(
       expect((error as SqlError.SqlError).reason._tag).toBe(
         'StatementTimeoutError',
       )
+
       expect(await count('sample', 'id = $1', [id])).toBe(1)
       expect(await count('workflow_runs', "input->>'value' = 'deadline'")).toBe(
         0,
@@ -536,6 +556,7 @@ describe.skipIf(!postgresTarget.url)(
           )
         }),
       )
+
       expect(Exit.isFailure(rolledBack)).toBe(true)
       expect(await count('workflow_runs', "input->>'value' = 'restart'")).toBe(
         1,
@@ -547,6 +568,7 @@ describe.skipIf(!postgresTarget.url)(
           return yield* sql.withTransaction(effectClient.restart(original.id))
         }),
       )
+
       expect(restarted.id).not.toBe(original.id)
       expect(poolUses).toBe(0)
       expect(await count('workflow_runs', "input->>'value' = 'restart'")).toBe(
@@ -558,6 +580,7 @@ describe.skipIf(!postgresTarget.url)(
       const bounded = createEffectSqlWorkflowClient(client, {
         answerTimeoutMs: 200,
       })
+
       const original = await client.start(task, { value: 'restart-read' })
       await client.cancel(original.id)
       const id = sampleId()
@@ -644,6 +667,7 @@ describe.skipIf(!postgresTarget.url)(
           return yield* sql.withTransaction(effectClient.cancel(queued.id))
         }),
       )
+
       expect(await runStatus(queued.id)).toBe('cancelling')
     })
 
@@ -662,11 +686,13 @@ describe.skipIf(!postgresTarget.url)(
                 const fiber = yield* Effect.forkChild(
                   effectClient.cancel(queued.id),
                 )
+
                 yield* Effect.promise(() =>
                   expect
                     .poll(() => lockWaiters('workflow_attempts'))
                     .toBeGreaterThan(0),
                 )
+
                 yield* Fiber.interrupt(fiber)
                 yield* insertSample(id)
               }),
@@ -685,6 +711,7 @@ describe.skipIf(!postgresTarget.url)(
       const started = await run(
         effectClient.start(workflow, { value: 'outside' }),
       )
+
       expect(poolUses).toBeGreaterThan(0)
       expect(await count('workflow_runs', 'id = $1', [started.id])).toBe(1)
     })
