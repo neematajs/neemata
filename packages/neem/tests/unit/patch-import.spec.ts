@@ -18,7 +18,9 @@ describe('importPatch', () => {
       .mockRejectedValueOnce(moduleNotFound())
       .mockResolvedValueOnce(patch)
 
-    await expect(importPatch(PATCH_URL, importModule)).resolves.toBe(patch)
+    await expect(importPatch(PATCH_URL, importModule, true)).resolves.toBe(
+      patch,
+    )
     expect(importModule.mock.calls).toEqual([[PATCH_URL], [PATCH_URL]])
   })
 
@@ -29,7 +31,9 @@ describe('importPatch', () => {
       .mockRejectedValueOnce(moduleNotFound())
       .mockRejectedValueOnce(missing)
 
-    await expect(importPatch(PATCH_URL, importModule)).rejects.toBe(missing)
+    await expect(importPatch(PATCH_URL, importModule, true)).rejects.toBe(
+      missing,
+    )
     expect(importModule).toHaveBeenCalledTimes(2)
   })
 
@@ -39,7 +43,21 @@ describe('importPatch', () => {
       .fn<(url: string) => Promise<unknown>>()
       .mockRejectedValue(failure)
 
-    await expect(importPatch(PATCH_URL, importModule)).rejects.toBe(failure)
+    await expect(importPatch(PATCH_URL, importModule, true)).rejects.toBe(
+      failure,
+    )
+    expect(importModule).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a missing patch at once where the resolver cache is not shared', async () => {
+    const missing = moduleNotFound()
+    const importModule = vi
+      .fn<(url: string) => Promise<unknown>>()
+      .mockRejectedValue(missing)
+
+    await expect(importPatch(PATCH_URL, importModule, false)).rejects.toBe(
+      missing,
+    )
     expect(importModule).toHaveBeenCalledTimes(1)
   })
 })
