@@ -3,6 +3,7 @@ import type { RunCoordinationExecutor } from '../../runtime/executors.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { QueueItem } from './commands.ts'
 import type { State } from './state.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import {
   claimQueued,
   matchesClaim,
@@ -181,6 +182,35 @@ export function createRunCoordinationExecutor(
         continueRunCommands[pendingIndex]!,
         released,
       )
+    },
+    async listUnserved(query) {
+      const after = query.cursor === undefined ? 0 : Number(query.cursor)
+      // Not a production adapter: sorting a copy per page stands in for the
+      // index the other adapters page through.
+      const live = [
+        ...continueRunCommands.map((item) => ({
+          item,
+          claimableAt: item.runAt ?? item.createdAt,
+        })),
+        ...Array.from(claimedContinueRunCommands.values(), (item) => ({
+          item,
+          claimableAt: item.leaseExpiresAt,
+        })),
+      ]
+        .filter(
+          ({ item }) => item.deadAt === undefined && item.sequence > after,
+        )
+        .sort((left, right) => left.item.sequence - right.item.sequence)
+      const page = live.slice(0, query.limit)
+      const workflows = groupUnservedWorkflows(
+        query,
+        page.map(({ item, claimableAt }) => ({
+          workflowName: item.payload.workflowName,
+          claimableAt,
+        })),
+      )
+      if (live.length <= query.limit) return { workflows }
+      return { workflows, cursor: String(page.at(-1)!.item.sequence) }
     },
   }
 }

@@ -35,6 +35,9 @@ export type {
   AttemptExecutor,
   CommandReleaseOptions,
   RunCoordinationExecutor,
+  UnservedWorkflow,
+  UnservedWorkflowPage,
+  UnservedWorkflowQuery,
 } from './executors.ts'
 export { StaleWriteFenceError, WorkflowRunConflictError } from './errors.ts'
 export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
@@ -139,11 +142,13 @@ export type {
   RunExecutionWorkerInput,
   RunTaskAttemptInput,
   RunWorkflowWorkerInput,
+  UnservedWorkflowWarning,
   WorkerHandlers,
   WorkerLoopOptions,
   WorkerLoopResult,
   WorkerRetentionOptions,
   WorkerSchedulingOptions,
+  WorkerUnservedWorkflowsOptions,
   WorkerCommandResult,
   WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeAtomicCompletion,

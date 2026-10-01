@@ -9,6 +9,7 @@ import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import {
   MAX_ERROR_BACKOFF_MS,
   RELEASE_BACKOFF_MS,
@@ -16,7 +17,9 @@ import {
   WORKFLOW_COMMANDS_CHANNEL,
   id,
   json,
+  many,
   one,
+  timestampColumn,
   timestampParam,
 } from './sql.ts'
 
@@ -363,10 +366,51 @@ export const createPostgresWorkflowCommandHelpers = (
   }
 }
 
+type UnservedRow = {
+  readonly id: string
+  readonly priority: number
+  readonly workflow_name: string
+  readonly run_at_key: string
+  readonly created_at_key: string
+  readonly claimable_at: unknown
+}
+
+// Microsecond UTC text: a millisecond timestamp would lose the position.
+type UnservedCursor = readonly [
+  priority: number,
+  runAt: string,
+  createdAt: string,
+  id: string,
+]
+
+const microsecondKey = (column: string) =>
+  `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+
+// Pages through the claim index in claim order. An expired lease counts from
+// its expiry and a live one is never claimable yet, so the claimable-time
+// cutoff excludes held commands without a separate predicate.
+const unservedPageSql = (position: string) => `
+  SELECT
+    id,
+    priority,
+    run_at,
+    created_at,
+    workflow_name,
+    ${microsecondKey('run_at')} AS run_at_key,
+    ${microsecondKey('created_at')} AS created_at_key,
+    CASE
+      WHEN lease_token IS NULL THEN run_at
+      ELSE lease_expires_at
+    END AS claimable_at
+  FROM workflow_commands
+  WHERE kind = 'continue' AND dead_at IS NULL ${position}
+  ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+`
+
 export const createRunCoordinationExecutor = (
   ctx: PostgresWorkflowCommandContext,
 ): RunCoordinationExecutor => {
-  const { ready } = ctx
+  const { db, ready } = ctx
   const {
     insertContinueCommand,
     releaseContinueCommand,
@@ -409,6 +453,50 @@ export const createRunCoordinationExecutor = (
     async release(command, options) {
       await ready
       await releaseContinueCommand(command.id, command.leaseToken, options)
+    },
+    async listUnserved(query) {
+      await ready
+      const after =
+        query.cursor === undefined
+          ? undefined
+          : (JSON.parse(query.cursor) as UnservedCursor)
+      const rows = await many<UnservedRow>(
+        db,
+        after === undefined
+          ? `${unservedPageSql('')} LIMIT $1`
+          : // Row comparison follows the claim index only within one priority,
+            // so lower priorities are a second ordered probe.
+            `
+            SELECT * FROM (
+              (${unservedPageSql(
+                `AND priority = $2
+                 AND (run_at, created_at, id)
+                   > ($3::timestamptz, $4::timestamptz, $5::uuid)`,
+              )} LIMIT $1)
+              UNION ALL
+              (${unservedPageSql('AND priority < $2')} LIMIT $1)
+            ) AS page
+            ORDER BY priority DESC, run_at ASC, created_at ASC, id ASC
+            LIMIT $1
+          `,
+        after === undefined ? [query.limit] : [query.limit, ...after],
+      )
+      const workflows = groupUnservedWorkflows(
+        query,
+        rows.map((row) => ({
+          workflowName: row.workflow_name,
+          claimableAt: timestampColumn(row.claimable_at),
+        })),
+      )
+      const last = rows.at(-1)
+      if (rows.length < query.limit || last === undefined) return { workflows }
+      const cursor: UnservedCursor = [
+        last.priority,
+        last.run_at_key,
+        last.created_at_key,
+        last.id,
+      ]
+      return { workflows, cursor: JSON.stringify(cursor) }
     },
   }
 }

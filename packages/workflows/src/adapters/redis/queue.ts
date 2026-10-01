@@ -6,7 +6,11 @@ import type {
   ExecutionWorkerClaim,
   RunCoordinationWorkerClaim,
 } from '../../runtime/commands.ts'
-import type { CommandReleaseOptions } from '../../runtime/executors.ts'
+import type {
+  CommandReleaseOptions,
+  UnservedWorkflowPage,
+  UnservedWorkflowQuery,
+} from '../../runtime/executors.ts'
 import type { StoredError, StoredRun } from '../../runtime/state.ts'
 import type { DeadWorkflowCommand, WriteFence } from '../../runtime/store.ts'
 import type { WorkflowCommandWakeKind } from '../../runtime/wake-events.ts'
@@ -18,6 +22,7 @@ import {
   COMMAND_LEASE_EXPIRED_ERROR,
   toStoredError,
 } from '../../runtime/errors.ts'
+import { groupUnservedWorkflows } from '../../runtime/executors.ts'
 import { UNFENCED, assertNotFenced, resolveWriteFence } from './fence.ts'
 import { QueueScripts } from './scripts.ts'
 import { decode, encode } from './state.ts'
@@ -239,6 +244,30 @@ export class Queue<T extends AttemptCommand | ContinueRunCommand> {
         released.dead ? '1' : '0',
       ],
     )
+  }
+
+  async listUnserved(
+    query: UnservedWorkflowQuery,
+  ): Promise<UnservedWorkflowPage> {
+    const queue = this.#keys.queue(this.#kind)
+    const result = scriptResult(
+      await this.#scripts.runRaw(
+        'listUnserved',
+        [queue.items],
+        [query.cursor ?? '0', String(query.limit), this.#keys.prefix],
+      ),
+    )
+    const inspected: { workflowName: string; claimableAt: Timestamp }[] = []
+    for (let index = 1; index < result.length; index += 2) {
+      inspected.push({
+        workflowName: result[index]!,
+        claimableAt: Number(result[index + 1]),
+      })
+    }
+    const workflows = groupUnservedWorkflows(query, inspected)
+    const cursor = result[0]
+    if (cursor === undefined || cursor === '0') return { workflows }
+    return { workflows, cursor }
   }
 
   async listDead(runId?: string): Promise<readonly DeadWorkflowCommand[]> {

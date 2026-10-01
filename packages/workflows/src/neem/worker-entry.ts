@@ -133,6 +133,8 @@ export function defineWorkflowsWorker<
           signal: abort.signal,
           onError: (error) =>
             ctx.logger.error({ err: error }, 'Neem workflows worker error'),
+          onWarning: ({ message, ...fields }) =>
+            ctx.logger.warn(fields, message),
         })
         // Any exit before a stop is a failure, as is a loop error at any time.
         // Registered before cleanup joins the loop, so `failure` is set first.

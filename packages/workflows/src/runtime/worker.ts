@@ -16,6 +16,8 @@ export {
   type WorkerHandlers,
   type WorkerReapingOptions,
   type WorkerRunTimeoutsOptions,
+  type WorkerUnservedWorkflowsOptions,
+  type UnservedWorkflowWarning,
 } from './worker/entry.ts'
 export {
   WorkflowAttemptAbortError,

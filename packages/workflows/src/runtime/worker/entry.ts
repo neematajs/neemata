@@ -9,7 +9,11 @@ import type {
   Timestamp,
 } from '../../types/index.ts'
 import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
-import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
+import type {
+  AttemptExecutor,
+  RunCoordinationExecutor,
+  UnservedWorkflow,
+} from '../executors.ts'
 import type { WorkflowStore } from '../store.ts'
 import type {
   WorkflowCommandWakeKind,
@@ -49,6 +53,9 @@ import { runTaskAttempt } from './task-attempt.ts'
 
 const DEFAULT_REAPING_EVERY_MS = 30_000
 const DEFAULT_RUN_TIMEOUTS_EVERY_MS = 60_000
+const DEFAULT_UNSERVED_WORKFLOWS_EVERY_MS = 300_000
+const DEFAULT_UNSERVED_WORKFLOWS_AFTER_MS = 300_000
+const UNSERVED_WORKFLOWS_PAGE_SIZE = 1_000
 
 export type WorkerReapingOptions = {
   readonly everyMs?: number
@@ -58,6 +65,24 @@ export type WorkerReapingOptions = {
 export type WorkerRunTimeoutsOptions = {
   readonly everyMs?: number
   readonly batchSize?: number
+}
+
+export type WorkerUnservedWorkflowsOptions = {
+  /**
+   * How often to inspect the next page of the queue; each unserved workflow
+   * is reported at most once per check.
+   */
+  readonly everyMs?: number
+  /**
+   * How long a run must have been claimable, unclaimed, to count: since it
+   * was due, or since its claimer's lease expired. A coordinator serving its
+   * workflow elsewhere would have claimed it by then.
+   */
+  readonly afterMs?: number
+}
+
+export type UnservedWorkflowWarning = UnservedWorkflow & {
+  readonly message: string
 }
 
 type AnyWorkflowImplementation = WorkflowImplementation<
@@ -97,6 +122,17 @@ export type RunWorkflowWorkerInput<
     readonly workflows: readonly W[]
     readonly reaping?: false | WorkerReapingOptions
     readonly runTimeouts?: false | WorkerRunTimeoutsOptions
+    /**
+     * Observes workflows whose queued runs no coordinator claims, such as a
+     * run started by name for a workflow no worker implements. Such a run is
+     * never released, so it would otherwise wait silently. Only a warning:
+     * another deployment may still serve it. The check pages through the
+     * queue over a coordinator's lifetime, so only `serveWorkflowWorker` runs
+     * it, and only with a listener: a one-shot `runWorkflowWorker` drain
+     * would reread the first page every time.
+     */
+    readonly onWarning?: (warning: UnservedWorkflowWarning) => void
+    readonly unservedWorkflows?: false | WorkerUnservedWorkflowsOptions
   }
 
 export type RunExecutionWorkerInput<
@@ -178,6 +214,42 @@ function withRunTimeoutsHook(
   ]
 }
 
+function withUnservedWorkflowsHook(
+  input: RunWorkflowWorkerInput,
+  hooks: readonly WorkerMaintenanceHook[],
+): readonly WorkerMaintenanceHook[] {
+  const { onWarning, unservedWorkflows: options } = input
+  if (onWarning === undefined || options === false) return hooks
+  const workflowNames = input.workflows.map(
+    (implementation) => implementation.workflow.name,
+  )
+  const afterMs = options?.afterMs ?? DEFAULT_UNSERVED_WORKFLOWS_AFTER_MS
+  // One bounded page per check, resuming where the last one stopped: a fixed
+  // sample would keep rereading whatever sits at its head.
+  let cursor: string | undefined
+  return [
+    ...hooks,
+    {
+      everyMs: options?.everyMs ?? DEFAULT_UNSERVED_WORKFLOWS_EVERY_MS,
+      run: async (now: Timestamp) => {
+        const page = await input.runCoordinationExecutor.listUnserved({
+          workflowNames,
+          claimableBefore: now - afterMs,
+          limit: UNSERVED_WORKFLOWS_PAGE_SIZE,
+          ...(cursor === undefined ? {} : { cursor }),
+        })
+        cursor = page.cursor
+        for (const workflow of page.workflows) {
+          onWarning({
+            ...workflow,
+            message: `Workflow [${workflow.workflowName}] has ${workflow.count} queued run(s) unclaimed for ${Math.round((now - workflow.oldestClaimableAt) / 1000)}s: this worker does not implement it, and no worker that does has claimed them`,
+          })
+        }
+      },
+    },
+  ]
+}
+
 function commandWake(
   wakeEvents: WorkflowWakeEvents | undefined,
   kind: WorkflowCommandWakeKind,
@@ -204,7 +276,7 @@ export async function runWorkflowWorker<W extends AnyWorkflowImplementation>(
   input: RunWorkflowWorkerInput<W>,
 ): Promise<WorkerLoopResult> {
   return drainWorkerPool(
-    workflowWorkerOptions(input),
+    workflowWorkerOptions(input, 'drain'),
     workflowDriver(input, resolveHandlers(input)),
   )
 }
@@ -213,13 +285,18 @@ export async function serveWorkflowWorker<W extends AnyWorkflowImplementation>(
   input: RunWorkflowWorkerInput<W> & { readonly signal: AbortSignal },
 ): Promise<WorkerLoopResult> {
   return serveWorkerPool(
-    { ...workflowWorkerOptions(input), signal: input.signal },
+    { ...workflowWorkerOptions(input, 'serve'), signal: input.signal },
     workflowDriver(input, resolveHandlers(input)),
   )
 }
 
-function workflowWorkerOptions(input: RunWorkflowWorkerInput) {
-  const maintenance = withRunTimeoutsHook(input, withReapingHook(input))
+function workflowWorkerOptions(
+  input: RunWorkflowWorkerInput,
+  mode: 'drain' | 'serve',
+) {
+  const hooks = withRunTimeoutsHook(input, withReapingHook(input))
+  const maintenance =
+    mode === 'serve' ? withUnservedWorkflowsHook(input, hooks) : hooks
   return withDefaultRetentionPruner({
     ...input,
     maintenance,
