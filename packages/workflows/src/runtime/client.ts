@@ -263,6 +263,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
           if (connection !== undefined && input.atomicStart?.loadRun) {
             return await input.atomicStart.loadRun({ runId, connection })
           }
+
           const [run] = await input.store.loadRuns([runId])
           return run
         },
