@@ -406,6 +406,8 @@ export class DevSession {
         this.awaitRecoveryOutput(controller, runtimeName),
       onFailure: (error, runtimeName) =>
         this.onRuntimeFailure(controller, error, runtimeName),
+      onRuntimeRecovered: (runtimeName) =>
+        this.options.probe?.emit('runtime:recovered', { runtimeName }),
     })
     this.controller = controller
     this.runtimeNames = controller.getSnapshot().runtimeNames
@@ -572,7 +574,9 @@ export class DevSession {
     if (started && this.watcher === watcher) {
       this.patchClients.add(threadId)
       // `thread-started` precedes registration; edits before this event fall
-      // back to replacing the threads instead of patching them.
+      // back to replacing the threads instead of patching them. The runtime
+      // also rejects patches until it is ready (`runtime:ready` or
+      // `runtime:recovered`), which can come before or after this event.
       this.options.probe?.emit('runtime:patch-client-registered', {
         runtimeName,
         threadId,

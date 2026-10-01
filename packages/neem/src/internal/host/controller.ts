@@ -38,6 +38,8 @@ export type HostControllerOptions = {
   recovery?: RecoveryOptions
   // Reports a runtime whose failure recovery could not repair.
   onFailure?: (error: Error, runtimeName: string) => void
+  // Reports a runtime that recovery restarted and that is ready again.
+  onRuntimeRecovered?: (runtimeName: string) => void
 }
 
 /**
@@ -504,7 +506,10 @@ export class HostController {
       recovery: this.options.recovery,
       onThreadEvent: this.options.onThreadEvent,
       prepareRecovery: prepareRecovery && (() => prepareRecovery(runtimeName)),
-      onRecovered: () => this.refreshProxyUpstreams(),
+      onRecovered: async () => {
+        await this.refreshProxyUpstreams()
+        this.options.onRuntimeRecovered?.(runtimeName)
+      },
       onUpstreamsChange: () => this.refreshProxyUpstreams(),
       // Syncing upstreams publishes health too: a recovered runtime is ready
       // before its new upstreams are routed, so publishing alone would

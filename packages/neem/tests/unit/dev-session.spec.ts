@@ -230,6 +230,17 @@ describe('DevSession', () => {
     await expectOpen(session)
   })
 
+  it('reports a runtime that recovery restarted', async () => {
+    const { session, probe } = await startSession()
+
+    state.controllers[0]!.options.onRuntimeRecovered?.('api')
+
+    expect(probe.emit).toHaveBeenCalledWith('runtime:recovered', {
+      runtimeName: 'api',
+    })
+    await expectOpen(session)
+  })
+
   it('recovers a runtime whose patch left no generation from refreshed output', async () => {
     const { session, probe } = await startSession()
     const [controller] = state.controllers

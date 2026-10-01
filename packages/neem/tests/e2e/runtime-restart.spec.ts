@@ -338,6 +338,7 @@ describe('Neem runtime restart', () => {
     const neem = await startWithPatchClients(fixture)
     await generations(fixture, neem, 'v1', 1)
 
+    const retired = neem.events().length
     await editDefinition(fixture, neem, ['v1', 'v2'], ['never', 'patched'])
     const unavailable = await neem.waitForEvent(
       (event) => event.event === 'runtime:patch-unavailable',
@@ -351,7 +352,7 @@ describe('Neem runtime restart', () => {
     ).toHaveLength(2)
 
     // The recovered threads are patch clients again.
-    await patchClients(neem, unavailable.sequence)
+    await patchClients(neem, retired)
     await editDefinition(fixture, neem, ['v2', 'v3'], ['patched', 'never'])
     await generations(fixture, neem, 'v3', 2)
     await applied(neem, 1)
@@ -387,15 +388,16 @@ describe('Neem runtime restart', () => {
     })
     await generations(fixture, neem, 'v1', 1)
 
+    const crashed = neem.events().length
     await writeFile(crashFile, '')
-    const restarted = await neem.waitForEvent(
+    await neem.waitForEvent(
       (event) => event.event === 'watcher:restarted',
       30_000,
     )
     // The new watcher's build restarts the runtime, whose threads register
     // with it as patch clients.
     await generations(fixture, neem, 'v1', 1, 4)
-    await patchClients(neem, restarted.sequence)
+    await patchClients(neem, crashed)
 
     await editMarker(fixture, neem, 'v1', 'v2')
     await generations(fixture, neem, 'v2', 2)
