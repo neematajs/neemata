@@ -10,7 +10,10 @@ import type {
 } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
-import { WorkflowRunConflictError } from '../../runtime/errors.ts'
+import {
+  WorkflowIdempotencyConflictError,
+  WorkflowRunConflictError,
+} from '../../runtime/errors.ts'
 import {
   DEFAULT_PRUNE_BATCH_SIZE,
   normalizePruneBatchSize,
@@ -123,7 +126,12 @@ export const createStoredRunWithState = async (
       ) {
         return run
       }
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      throw new WorkflowIdempotencyConflictError({
+        runId: run.id,
+        status: run.status,
+        key: input.idempotencyKey,
+        runnableName: runnableName(input),
+      })
     }
     return undefined
   }

@@ -40,6 +40,7 @@ import type { WorkflowRedisClient } from './client.ts'
 import type { FenceCall } from './fence.ts'
 import type { Keys } from './keys.ts'
 import {
+  WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
   toStoredError,
 } from '../../runtime/errors.ts'
@@ -171,7 +172,12 @@ export class StoreRuntime {
       if (runMatchesCreateInput(stored, normalized)) {
         return { run: stored, created: false, startAt: storedStartAt }
       }
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      throw new WorkflowIdempotencyConflictError({
+        runId: stored.id,
+        status: stored.status,
+        key: run.idempotencyKey!,
+        runnableName: runnableName(normalized),
+      })
     }
     if (result[0] === 'joined') {
       return { run: stored, created: false, startAt: storedStartAt }
@@ -966,6 +972,15 @@ export class StoreRuntime {
     }
     if (result[0] === 'conflict') {
       throw new Error(`Conflicting child run [${reference}]`)
+    }
+    if (result[0] === 'idempotency-conflict') {
+      const holder = decodeScriptValue<StoredRun>(result[1])
+      throw new WorkflowIdempotencyConflictError({
+        runId: holder.id,
+        status: holder.status,
+        key: params.idempotencyKey!,
+        runnableName: params.childName,
+      })
     }
     return {
       child: decodeScriptValue<StoredNodeChild>(result[1]),
