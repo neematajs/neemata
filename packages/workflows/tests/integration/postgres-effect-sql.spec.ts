@@ -584,6 +584,103 @@ describe.skipIf(!postgresTarget.url)(
       expect(await count('sample', 'id = $1', [id])).toBe(1)
     })
 
+    const runStatus = async (runId: string) =>
+      (
+        await pool.query<{ status: string }>(
+          'SELECT status::text AS status FROM workflow_runs WHERE id = $1',
+          [runId],
+        )
+      ).rows[0]?.status
+
+    it('commits a cancellation with the caller, on the caller session', async () => {
+      const queued = await client.start(task, { value: 'cancel-commit' })
+      poolUses = 0
+      const id = sampleId()
+      let statusOutside: string | undefined
+
+      const cancelled = await run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* insertSample(id)
+              const cancelled = yield* effectClient.cancel(queued.id)
+              statusOutside = yield* Effect.promise(() => runStatus(queued.id))
+              return cancelled
+            }),
+          )
+        }),
+      )
+
+      expect(cancelled?.status).toBe('cancelled')
+      expect(statusOutside).toBe('queued')
+      expect(poolUses).toBe(0)
+      expect(await runStatus(queued.id)).toBe('cancelled')
+      expect(await count('sample', 'id = $1', [id])).toBe(1)
+    })
+
+    it('leaves the run untouched when the caller rolls back a cancellation', async () => {
+      const queued = await client.start(workflow, { value: 'cancel-rollback' })
+
+      const exit = await runExit(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const cancelling = yield* effectClient.cancel(queued.id)
+              expect(cancelling?.status).toBe('cancelling')
+              return yield* Effect.fail(new Abort())
+            }),
+          )
+        }),
+      )
+
+      expect(Exit.isFailure(exit)).toBe(true)
+      expect(await runStatus(queued.id)).toBe('queued')
+
+      await run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql.withTransaction(effectClient.cancel(queued.id))
+        }),
+      )
+      expect(await runStatus(queued.id)).toBe('cancelling')
+    })
+
+    it('rolls back an interrupted cancellation while the caller carries on and commits', async () => {
+      const queued = await client.start(task, { value: 'cancel-interrupted' })
+      const id = sampleId()
+      // The task's run is cancelled first; settling its attempt then waits on
+      // this lock.
+      const unlock = await lockTable('workflow_attempts')
+      try {
+        await run(
+          Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient
+            return yield* sql.withTransaction(
+              Effect.gen(function* () {
+                const fiber = yield* Effect.forkChild(
+                  effectClient.cancel(queued.id),
+                )
+                yield* Effect.promise(() =>
+                  expect
+                    .poll(() => lockWaiters('workflow_attempts'))
+                    .toBeGreaterThan(0),
+                )
+                yield* Fiber.interrupt(fiber)
+                yield* insertSample(id)
+              }),
+            )
+          }),
+        )
+      } finally {
+        await unlock()
+      }
+
+      expect(await count('sample', 'id = $1', [id])).toBe(1)
+      expect(await runStatus(queued.id)).toBe('queued')
+    })
+
     it('starts on the workflow pool outside a transaction', async () => {
       const started = await run(
         effectClient.start(workflow, { value: 'outside' }),

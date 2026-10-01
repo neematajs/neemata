@@ -14,6 +14,8 @@ export type {
   WatchEvent,
   WatchRunOptions,
   WorkflowRuntimeAdapter,
+  WorkflowRuntimeCallerConnection,
+  WorkflowRuntimeCancelOptions,
   WorkflowRuntimeClient,
   WorkflowRuntimeStartOptions,
 } from './client.ts'
