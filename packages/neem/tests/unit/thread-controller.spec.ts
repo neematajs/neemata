@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { createFuture } from '@nmtjs/common'
@@ -277,6 +277,69 @@ describe('ThreadController', () => {
       await thread.stop().catch(() => undefined)
     }
   })
+
+  // Bun shares its resolver's directory cache between threads, and threads
+  // that miss new files in one cached directory at the same moment can report
+  // them missing. Many rounds make that collision likely on Bun.
+  it('imports patch files that every thread receives at the same moment', async () => {
+    const fixture = await createThreadFixture(
+      `import ${JSON.stringify(REAL_WORKER_ENTRY)}`,
+      `
+      globalThis.__neem_patches__ = {
+        clientId: globalThis.__neem_patch_client_id__,
+        async apply(update, load) {
+          await load()
+          return { outcome: 'applied', delivered: true }
+        },
+      }
+      export default Object.freeze({
+        [Symbol.for('neem:runtime-worker')]: true,
+        createRuntime() {
+          return { async start() { return [] }, async stop() {} }
+        },
+      })
+      `,
+    )
+    // Bun never finds a new file in a cached directory it reached through a
+    // symlink, as macOS temp directories are, whichever thread asks.
+    const outDir = await realpath(fixture.artifact.outDir)
+    const artifact = { ...fixture.artifact, outDir }
+    const threads = Array.from(
+      { length: 8 },
+      (_, index) =>
+        new ThreadController({
+          snapshot: fixture.snapshot,
+          runtimeName: 'api',
+          plan: { name: `api:${index}`, artifact },
+          index,
+          hooks: createHostHooks(),
+        }),
+    )
+    onTestFinished(async () => {
+      await Promise.all(threads.map((thread) => thread.stop()))
+    })
+    await Promise.all(threads.map((thread) => thread.start()))
+
+    let file = 0
+    for (let round = 1; round <= 250; round++) {
+      const updates = threads.map(() => ({
+        type: 'Patch' as const,
+        filename: `hmr_patch_${file++}.js`,
+        seq: round,
+        changedIds: [],
+      }))
+      // As the compiler does: every file is on disk before any thread hears.
+      for (const update of updates) {
+        await writeFile(resolve(outDir, update.filename), 'export {}\n')
+      }
+      const results = await Promise.all(
+        threads.map((thread, index) => thread.applyPatch(updates[index]!)),
+      )
+      expect(results.filter((result) => result.outcome !== 'applied')).toEqual(
+        [],
+      )
+    }
+  }, 20_000)
 })
 
 const REAL_WORKER_ENTRY = new URL(
