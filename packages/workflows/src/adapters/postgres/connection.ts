@@ -24,9 +24,19 @@ export type WorkflowPostgresQueryClient = {
 export type WorkflowPostgresPoolClient = WorkflowPostgresQueryClient & {
   /** Discard the session instead of returning it to the pool when true. */
   release(destroy?: boolean): void
+  /** `pg`'s session events: a failed or ended socket discards the session. */
+  on?(event: 'error', listener: (error: Error) => void): unknown
+  on?(event: 'end', listener: () => void): unknown
+  removeListener?(event: 'error', listener: (error: Error) => void): unknown
+  removeListener?(event: 'end', listener: () => void): unknown
 }
 
 export type WorkflowPostgresPool = WorkflowPostgresQueryClient & {
+  /**
+   * Called as `connect(callback)` first, which pg-pool answers in the same
+   * tick it hands the session over; a pool that ignores the callback and
+   * returns the session's promise works too.
+   */
   connect(): Promise<WorkflowPostgresPoolClient>
 }
 
@@ -34,6 +44,34 @@ export type WorkflowPostgresTransactionClient = WorkflowPostgresQueryClient & {
   transaction<T>(
     handler: (connection: WorkflowPostgresQueryClient) => Promise<T>,
   ): Promise<T>
+}
+
+export type CreatePostgresWorkflowConnectionOptions = {
+  /**
+   * How long PostgreSQL has to answer each statement the engine sends through
+   * a pool, in milliseconds. A statement that misses it fails and its session
+   * is discarded instead of returned to the pool. Idle sessions and waiting
+   * for a free session are not bounded by it. Only pools accept it: the
+   * adapter cannot discard sessions of other clients.
+   */
+  readonly answerTimeoutMs?: number
+}
+
+// Node fires longer timers after 1 ms instead.
+const MAX_TIMER_MS = 2_147_483_647
+
+const normalizeAnswerTimeoutMs = (answerTimeoutMs: number | undefined) => {
+  if (answerTimeoutMs === undefined) return undefined
+  if (
+    !Number.isSafeInteger(answerTimeoutMs) ||
+    answerTimeoutMs <= 0 ||
+    answerTimeoutMs > MAX_TIMER_MS
+  ) {
+    throw new RangeError(
+      `answerTimeoutMs must be a positive integer of at most ${MAX_TIMER_MS}`,
+    )
+  }
+  return answerTimeoutMs
 }
 
 type WorkflowPostgresExternalClient =
@@ -58,6 +96,112 @@ const queryPostgresClient = <T extends JsonRecord>(
   sql: string,
   params: readonly unknown[] = [],
 ) => client.query<T>(sql, [...params])
+
+// `pg`'s `query_timeout` is the one rejection it makes with the statement left
+// unanswered, and it always creates exactly this error. Its other rejections
+// leave the session in sync, or behind a `Sync` it already sent (a parameter
+// that failed to serialize), or come with an `error` or `end` event.
+const isDriverReadTimeout = (error: unknown) =>
+  error instanceof Error && error.message === 'Query read timeout'
+
+type BorrowedSession = {
+  readonly session: WorkflowPostgresQueryClient
+  /** Idempotent: a session discarded while in use is already released. */
+  readonly release: (destroy: boolean) => void
+}
+
+// A session is unusable once its answer deadline passed, its socket failed or
+// ended, or the driver's read timeout gave up on a statement. Any other failure,
+// such as a server error, a throwing type parser or a parameter that failed to
+// serialize, leaves it usable, so a savepoint can recover. An unusable session
+// is discarded at once rather than when its owner finishes: a handler that
+// catches the failure and carries on would otherwise hold the unanswered
+// statement, its locks and the pool slot. Every later statement on it fails at
+// once; a ROLLBACK would only queue behind the unanswered statement.
+const borrowPooledSession = async (
+  pool: WorkflowPostgresPool,
+  answerTimeoutMs: number | undefined,
+): Promise<BorrowedSession> => {
+  let client!: WorkflowPostgresPoolClient
+  let released = false
+  let unusable: { readonly error: unknown } | undefined
+  const release = (destroy: boolean) => {
+    if (released) return
+    released = true
+    client.release(destroy)
+    // Removed only after the pool took the session back and attached its own.
+    client.removeListener?.('error', onError)
+    client.removeListener?.('end', onEnd)
+  }
+  const discard = (error: unknown) => {
+    unusable ??= { error }
+    release(true)
+  }
+  const onError = (error: Error) => discard(error)
+  const onEnd = () => discard(new Error('The PostgreSQL session ended'))
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    // pg-pool drops its own error listener right before handing a session
+    // over, and the socket data that completed the checkout may carry an error
+    // right behind it. Listening from inside the pool's callback, as its own
+    // `query()` does, leaves no tick for that `error` event to go unhandled.
+    const checkout = (error: unknown, session?: WorkflowPostgresPoolClient) => {
+      if (settled) return
+      settled = true
+      if (!session) return reject(error)
+      client = session
+      session.on?.('error', onError)
+      session.on?.('end', onEnd)
+      resolve()
+    }
+    const pending = (pool.connect as (callback: typeof checkout) => unknown)(
+      checkout,
+    )
+    if (
+      typeof pending === 'object' &&
+      pending !== null &&
+      'then' in pending &&
+      typeof pending.then === 'function'
+    ) {
+      ;(pending as Promise<WorkflowPostgresPoolClient>).then(
+        (session) => checkout(undefined, session),
+        checkout,
+      )
+    }
+  })
+
+  const query = <T extends JsonRecord>(
+    sql: string,
+    params?: readonly unknown[],
+  ) =>
+    new Promise<WorkflowPostgresQueryResult<T>>((resolve, reject) => {
+      if (unusable) return reject(unusable.error)
+      const answer = client.query<T>(sql, params)
+      const timer =
+        answerTimeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              const error = new Error(
+                `PostgreSQL did not answer a workflow statement within ${answerTimeoutMs} ms; its session is discarded`,
+              )
+              discard(error)
+              reject(error)
+            }, answerTimeoutMs)
+      answer.then(
+        (result) => {
+          clearTimeout(timer)
+          resolve(result)
+        },
+        (error: unknown) => {
+          clearTimeout(timer)
+          if (isDriverReadTimeout(error)) discard(error)
+          reject(error)
+        },
+      )
+    })
+  return { session: { query }, release }
+}
 
 const createSerializer = () => {
   let queue = Promise.resolve()
@@ -154,7 +298,18 @@ const runTransactionScope = async <T>(
 
 export function createPostgresWorkflowConnection(
   client: WorkflowPostgresExternalClient,
+  options: CreatePostgresWorkflowConnectionOptions = {},
 ): WorkflowPostgresConnection {
+  const answerTimeoutMs = normalizeAnswerTimeoutMs(options.answerTimeoutMs)
+  if (
+    answerTimeoutMs !== undefined &&
+    (hasTransactionApi(client) || !hasConnectApi(client))
+  ) {
+    throw new TypeError(
+      'answerTimeoutMs requires a pool: only a pooled session can be discarded after a statement goes unanswered',
+    )
+  }
+
   // A plain client is one session: anything it runs while a transaction is
   // open joins that transaction and is lost with its rollback. Top-level
   // queries therefore wait their turn with transactions; queries made through
@@ -189,18 +344,45 @@ export function createPostgresWorkflowConnection(
   const serializesQueries = !hasTransactionApi(client) && !hasConnectApi(client)
 
   return {
-    query: (sql, params = []) =>
-      serializesQueries
-        ? serializeClient(() => queryPostgresClient(client, sql, params))
-        : queryPostgresClient(client, sql, params),
+    async query<T extends JsonRecord = JsonRecord>(
+      sql: string,
+      params: readonly unknown[] = [],
+    ) {
+      if (serializesQueries) {
+        return serializeClient(() =>
+          queryPostgresClient<T>(client, sql, params),
+        )
+      }
+      // `pool.query` would pick a session the adapter cannot discard.
+      if (answerTimeoutMs !== undefined && hasConnectApi(client)) {
+        const { session, release } = await borrowPooledSession(
+          client,
+          answerTimeoutMs,
+        )
+        let result: WorkflowPostgresQueryResult<T>
+        try {
+          result = await queryPostgresClient<T>(session, sql, params)
+        } catch (error) {
+          // As `pool.query` does: nothing is lost by replacing the session.
+          release(true)
+          throw error
+        }
+        release(false)
+        return result
+      }
+      return queryPostgresClient<T>(client, sql, params)
+    },
     async transaction(handler) {
       if (hasTransactionApi(client)) {
         return client.transaction((tx) => runTransactionScope(tx, handler))
       }
 
       if (hasConnectApi(client)) {
-        const tx = await client.connect()
-        return runTransaction(tx, handler, (destroy) => tx.release(destroy))
+        const { session, release } = await borrowPooledSession(
+          client,
+          answerTimeoutMs,
+        )
+        return runTransaction(session, handler, release)
       }
 
       return serializeClient(() => runTransaction(client, handler))
