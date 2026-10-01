@@ -6,7 +6,7 @@ import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
 } from '../../src/adapters/postgres.ts'
-import { StaleWriteFenceError } from '../../src/runtime/index.ts'
+import { StaleWriteFenceError, type RunLease } from '../../src/runtime/index.ts'
 import {
   createPostgresWorkflowHarness,
   postgresTarget,
@@ -113,6 +113,46 @@ describe.skipIf(!postgresTarget.url)(
         },
       )
       return { opened, commit, committed }
+    }
+
+    // Makes a fenced `write` under a lease short enough to lapse while the
+    // write's transaction still holds it, then waits until it has: another
+    // transaction then sees a committed, expired lease, so the write's row
+    // lock is the only thing left marking the run busy. Setup slow enough to
+    // outlast the lease renews it and writes again instead of failing.
+    async function writeUnderLapsingLease(
+      runtime: PostgresWorkflowHarness['runtime'],
+      pool: PostgresWorkflowHarness['pool'],
+      lease: RunLease,
+      write: () => Promise<unknown>,
+    ) {
+      for (let attempt = 1; ; attempt++) {
+        await runtime.store.renewRunLease(lease, 300)
+        try {
+          await write()
+          break
+        } catch (error) {
+          if (!(error instanceof StaleWriteFenceError) || attempt === 10) {
+            throw error
+          }
+        }
+      }
+      await expect
+        .poll(
+          async () => {
+            const { rows } = await pool.query<{ expired: boolean }>(
+              `
+                SELECT expires_at <= clock_timestamp() AS expired
+                FROM workflow_run_leases
+                WHERE run_id = $1
+              `,
+              [lease.runId],
+            )
+            return rows[0]?.expired
+          },
+          { timeout: 5_000, interval: 20 },
+        )
+        .toBe(true)
     }
 
     async function failedAttempt(runtime: PostgresWorkflowHarness['runtime']) {
@@ -223,11 +263,12 @@ describe.skipIf(!postgresTarget.url)(
       const writer = openWriter(pool)
       try {
         const writerRuntime = await writer.opened
-        await writerRuntime.store.markRunRunning({
-          runId: run.id,
-          fence: { runLease: stale! },
-        })
-        await wait(300)
+        await writeUnderLapsingLease(runtime, pool, stale!, () =>
+          writerRuntime.store.markRunRunning({
+            runId: run.id,
+            fence: { runLease: stale! },
+          }),
+        )
 
         let takenOver = false
         const takeover = runtime.store
@@ -274,13 +315,14 @@ describe.skipIf(!postgresTarget.url)(
         const writerRuntime = await writer.opened
         // Leaves the run row unlocked, so the retry locks it first and then
         // meets the lease row this transaction holds.
-        await writerRuntime.store.setNodeInput({
-          runId: run.id,
-          nodeName: 'step',
-          input: 1,
-          fence,
-        })
-        await wait(300)
+        await writeUnderLapsingLease(runtime, pool, lease!, () =>
+          writerRuntime.store.setNodeInput({
+            runId: run.id,
+            nodeName: 'step',
+            input: 1,
+            fence,
+          }),
+        )
 
         const retry = { runId: run.id, expectedVersion: failed!.version }
         const startedAt = performance.now()

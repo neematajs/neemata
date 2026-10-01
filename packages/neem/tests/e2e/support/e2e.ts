@@ -278,6 +278,44 @@ export async function editWorkerFile(
   )
 }
 
+/**
+ * Waits until a runtime that (re)started after probe sequence `since` accepts
+ * patches: `threads` of its threads are registered as patch clients, and the
+ * host started or recovery restarted the runtime. Edits made earlier fall back
+ * to replacing the threads instead of patching them.
+ */
+export async function waitForPatchClients(
+  neem: SpawnedNeem,
+  options: { threads: number; runtimeName?: string; since?: number },
+): Promise<void> {
+  const { threads, runtimeName, since = 0 } = options
+  const ofRuntime = (event: NeemProbeEvent) =>
+    !runtimeName || event.runtimeName === runtimeName
+  await waitFor(
+    () => {
+      const events = neem.events().filter((event) => event.sequence > since)
+      const registered = events.filter(
+        (event) =>
+          event.event === 'runtime:patch-client-registered' && ofRuntime(event),
+      )
+      const ready = events.some(
+        (event) =>
+          event.event === 'runtime:ready' ||
+          (event.event === 'runtime:recovered' && ofRuntime(event)),
+      )
+      return ready && registered.length >= threads
+    },
+    30_000,
+    () =>
+      formatProcessDiagnostics(
+        neem.events(),
+        neem.stdout(),
+        neem.stderr(),
+        undefined,
+      ),
+  )
+}
+
 export async function writeFileAtomically(
   path: string,
   content: string,

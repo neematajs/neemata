@@ -137,7 +137,9 @@ describe('Neem recovery health and proxy behavior', () => {
     const fixture = await createNeemFixture({ config: 'recovery-health' })
     const [serverPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-health-marker')
+    const releaseFile = resolve(fixture.dir, 'recovery-health-release')
     await rm(markerFile, { force: true })
+    await rm(releaseFile, { force: true })
 
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -147,6 +149,7 @@ describe('Neem recovery health and proxy behavior', () => {
           NEEM_RECOVERY_HEALTH_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_HEALTH_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_HEALTH_MARKER: markerFile,
+          NEEM_RECOVERY_HEALTH_RELEASE: releaseFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -171,12 +174,13 @@ describe('Neem recovery health and proxy behavior', () => {
       1,
     )
 
-    // The recovery delay event above proves the worker is mid-restart; the
-    // host itself stays healthy meanwhile.
+    // The recovery delay event above proves the worker is mid-restart, and it
+    // stays there until released; the host itself stays healthy meanwhile.
     expect(await fetchJson(`http://127.0.0.1:${serverPort}/ready`)).toEqual({
       status: 503,
       body: { ok: false, healthy: true, ready: false },
     })
+    await writeFile(releaseFile, '')
 
     const recoveredReady = await waitForJson(
       `http://127.0.0.1:${serverPort}/ready`,

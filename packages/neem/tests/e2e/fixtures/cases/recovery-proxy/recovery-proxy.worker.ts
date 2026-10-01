@@ -14,7 +14,8 @@ type RecoveryProxyData = {
 }
 
 // Bounded below Neem's 30 s worker startup deadline so a test that never
-// releases fails on its own assertions instead of hanging.
+// releases fails on its own assertions instead of hanging. Starting without
+// the release would end the window the test observes, so the deadline fails.
 const RELEASE_TIMEOUT_MS = 20_000
 
 export default defineRuntimeWorker<RecoveryProxyData>({
@@ -33,7 +34,10 @@ export default defineRuntimeWorker<RecoveryProxyData>({
             port: ctx.data.port,
           })
           const deadline = Date.now() + RELEASE_TIMEOUT_MS
-          while (!existsSync(ctx.data.release) && Date.now() < deadline) {
+          while (!existsSync(ctx.data.release)) {
+            if (Date.now() >= deadline) {
+              throw new Error('recovery proxy fixture was never released')
+            }
             await wait(25)
           }
         }

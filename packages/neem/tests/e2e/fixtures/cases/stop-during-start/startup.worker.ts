@@ -1,3 +1,5 @@
+import { parentPort } from 'node:worker_threads'
+
 import { defineRuntimeWorker } from '@nmtjs/neem'
 
 import { record, wait } from '../../shared/support/_events.ts'
@@ -6,7 +8,9 @@ export default defineRuntimeWorker({
   definition: undefined,
   async createRuntime(ctx) {
     record({ event: 'startup-create', name: ctx.name })
-    if (process.env.NEEM_STARTUP_PHASE === 'factory') await wait(300)
+    // Holding creation until the thread's stop request arrives keeps the stop
+    // inside the factory, however late the test sends it.
+    if (process.env.NEEM_STARTUP_PHASE === 'factory') await untilStopRequested()
     const ready = Promise.withResolvers<undefined>()
     void ready.promise.catch(() => {})
     return {
@@ -24,3 +28,14 @@ export default defineRuntimeWorker({
     }
   },
 })
+
+function untilStopRequested(): Promise<void> {
+  return new Promise((resolve) => {
+    const onMessage = (message: { type?: unknown } | undefined) => {
+      if (message?.type !== 'stop') return
+      parentPort?.off('message', onMessage)
+      resolve()
+    }
+    parentPort?.on('message', onMessage)
+  })
+}

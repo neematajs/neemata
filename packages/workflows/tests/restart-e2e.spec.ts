@@ -8,6 +8,7 @@ import {
   editWorkerFile,
   spawnNeem,
   waitFor,
+  waitForPatchClients,
 } from '../../neem/tests/e2e/support/e2e.ts'
 import { createTempDir } from '../../neem/tests/support/temp.ts'
 
@@ -28,6 +29,8 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
     const initial = await waitForGeneration('v1', 1, neem)
     const threads = new Set(initial.map((event) => event.threadId))
     expect(threads.size).toBe(2)
+    // Edits before registration replace the threads instead of patching them.
+    await waitForPatchClients(neem, { threads: 2, runtimeName: 'workflows' })
 
     for (const generation of [2, 3]) {
       const previous = `'v${generation - 1}'`

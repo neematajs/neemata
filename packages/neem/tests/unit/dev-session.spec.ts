@@ -214,6 +214,12 @@ describe('DevSession', () => {
     expect(first!.stop).toHaveBeenCalled()
     expect(running!.stop).toHaveBeenCalled()
     expect(probe.emit).toHaveBeenCalledWith('watcher:restarted')
+    await vi.waitFor(() =>
+      expect(probe.emit).toHaveBeenCalledWith(
+        'runtime:patch-client-registered',
+        { runtimeName: 'api', threadId: 'api:1' },
+      ),
+    )
     // Output of the dead watcher is not trusted; the retired thread was never
     // the new watcher's client.
     expect(second.requests.map((request) => request.type)).toEqual([
@@ -221,6 +227,17 @@ describe('DevSession', () => {
       'ensure-worker-output',
       'patch-client-started',
     ])
+    await expectOpen(session)
+  })
+
+  it('reports a runtime that recovery restarted', async () => {
+    const { session, probe } = await startSession()
+
+    state.controllers[0]!.options.onRuntimeRecovered?.('api')
+
+    expect(probe.emit).toHaveBeenCalledWith('runtime:recovered', {
+      runtimeName: 'api',
+    })
     await expectOpen(session)
   })
 
