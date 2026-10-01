@@ -215,8 +215,8 @@ export function createEffectSqlWorkflowClient(
 
   // Errors the guard accepts fail typed; anything else is a defect.
   const run = <A, E>(
-    operation: (connection?: WorkflowPostgresConnection) => Promise<A>,
     isFailure: (error: unknown) => error is E,
+    operation: (connection?: WorkflowPostgresConnection) => Promise<A>,
   ): Effect.Effect<A, E | SqlError.SqlError, SqlClient.SqlClient> =>
     Effect.gen(function* () {
       const toFailure = (error: unknown): Effect.Effect<never, E> =>
@@ -272,33 +272,35 @@ export function createEffectSqlWorkflowClient(
       )
     })
 
+  function start(
+    runnable: AnyWorkflowDefinition | AnyTaskDefinition,
+    input: unknown,
+    options?: EffectSqlWorkflowStartOptions,
+  ) {
+    return run(isStartError, (connection) => {
+      return client.start(runnable as AnyWorkflowDefinition, input as never, {
+        ...options,
+        connection,
+      })
+    })
+  }
+
+  function restart(runId: string, options?: EffectSqlWorkflowStartOptions) {
+    return run(isStartError, (connection) => {
+      return client.restart(runId, { ...options, connection })
+    })
+  }
+
+  function cancel(runId: string) {
+    return run(SqlError.isSqlError, (connection) => {
+      return client.cancel(runId, { connection })
+    })
+  }
+
   return {
-    start: ((
-      runnable: AnyWorkflowDefinition | AnyTaskDefinition,
-      input: unknown,
-      startOptions?: EffectSqlWorkflowStartOptions,
-    ) =>
-      run(
-        (connection) =>
-          client.start(runnable as AnyWorkflowDefinition, input as never, {
-            ...startOptions,
-            connection,
-          }),
-        isStartError,
-      )) as EffectSqlWorkflowClient['start'],
-
-    restart: (runId, restartOptions) =>
-      run(
-        (connection) =>
-          client.restart(runId, { ...restartOptions, connection }),
-        isStartError,
-      ),
-
-    cancel: (runId) =>
-      run(
-        (connection) => client.cancel(runId, { connection }),
-        SqlError.isSqlError,
-      ),
+    start: start as EffectSqlWorkflowClient['start'],
+    restart,
+    cancel,
   }
 }
 
