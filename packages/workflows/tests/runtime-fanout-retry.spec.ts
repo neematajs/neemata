@@ -559,4 +559,48 @@ describe('task node retry overrides', () => {
     expect(snapshot.run.status).toBe('completed')
     expect(snapshot.run.output).toEqual(['P', 'M1', 'M2'])
   })
+
+  it('applies a map node policy to every item in place of the task default', async () => {
+    const calls = new Map<string, number>()
+    const task = defineStandardTask({
+      name: 'retry-override.always-fails',
+      input: text,
+      output: text,
+      retry: { attempts: 3 },
+    })
+    const taskImplementation = implementStandardTask(task, {
+      pool: 'test',
+      handler: async (input) => {
+        calls.set(input, (calls.get(input) ?? 0) + 1)
+        throw new Error(`fails [${input}]`)
+      },
+    })
+    const workflow = defineStandardWorkflow({
+      name: 'retry-override.map-replaces-default',
+      input: text,
+      output: z.array(text),
+    })
+      .mapTask('each', task, { item: text, retry: { attempts: 2 } })
+      .build()
+    const implementation = implementStandardWorkflow(workflow, { pool: 'test' })
+      .each(task, {
+        items: () => ['m1', 'm2', 'm3'],
+        input: (_outputs, item) => item,
+      })
+      .finish(({ each }) => each.items.map(({ output }) => output))
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const run = await client.start(workflow, 'p')
+    await drain({
+      ...runtime,
+      workflows: [implementation],
+      tasks: [taskImplementation],
+      workerId: 'fanout-retry',
+    })
+
+    const snapshot = (await client.get(run.id))!
+    expect(snapshot.run.status).toBe('failed')
+    expect(Object.fromEntries(calls)).toEqual({ m1: 2, m2: 2, m3: 2 })
+  })
 })
