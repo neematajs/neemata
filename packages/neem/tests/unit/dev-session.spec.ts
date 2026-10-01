@@ -214,6 +214,12 @@ describe('DevSession', () => {
     expect(first!.stop).toHaveBeenCalled()
     expect(running!.stop).toHaveBeenCalled()
     expect(probe.emit).toHaveBeenCalledWith('watcher:restarted')
+    await vi.waitFor(() =>
+      expect(probe.emit).toHaveBeenCalledWith(
+        'runtime:patch-client-registered',
+        { runtimeName: 'api', threadId: 'api:1' },
+      ),
+    )
     // Output of the dead watcher is not trusted; the retired thread was never
     // the new watcher's client.
     expect(second.requests.map((request) => request.type)).toEqual([

@@ -569,7 +569,15 @@ export class DevSession {
       if (this.watcher !== watcher) return
       throw error
     }
-    if (started && this.watcher === watcher) this.patchClients.add(threadId)
+    if (started && this.watcher === watcher) {
+      this.patchClients.add(threadId)
+      // `thread-started` precedes registration; edits before this event fall
+      // back to replacing the threads instead of patching them.
+      this.options.probe?.emit('runtime:patch-client-registered', {
+        runtimeName,
+        threadId,
+      })
+    }
   }
 
   private async applyPatch(
