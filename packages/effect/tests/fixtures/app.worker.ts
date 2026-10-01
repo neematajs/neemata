@@ -4,8 +4,8 @@ import { createServer } from 'node:http'
 import { NodeHttpServer } from '@effect/platform-node'
 import { defineEffectWorker } from '@nmtjs/effect/neem/worker'
 import * as Effect from 'effect/Effect'
+import { HttpServer, HttpServerResponse } from 'effect/http'
 import * as Layer from 'effect/Layer'
-import { HttpServer, HttpServerResponse } from 'effect/unstable/http'
 
 const marker = 'effect-v1'
 const eventsFile = process.env.EFFECT_EVENTS_FILE!

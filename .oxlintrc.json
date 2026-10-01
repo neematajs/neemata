@@ -48,35 +48,6 @@
       }
     },
     {
-      "files": [
-        "packages/workflows/**",
-        "packages/pubsub/**",
-        "packages/common/**",
-        "packages/effect/src/**",
-        "packages/effect/tests/unit/**",
-        "packages/vite/src/**",
-        "packages/nuxt/src/**",
-        "packages/metrics/src/**"
-      ],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "effect/unstable",
-                  "effect/unstable/**",
-                  "@effect/**"
-                ],
-                "message": "Retained libraries use stable Effect modules only; platform and unstable integrations belong to applications."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
       "files": ["packages/workflows/src/**", "packages/pubsub/src/**"],
       "rules": {
         "no-restricted-imports": [
@@ -97,23 +68,7 @@
         "packages/workflows/src/effect/**",
         "packages/pubsub/src/effect/**"
       ],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": [
-                  "effect/unstable",
-                  "effect/unstable/**",
-                  "@effect/**"
-                ],
-                "message": "Retained libraries use stable Effect modules only; platform and unstable integrations belong to applications."
-              }
-            ]
-          }
-        ]
-      }
+      "rules": { "no-restricted-imports": "off" }
     }
   ]
 }

@@ -1,8 +1,7 @@
 # Effect Applications
 
 `@nmtjs/effect` hosts one supervised Effect application per Neem worker.
-Its required peer is exactly `effect@4.0.0-rc.116`; applications and preset
-must upgrade together. Neem itself does not depend on Effect. The app owns its
+Its required peer is `effect@^4.0.0`. Neem itself does not depend on Effect. The app owns its
 HTTP/RPC/platform integrations, schemas and clients; the preset supplies none.
 
 ## Declaration and Planner

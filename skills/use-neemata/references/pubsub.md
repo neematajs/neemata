@@ -131,8 +131,8 @@ idle subscriptions, including ones never read, can be released.
 
 ## Effect
 
-`@nmtjs/pubsub/effect` requires the optional peer `effect` exactly
-`4.0.0-rc.116`. It exports `defineChannel`, `PubSub`, `PubSubError`,
+`@nmtjs/pubsub/effect` requires the optional peer `effect`
+`^4.0.0`. It exports `defineChannel`, `PubSub`, `PubSubError`,
 `PubSubConnectionLostError`, `make`, `layer`, and `codec` / `schemaOf` from
 `@nmtjs/common/effect`.
 

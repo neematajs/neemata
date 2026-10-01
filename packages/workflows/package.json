@@ -146,7 +146,7 @@
   },
   "peerDependencies": {
     "drizzle-orm": ">=1.0.0-rc.4 <2.0.0",
-    "effect": "4.0.0-rc.116",
+    "effect": "^4.0.0",
     "ioredis": "^5.10.1",
     "iovalkey": "^0.3.3"
   },
@@ -175,7 +175,7 @@
     "@types/pg": "^8.20.0",
     "drizzle-kit": "1.0.0-rc.4",
     "drizzle-orm": "1.0.0-rc.4",
-    "effect": "4.0.0-rc.116",
+    "effect": "^4.0.0",
     "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3",
     "pg": "^8.22.0",

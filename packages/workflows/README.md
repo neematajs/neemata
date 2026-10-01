@@ -18,10 +18,9 @@ import {
 
 `@nmtjs/workflows/effect` exports the same four functions for Effect
 applications: definitions take `effect/Schema` schemas, and handlers return
-Effects whose services come from the worker. It needs the optional `effect` peer,
-pinned to `4.0.0-rc.116`, as does the Effect worker in
-`@nmtjs/workflows/effect/neem`. Applications and the package must use this exact version during the
-release-candidate period; only stable Effect modules are imported. Definitions
+Effects whose services come from the worker. It needs the optional `effect` peer
+(`^4.0.0`), as does the Effect worker in `@nmtjs/workflows/effect/neem`; only
+stable Effect modules are imported. Definitions
 and implementations from either entry point are interchangeable everywhere else.
 
 Runtime adapters live behind explicit subpaths:

@@ -4,13 +4,10 @@ Run a supervised Effect application in a Neem worker. The application supplies i
 services, main effect, and upstreams; the preset owns their lifetime. Neem itself
 has no Effect dependency.
 
-It targets **Effect 4.0.0-rc.116**, pinned exactly. The preset imports only
-stable Effect modules. Applications choose and pin their own HTTP, RPC, and platform
-integrations, including any unstable APIs.
-
-During the release-candidate phase, the preset's exact peer pin requires the preset
-and application to upgrade together. Each upgrade must rerun the lifecycle and
-application-boundary tests; compatibility across other RC versions is not promised.
+It targets **Effect 4** (`effect@^4.0.0`). The preset imports only stable
+Effect modules, so it follows Effect's semver guarantees. Applications choose and
+pin their own HTTP, RPC, and platform integrations, including any modules marked
+`@stability unstable`.
 
 ```ts
 // neem.runtime.ts
@@ -29,7 +26,7 @@ import { NodeHttpServer } from '@effect/platform-node'
 import { defineEffectWorker } from '@nmtjs/effect/neem/worker'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
-import { HttpServer, HttpServerResponse } from 'effect/unstable/http'
+import { HttpServer, HttpServerResponse } from 'effect/http'
 
 export default defineEffectWorker(() => ({
   layer: Layer.empty,
@@ -103,8 +100,8 @@ facade. Effect RPC or HttpApi belongs to the application, as do uploads and auth
 For a Promise-based frontend, one tested pattern is an application-owned wrapper
 over `RpcClient`. Its ManagedRuntime owns the HTTP client protocol; each call owns
 an RPC scope and accepts an AbortSignal. The application explicitly
-marks the HTTP effect returned by `RpcServer.toHttpEffect` interruptible: in the
-pinned version, the HTTP handler otherwise starts uninterruptible, so disconnecting
+marks the HTTP effect returned by `RpcServer.toHttpEffect` interruptible: in Effect
+4.0.0, the HTTP handler otherwise starts uninterruptible, so disconnecting
 a request does not promptly close its RPC scope. A server-finalizer test verifies
 this behavior. Interruption still does not guarantee a non-cooperative database
 query has stopped.
