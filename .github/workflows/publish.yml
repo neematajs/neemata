@@ -89,8 +89,9 @@ jobs:
       - name: Add shared README and license
         run: |
           # Packages with their own README keep it; the rest get the root one.
-          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec sh -c 'test -f README.md || cp "$GITHUB_WORKSPACE/README.md" ./'
-          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
+          # --no-sort: pnpm 12 rejects the metrics <-> neem cycle when ordering tasks.
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r --no-sort exec sh -c 'test -f README.md || cp "$GITHUB_WORKSPACE/README.md" ./'
+          pnpm --filter "./packages/*" --filter "!@nmtjs/proxy" --filter "!@nmtjs/prom-client" -r --no-sort exec cp "$GITHUB_WORKSPACE/LICENSE.md" ./
 
       - name: Build TypeScript packages
         run: pnpm run build:ts
