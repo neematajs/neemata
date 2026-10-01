@@ -260,23 +260,28 @@ export function createEffectSqlWorkflowClient(
       )
     })
 
-  return {
-    start: ((
-      runnable: AnyWorkflowDefinition | AnyTaskDefinition,
-      input: unknown,
-      startOptions?: EffectSqlWorkflowStartOptions,
-    ) =>
-      run((connection) =>
-        client.start(runnable as AnyWorkflowDefinition, input as never, {
-          ...startOptions,
-          connection,
-        }),
-      )) as EffectSqlWorkflowClient['start'],
+  function start(
+    runnable: AnyWorkflowDefinition | AnyTaskDefinition,
+    input: unknown,
+    options?: EffectSqlWorkflowStartOptions,
+  ) {
+    return run((connection) => {
+      return client.start(runnable as AnyWorkflowDefinition, input as never, {
+        ...options,
+        connection,
+      })
+    })
+  }
 
-    restart: (runId, restartOptions) =>
-      run((connection) =>
-        client.restart(runId, { ...restartOptions, connection }),
-      ),
+  function restart(runId: string, options?: EffectSqlWorkflowStartOptions) {
+    return run((connection) => {
+      return client.restart(runId, { ...options, connection })
+    })
+  }
+
+  return {
+    start: start as EffectSqlWorkflowClient['start'],
+    restart,
   }
 }
 
