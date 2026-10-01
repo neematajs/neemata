@@ -152,6 +152,15 @@ const runTransactionScope = async <T>(
   }
 }
 
+/**
+ * A connection over a session whose transaction its caller already holds open.
+ * Its `transaction()` is a savepoint: a BEGIN/COMMIT would end the caller's
+ * transaction early.
+ */
+export const createPostgresWorkflowNestedConnection = (
+  client: WorkflowPostgresQueryClient,
+): WorkflowPostgresConnection => createTransactionScope(client).connection
+
 export function createPostgresWorkflowConnection(
   client: WorkflowPostgresExternalClient,
 ): WorkflowPostgresConnection {

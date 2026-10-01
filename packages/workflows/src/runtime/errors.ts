@@ -33,6 +33,20 @@ export class WorkflowRunConflictError extends Error {
 }
 
 /**
+ * A start reused an idempotency key that already belongs to a run with a
+ * different target or input, so the key cannot return that run.
+ */
+export class WorkflowIdempotencyConflictError extends Error {
+  readonly workflowName: string
+
+  constructor(workflowName: string) {
+    super(`Conflicting idempotent run [${workflowName}]`)
+    this.name = 'WorkflowIdempotencyConflictError'
+    this.workflowName = workflowName
+  }
+}
+
+/**
  * A write carried a `WriteFence` that no longer holds: its issuer lost the run
  * lease or the attempt it acted for, and the store wrote nothing.
  */

@@ -14,6 +14,8 @@ export type {
   WatchEvent,
   WatchRunOptions,
   WorkflowRuntimeAdapter,
+  WorkflowRuntimeCallerConnection,
+  WorkflowRuntimeCancelOptions,
   WorkflowRuntimeClient,
   WorkflowRuntimeStartOptions,
 } from './client.ts'
@@ -36,7 +38,11 @@ export type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
 } from './executors.ts'
-export { StaleWriteFenceError, WorkflowRunConflictError } from './errors.ts'
+export {
+  StaleWriteFenceError,
+  WorkflowIdempotencyConflictError,
+  WorkflowRunConflictError,
+} from './errors.ts'
 export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
 export type { HandlerRunner, HandlerRunnerOptions } from './handler.ts'
 export { createInMemoryWorkflowRuntime } from '../adapters/in-memory.ts'

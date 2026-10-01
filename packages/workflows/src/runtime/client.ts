@@ -36,6 +36,7 @@ import type { WorkflowWakeEvents } from './wake-events.ts'
 import type {
   WorkflowRuntimeAtomicCompletion,
   WorkflowRuntimeAtomicContinuation,
+  WorkflowRuntimeOperationContext,
 } from './worker.ts'
 import { decodeStoredValue } from './codec.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
@@ -70,6 +71,27 @@ export type WorkflowRuntimeStartOptions<Connection = never> = {
    * postgres-facing code paths run against it unchanged.
    */
   readonly connection?: Connection
+}
+
+export type WorkflowRuntimeCancelOptions<Connection = never> = {
+  /**
+   * Adapter connection already inside the caller's open transaction, as for
+   * `start()`: the cancellation and the wakes it dispatches commit or roll
+   * back with the caller's writes.
+   */
+  readonly connection?: Connection
+}
+
+/**
+ * Runs client operations with the store and executors bound to a connection
+ * already inside the caller's open transaction, under a rollback boundary of
+ * their own.
+ */
+export type WorkflowRuntimeCallerConnection<Connection = never> = {
+  readonly run: <T>(
+    connection: Connection,
+    handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
+  ) => Promise<T>
 }
 
 export type WatchRunOptions = {
@@ -110,6 +132,7 @@ export type WorkflowRuntimeAdapter<Connection = never> = {
   readonly scheduler?: WorkflowScheduler
   readonly wakeEvents?: WorkflowWakeEvents
   readonly atomicStart?: WorkflowRuntimeAtomicStart<Connection>
+  readonly callerConnection?: WorkflowRuntimeCallerConnection<Connection>
   readonly atomicContinuation?: WorkflowRuntimeAtomicContinuation
   readonly atomicCompletion?: WorkflowRuntimeAtomicCompletion
   readonly dispose?: () => Promise<void> | void
@@ -147,7 +170,10 @@ export type WorkflowRuntimeClient<Connection = never> = {
       options?: WorkflowRuntimeStartOptions<Connection>,
     ): Promise<TaskRun<Task>>
   }
-  readonly cancel: (runId: string) => Promise<StoredRun | undefined>
+  readonly cancel: (
+    runId: string,
+    options?: WorkflowRuntimeCancelOptions<Connection>,
+  ) => Promise<StoredRun | undefined>
   readonly deleteRun: (runId: string) => Promise<DeleteRunResult>
   /** Retries failed work in place; callers can fence stale UI requests with the observed version. */
   readonly retry: (
@@ -246,6 +272,25 @@ export function createWorkflowRuntimeClient<Connection = never>(
       }
     }
   }) as WorkflowRuntimeClient<Connection>['start']
+  // Without a connection, operations use the adapter's own; with one, they
+  // run inside the caller's transaction or fail rather than escape it.
+  const withConnection = <T>(
+    connection: Connection | undefined,
+    handler: (runtime: WorkflowRuntimeOperationContext) => Promise<T>,
+  ): Promise<T> => {
+    if (connection === undefined) return handler(input)
+
+    if (!input.callerConnection) {
+      return Promise.reject(
+        new Error(
+          'Workflow runtime adapter does not support caller-provided connections',
+        ),
+      )
+    }
+
+    return input.callerConnection.run(connection, handler)
+  }
+
   const requireScheduler = () => {
     if (!input.scheduler) {
       throw new Error('Workflow runtime adapter does not support schedules')
@@ -257,7 +302,18 @@ export function createWorkflowRuntimeClient<Connection = never>(
     start,
     deleteRun: (runId) => input.store.deleteRun(runId),
     restart: (runId, options) =>
-      restartRun(input.store, definitions, start, runId, options),
+      restartRun(
+        async (runId) => {
+          const [run] = await withConnection(options?.connection, (runtime) =>
+            runtime.store.loadRuns([runId]),
+          )
+          return run
+        },
+        definitions,
+        start,
+        runId,
+        options,
+      ),
     retry: async (runId, options) => {
       const [run] = await input.store.loadRuns([runId])
       if (!run) throw new Error(`Run [${runId}] not found`)
@@ -266,38 +322,10 @@ export function createWorkflowRuntimeClient<Connection = never>(
         expectedVersion: options?.expectedVersion ?? run.version,
       })
     },
-    cancel: async (runId) => {
-      const run = await input.store.requestRunCancellation({ runId })
-      if (!run) return undefined
-      if (isTerminalRunStatus(run.status)) {
-        // A cancelled queued task has no command left to replay its parent
-        // wake, so a cancel whose wake failed is repaired by cancelling again.
-        await wakeParentRun({
-          store: input.store,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          run,
-        })
-        return run
-      }
-      if (run.kind === 'task') {
-        // No coordinator owns task runs: a continuation carries the task
-        // name, which no workflow worker claims, so the run would park in
-        // `cancelling` forever. Settle it here; a worker still holding the
-        // attempt observes the terminal status on its next heartbeat.
-        return await cancelRunAndWakeParent({
-          store: input.store,
-          attemptExecutor: input.attemptExecutor,
-          runCoordinationExecutor: input.runCoordinationExecutor,
-          runId: run.id,
-        })
-      }
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: run.id,
-        workflowName: run.workflowName,
-      })
-      return run
-    },
+    cancel: (runId, options) =>
+      withConnection(options?.connection, (runtime) =>
+        cancelRun(runtime, runId),
+      ),
     get: (runId) => input.store.loadRunSnapshot(runId),
     list: (filter) => input.store.listRuns(filter),
     listSummaries: (filter) => input.store.listRunSummaries(filter),
@@ -322,6 +350,45 @@ export function createWorkflowRuntimeClient<Connection = never>(
         requireScheduler().setEnabled(name, enabled),
     },
   })
+}
+
+async function cancelRun(
+  runtime: WorkflowRuntimeOperationContext,
+  runId: string,
+): Promise<StoredRun | undefined> {
+  const run = await runtime.store.requestRunCancellation({ runId })
+  if (!run) return undefined
+
+  if (isTerminalRunStatus(run.status)) {
+    // A cancelled queued task has no command left to replay its parent
+    // wake, so a cancel whose wake failed is repaired by cancelling again.
+    await wakeParentRun({
+      store: runtime.store,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      run,
+    })
+    return run
+  }
+
+  if (run.kind === 'task') {
+    // No coordinator owns task runs: a continuation carries the task
+    // name, which no workflow worker claims, so the run would park in
+    // `cancelling` forever. Settle it here; a worker still holding the
+    // attempt observes the terminal status on its next heartbeat.
+    return await cancelRunAndWakeParent({
+      store: runtime.store,
+      attemptExecutor: runtime.attemptExecutor,
+      runCoordinationExecutor: runtime.runCoordinationExecutor,
+      runId: run.id,
+    })
+  }
+
+  await runtime.runCoordinationExecutor.enqueue({
+    kind: 'continueRun',
+    runId: run.id,
+    workflowName: run.workflowName,
+  })
+  return run
 }
 
 async function* watchRun(params: {
@@ -504,13 +571,13 @@ function createDefinitionIndex(
 }
 
 async function restartRun<Connection>(
-  store: WorkflowStore,
+  loadRun: (runId: string) => Promise<StoredRun | undefined>,
   definitions: WorkflowDefinitionIndex,
   start: WorkflowRuntimeClient<Connection>['start'],
   runId: string,
   options?: WorkflowRuntimeStartOptions<Connection>,
 ): Promise<RunnableRun> {
-  const [run] = await store.loadRuns([runId])
+  const run = await loadRun(runId)
   if (!run) throw new Error(`Run [${runId}] not found`)
   if (!isTerminalRunStatus(run.status)) {
     throw new Error(`Run [${runId}] is not terminal`)

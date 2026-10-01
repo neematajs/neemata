@@ -16,7 +16,10 @@ import type {
   WorkflowStore,
 } from '../../runtime/store.ts'
 import type { State } from './state.ts'
-import { WorkflowRunConflictError } from '../../runtime/errors.ts'
+import {
+  WorkflowIdempotencyConflictError,
+  WorkflowRunConflictError,
+} from '../../runtime/errors.ts'
 import {
   compareAttempts,
   compareRunsOldest,
@@ -177,7 +180,7 @@ export function createRunWithState(
         return { run: existing, created: false }
       }
 
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      throw new WorkflowIdempotencyConflictError(input.workflowName)
     }
   }
 

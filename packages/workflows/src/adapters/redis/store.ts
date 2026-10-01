@@ -40,6 +40,7 @@ import type { WorkflowRedisClient } from './client.ts'
 import type { FenceCall } from './fence.ts'
 import type { Keys } from './keys.ts'
 import {
+  WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
   toStoredError,
 } from '../../runtime/errors.ts'
@@ -171,7 +172,7 @@ export class StoreRuntime {
       if (runMatchesCreateInput(stored, normalized)) {
         return { run: stored, created: false, startAt: storedStartAt }
       }
-      throw new Error(`Conflicting idempotent run [${input.workflowName}]`)
+      throw new WorkflowIdempotencyConflictError(input.workflowName)
     }
     if (result[0] === 'joined') {
       return { run: stored, created: false, startAt: storedStartAt }

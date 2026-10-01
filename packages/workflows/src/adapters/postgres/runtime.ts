@@ -1,4 +1,7 @@
-import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
+import type {
+  WorkflowRuntimeAdapter,
+  WorkflowRuntimeCallerConnection,
+} from '../../runtime/client.ts'
 import type { WorkflowRuntimeAtomicStart } from '../../runtime/coordinator.ts'
 import type { PruneTerminalRunsParams } from '../../runtime/store.ts'
 import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
@@ -128,6 +131,22 @@ export function createPostgresWorkflowRuntime(params: {
       }),
   }
 
+  const callerConnection: WorkflowRuntimeCallerConnection<WorkflowPostgresConnection> =
+    {
+      run: (connection, handler) =>
+        connection.transaction(async (tx) => {
+          const runtime = createPostgresWorkflowRuntime({
+            connection: tx,
+            maxDeliveries,
+          })
+          return await handler({
+            store: runtime.store,
+            runCoordinationExecutor: runtime.runCoordinationExecutor,
+            attemptExecutor: runtime.attemptExecutor,
+          })
+        }),
+    }
+
   const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
     run: (handler) =>
       db.transaction(async (tx) => {
@@ -182,6 +201,7 @@ export function createPostgresWorkflowRuntime(params: {
     retentionPruner,
     scheduler,
     atomicStart,
+    callerConnection,
     atomicContinuation,
     atomicCompletion,
     connection: db,
