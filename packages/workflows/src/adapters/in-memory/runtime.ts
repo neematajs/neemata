@@ -1,3 +1,4 @@
+import type { WorkflowRuntimeCallerConnection } from '../../runtime/client.ts'
 import type {
   ActivityAttemptCommand,
   ContinueRunCommand,
@@ -43,6 +44,7 @@ export type InMemoryWorkflowRuntime = {
   readonly retentionPruner: WorkflowRetentionPruner
   readonly scheduler: WorkflowScheduler
   readonly atomicStart: WorkflowRuntimeAtomicStart
+  readonly callerConnection: WorkflowRuntimeCallerConnection
   readonly atomicCompletion: WorkflowRuntimeAtomicCompletion
   readonly inspect: () => {
     readonly runs: readonly StoredRun[]
@@ -113,6 +115,12 @@ export function createInMemoryWorkflowRuntime(
     },
   }
 
+  // Ignores the connection for the same reason as atomicStart.
+  const callerConnection: WorkflowRuntimeCallerConnection = {
+    run: (_connection, handler) =>
+      handler({ store, runCoordinationExecutor, attemptExecutor }),
+  }
+
   // Not a transaction: it only fences the attempt settlement by the queue
   // claim, so a worker that was taken over cannot commit its result.
   const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
@@ -172,6 +180,7 @@ export function createInMemoryWorkflowRuntime(
     runCoordinationExecutor,
     attemptExecutor,
     atomicStart,
+    callerConnection,
     atomicCompletion,
     scheduler,
     inspect,

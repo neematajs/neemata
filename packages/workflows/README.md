@@ -558,7 +558,8 @@ batch size. Locked rows remain for a later retention pass.
 An application on Effect SQL (`@effect/sql-pg`, or Drizzle's
 `drizzle-orm/effect-postgres` on top of it) can start a run inside its own
 transaction. `createEffectSqlWorkflowClient` wraps the Postgres client, and its
-`start` and `restart` read the open transaction of the `SqlClient` in context:
+`start`, `restart` and `cancel` read the open transaction of the `SqlClient` in
+context:
 
 ```ts
 import * as Effect from 'effect/Effect'
@@ -583,7 +584,8 @@ const admitTurn = Effect.gen(function* () {
 - Inside a transaction, run creation and dispatch use the caller's session and
   run under a savepoint. They commit or roll back with the caller's writes, and the
   workflow pool lends no session. The returned run is provisional until the caller
-  commits, and wake notifications are delivered only on commit.
+  commits, and wake notifications are delivered only on commit. `cancel` works the
+  same way: the cancellation and the wakes it dispatches commit with the caller.
 - A unique or idempotency-key conflict fails with `WorkflowRunConflictError` or
   `WorkflowIdempotencyConflictError`, and SQL failures fail with `SqlError`. The
   savepoint is rolled back, so the caller's transaction stays usable. Other failures,
@@ -599,7 +601,7 @@ const admitTurn = Effect.gen(function* () {
   is cancelled and fails with a `StatementTimeoutError` reason. The `SAVEPOINT`,
   `ROLLBACK TO` and `RELEASE` statements Effect SQL sends around it are not
   covered.
-- Outside a transaction, both methods behave like the Promise client and use the
+- Outside a transaction, the methods behave like the Promise client and use the
   workflow pool.
 
 This entry point imports `effect/sql`, which Effect still marks unstable. The
