@@ -33,6 +33,7 @@ import {
   verifyPostgresWorkflowSchema,
 } from '@nmtjs/workflows/postgres'
 import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
+import { createEffectSqlWorkflowClient } from '@nmtjs/workflows/postgres/effect'
 import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
 ```
 
@@ -551,6 +552,60 @@ may make progress. Each store call and worker retention interval performs one
 bounded pass. `client.pruneRuns()` repeats those passes in separate transactions
 until neither cleanup fills its batch, including with `statuses: []` or a zero
 batch size. Locked rows remain for a later retention pass.
+
+## Effect SQL Transactions
+
+An application on Effect SQL (`@effect/sql-pg`, or Drizzle's
+`drizzle-orm/effect-postgres` on top of it) can start a run inside its own
+transaction. `createEffectSqlWorkflowClient` wraps the Postgres client, and its
+`start` and `restart` read the open transaction of the `SqlClient` in context:
+
+```ts
+import * as Effect from 'effect/Effect'
+import * as SqlClient from 'effect/sql/SqlClient'
+import { createEffectSqlWorkflowClient } from '@nmtjs/workflows/postgres/effect'
+
+const workflows = createEffectSqlWorkflowClient(client, {
+  answerTimeoutMs: 5_000,
+})
+
+const admitTurn = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      yield* sql`INSERT INTO messages ${sql.insert(message)}`
+      return yield* workflows.start(chatTurn, { messageId: message.id })
+    }),
+  )
+})
+```
+
+- Inside a transaction, run creation and dispatch use the caller's session and
+  run under a savepoint. They commit or roll back with the caller's writes, and the
+  workflow pool lends no session. The returned run is provisional until the caller
+  commits, and wake notifications are delivered only on commit.
+- A unique or idempotency-key conflict fails with `WorkflowRunConflictError` or
+  `WorkflowIdempotencyConflictError`, and SQL failures fail with `SqlError`. The
+  savepoint is rolled back, so the caller's transaction stays usable. Other failures,
+  such as input that does not match its schema, are defects.
+- The savepoint is Effect SQL's own nested `withTransaction`, so concurrent starts
+  in one transaction take turns with each other and with the caller's other nested
+  transactions. As with any nested `withTransaction`, a start still waiting for its
+  turn is interrupted only once it gets the turn.
+- Interrupting a start cancels its statement in flight on the server, and the
+  interruption completes once the start has unwound and its savepoint is rolled
+  back. The caller's transaction stays usable.
+- `answerTimeoutMs` bounds each statement of the start. A statement that misses it
+  is cancelled and fails with a `StatementTimeoutError` reason. The `SAVEPOINT`,
+  `ROLLBACK TO` and `RELEASE` statements Effect SQL sends around it are not
+  covered.
+- Outside a transaction, both methods behave like the Promise client and use the
+  workflow pool.
+
+This entry point imports `effect/sql`, which Effect still marks unstable. The
+adapter's SQL runs through the caller's `SqlClient` with its row transforms
+off. `@effect/sql-pg` decodes `timestamptz` to `Date` and `jsonb` to values, both of
+which the adapter reads.
 
 ## Wake Events (LISTEN/NOTIFY)
 

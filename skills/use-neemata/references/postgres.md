@@ -89,6 +89,14 @@ transaction: a new `BEGIN` / `COMMIT` would not preserve the caller's boundary.
 The in-memory adapter ignores a passed connection so PostgreSQL-facing code
 runs unchanged in tests.
 
+Effect SQL applications (`@effect/sql-pg`, Drizzle `effect-postgres`) wrap the
+client with `createEffectSqlWorkflowClient(client, { answerTimeoutMs })` from
+`@nmtjs/workflows/postgres/effect`. Its `start` and `restart` require
+`SqlClient`, join an open `sql.withTransaction` through a savepoint on the
+caller's session, and fail conflicts with `WorkflowRunConflictError` /
+`WorkflowIdempotencyConflictError` while the transaction stays usable. Outside a
+transaction they use the workflow pool like the Promise client.
+
 ## Timestamps and runtime options
 
 Runtime timestamps are Unix milliseconds, including options and returned records.

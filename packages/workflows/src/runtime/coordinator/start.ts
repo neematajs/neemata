@@ -79,6 +79,14 @@ export type WorkflowRuntimeAtomicStart<Connection = never> = {
     readonly startAt?: Timestamp
     readonly connection?: Connection
   }) => Promise<StoredRun>
+  /**
+   * Reads a run through the caller's connection, so `restart()` inside the
+   * caller's transaction borrows no other session.
+   */
+  readonly loadRun?: (input: {
+    readonly runId: string
+    readonly connection: Connection
+  }) => Promise<StoredRun | undefined>
 }
 
 export async function startWorkflowRun<

@@ -408,6 +408,9 @@ importers:
         specifier: ^5.6.1
         version: 5.6.1
     devDependencies:
+      '@effect/sql-pg':
+        specifier: ^4.0.0
+        version: 4.0.0(effect@4.0.0)
       '@electric-sql/pglite':
         specifier: ^0.5.3
         version: 0.5.3
@@ -419,16 +422,16 @@ importers:
         version: 1.0.0-rc.4
       drizzle-orm:
         specifier: 1.0.0-rc.4
-        version: 1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3)
+        version: 1.0.0-rc.4(@effect/sql-pg@4.0.0(effect@4.0.0))(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3)
       effect:
         specifier: ^4.0.0
         version: 4.0.0
       ioredis:
         specifier: ^5.11.1
-        version: 5.11.1
+        version: 5.11.1(supports-color@10.2.2)
       iovalkey:
         specifier: ^0.3.3
-        version: 0.3.3
+        version: 0.3.3(supports-color@10.2.2)
       pg:
         specifier: ^8.22.0
         version: 8.22.0
@@ -662,6 +665,11 @@ packages:
     peerDependencies:
       effect: ^4.0.0
       redis: '>=5.0.0 <7.0.0'
+
+  '@effect/sql-pg@4.0.0':
+    resolution: {integrity: sha512-w0sRMA08Tgz73aReYpFSxD+nz2LUKYhH/4zaRpo4G5b5YG+eqiAL7XYhqIjvGZ8MZacazbG71Jhprv6ccz9HDg==}
+    peerDependencies:
+      effect: ^4.0.0
 
   '@electric-sql/pglite@0.5.3':
     resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
@@ -3353,11 +3361,6 @@ packages:
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
-    peerDependencies:
-      ajv: ^8.0.0
-    peerDependenciesMeta:
-      ajv:
-        optional: true
 
   ajv@6.15.0:
     resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
@@ -7836,6 +7839,10 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
+  '@effect/sql-pg@4.0.0(effect@4.0.0)':
+    dependencies:
+      effect: 4.0.0
+
   '@electric-sql/pglite@0.5.3': {}
 
   '@emnapi/core@1.10.0':
@@ -8318,7 +8325,7 @@ snapshots:
     dependencies:
       '@napi-rs/lzma': 1.5.1
       '@napi-rs/tar': 1.1.1
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -10753,6 +10760,12 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
+  debug@4.4.3(supports-color@10.2.2):
+    dependencies:
+      ms: 2.1.3
+    optionalDependencies:
+      supports-color: 10.2.2
+
   deepmerge@4.3.1: {}
 
   default-browser-id@5.0.1: {}
@@ -10844,8 +10857,9 @@ snapshots:
       get-tsconfig: 4.14.0
       jiti: 2.7.0
 
-  drizzle-orm@1.0.0-rc.4(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3):
+  drizzle-orm@1.0.0-rc.4(@effect/sql-pg@4.0.0(effect@4.0.0))(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.0)(pg@8.22.0)(valibot@1.4.2(typescript@7.0.1-rc))(zod@4.4.3):
     optionalDependencies:
+      '@effect/sql-pg': 4.0.0(effect@4.0.0)
       '@electric-sql/pglite': 0.5.3
       '@opentelemetry/api': 1.9.0
       '@types/pg': 8.20.0
@@ -11626,11 +11640,37 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
+  ioredis@5.11.1(supports-color@10.2.2):
+    dependencies:
+      '@ioredis/commands': 1.10.0
+      cluster-key-slot: 1.1.1
+      debug: 4.4.3(supports-color@10.2.2)
+      denque: 2.1.0
+      redis-errors: 1.2.0
+      redis-parser: 3.0.0
+      standard-as-callback: 2.1.0
+    transitivePeerDependencies:
+      - supports-color
+
   iovalkey@0.3.3:
     dependencies:
       '@iovalkey/commands': 0.1.0
       cluster-key-slot: 1.1.2
       debug: 4.4.3
+      denque: 2.1.0
+      lodash.defaults: 4.2.0
+      lodash.isarguments: 3.1.0
+      redis-errors: 1.2.0
+      redis-parser: 3.0.0
+      standard-as-callback: 2.1.0
+    transitivePeerDependencies:
+      - supports-color
+
+  iovalkey@0.3.3(supports-color@10.2.2):
+    dependencies:
+      '@iovalkey/commands': 0.1.0
+      cluster-key-slot: 1.1.2
+      debug: 4.4.3(supports-color@10.2.2)
       denque: 2.1.0
       lodash.defaults: 4.2.0
       lodash.isarguments: 3.1.0

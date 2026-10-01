@@ -126,6 +126,13 @@ export function createPostgresWorkflowRuntime(params: {
         )
         return started
       }),
+    loadRun: async ({ runId, connection }) => {
+      const [run] = await createPostgresWorkflowStore({
+        db: connection,
+        ready,
+      }).loadRuns([runId])
+      return run
+    },
   }
 
   const atomicCompletion: WorkflowRuntimeAtomicCompletion = {

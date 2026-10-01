@@ -257,7 +257,20 @@ export function createWorkflowRuntimeClient<Connection = never>(
     start,
     deleteRun: (runId) => input.store.deleteRun(runId),
     restart: (runId, options) =>
-      restartRun(input.store, definitions, start, runId, options),
+      restartRun(
+        async (runId) => {
+          const connection = options?.connection
+          if (connection !== undefined && input.atomicStart?.loadRun) {
+            return await input.atomicStart.loadRun({ runId, connection })
+          }
+          const [run] = await input.store.loadRuns([runId])
+          return run
+        },
+        definitions,
+        start,
+        runId,
+        options,
+      ),
     retry: async (runId, options) => {
       const [run] = await input.store.loadRuns([runId])
       if (!run) throw new Error(`Run [${runId}] not found`)
@@ -504,13 +517,13 @@ function createDefinitionIndex(
 }
 
 async function restartRun<Connection>(
-  store: WorkflowStore,
+  loadRun: (runId: string) => Promise<StoredRun | undefined>,
   definitions: WorkflowDefinitionIndex,
   start: WorkflowRuntimeClient<Connection>['start'],
   runId: string,
   options?: WorkflowRuntimeStartOptions<Connection>,
 ): Promise<RunnableRun> {
-  const [run] = await store.loadRuns([runId])
+  const run = await loadRun(runId)
   if (!run) throw new Error(`Run [${runId}] not found`)
   if (!isTerminalRunStatus(run.status)) {
     throw new Error(`Run [${runId}] is not terminal`)
