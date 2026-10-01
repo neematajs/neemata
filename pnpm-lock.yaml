@@ -253,6 +253,9 @@ importers:
       '@electric-sql/pglite':
         specifier: ^0.5.3
         version: 0.5.3
+      '@nmtjs/proxy':
+        specifier: 1.0.0-beta.10
+        version: 1.0.0-beta.10
       '@types/pg':
         specifier: ^8.20.0
         version: 8.20.0
