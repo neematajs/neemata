@@ -131,9 +131,10 @@ describe('worker startup cleanup deadline', () => {
       workflows: () => [workflowImpl],
       schedules: () => [schedule],
       runtime: Effect.sync(() => ({ ...adapter.runtime, dispose: () => {} })),
-      layer: Layer.effectDiscard(
-        Effect.addFinalizer(() => Effect.promise(() => released.promise)),
-      ),
+      layer: () =>
+        Layer.effectDiscard(
+          Effect.addFinalizer(() => Effect.promise(() => released.promise)),
+        ),
     })
     const { runtime, close } = await createCoordinator(worker)
 
@@ -232,11 +233,12 @@ describe('worker startup settings validation', () => {
         acquired++
         return createInMemoryWorkflowRuntime()
       }),
-      layer: Layer.effectDiscard(
-        Effect.sync(() => {
-          acquired++
-        }),
-      ),
+      layer: () =>
+        Layer.effectDiscard(
+          Effect.sync(() => {
+            acquired++
+          }),
+        ),
     })
     const { runtime, close } = await createCoordinator(worker, invalid)
 

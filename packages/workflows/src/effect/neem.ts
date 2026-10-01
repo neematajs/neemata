@@ -1,3 +1,4 @@
+import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import type * as Scope from 'effect/Scope'
 import { createFuture } from '@nmtjs/common'
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -33,9 +34,19 @@ export type WorkflowsRuntime<R = never> = Effect.Effect<
   R | Scope.Scope
 >
 
+/**
+ * Builds the Layer once per runtime start, after registry validation; each
+ * development reload calls it again in the same thread. `ctx.logger` is Neem's
+ * worker logger, which Neem flushes on stop, and `ctx.data` names the role and
+ * pool.
+ */
+export type WorkflowsLayer<R> = (
+  ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>,
+) => Layer.Layer<R, unknown>
+
 type WorkflowServices<R> = [Exclude<R, Scope.Scope>] extends [never]
-  ? { readonly layer?: Layer.Layer<never, unknown> }
-  : { readonly layer: Layer.Layer<Exclude<R, Scope.Scope>, unknown> }
+  ? { readonly layer?: WorkflowsLayer<never> }
+  : { readonly layer: WorkflowsLayer<Exclude<R, Scope.Scope>> }
 
 /** What a worker thread serves, the adapter, and the Layer its handlers require. */
 export type WorkflowsWorkerDefinition<
@@ -144,7 +155,7 @@ export function defineWorkflowsWorker<
         })
         // The typed services check coverage; the registry erases the distinct
         // requirements of its handlers and adapter factory here.
-        const layer = (definition.layer ?? Layer.empty) as Layer.Layer<
+        const layer = (definition.layer?.(ctx) ?? Layer.empty) as Layer.Layer<
           any,
           unknown
         >
