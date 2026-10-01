@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/vite",
-  "version": "0.18.0-alpha.3",
+  "version": "0.18.0-alpha.4",
   "description": "Neem runtime preset for hosting Vite-powered apps.",
   "type": "module",
   "repository": {
