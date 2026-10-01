@@ -90,7 +90,7 @@ interface PubSubAdapter {
 
 ## Effect
 
-`@nmtjs/pubsub/effect` needs the optional `effect` peer, pinned to `4.0.0-rc.116`.
+`@nmtjs/pubsub/effect` needs the optional `effect` peer (`^4.0.0`).
 Its `defineChannel` takes `effect/Schema` schemas, published through their JSON
 encoding, and returns an ordinary channel. The `PubSub` service publishes with an
 Effect. `subscribe` is a scoped Effect that completes once the broker subscription

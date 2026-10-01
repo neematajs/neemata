@@ -138,7 +138,7 @@ separate hard [5,000 ms thread deadline](cli.md#start-failure-and-shutdown).
 Use `defineWorkflowsWorker` from `@nmtjs/workflows/effect/neem`, with the same
 runtime declaration helper and planner from `@nmtjs/workflows/neem`.
 Effect task/workflow implementations come from `@nmtjs/workflows/effect`.
-Install the exact optional peer `effect@4.0.0-rc.116` when using this API.
+Install the optional peer `effect@^4.0.0` when using this API.
 
 This worker takes `{ workflows, tasks?, schedules?, runtime, layer? }`, not
 Promise `setup`/`env`/`dispose`:

@@ -16,8 +16,8 @@ RPC/HTTP APIs and dependency wiring.
   `@nmtjs/pubsub/effect`.
 - Neem workers import from `@nmtjs/workflows/neem` or
   `@nmtjs/workflows/effect/neem`.
-- Effect adapters require the optional `effect` peer exactly
-  `4.0.0-rc.116`. Core workflow and pubsub APIs are Effect-free.
+- Effect adapters require the optional `effect` peer
+  `^4.0.0`. Core workflow and pubsub APIs are Effect-free.
 - Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
   running Neem itself is covered by the `use-neem` skill.
 

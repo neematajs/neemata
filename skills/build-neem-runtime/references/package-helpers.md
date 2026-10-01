@@ -161,7 +161,7 @@ One supervised fiber owns the scoped main and provided Layer. `stop()`
 interrupts and joins it, including finalizers; `finished` reflects its exit.
 Pre-readiness failure rejects start; post-readiness failure reaches Neem via
 `finished`. Background work must be composed into main or explicitly
-supervised. The preset pins its `effect` peer to `4.0.0-rc.116` and does not
+supervised. The preset requires the `effect@^4.0.0` peer and does not
 bridge Effect logging into `ctx.logger` automatically.
 
 ## Applying these patterns

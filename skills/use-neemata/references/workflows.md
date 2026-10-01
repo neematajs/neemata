@@ -14,8 +14,8 @@ Use package subpaths, not an umbrella `nmtjs` import:
 - `@nmtjs/workflows/runtime`: `createWorkflowRuntimeClient`,
   `createInMemoryWorkflowRuntime`, worker loops, handler runner and adapter types.
 - `@nmtjs/workflows/effect`: Effect contract/implementation builders, handler
-  runtime and worker wrappers; optional peer `effect` is exactly
-  `4.0.0-rc.116`.
+  runtime and worker wrappers; optional peer `effect` is
+  `^4.0.0`.
 - `@nmtjs/workflows/postgres`, `/postgres/drizzle`, `/postgres/testing`:
   see [PostgreSQL](postgres.md) for clients, migrations and ownership.
 - `@nmtjs/workflows/redis`: `createRedisWorkflowRuntime`,
