@@ -511,6 +511,23 @@ for _, id in ipairs(ids) do
 end
 return result
 `,
+  listUnserved: `
+${QUEUE_CLEANUP}
+-- Read-only. Only the item hash also holds claimed commands, whose lease may
+-- have expired with nobody left to reclaim them; its scan cursor covers every
+-- command present throughout, in about COUNT entries per page.
+local scan = redis.call('HSCAN', KEYS[1], ARGV[1], 'COUNT', ARGV[2])
+local result = { scan[1] }
+local entries = scan[2]
+for index = 1, #entries, 2 do
+  local item = cjson.decode(entries[index + 1])
+  if not item.deadAt and not orphaned(item, ARGV[3]) and not unmapped(item, ARGV[3]) then
+    table.insert(result, item.payload.workflowName)
+    table.insert(result, tostring(item.leaseExpiresAt or item.runAtScore or item.createdAtScore))
+  end
+end
+return result
+`,
   pruneDead: `
 ${QUEUE_CLEANUP}
 -- An unreaped dead command is the only thing left that can settle its run, so

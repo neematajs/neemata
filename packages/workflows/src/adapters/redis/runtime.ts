@@ -139,6 +139,7 @@ export function createRedisWorkflowRuntime(
       claim: (worker) => continueQueue.claim(worker, worker.leaseMs),
       ack: (command) => continueQueue.ack(command),
       release: (command, options) => continueQueue.release(command, options),
+      listUnserved: (query) => continueQueue.listUnserved(query),
     }
   const attemptExecutor: RedisWorkflowRuntime['attemptExecutor'] = {
     dispatchActivity: (command, options) =>

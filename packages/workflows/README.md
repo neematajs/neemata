@@ -178,6 +178,19 @@ Share one definition module between a reference and its implementation. An
 implementation listed more than once is deduplicated. `ctx.data` names the thread's role and pool, for a `setup` that
 needs different resources per pool.
 
+Startup cannot see runs started by name, such as a `client.start` from another
+deployment. A run of a workflow that no coordinator implements is never claimed
+and stays `queued`; neither is one whose only serving coordinator crashed while
+holding it. Every five minutes, coordinators inspect the next page of up to
+1000 queued runs and log one warning per workflow they do not implement whose
+runs have been claimable for over five minutes: since due, or since the lease
+expired. Pages resume where the last one ended, so a large queue takes several
+checks to cover. The runs are left alone, since another deployment may still
+serve them. A standalone coordinator reports them to
+`serveWorkflowWorker({ onWarning })` and runs no check without it;
+`unservedWorkflows` takes `everyMs` and `afterMs`, or `false`. A one-shot
+`runWorkflowWorker` drain never checks.
+
 On stop the worker stops claiming, aborts attempts, joins the loops, waits for
 every handler to settle, and only then disposes the adapter and calls `dispose`.
 A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem

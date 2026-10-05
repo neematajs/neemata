@@ -37,6 +37,9 @@ export type {
   AttemptExecutor,
   CommandReleaseOptions,
   RunCoordinationExecutor,
+  UnservedWorkflow,
+  UnservedWorkflowPage,
+  UnservedWorkflowQuery,
 } from './executors.ts'
 export {
   StaleWriteFenceError,
@@ -145,11 +148,13 @@ export type {
   RunExecutionWorkerInput,
   RunTaskAttemptInput,
   RunWorkflowWorkerInput,
+  UnservedWorkflowWarning,
   WorkerHandlers,
   WorkerLoopOptions,
   WorkerLoopResult,
   WorkerRetentionOptions,
   WorkerSchedulingOptions,
+  WorkerUnservedWorkflowsOptions,
   WorkerCommandResult,
   WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeAtomicCompletion,
