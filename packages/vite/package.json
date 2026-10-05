@@ -63,7 +63,7 @@
   "devDependencies": {
     "@types/node": "^24.13.2",
     "rolldown": "catalog:",
-    "vite": "catalog:"
+    "vite": "^8.3.2"
   },
   "files": [
     "dist",
