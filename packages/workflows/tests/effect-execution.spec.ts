@@ -5,7 +5,7 @@ import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
-import { pino } from 'pino'
+import { pino, type Logger } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -313,7 +313,7 @@ it.each([false, true])(
     }
     const worker = defineWorkflowsWorker({
       ...config,
-      layer,
+      layer: () => layer,
       runtime: Effect.succeed(adapter),
     })
     const channel = new MessageChannel()
@@ -378,7 +378,7 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   )
   const worker = defineWorkflowsWorker({
     workflows: () => [],
-    layer,
+    layer: () => layer,
     runtime: Effect.sync(createInMemoryWorkflowRuntime),
   })
   const channel = new MessageChannel()
@@ -406,6 +406,67 @@ it('keeps the cleanup deadline armed through Layer disposal', async () => {
   } finally {
     release.resolve()
     await stopping
+    channel.port1.close()
+    channel.port2.close()
+  }
+})
+
+it('builds the Layer from the worker context so services log through Neem', async () => {
+  const logs = Context.Service<{ info: (message: string) => void }>('test-logs')
+  const logged = Promise.withResolvers<void>()
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) =>
+      Effect.gen(function* () {
+        const log = yield* logs
+        log.info(`handled ${input}`)
+        logged.resolve()
+        return input
+      }),
+  })
+  const adapter = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(adapter).start(task, 3)
+  const layer = vi.fn((ctx: { logger: Logger }) =>
+    Layer.succeed(logs, { info: (message) => ctx.logger.info(message) }),
+  )
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    layer,
+    runtime: Effect.succeed(adapter),
+  })
+  const logger = pino({ enabled: false })
+  const info = vi.spyOn(logger, 'info')
+  const channel = new MessageChannel()
+  // A development reload creates and starts another runtime in the same thread.
+  const create = () =>
+    worker.createRuntime({
+      mode: 'development',
+      name: 'logging',
+      data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+      definition: worker.definition,
+      logger,
+      port: channel.port1,
+    })
+  try {
+    const first = await create()
+    try {
+      expect(layer).not.toHaveBeenCalled()
+      await first.start()
+      await logged.promise
+      expect(info).toHaveBeenCalledWith('handled 3')
+      expect(layer).toHaveBeenCalledOnce()
+    } finally {
+      await first.stop()
+    }
+    const reloaded = await create()
+    try {
+      await reloaded.start()
+      expect(layer).toHaveBeenCalledTimes(2)
+    } finally {
+      await reloaded.stop()
+    }
+  } finally {
     channel.port1.close()
     channel.port2.close()
   }

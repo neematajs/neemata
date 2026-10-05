@@ -622,7 +622,7 @@ describe('workflows Neem integration', () => {
     const worker = defineWorkflowsWorker({
       ...config,
       runtime: Effect.sync(() => runtimeAdapter),
-      layer: services,
+      layer: () => services,
     })
     const runtimes = await Promise.all(
       (['coordinator', 'execution'] as const).map(async (role) => {
