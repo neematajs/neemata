@@ -5,31 +5,13 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  rolldown: ^1.2.11
-  vite: 8.0.11
+  rolldown: ^1.2.12
   zod: ^4.4.3
+
+# 3 days, in minutes.
+minimumReleaseAge: 4320
 
 minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  - '@rolldown/binding-android-arm-eabi@1.2.11'
-  - '@rolldown/binding-android-arm64@1.2.11'
-  - '@rolldown/binding-darwin-arm64@1.2.11'
-  - '@rolldown/binding-darwin-x64@1.2.11'
-  - '@rolldown/binding-freebsd-x64@1.2.11'
-  - '@rolldown/binding-linux-arm-gnueabihf@1.2.11'
-  - '@rolldown/binding-linux-arm64-gnu@1.2.11'
-  - '@rolldown/binding-linux-arm64-musl@1.2.11'
-  - '@rolldown/binding-linux-ppc64-gnu@1.2.11'
-  - '@rolldown/binding-linux-s390x-gnu@1.2.11'
-  - '@rolldown/binding-linux-x64-gnu@1.2.11'
-  - '@rolldown/binding-linux-x64-musl@1.2.11'
-  - '@rolldown/binding-openharmony-arm64@1.2.11'
-  - '@rolldown/binding-win32-arm64-msvc@1.2.11'
-  - '@rolldown/binding-win32-x64-msvc@1.2.11'
-  - rolldown@1.2.11
-  - '@effect/platform-node-shared@4.0.0'
-  - '@effect/platform-node@4.0.0'
-  - effect@4.0.0
-  - '@effect/sql-pg@4.0.0'
