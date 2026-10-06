@@ -174,13 +174,18 @@ export function createRunWithState(
 
   if (input.idempotencyKey) {
     const existingRunId = runIdempotencyKeys.get(valueKey(input.idempotencyKey))
-    if (existingRunId) {
-      const existing = runs.get(existingRunId)
-      if (existing && runMatchesCreateInput(existing, input)) {
+    const existing =
+      existingRunId === undefined ? undefined : runs.get(existingRunId)
+    if (existing) {
+      if (runMatchesCreateInput(existing, input)) {
         return { run: existing, created: false }
       }
-
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+      throw new WorkflowIdempotencyConflictError({
+        runId: existing.id,
+        status: existing.status,
+        key: input.idempotencyKey,
+        runnableName: runnableName(input),
+      })
     }
   }
 

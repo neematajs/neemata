@@ -699,6 +699,22 @@ installed schema does not match the runtime. The helper
 `@nmtjs/workflows/postgres/testing` for tests and local development only, not
 production migrations.
 
+## Idempotency and uniqueness
+
+`idempotencyKey` makes a retried request safe: a start whose key is already held
+returns the stored run, provided it targets the same workflow or task with a
+deep-equal input. Anything else throws `WorkflowIdempotencyConflictError` (from
+`@nmtjs/workflows/runtime`) with the holder's `runId` and `status`, which maps
+naturally to an HTTP 409. Keep per-request values such as `queuedAt` timestamps
+out of keyed input, or a retry carrying a fresh value becomes a conflict.
+
+When a key should allow at most one run whatever the input, use
+`unique: { key, behavior: 'join' }` instead: it returns the run holding the key
+without comparing inputs. The key is held while the run is active, or with
+`scope: 'all'` for as long as the run is retained: pruning or deleting it, or
+Redis terminal-family retention expiring it, releases the key. The default
+`behavior: 'reject'` throws `WorkflowRunConflictError`.
+
 ## Retrying failed work
 
 `client.retry(runId, { expectedVersion })` reopens a failed root run in place.

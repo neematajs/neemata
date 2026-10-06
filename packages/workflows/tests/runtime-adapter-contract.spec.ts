@@ -23,6 +23,7 @@ import {
 import {
   createWorkflowRuntimeClient,
   StaleWriteFenceError,
+  WorkflowIdempotencyConflictError,
   type WorkflowRuntimeAdapter,
   type WorkflowStore,
   type WriteFence,
@@ -365,6 +366,52 @@ function workflowRuntimeAdapterContract(
         expect(claimed?.id).toMatch(uuidPattern)
         expect(claimed?.command.attemptId).toMatch(uuidPattern)
         expect(claimed?.command.leaseToken).toMatch(uuidPattern)
+      }
+    })
+
+    it('rejects keyed starts whose input differs from the key holder', async () => {
+      const workflow = defineWorkflow({
+        name: 'adapter-keyed-workflow',
+        input: Schema.Struct({ queuedAt: Schema.Number }),
+        output: Schema.Struct({ caseId: Schema.String }),
+      }).build()
+      const task = defineTask({
+        name: 'adapter-keyed-task',
+        input: Schema.Struct({ queuedAt: Schema.Number }),
+        output: Schema.Struct({ id: Schema.String }),
+      })
+      const runtime = await createRuntime()
+      const client = createWorkflowRuntimeClient(runtime)
+
+      const starts = [
+        [
+          workflow.name,
+          (queuedAt: number, idempotencyKey: readonly unknown[]) =>
+            client.start(workflow, { queuedAt }, { idempotencyKey }),
+        ],
+        [
+          task.name,
+          (queuedAt: number, idempotencyKey: readonly unknown[]) =>
+            client.start(task, { queuedAt }, { idempotencyKey }),
+        ],
+      ] as const
+      for (const [runnableName, start] of starts) {
+        const idempotencyKey = ['keyed', runnableName]
+        const first = await start(1, idempotencyKey)
+        const retried = await start(1, idempotencyKey)
+        expect(retried.id).toBe(first.id)
+
+        const conflict = await start(2, idempotencyKey).then(
+          () => undefined,
+          (error) => error,
+        )
+        expect(conflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+        expect(conflict).toMatchObject({
+          runId: first.id,
+          status: 'queued',
+          key: idempotencyKey,
+          runnableName,
+        })
       }
     })
 
@@ -2298,24 +2345,43 @@ function workflowRuntimeAdapterContract(
 
       expect(sameStableKeyed.id).toBe(stableKeyed.id)
 
-      await expect(
-        runtime.store.createRun({
+      const inputConflict = await runtime.store
+        .createRun({
           kind: 'workflow',
           workflowName: 'idempotent-workflow',
           input: { scenario: 'beta' },
           idempotencyKey: ['workflow', 'alpha'],
-        }),
-      ).rejects.toThrow('Conflicting idempotent run')
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(inputConflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(inputConflict).toMatchObject({
+        runId: run.id,
+        status: 'queued',
+        key: ['workflow', 'alpha'],
+        runnableName: 'idempotent-workflow',
+      })
 
-      await expect(
-        runtime.store.createRun({
+      const targetConflict = await runtime.store
+        .createRun({
           kind: 'task',
           workflowName: 'idempotent-task',
           taskName: 'idempotent-task',
           input: { scenario: 'alpha' },
           idempotencyKey: ['workflow', 'alpha'],
-        }),
-      ).rejects.toThrow('Conflicting idempotent run')
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(targetConflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(targetConflict).toMatchObject({
+        runId: run.id,
+        key: ['workflow', 'alpha'],
+        runnableName: 'idempotent-task',
+      })
     })
 
     it('ignores stale completions and terminal state rewrites', async () => {
@@ -2925,6 +2991,75 @@ function workflowRuntimeAdapterContract(
           idempotencyKey: ['child', 'different-logical-operation'],
         }),
       ).rejects.toThrow('Conflicting child run')
+    })
+
+    it('rejects a sibling child start reusing an idempotency key with different input', async () => {
+      const runtime = await createRuntime()
+      const parent = await runtime.store.createRun({
+        workflowName: 'keyed-children-parent',
+        input: {},
+      })
+      await runtime.store.createNode({
+        runId: parent.id,
+        name: 'children',
+        kind: 'parallel',
+      })
+      await runtime.store.ensureNodeChildren({
+        runId: parent.id,
+        nodeName: 'children',
+        children: [
+          { childKey: 'first', kind: 'workflow' },
+          { childKey: 'second', kind: 'workflow' },
+        ],
+      })
+      const childParams = {
+        runId: parent.id,
+        nodeName: 'children',
+        childKind: 'workflow' as const,
+        childName: 'keyed-child',
+        rootRunId: parent.rootRunId,
+        idempotencyKey: ['keyed-child', 1],
+      }
+      const first = await runtime.store.ensureChildRun({
+        ...childParams,
+        childKey: 'first',
+        input: { value: 'alpha' },
+      })
+
+      const conflict = await runtime.store
+        .ensureChildRun({
+          ...childParams,
+          childKey: 'second',
+          input: { value: 'beta' },
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(conflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(conflict).toMatchObject({
+        runId: first.childRun.id,
+        status: 'queued',
+        key: ['keyed-child', 1],
+        runnableName: 'keyed-child',
+      })
+
+      // Replaying a linked child with other data is a replay mismatch, not a
+      // key conflict.
+      const replay = await runtime.store
+        .ensureChildRun({
+          ...childParams,
+          childKey: 'first',
+          input: { value: 'beta' },
+        })
+        .then(
+          () => undefined,
+          (error) => error,
+        )
+      expect(replay).not.toBeInstanceOf(WorkflowIdempotencyConflictError)
+      expect(replay).toMatchObject({
+        message: expect.stringContaining('Conflicting child run'),
+      })
     })
 
     it('creates one successor for an attempt, however many workers retry it', async () => {
