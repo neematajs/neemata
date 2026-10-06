@@ -16,10 +16,17 @@ import {
   createPostgresWorkflowRuntime,
   verifyPostgresWorkflowSchema,
   WORKFLOW_POSTGRES_SCHEMA_MANIFEST,
+  type WorkflowPostgresConnection,
 } from '../../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
 import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
-import { postgresTarget, requireServiceEnv, wait } from './helpers.ts'
+import {
+  createStallingProxy,
+  postgresTarget,
+  requireServiceEnv,
+  type StallingProxy,
+  wait,
+} from './helpers.ts'
 
 requireServiceEnv(postgresTarget)
 
@@ -133,6 +140,221 @@ describe.skipIf(!postgresTarget.url)(
       expect(await count('sample', `id = ${sampleId}`)).toBe(0)
       await isolated.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
       expect(await count('sample', `id = ${sampleId}`)).toBe(1)
+    })
+
+    // A one-session pool behind a proxy that can stop forwarding.
+    async function createStallingPool(options: pg.PoolConfig = {}) {
+      const proxy = await createStallingProxy(postgresTarget.url!)
+      closers.push(() => proxy.close())
+      const stalling = new pg.Pool({
+        ...sessionOptions('transactions-unanswered'),
+        connectionString: proxy.url,
+        max: 1,
+        idleTimeoutMillis: 0,
+        ...options,
+      })
+      closers.push(() => stalling.end())
+      const sessions: pg.Client[] = []
+      stalling.on('connect', (session) => {
+        sessions.push(session as unknown as pg.Client)
+      })
+      return { proxy, stalling, sessions }
+    }
+
+    const pid = async (connection: WorkflowPostgresConnection) =>
+      (
+        await connection.query<{ pid: number }>(
+          'SELECT pg_backend_pid() AS pid',
+        )
+      ).rows[0]!.pid
+
+    const stallingRuns = [
+      [
+        'a transaction',
+        (
+          connection: WorkflowPostgresConnection,
+          proxy: StallingProxy,
+          sampleId: number,
+        ) =>
+          connection.transaction(async (tx) => {
+            await tx.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+            proxy.stall()
+            await tx.query('SELECT 1')
+          }),
+      ],
+      [
+        'a top-level statement',
+        (connection: WorkflowPostgresConnection, proxy: StallingProxy) => {
+          proxy.stall()
+          return connection.query('SELECT 1')
+        },
+      ],
+    ] as const
+
+    const answerDeadline = {
+      bound: 'the answer deadline',
+      poolOptions: {},
+      connectionOptions: { answerTimeoutMs: 1_000 },
+      message: 'did not answer',
+    }
+    // The driver's read timeout fails the statement first but leaves it in
+    // flight on the session.
+    const driverTimeout = {
+      bound: "the driver's earlier read timeout",
+      poolOptions: { query_timeout: 1_000 },
+      connectionOptions: { answerTimeoutMs: 60_000 },
+      message: 'Query read timeout',
+    }
+
+    it.each(
+      stallingRuns.flatMap(([name, run]) =>
+        [answerDeadline, driverTimeout].map(
+          (bound) => [name, bound.bound, run, bound] as const,
+        ),
+      ),
+    )(
+      'fails %s the server stops answering at %s and discards its session',
+      async (
+        _name,
+        _bound,
+        run,
+        { poolOptions, connectionOptions, message },
+      ) => {
+        const sampleId = Math.floor(Math.random() * 2 ** 31)
+        const { proxy, stalling, sessions } =
+          await createStallingPool(poolOptions)
+        const connection = createPostgresWorkflowConnection(
+          stalling,
+          connectionOptions,
+        )
+
+        // Only the deadlines' timers, faked for every statement of the test:
+        // the sockets stay real, and a healthy statement cannot miss a
+        // deadline that time reaches only once the proxy dropped one.
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+        try {
+          const before = await pid(connection)
+          const failed = run(connection, proxy, sampleId).catch(
+            (error: unknown) => error,
+          )
+          await proxy.swallowed
+          await vi.advanceTimersByTimeAsync(1_000)
+          expect(await failed).toMatchObject({
+            message: expect.stringContaining(message),
+          })
+
+          expect(sessions).toHaveLength(1)
+          expect(sessions[0]!.connection.stream.destroyed).toBe(true)
+          expect(stalling.totalCount).toBe(0)
+          expect(await pid(connection)).not.toBe(before)
+        } finally {
+          vi.useRealTimers()
+        }
+        expect(await count('sample', `id = ${sampleId}`)).toBe(0)
+      },
+    )
+
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    // Failures `pg` raises on its side of a session that stays usable: a type
+    // parser throws after the statement's ReadyForQuery, and a parameter that
+    // fails to serialize is rejected behind a `Sync` already sent.
+    const recoverableFailures = [
+      [
+        'a type parser that threw',
+        'SELECT 1.5::numeric AS value',
+        [],
+        'numeric parser failed',
+      ],
+      [
+        'a throwing toPostgres()',
+        'SELECT $1::text AS value',
+        [
+          {
+            toPostgres() {
+              throw new Error('toPostgres failed')
+            },
+          },
+        ],
+        'toPostgres failed',
+      ],
+      [
+        'a circular JSON parameter',
+        'SELECT $1::jsonb AS value',
+        [circular],
+        'circular',
+      ],
+    ] as const
+
+    it.each(
+      recoverableFailures.flatMap(([name, ...failure]) =>
+        (['without', 'with'] as const).map(
+          (deadline) => [name, deadline, ...failure] as const,
+        ),
+      ),
+    )(
+      'recovers in a savepoint from %s, %s an answer deadline',
+      async (_name, deadline, statement, params, message) => {
+        const [first, second] = [0, 1].map(() =>
+          Math.floor(Math.random() * 2 ** 31),
+        )
+        const parsing = new pg.Pool({
+          ...sessionOptions('transactions-recoverable'),
+          max: 1,
+          types: {
+            getTypeParser: ((oid: number, format?: 'text' | 'binary') =>
+              oid === pg.types.builtins.NUMERIC
+                ? () => {
+                    throw new Error('numeric parser failed')
+                  }
+                : pg.types.getTypeParser(oid, format)) as never,
+          },
+        })
+        closers.push(() => parsing.end())
+        const connection = createPostgresWorkflowConnection(
+          parsing,
+          deadline === 'with' ? { answerTimeoutMs: 60_000 } : {},
+        )
+
+        await connection.transaction(async (tx) => {
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [first])
+          await expect(
+            tx.transaction(async (nested) => {
+              await nested.query(statement, params)
+            }),
+          ).rejects.toThrow(message)
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [second])
+        })
+
+        expect(await count('sample', `id IN (${first}, ${second})`)).toBe(2)
+        expect(parsing.totalCount).toBe(1)
+      },
+    )
+
+    it('discards a pooled session whose socket fails mid-transaction', async () => {
+      const sampleId = Math.floor(Math.random() * 2 ** 31)
+      const { proxy, stalling, sessions } = await createStallingPool()
+      const connection = createPostgresWorkflowConnection(stalling)
+
+      const failed = connection
+        .transaction(async (tx) => {
+          await tx.query('INSERT INTO sample (id) VALUES ($1)', [sampleId])
+          proxy.stall()
+          await tx.query('SELECT 1')
+        })
+        .catch((error: unknown) => error)
+      await proxy.swallowed
+      // The checked-out client reports the lost socket as an `error` event,
+      // which would crash the process with nobody listening.
+      await proxy.close()
+
+      expect(await failed).toMatchObject({
+        message: expect.stringContaining('Connection terminated'),
+      })
+      expect(sessions).toHaveLength(1)
+      expect(sessions[0]!.connection.stream.destroyed).toBe(true)
+      expect(stalling.totalCount).toBe(0)
+      expect(await count('sample', `id = ${sampleId}`)).toBe(0)
     })
 
     it("bounds dead-command pruning while skipping another session's locked row", async () => {

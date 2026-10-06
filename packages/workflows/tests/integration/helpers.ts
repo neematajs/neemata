@@ -1,6 +1,9 @@
+import type { AddressInfo, Socket } from 'node:net'
 import { randomUUID } from 'node:crypto'
+import { connect, createServer } from 'node:net'
 
 import type { Pool as PgPool } from 'pg'
+import { createFuture } from '@nmtjs/common'
 import * as Context from 'effect/Context'
 import { Redis } from 'ioredis'
 import { Redis as Valkey } from 'iovalkey'
@@ -41,6 +44,77 @@ export function createTestName(prefix: string) {
 
 export function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export type StallingProxy = {
+  /** `url` with its host and port pointing at the proxy. */
+  readonly url: string
+  /**
+   * Stops forwarding on every connection open now, in both directions and
+   * including closes, like a server that stopped replying behind a
+   * partition. Connections opened later forward normally.
+   */
+  stall(): void
+  /** Settles once a stalled connection dropped bytes its client sent. */
+  readonly swallowed: Promise<void>
+  close(): Promise<void>
+}
+
+export async function createStallingProxy(url: string): Promise<StallingProxy> {
+  const target = new URL(url)
+  const swallowed = createFuture<void>()
+  const connections = new Set<{
+    readonly client: Socket
+    readonly upstream: Socket
+    stalled: boolean
+  }>()
+  const server = createServer({ allowHalfOpen: true }, (client) => {
+    const upstream = connect({
+      host: target.hostname,
+      port: Number(target.port || 5432),
+      allowHalfOpen: true,
+    })
+    const connection = { client, upstream, stalled: false }
+    connections.add(connection)
+    client.on('data', (chunk) => {
+      if (connection.stalled) swallowed.resolve()
+      else upstream.write(chunk)
+    })
+    upstream.on('data', (chunk) => {
+      if (!connection.stalled) client.write(chunk)
+    })
+    for (const [from, to] of [
+      [client, upstream],
+      [upstream, client],
+    ] as const) {
+      from.on('error', () => {})
+      from.on('end', () => {
+        if (!connection.stalled) to.end()
+      })
+      from.on('close', () => {
+        if (!connection.stalled) to.destroy()
+      })
+    }
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const proxied = new URL(url)
+  proxied.hostname = '127.0.0.1'
+  proxied.port = String((server.address() as AddressInfo).port)
+
+  return {
+    url: proxied.toString(),
+    stall() {
+      for (const connection of connections) connection.stalled = true
+    },
+    swallowed: swallowed.promise,
+    async close() {
+      for (const { client, upstream } of connections) {
+        client.destroy()
+        upstream.destroy()
+      }
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    },
+  }
 }
 
 export type PostgresWorkflowHarness = {

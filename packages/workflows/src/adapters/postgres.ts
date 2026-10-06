@@ -1,5 +1,6 @@
 export {
   createPostgresWorkflowConnection,
+  type CreatePostgresWorkflowConnectionOptions,
   type WorkflowPostgresConnection,
   type WorkflowPostgresPool,
   type WorkflowPostgresPoolClient,
