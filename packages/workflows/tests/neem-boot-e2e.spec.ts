@@ -20,8 +20,7 @@ const bootModes = ['production', 'development'] as const
 const invalidRegistries = [
   {
     registry: 'undeclared-pool',
-    error:
-      'Execution pools [heavy] named by implementations are not declared by the workflows planner',
+    error: 'Execution pools [heavy] named by implementations are not declared',
   },
   {
     registry: 'incomplete',
