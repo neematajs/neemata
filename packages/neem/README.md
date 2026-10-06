@@ -73,8 +73,16 @@ within what is left of that budget, so asynchronous destinations keep the
 shutdown logs. A crashing thread gets a best-effort flush of up to one second.
 
 A shutdown that fails exits with a non-zero code: a cleanup step that throws,
-or a worker or host runner that had to be terminated. `lifecycle.startTimeout`
-(default `30000`) bounds how long a worker may take to become ready.
+or a worker or host runner that had to be terminated.
+
+`lifecycle.startTimeout` (default `30000`) bounds how long a worker may take to
+become ready; one that misses it is terminated at once, without waiting for
+`worker:fail` hooks. In development it also bounds each patch, which retires the
+running generation and starts its replacement. A patch that overruns fails the
+worker, and recovery stops it before starting a fresh one. If that stop exceeds
+`lifecycle.stopTimeout`, the worker is terminated and the failed cleanup uses up
+the recovery attempt: the runtime stays unready until the next successful build
+restarts it.
 
 ## Development environment files
 
