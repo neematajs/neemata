@@ -105,9 +105,12 @@ export function makePinoLogger(
   })
 }
 
-/** Replaces the default Effect loggers with one writing to `logger`. */
+/**
+ * Replaces Effect's default console logger with one writing to `logger`.
+ * Effect's tracer logger stays, so logs still become events on the current span.
+ */
 export function pinoLoggerLayer(logger: PinoLogger): Layer.Layer<never> {
-  return Logger.layer([makePinoLogger(logger)])
+  return Logger.layer([makePinoLogger(logger), Logger.tracerLogger])
 }
 
 // Annotation keys and span labels come from the application; plain assignment

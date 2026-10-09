@@ -105,8 +105,11 @@ Each entry becomes one Pino record:
   Interruption alone is not recorded as an error.
 
 Effect's `MinimumLogLevel` (default `Info`) filters before Pino's level does, so
-enable debug output in both. A `Logger.layer` provided by the application's layer
-replaces the Pino logger; pass `{ mergeWithExisting: true }` to keep both.
+enable debug output in both. Like Effect's defaults, the installed set keeps
+`Logger.tracerLogger`, so logs still become events on the current span. A
+`Logger.layer` provided by the application's layer replaces the whole set; include
+`Logger.tracerLogger` in it to keep span events, or pass `{ mergeWithExisting: true }`
+to add loggers alongside Pino.
 
 The adapter is also available on its own:
 

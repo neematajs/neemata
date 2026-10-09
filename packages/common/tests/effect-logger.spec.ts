@@ -26,7 +26,7 @@ function capture(level: Level = 'trace', redact?: string[]) {
   return { logger, records }
 }
 
-function run(logger: Pino, effect: Effect.Effect<unknown>) {
+function run<A>(logger: Pino, effect: Effect.Effect<A, unknown>) {
   return Effect.runPromise(
     effect.pipe(
       Effect.provide(pinoLoggerLayer(logger)),
@@ -245,6 +245,21 @@ describe('Pino logger', () => {
     await run(logger, Effect.logInfo('stopped', exit.cause))
     expect(records[0]).toMatchObject({ msg: 'stopped' })
     expect(records[0]).not.toHaveProperty('err')
+  })
+
+  it('keeps recording logs as events on the current span', async () => {
+    const { logger, records } = capture()
+    const span = await run(
+      logger,
+      Effect.log('inside').pipe(
+        Effect.andThen(Effect.currentSpan),
+        Effect.withSpan('work'),
+      ),
+    )
+    expect(records.map(({ msg }) => msg)).toEqual(['inside'])
+    expect((span as any).events).toEqual([
+      ['inside', expect.any(BigInt), expect.any(Object)],
+    ])
   })
 
   it('can be combined with other loggers', async () => {
