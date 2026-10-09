@@ -4,14 +4,18 @@ import * as Fiber from 'effect/Fiber'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import { describe, expect, expectTypeOf, it } from 'vitest'
+import * as z from 'zod'
 
 import type { PubSubAdapter, PubSubMessage } from '../src/adapter.ts'
+import type { EventPayload } from '../src/contract.ts'
+import type { EffectSchema } from '../src/effect/index.ts'
 import {
   defineChannel,
   layer,
   PubSub,
   PubSubConnectionLostError,
   PubSubError,
+  schemaOf,
 } from '../src/effect/index.ts'
 
 const room = defineChannel({
@@ -278,6 +282,151 @@ describe('Effect adapter', () => {
     )
     expect(exit._tag).toBe('Success')
     if (exit._tag === 'Success') expect(exit.value).toBeInstanceOf(PubSubError)
+    expect(published).toEqual([])
+  })
+})
+
+describe('Standard schemas in Effect channels', () => {
+  const date = {
+    decode: z.iso.datetime().transform((stored) => new Date(stored)),
+    encode: z.date().transform((value) => value.toISOString()),
+  }
+  const text = z.object({ text: z.string().min(1) })
+  const mixed = defineChannel({
+    name: 'mixed',
+    params: z.object({ roomId: z.string() }),
+    key: ({ roomId }) => roomId,
+    events: {
+      seen: Schema.DateTimeUtcFromString,
+      message: text,
+      edited: date,
+    },
+  })
+
+  it('types params and payloads from either library', () => {
+    expectTypeOf<Parameters<NonNullable<typeof mixed.key>>[0]>().toEqualTypeOf<{
+      roomId: string
+    }>()
+    expectTypeOf(mixed.events.message).toExtend<{
+      readonly event: 'message'
+    }>()
+    void Effect.gen(function* () {
+      const pubsub = yield* PubSub
+      const stream = yield* pubsub.subscribe(mixed, { roomId: 'a' })
+      expectTypeOf<Stream.Success<typeof stream>>().toEqualTypeOf<
+        | {
+            readonly event: 'seen'
+            readonly payload: Schema.Schema.Type<
+              typeof Schema.DateTimeUtcFromString
+            >
+          }
+        | { readonly event: 'message'; readonly payload: { text: string } }
+        | { readonly event: 'edited'; readonly payload: Date }
+      >()
+      // @ts-expect-error The payload is a Date.
+      yield* pubsub.publish(mixed.events.edited, { roomId: 'a' }, 'now')
+    })
+
+    // Effect params work alongside Standard events, as before.
+    defineChannel({
+      name: 'effect-params',
+      params: Schema.Struct({ roomId: Schema.String }),
+      key: ({ roomId }) => roomId,
+      events: { message: text },
+    })
+    void (() =>
+      defineChannel({
+        name: 'transformed',
+        // Its Date output cannot be validated as its string input again.
+        // @ts-expect-error A transforming Standard schema must declare both directions.
+        events: { seen: Schema.DateTimeUtcFromString, edited: date.decode },
+      }))
+  })
+
+  it('types unions of Effect and Standard schemas and Effect type parameters', () => {
+    const text = Math.random() > 0.5 ? Schema.String : z.string()
+    const either = defineChannel({ name: 'either', events: { text } })
+    expectTypeOf<
+      EventPayload<typeof either.events.text>
+    >().toEqualTypeOf<string>()
+
+    const make = <S extends EffectSchema>(schema: S) =>
+      defineChannel({ name: 'generic', events: { value: schema } })
+    expectTypeOf<
+      EventPayload<
+        ReturnType<typeof make<typeof Schema.DateFromString>>['events']['value']
+      >
+    >().toEqualTypeOf<Date>()
+  })
+
+  it('keeps Standard schemas as declared and converts only Effect schemas', () => {
+    expect(mixed.events.message.payload).toBe(text)
+    expect(mixed.events.edited.payload).toBe(date)
+    expect(schemaOf(mixed.events.seen.payload)).toBe(
+      Schema.DateTimeUtcFromString,
+    )
+  })
+
+  it('publishes and streams payloads encoded by either library', async () => {
+    const { adapter, published } = broker()
+    const at = new Date('2026-01-01T00:00:00.000Z')
+    const received = await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        const stream = yield* pubsub.subscribe(mixed, { roomId: 'a' })
+        yield* pubsub.publish(
+          mixed.events.seen,
+          { roomId: 'a' },
+          Schema.decodeSync(Schema.DateTimeUtcFromString)(at.toISOString()),
+        )
+        yield* pubsub.publish(
+          mixed.events.message,
+          { roomId: 'a' },
+          {
+            text: 'x',
+          },
+        )
+        yield* pubsub.publish(mixed.events.edited, { roomId: 'a' }, at)
+        return yield* Stream.runCollect(Stream.take(stream, 3))
+      }).pipe(Effect.scoped, Effect.provide(layer({ adapter }))),
+    )
+
+    expect(published).toEqual([
+      {
+        channel: 'mixed:a',
+        data: { event: 'seen', payload: '2026-01-01T00:00:00.000Z' },
+      },
+      {
+        channel: 'mixed:a',
+        data: { event: 'message', payload: { text: 'x' } },
+      },
+      {
+        channel: 'mixed:a',
+        data: { event: 'edited', payload: '2026-01-01T00:00:00.000Z' },
+      },
+    ])
+    const [seen, message, edited] = received
+    expect(seen?.event).toBe('seen')
+    expect(message).toEqual({ event: 'message', payload: { text: 'x' } })
+    expect(edited).toEqual({ event: 'edited', payload: at })
+  })
+
+  it('rejects invalid Standard params and payloads with a PubSubError', async () => {
+    const { adapter, published } = broker()
+    const publish = (params: { roomId: string }, payload: { text: string }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const pubsub = yield* PubSub
+          return yield* pubsub.publish(mixed.events.message, params, payload)
+        }).pipe(Effect.flip, Effect.provide(layer({ adapter }))),
+      )
+
+    expect(await publish({ roomId: 'a' }, { text: '' })).toBeInstanceOf(
+      PubSubError,
+    )
+    expect(await publish({ roomId: 1 as never }, { text: 'x' })).toBeInstanceOf(
+      PubSubError,
+    )
     expect(published).toEqual([])
   })
 })

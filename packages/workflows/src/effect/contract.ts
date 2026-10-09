@@ -1,7 +1,7 @@
 import type { EffectSchemaKind } from './codec.ts'
 import { createContract } from '../contract/index.ts'
-import { codec } from './codec.ts'
+import { toCodec } from './codec.ts'
 
-/** The definition builders, declared with Effect schemas. */
+/** The definition builders, declared with Effect or Standard schemas. */
 export const { defineTask, defineWorkflow } =
-  createContract<EffectSchemaKind>(codec)
+  createContract<EffectSchemaKind>(toCodec)

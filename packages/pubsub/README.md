@@ -92,7 +92,10 @@ interface PubSubAdapter {
 
 `@nmtjs/pubsub/effect` needs the optional `effect` peer (`^4.0.0`).
 Its `defineChannel` takes `effect/Schema` schemas, published through their JSON
-encoding, and returns an ordinary channel. The `PubSub` service publishes with an
+encoding, and returns an ordinary channel. It also takes the Standard schemas and
+`{ decode, encode }` pairs the core `defineChannel` takes, as they are and with the
+same checks, so a channel can mix both, for example to reuse a Zod schema the
+application already has. The `PubSub` service publishes with an
 Effect. `subscribe` is a scoped Effect that completes once the broker subscription
 is live, like the manager's `subscribe()`, and yields a Stream of its messages.
 

@@ -6,6 +6,8 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
+import type { EffectSchema } from '../src/effect/index.ts'
+import type { TaskInput, WorkflowInput } from '../src/index.ts'
 import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
 import {
   createHandlerRuntime,
@@ -15,6 +17,7 @@ import {
   implementWorkflow,
   runExecutionWorker,
   runWorkflowWorker,
+  schemaOf,
   type HandlerRuntime,
   type Requirements,
 } from '../src/effect/index.ts'
@@ -28,6 +31,7 @@ import {
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,
+  createWorkflowRuntimeClient,
   runExecutionWorker as runStoredExecutionWorker,
 } from '../src/runtime/index.ts'
 
@@ -240,6 +244,134 @@ it('accepts decoded values and Effect handlers without an async compatibility AP
     pool: 'test',
     // @ts-expect-error Only native Effects cross the execution boundary.
     handler: async () => 1,
+  })
+})
+
+describe('Standard schemas in Effect definitions', () => {
+  const date = {
+    decode: z.iso.datetime().transform((stored) => new Date(stored)),
+    encode: z.date().transform((value) => value.toISOString()),
+  }
+  const mixed = defineTask({
+    name: 'mixed.task',
+    input: date,
+    output: Schema.NumberFromString,
+  })
+
+  it('infers Standard and Effect schema types side by side', () => {
+    const point = z.object({ x: z.number() })
+    const workflow = defineWorkflow({
+      name: 'mixed.workflow',
+      input: point,
+      output: Schema.Date,
+    })
+      .activity('effect', { input: Schema.Number, output: date })
+      .activity('standard', { input: date, output: point })
+      .mapTask('each', mixed, { item: z.string() })
+      .build()
+
+    expectTypeOf(mixed._types!).toEqualTypeOf<{
+      readonly input: Date
+      readonly output: number
+    }>()
+    implementWorkflow(workflow, { pool: 'test' })
+      .effect(() => Effect.succeed(new Date()), {
+        input: (_outputs, input) => {
+          expectTypeOf(input).toEqualTypeOf<{ x: number }>()
+          return input.x
+        },
+      })
+      .standard((input) => Effect.succeed({ x: input.getTime() }), {
+        input: ({ effect }) => {
+          expectTypeOf(effect).toEqualTypeOf<Date>()
+          return effect
+        },
+      })
+      .each(mixed, {
+        items: ({ standard }) => [String(standard.x)],
+        input: (_outputs, item) => {
+          expectTypeOf(item).toEqualTypeOf<string>()
+          return new Date(item)
+        },
+      })
+      .finish(({ each }) => {
+        expectTypeOf(each.items[0]?.output).toExtend<number | undefined>()
+        return Effect.succeed(new Date())
+      })
+
+    // Definitions keep a Standard schema as declared; only Effect schemas
+    // are converted, so only they read back.
+    expect(workflow.input).toBe(point)
+    expect(schemaOf(workflow.input)).toBeUndefined()
+    expect(mixed.input).toBe(date)
+    expect(schemaOf(mixed.output)).toBe(Schema.NumberFromString)
+  })
+
+  it('rejects a lone transforming Standard schema', () => {
+    defineTask({
+      name: 'mixed.transformed',
+      // Its Date output cannot be validated as its string input again.
+      // @ts-expect-error A transforming Standard schema must declare both directions.
+      input: date.decode,
+      output: Schema.DateFromString,
+    })
+    defineWorkflow({ name: 'mixed.transformed', input: Schema.String })
+      // @ts-expect-error Builder nodes check Standard schemas the same way.
+      .activity('step', { input: Schema.String, output: date.decode })
+  })
+
+  it('types a union of Effect and Standard schemas as the union of their values', () => {
+    const text = Math.random() > 0.5 ? Schema.String : z.string()
+    const either = defineTask({
+      name: 'mixed.union',
+      input: text,
+      output: text,
+    })
+    expectTypeOf<TaskInput<typeof either>>().toEqualTypeOf<string>()
+  })
+
+  it('accepts a type parameter constrained to Effect schemas', () => {
+    const make = <S extends EffectSchema>(schema: S) =>
+      defineWorkflow({ name: 'mixed.generic', input: schema, output: schema })
+        .activity('step', { input: schema, output: schema })
+        .mapTask(
+          'each',
+          defineTask({ name: 'mixed.generic', input: schema, output: schema }),
+          { item: schema },
+        )
+        .build()
+    expectTypeOf<
+      WorkflowInput<ReturnType<typeof make<typeof Schema.DateFromString>>>
+    >().toEqualTypeOf<Date>()
+  })
+
+  it('encodes and decodes Standard and Effect schemas through the runtime', async () => {
+    let received: unknown
+    const implementation = implementTask(mixed, {
+      pool: 'test',
+      handler: (input) => {
+        received = input
+        return Effect.succeed(input.getTime())
+      },
+    })
+    const runtime = createInMemoryWorkflowRuntime()
+    const client = createWorkflowRuntimeClient(runtime)
+    const at = new Date('2026-01-01T00:00:00.000Z')
+    const run = await client.start(mixed, at)
+    await runExecutionWorker({
+      ...runtime,
+      context: Context.empty(),
+      tasks: [implementation],
+      workflows: [],
+      workerId: 'mixed',
+    })
+
+    expect(received).toEqual(at)
+    expect((await client.get(run.id))?.run).toMatchObject({
+      status: 'completed',
+      input: '2026-01-01T00:00:00.000Z',
+      output: String(at.getTime()),
+    })
   })
 })
 
