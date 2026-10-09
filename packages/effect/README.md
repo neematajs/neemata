@@ -119,6 +119,11 @@ The adapter is also available on its own:
 import { makePinoLogger, pinoLoggerLayer } from '@nmtjs/common/effect'
 ```
 
+`loggerFromContext(context)` goes the other way: a Pino-shaped logger for
+Promise-based code, such as the pubsub manager behind the Effect `PubSub` layer,
+that writes through the Effect loggers, `MinimumLogLevel` and annotations of
+`context`.
+
 ## Application and client boundary
 
 The preset provides no procedures, schemas, transport protocol, or Promise client

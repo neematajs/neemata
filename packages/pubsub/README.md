@@ -127,3 +127,11 @@ when it is run and unsubscribes when it ends.
 Failures are `PubSubError`s carrying the cause, such as the
 `PubSubConnectionLostError` that ends a stream when the connection drops. The layer
 does not own the adapter; acquire and dispose it in the application's own layer.
+
+Without a `logger` option, `layer` logs the manager's entries through the Effect
+loggers, minimum log level and annotations in place where it is built, so the
+application's Logger layers and `MinimumLogLevel` apply. Fields such as `channel`
+become log annotations and errors the entry's cause. An explicit `logger` still
+takes precedence. `make` builds the service synchronously and logs only through an
+explicit `logger`; `loggerFromContext(yield* Effect.context())` from
+`@nmtjs/common/effect` gives it, or a Redis adapter, the same Effect-backed logger.

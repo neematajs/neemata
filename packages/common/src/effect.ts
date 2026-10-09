@@ -70,4 +70,8 @@ export function schemaOf(
 }
 
 export type { PinoLogger } from './effect-logger.ts'
-export { makePinoLogger, pinoLoggerLayer } from './effect-logger.ts'
+export {
+  loggerFromContext,
+  makePinoLogger,
+  pinoLoggerLayer,
+} from './effect-logger.ts'

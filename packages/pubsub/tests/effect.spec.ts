@@ -1,6 +1,8 @@
 import type * as Scope from 'effect/Scope'
 import * as Effect from 'effect/Effect'
 import * as Fiber from 'effect/Fiber'
+import * as Logger from 'effect/Logger'
+import * as References from 'effect/References'
 import * as Schema from 'effect/Schema'
 import * as Stream from 'effect/Stream'
 import { describe, expect, expectTypeOf, it } from 'vitest'
@@ -279,6 +281,150 @@ describe('Effect adapter', () => {
     expect(exit._tag).toBe('Success')
     if (exit._tag === 'Success') expect(exit.value).toBeInstanceOf(PubSubError)
     expect(published).toEqual([])
+  })
+})
+
+describe('Effect adapter logging', () => {
+  function capture(write?: () => void) {
+    const entries: { level: string; message: unknown; channel: unknown }[] = []
+    const logger = Logger.layer([
+      Logger.make(({ logLevel, message, fiber }) => {
+        write?.()
+        entries.push({
+          level: logLevel,
+          message,
+          channel: fiber.getRef(References.CurrentLogAnnotations).channel,
+        })
+      }),
+    ])
+    return { logger, entries }
+  }
+
+  const roundTrip = Effect.gen(function* () {
+    const pubsub = yield* PubSub
+    const stream = yield* pubsub.subscribe(room, { roomId: 'a' })
+    yield* pubsub.publish(room.events.message, { roomId: 'a' }, { text: 'x' })
+    return yield* Stream.runHead(stream)
+  }).pipe(Effect.scoped)
+
+  it("logs the manager's entries through the Effect logger by default", async () => {
+    const { adapter } = broker()
+    const { logger, entries } = capture()
+
+    await Effect.runPromise(
+      roundTrip.pipe(
+        Effect.provide(layer({ adapter })),
+        Effect.provide(logger),
+        Effect.provideService(References.MinimumLogLevel, 'Trace'),
+      ),
+    )
+
+    expect(entries).toContainEqual({
+      level: 'Trace',
+      message: ['Publishing pubsub message'],
+      channel: 'room:a',
+    })
+    expect(entries).toContainEqual({
+      level: 'Trace',
+      message: ['Opening pubsub channel'],
+      channel: 'room:a',
+    })
+  })
+
+  it('reports a failed publish at the error level', async () => {
+    const failure = new Error('PUBLISH failed')
+    const adapter: PubSubAdapter = {
+      publish: () => Promise.reject(failure),
+      subscribe: async () => (async function* () {})(),
+    }
+    const { logger, entries } = capture()
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const pubsub = yield* PubSub
+        return yield* pubsub.publish(
+          room.events.message,
+          { roomId: 'a' },
+          { text: 'x' },
+        )
+      }).pipe(
+        Effect.flip,
+        Effect.provide(layer({ adapter })),
+        Effect.provide(logger),
+      ),
+    )
+
+    expect(entries).toEqual([
+      {
+        level: 'Error',
+        message: ['Failed to publish pubsub message'],
+        channel: 'room:a',
+      },
+    ])
+  })
+
+  it('skips entries below MinimumLogLevel', async () => {
+    const { adapter } = broker()
+    const { logger, entries } = capture()
+
+    await Effect.runPromise(
+      roundTrip.pipe(
+        Effect.provide(layer({ adapter })),
+        Effect.provide(logger),
+      ),
+    )
+
+    expect(entries).toEqual([])
+  })
+
+  it('logs through an explicit logger instead', async () => {
+    const { adapter } = broker()
+    const { logger, entries } = capture()
+    const traced: unknown[] = []
+    const noop = () => {}
+    const explicit = {
+      trace: (obj: unknown, msg?: string) => traced.push([obj, msg]),
+      debug: noop,
+      warn: noop,
+      error: noop,
+    }
+
+    await Effect.runPromise(
+      roundTrip.pipe(
+        Effect.provide(layer({ adapter, logger: explicit })),
+        Effect.provide(logger),
+        Effect.provideService(References.MinimumLogLevel, 'Trace'),
+      ),
+    )
+
+    expect(traced).toContainEqual([
+      { channel: 'room:a' },
+      'Publishing pubsub message',
+    ])
+    expect(entries).toEqual([])
+  })
+
+  it('keeps publishing and delivering when the Effect logger throws', async () => {
+    const { adapter } = broker()
+    let calls = 0
+    const { logger } = capture(() => {
+      calls++
+      throw new Error('logger failed')
+    })
+
+    const received = await Effect.runPromise(
+      roundTrip.pipe(
+        Effect.provide(layer({ adapter })),
+        Effect.provide(logger),
+        Effect.provideService(References.MinimumLogLevel, 'Trace'),
+      ),
+    )
+
+    expect(received).toMatchObject({
+      _tag: 'Some',
+      value: { event: 'message', payload: { text: 'x' } },
+    })
+    expect(calls).toBeGreaterThan(0)
   })
 })
 
