@@ -10,14 +10,13 @@ import {
   type PostgresWorkflowWakeEvents,
 } from '../../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../../src/adapters/postgres/testing.ts'
+import { defineWorkflow, implementWorkflow } from '../../src/effect/index.ts'
+import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
 import {
-  defineWorkflow,
-  implementWorkflow,
+  fromPromise,
   serveExecutionWorker,
   serveWorkflowWorker,
-} from '../../src/effect/index.ts'
-import { createWorkflowRuntimeClient } from '../../src/runtime/index.ts'
-import { fromPromise } from '../support/effect.ts'
+} from '../support/effect.ts'
 import {
   createTestContext,
   createTestName,

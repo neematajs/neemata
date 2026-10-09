@@ -19,8 +19,6 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   defineTask as defineStandardTask,
@@ -40,7 +38,11 @@ import {
   timeoutExpiredWorkflowRuns,
 } from '../src/runtime/worker.ts'
 import { matchingKeys } from './integration/helpers.ts'
-import { fromPromise } from './support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from './support/effect.ts'
 
 const text = z.string()
 

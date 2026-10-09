@@ -1,3 +1,9 @@
+export { WorkflowClient } from './client.ts'
+export type {
+  WorkflowStartError,
+  WorkflowStartOptions,
+  WorkflowWatchOptions,
+} from './client.ts'
 export { codec, schemaOf } from './codec.ts'
 export type { EffectSchema, EffectSchemaKind } from './codec.ts'
 export { defineTask, defineWorkflow } from './contract.ts'

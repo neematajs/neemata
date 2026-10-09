@@ -8,8 +8,6 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   createHandlerRunner,
@@ -24,7 +22,11 @@ import {
   type WorkflowRuntimeAtomicCompletion,
   type WorkflowStore,
 } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from './support/effect.ts'
 
 describe('workflow worker runtime', () => {
   const createTestContext = () => {

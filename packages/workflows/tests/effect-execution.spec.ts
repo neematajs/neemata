@@ -65,13 +65,14 @@ describe('Effect workflow execution', () => {
       const runtime = createInMemoryWorkflowRuntime()
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(task, 7)
-      await runExecutionWorker({
-        ...runtime,
-        context: Context.empty(),
-        tasks: [implementation],
-        workflows: [],
-        workerId: 'effects',
-      })
+      await Effect.runPromise(
+        runExecutionWorker({
+          ...runtime,
+          tasks: [implementation],
+          workflows: [],
+          workerId: 'effects',
+        }),
+      )
       const snapshot = (await client.get(run.id))!
       expect(snapshot.run).toMatchObject({
         status: 'completed',
@@ -204,14 +205,15 @@ describe('Effect workflow execution', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(task, 1)
-    const running = runExecutionWorker({
-      ...runtime,
-      context: Context.empty(),
-      tasks: [implementation],
-      workflows: [],
-      workerId: 'cancel',
-      leaseMs: 15,
-    })
+    const running = Effect.runPromise(
+      runExecutionWorker({
+        ...runtime,
+        tasks: [implementation],
+        workflows: [],
+        workerId: 'cancel',
+        leaseMs: 15,
+      }),
+    )
     await started.promise
     await client.cancel(run.id)
     await running

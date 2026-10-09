@@ -15,8 +15,6 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   defineSchedule,
@@ -28,7 +26,11 @@ import {
   createWorkflowRuntimeClient,
   isTerminalRunStatus,
 } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from './support/effect.ts'
 
 const at = '2026-09-20T10:00:00.000Z'
 const payload = Schema.Struct({

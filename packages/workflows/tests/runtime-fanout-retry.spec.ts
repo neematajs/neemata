@@ -3,12 +3,7 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
-import {
-  defineWorkflow,
-  implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
-} from '../src/effect/index.ts'
+import { defineWorkflow, implementWorkflow } from '../src/effect/index.ts'
 import {
   defineTask as defineStandardTask,
   defineWorkflow as defineStandardWorkflow,
@@ -27,7 +22,11 @@ import {
   reapDeadWorkflowCommands,
   timeoutExpiredWorkflowRuns,
 } from '../src/runtime/worker.ts'
-import { fromPromise } from './support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from './support/effect.ts'
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 

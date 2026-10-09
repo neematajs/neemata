@@ -18,7 +18,6 @@ import {
   defineTask,
   defineWorkflow,
   implementWorkflow,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   createWorkflowRuntimeClient,
@@ -27,7 +26,7 @@ import {
   type WorkflowStore,
   type WriteFence,
 } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import { fromPromise, runWorkflowWorker } from './support/effect.ts'
 
 type RuntimeFactoryOptions = {
   readonly maxDeliveries?: number

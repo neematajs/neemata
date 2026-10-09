@@ -421,6 +421,9 @@ async function* watchRun(params: {
   }
   const sleep = (ms: number) =>
     new Promise<void>((resolve) => {
+      // An abort during a debounce read has already fired: a listener added
+      // now would never run, and `return()` would wait out the whole window.
+      if (signal?.aborted) return resolve()
       let settled = false
       const finish = () => {
         if (settled) return

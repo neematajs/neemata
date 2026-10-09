@@ -13,10 +13,7 @@ import type {
   WorkflowPostgresQueryClient,
   WorkflowPostgresQueryResult,
 } from '../adapters/postgres/connection.ts'
-import type {
-  WorkflowRuntimeClient,
-  WorkflowRuntimeStartOptions,
-} from '../runtime/client.ts'
+import type { WorkflowRuntimeClient } from '../runtime/client.ts'
 import type { StoredRun } from '../runtime/state.ts'
 import type {
   AnyTaskDefinition,
@@ -27,21 +24,13 @@ import type {
   WorkflowInput,
   WorkflowRun,
 } from '../types/index.ts'
+import type { WorkflowStartError, WorkflowStartOptions } from './client.ts'
 import { createPostgresWorkflowNestedConnection } from '../adapters/postgres/connection.ts'
-import {
-  WorkflowIdempotencyConflictError,
-  WorkflowRunConflictError,
-} from '../runtime/errors.ts'
+import { isWorkflowStartError } from './client.ts'
 
-export type EffectSqlWorkflowStartOptions = Omit<
-  WorkflowRuntimeStartOptions,
-  'connection'
->
+export type EffectSqlWorkflowStartOptions = WorkflowStartOptions
 
-export type EffectSqlWorkflowStartError =
-  | WorkflowRunConflictError
-  | WorkflowIdempotencyConflictError
-  | SqlError.SqlError
+export type EffectSqlWorkflowStartError = WorkflowStartError | SqlError.SqlError
 
 export type EffectSqlWorkflowClient = {
   /**
@@ -196,9 +185,7 @@ const createTransactionSession = (
 }
 
 const isStartError = (error: unknown): error is EffectSqlWorkflowStartError =>
-  error instanceof WorkflowRunConflictError ||
-  error instanceof WorkflowIdempotencyConflictError ||
-  SqlError.isSqlError(error)
+  isWorkflowStartError(error) || SqlError.isSqlError(error)
 
 /**
  * Wraps a Postgres workflow client for Effect SQL applications, so starting,

@@ -10,15 +10,17 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../../src/effect/index.ts'
 import { defineSchedule } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   type RunSnapshot,
 } from '../../src/runtime/index.ts'
-import { fromPromise } from '../support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from '../support/effect.ts'
 import {
   createPostgresWorkflowHarness,
   createTestContext,

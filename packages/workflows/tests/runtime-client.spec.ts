@@ -1002,6 +1002,79 @@ describe('workflow runtime client', () => {
     }
   })
 
+  it('ends a watch aborted during a debounced read without waiting out the window', async () => {
+    const runtime = createInMemoryWorkflowRuntime()
+    const gate = Promise.withResolvers<void>()
+    let gated = false
+    const reading = Promise.withResolvers<void>()
+    const client = createWorkflowRuntimeClient({
+      ...runtime,
+      store: {
+        ...runtime.store,
+        loadRuns: async (runIds) => {
+          const result = await runtime.store.loadRuns(runIds)
+          if (gated) {
+            reading.resolve()
+            await gate.promise
+          }
+          return result
+        },
+      },
+    })
+    const run = await runtime.store.createRun({
+      workflowName: 'client-watch-debounce-abort',
+      input: {},
+    })
+    await runtime.store.createNode({
+      runId: run.id,
+      name: 'step',
+      kind: 'activity',
+    })
+    await runtime.store.ensureNodeChildren({
+      runId: run.id,
+      nodeName: 'step',
+      children: [{ childKey: '$self', kind: 'activity' }],
+    })
+    const abort = new AbortController()
+    const iterator = client
+      .watch(run.id, {
+        wake: true,
+        // Far beyond the test timeout, so waiting it out fails the test.
+        debounceMs: 600_000,
+        pollIntervalMs: 600_000,
+        signal: abort.signal,
+      })
+      [Symbol.asyncIterator]()
+    await expect(iterator.next()).resolves.toMatchObject({
+      value: { kind: 'run', status: 'queued' },
+    })
+    const leading = iterator.next()
+    await runtime.store.ensureChildAttempt({
+      runId: run.id,
+      nodeName: 'step',
+      childKey: '$self',
+      input: {},
+    })
+    await expect(leading).resolves.toMatchObject({ value: { kind: 'change' } })
+
+    // A wake inside the window makes the watch peek at the run row.
+    const trailing = iterator.next()
+    gated = true
+    await runtime.store.completeNodeChild({
+      runId: run.id,
+      nodeName: 'step',
+      childKey: '$self',
+      output: {},
+    })
+    await reading.promise
+    abort.abort()
+    gate.resolve()
+    await expect(trailing).resolves.toStrictEqual({
+      done: true,
+      value: undefined,
+    })
+  })
+
   it('ends watch iteration cleanly on abort and early consumer return', async () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
