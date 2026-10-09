@@ -59,7 +59,8 @@ export type WorkflowWatchOptions = Omit<WatchRunOptions, 'signal'>
  * tagged errors; every other rejection, such as a missing run or input that
  * does not match its schema, is a defect. Interrupting a call stops waiting for
  * it, but the operation itself still completes: the Promise client cannot
- * cancel one. Each call runs in a `WorkflowClient.<method>` span.
+ * cancel one. Each Effect-returning call runs in a `WorkflowClient.<method>`
+ * span; `watch` streams are not traced.
  */
 export class WorkflowClient extends Context.Service<
   WorkflowClient,

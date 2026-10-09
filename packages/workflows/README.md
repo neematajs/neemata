@@ -454,7 +454,8 @@ greetOnce.pipe(Effect.provide(ClientLive))
   `WorkflowIdempotencyConflictError`; both carry a `_tag`, so `Effect.catchTag`
   recovers one of them. Every other rejection, such as a missing run, input that
   does not match its schema, or an adapter failure, is a defect.
-- Each call runs in a `WorkflowClient.<method>` span.
+- Each Effect-returning call runs in a `WorkflowClient.<method>` span; `watch`
+  streams are not traced.
 - Interrupting a call stops waiting for it, but the operation still completes:
   the Promise client cannot cancel it.
 - `watch(runId, options?)` takes the Promise client's watch options without

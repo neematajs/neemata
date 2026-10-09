@@ -261,8 +261,9 @@ Effect code uses `WorkflowClient` from `@nmtjs/workflows/effect`, a
 `WorkflowClient.make(client)` over a Promise client (whose adapter stays owned
 by its creator). Methods mirror the Promise client and return Effects:
 `start` / `restart` fail with the two conflict errors (recover with
-`Effect.catchTag`), and every other rejection is a defect. Each call runs in a
-`WorkflowClient.<method>` span; interrupting a call stops waiting but cannot
+`Effect.catchTag`), and every other rejection is a defect. Each
+Effect-returning call (not `watch`) runs in a `WorkflowClient.<method>` span;
+interrupting a call stops waiting but cannot
 cancel the operation. There is no `connection` option: transactional starts use
 `createEffectSqlWorkflowClient` ([PostgreSQL](postgres.md)).
 
