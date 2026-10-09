@@ -160,9 +160,12 @@ function providePubSub(adapter: Parameters<typeof layer>[0]['adapter']) {
 ```
 
 Effect channels use synchronous, service-free Effect schemas and their JSON
-encoding, returning ordinary channels usable by either manager. Parameter
-schemas must preserve the parameter type. `schemaOf` returns the original
-Effect schema only for a codec made through `codec`.
+encoding, returning ordinary channels usable by either manager. Event payloads
+and params may also be Standard schemas (payloads also `{ decode, encode }`
+pairs), used as given with the core checks, so Effect and e.g. Zod schemas can
+be mixed in one channel. Parameter schemas must preserve the parameter type.
+`schemaOf` returns the original Effect schema only for a codec made through
+`codec`, so `undefined` for a Standard schema.
 
 `make({ adapter, logger? })` returns `PubSub['Service']` directly.
 `layer({ adapter, logger? })` provides that service without acquiring or

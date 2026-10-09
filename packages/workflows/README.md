@@ -226,6 +226,23 @@ both through Effect's Standard Schema and Standard JSON Schema converters.
 `schemaOf(definition.input)` returns the declared Effect schema, for composing
 schemas from existing definitions.
 
+The Effect builders also take whatever the core builders take: a Standard Schema
+or a `{ decode, encode }` pair, stored as given and checked the same way, so a
+lone transforming Standard Schema is rejected at compile time. One definition can
+mix both, for example to reuse a Zod schema the application already has:
+
+```ts
+import * as z from 'zod'
+
+const geocode = defineTask({
+  name: 'geocode',
+  input: z.object({ address: z.string() }),
+  output: Schema.Struct({ lat: Schema.Number, lng: Schema.Number }),
+})
+```
+
+`schemaOf` returns `undefined` for a Standard schema.
+
 Every typed programmatic API takes and returns decoded **Type**: `client.start`
 input and its returned run input/output, task/activity handlers, workflow finish,
 input mappers, map items and per-item inputs, code-defined schedule inputs, and

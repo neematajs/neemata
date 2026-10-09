@@ -159,10 +159,13 @@ child-run identity. Retry/timeout options are also available on activities.
 
 Import the builders from `@nmtjs/workflows/effect`. They accept synchronous,
 service-free `effect/Schema` codecs, including transforms such as
-`Schema.DateFromString`. `codec(schema)` derives the JSON encoding pair;
+`Schema.DateFromString`. They also accept the Standard schemas and
+`{ decode, encode }` pairs the core builders accept, stored as given with the
+same non-reversible-transform check, so one definition can mix Effect and e.g.
+Zod schemas. `codec(schema)` derives the JSON encoding pair;
 `schemaOf(definition.input)` returns the original schema, or `undefined` for
-a schema not created through that adapter. Both helpers are re-exported from
-`@nmtjs/common/effect`.
+a schema not created through that adapter (such as a Standard schema). Both
+helpers are re-exported from `@nmtjs/common/effect`.
 
 Effect task/activity handlers take `(input, lifecycle)`; Effect `finish`
 takes only `(outputs, workflowInput)`. Each returns an Effect; acquire services
