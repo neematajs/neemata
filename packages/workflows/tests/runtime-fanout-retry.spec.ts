@@ -10,10 +10,12 @@ import {
   runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
-  defineTask as defineStandardTask,
-  defineWorkflow as defineStandardWorkflow,
   implementTask as implementStandardTask,
   implementWorkflow as implementStandardWorkflow,
+} from '../src/implement/index.ts'
+import {
+  defineTask as defineStandardTask,
+  defineWorkflow as defineStandardWorkflow,
 } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,

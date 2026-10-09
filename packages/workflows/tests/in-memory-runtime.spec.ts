@@ -5,12 +5,8 @@ import {
   createInMemoryWorkflowRuntime,
   type InMemoryWorkflowRuntime,
 } from '../src/adapters/in-memory.ts'
-import {
-  defineSchedule,
-  defineTask,
-  defineWorkflow,
-  implementWorkflow,
-} from '../src/index.ts'
+import { implementWorkflow } from '../src/implement/index.ts'
+import { defineSchedule, defineTask, defineWorkflow } from '../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runExecutionWorker,

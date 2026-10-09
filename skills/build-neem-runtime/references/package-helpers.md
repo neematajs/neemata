@@ -8,9 +8,12 @@ Choose a helper's call shape deliberately: existing presets differ.
 ## Workflows: host preset and role-based planning
 
 `@nmtjs/workflows/neem` exports `createWorkflowsRuntime`,
-`defineWorkflowsPlanner`, `defineWorkflowsWorker`, and their public configuration
-types. Its host entry is exported at `@nmtjs/workflows/neem/host`; the worker
-helper also has the `@nmtjs/workflows/neem/worker-entry` subpath.
+`defineWorkflowsPlanner`, and their public configuration types; it is
+Effect-free and loads no application code, since the planner and host run in
+Neem's host-runner thread. Its host entry is exported at
+`@nmtjs/workflows/neem/host`. The worker helper, `defineWorkflowsWorker`, lives
+at `@nmtjs/workflows/effect/neem`, because workflow implementations are written
+with Effect.
 
 `createWorkflowsRuntime()` takes no arguments and returns
 `createRuntime({ host: { entry: '@nmtjs/workflows/neem/host' } })`. The caller
@@ -62,45 +65,42 @@ marked `NeemRuntimePlanner<ResolvedWorkflowsPlan, WorkflowsWorkerData>`;
   loops perform coordination and execution; the host does not own their
   adapters or handler environment.
 
-## Workflows: worker setup and resource ownership
+## Workflows: worker runtime, Layer and resource ownership
 
-`defineWorkflowsWorker<const W = never, const T = never>` constrains `W` and
-`T` to workflow/task implementations and accepts
-`WorkflowsWorkerDefinition<W, T>`. It creates a marked
-`NeemRuntimeWorker<WorkflowsWorkerData, unknown>` whose definition is loaded
-inside each thread.
+`defineWorkflowsWorker<const W = never, const T = never, R = never>` from
+`@nmtjs/workflows/effect/neem` constrains `W` and `T` to workflow/task
+implementations and accepts `WorkflowsWorkerDefinition<W, T, R>`. It creates a
+marked `NeemRuntimeWorker<WorkflowsWorkerData, unknown>` whose definition is
+loaded inside each thread.
 
 The definition includes `WorkflowsRegistry`: required async-capable
 `workflows()` and optional `tasks()` and `schedules()` array loaders. It also
-requires `setup(ctx)`, run once per worker thread, with
-`NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>`. `ctx.definition` is
-therefore `unknown`; the helper closes over its typed definition.
+takes:
 
-`setup` returns `WorkflowsWorkerResources<E>` or a promise:
+- Required `runtime: Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`,
+  acquired once per runtime start in the worker's Scope. Use
+  `Effect.acquireRelease` to tie thread-local clients to it. Workers needing
+  shared durable state must connect to the same backing store; an in-memory
+  adapter is local to one thread.
+- `layer: (ctx) => Layer`, with
+  `NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>`, providing every
+  service the handlers and `runtime` require except `Scope`. It is required
+  exactly when those requirements are nonempty; a missing service is a compile
+  error. `ctx.definition` is `unknown`; the helper closes over its typed
+  definition.
 
-- Required `runtime: WorkflowRuntimeAdapter`.
-- `env: E` for the Promise handlers. Its type is inferred from registered
-  workflow/task implementations and is required when they require it; it is
-  optional when their environment is `unknown`.
-- Optional `dispose(): MaybePromise<void>` for resources owned by that env or
-  setup. Open thread-local clients here. Workers needing shared durable state
-  must connect to the same backing store; an in-memory adapter is local to one
-  thread.
+The helper resolves and validates the registry before building the Layer:
+duplicate implementation names, missing referenced children/tasks, schedule
+targets, definition identity conflicts, and undeclared implementation pools
+fail startup. Pool validation uses planner `data.pools`; manually supplied
+worker data without that field skips this check.
 
-The helper resolves and validates the registry before setup: duplicate
-implementation names, missing referenced children/tasks, schedule targets,
-definition identity conflicts, and undeclared implementation pools fail
-startup. Pool validation uses planner `data.pools`; manually supplied worker
-data without that field skips this check.
-
-After setup, coordinator workers reconcile schedules (requiring adapter
+After acquisition, coordinator workers reconcile schedules (requiring adapter
 scheduler support), then start their role loop. `start()` resolves `undefined`
 when serving; `finished` reports a loop ending unexpectedly. Shutdown aborts
-claims/attempts, joins loop work, drains handlers, then calls
-`runtime.dispose?.()` followed by resource `dispose?.()`, even if adapter
-disposal throws. Setup must clean up its own acquisitions if it rejects before
-returning resources. A stop during setup waits for its returned resources and
-cleans them up.
+claims/attempts, joins loop work, drains handlers, then releases the adapter
+and closes the Layer, even if adapter disposal throws. A stop or failure during
+startup releases whatever was acquired.
 
 `cleanupTimeoutMs` sets the package's cleanup failure deadline and can signal
 fatal failure while running. It cannot extend Neem's hard 5,000 ms worker stop

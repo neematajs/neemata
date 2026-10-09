@@ -10,10 +10,8 @@ import {
   implementWorkflow,
   schemaOf,
 } from '../src/effect/index.ts'
-import {
-  defineWorkflow as defineStandardWorkflow,
-  implementWorkflow as implementStandardWorkflow,
-} from '../src/index.ts'
+import { implementWorkflow as implementStandardWorkflow } from '../src/implement/index.ts'
+import { defineWorkflow as defineStandardWorkflow } from '../src/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow implementation chain', () => {

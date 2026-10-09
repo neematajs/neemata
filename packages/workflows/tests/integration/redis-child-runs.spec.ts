@@ -6,12 +6,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '../../src/index.ts'
+import { implementTask, implementWorkflow } from '../../src/implement/index.ts'
+import { defineTask, defineWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runExecutionWorker,

@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
 import type { EffectSchema } from '../src/effect/index.ts'
+import type { Env } from '../src/implement/index.ts'
 import type * as workflows from '../src/index.ts'
 import {
   defineTask,
@@ -11,16 +12,38 @@ import {
   implementWorkflow,
   schemaOf,
 } from '../src/effect/index.ts'
+import { implementWorkflow as implementCoreWorkflow } from '../src/implement/index.ts'
 import {
   defineTask as defineCoreTask,
   defineWorkflow as defineCoreWorkflow,
-  implementWorkflow as implementCoreWorkflow,
   toStoredJsonSchema,
 } from '../src/index.ts'
 import { fromPromise } from './support/effect.ts'
 
 describe('workflow API boundaries', () => {
   const prefix = 'prefix'
+
+  it('authors implementations only through the Effect chain', async () => {
+    const root = await import('../src/index.ts')
+    const neem = await import('../src/neem/index.ts')
+
+    // The Promise chain is the engine's internal handler shape, not an
+    // authoring API: the root keeps contracts, the Neem entry its planner.
+    expect(root).not.toHaveProperty('implementTask')
+    expect(root).not.toHaveProperty('implementWorkflow')
+    expect(neem).not.toHaveProperty('defineWorkflowsWorker')
+    expect(Object.keys(neem).sort()).toStrictEqual([
+      'createWorkflowsRuntime',
+      'defineWorkflowsPlanner',
+    ])
+    // @ts-expect-error The Promise handler types left the root as well.
+    type _Env = workflows.Env<never>
+    // @ts-expect-error So did the Promise chain's builder types.
+    type _Chain = workflows.WorkflowImplementationChain<never, never, never>
+    expectTypeOf<
+      workflows.TaskImplementation<workflows.AnyTaskDefinition>
+    >().toHaveProperty('handler')
+  })
 
   const embedding = defineTask({
     name: 'embedding.generate',
@@ -477,7 +500,7 @@ describe('core chain: mapper required for incompatible step inputs', () => {
         input: (_outputs, input) => Number(input),
       })
       .finish(({ step }) => step)
-    expectTypeOf<workflows.Env<typeof mapped>>().toEqualTypeOf<Clock>()
+    expectTypeOf<Env<typeof mapped>>().toEqualTypeOf<Clock>()
   })
 
   it('keeps the mapper optional when the step takes the workflow input', () => {
@@ -499,7 +522,7 @@ describe('core chain: mapper required for incompatible step inputs', () => {
       .activity((input, _lifecycle, env: Clock) => `${input}${env.clock.now()}`)
       .pair({ task: textTask, bare: (input) => input })
       .finish(({ pair }) => pair.bare)
-    expectTypeOf<workflows.Env<typeof implementation>>().toEqualTypeOf<Clock>()
+    expectTypeOf<Env<typeof implementation>>().toEqualTypeOf<Clock>()
     expect(implementation.nodes).toHaveLength(3)
   })
 
@@ -551,7 +574,7 @@ describe('core chain: mapper required for incompatible step inputs', () => {
         }),
       })
       .finish(({ pick }) => pick)
-    expectTypeOf<workflows.Env<typeof mapped>>().toEqualTypeOf<Clock>()
+    expectTypeOf<Env<typeof mapped>>().toEqualTypeOf<Clock>()
 
     chain
       .pair(({ task, activity }) => ({

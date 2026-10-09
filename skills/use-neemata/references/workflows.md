@@ -9,21 +9,22 @@ bounded history. Use the in-memory runtime for tests.
 
 Use package subpaths, not an umbrella `nmtjs` import:
 
-- `@nmtjs/workflows`: `defineTask`, `defineWorkflow`, `defineSchedule`,
-  `implementTask`, `implementWorkflow`, `toStoredJsonSchema` and contract types.
+- `@nmtjs/workflows`: Effect-free contracts: `defineTask`, `defineWorkflow`,
+  `defineSchedule`, `toStoredJsonSchema` and contract types. It exports no
+  implementation builders.
 - `@nmtjs/workflows/runtime`: `createWorkflowRuntimeClient`,
   `createInMemoryWorkflowRuntime`, worker loops, handler runner and adapter types.
-- `@nmtjs/workflows/effect`: Effect contract/implementation builders, handler
-  runtime and worker wrappers; optional peer `effect` is
-  `^4.0.0`.
+- `@nmtjs/workflows/effect`: `implementTask` / `implementWorkflow` (the only
+  authoring API), Effect contract builders, handler runtime and standalone
+  worker wrappers; optional peer `effect` is `^4.0.0`.
 - `@nmtjs/workflows/postgres`, `/postgres/drizzle`, `/postgres/testing`:
   see [PostgreSQL](postgres.md) for clients, migrations and ownership.
 - `@nmtjs/workflows/redis`: `createRedisWorkflowRuntime`,
   `WorkflowRedisClient`, `CreateRedisWorkflowRuntimeParams`,
   `RedisWorkflowRuntime`.
 - `@nmtjs/workflows/inspector`: graph/catalog serialization and `nodeUnits`.
-- `@nmtjs/workflows/neem`: runtime factory, planner and Promise worker;
-  `@nmtjs/workflows/effect/neem`: Effect worker.
+- `@nmtjs/workflows/neem`: Effect-free runtime factory and planner;
+  `@nmtjs/workflows/effect/neem`: the worker.
 
 Core schemas implement Standard Schema. Handlers, input mappers, `finish` and
 `client.start` use the schema's decoded output type; storage uses JSON.
@@ -47,15 +48,16 @@ Core schemas implement Standard Schema. Handlers, input mappers, `finish` and
 Definitions contain schemas and topology, not handlers or placement. Finish
 workflow builders with `.build()`. Implementations bind each node in declaration
 order, then `.finish(...)`; pass the exact referenced definition object.
+Implement definitions from either entry point with `@nmtjs/workflows/effect`.
 
 ```ts
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '@nmtjs/workflows'
+import { defineTask, defineWorkflow } from '@nmtjs/workflows'
+import { implementTask, implementWorkflow } from '@nmtjs/workflows/effect'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
 import * as z from 'zod'
+
+export class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
 
 export const decorate = defineTask({
   name: 'content.decorate',
@@ -76,16 +78,19 @@ export const prepare = defineWorkflow({
 
 export const decorateImpl = implementTask(decorate, {
   pool: 'content',
-  handler: (input, _lifecycle, env: { prefix: string }) => env.prefix + input,
+  handler: (input) =>
+    Effect.gen(function* () {
+      return (yield* Prefix) + input
+    }),
 })
 
 export const prepareImpl = implementWorkflow(prepare, { pool: 'content' })
-  .clean((input) => input.trim(), {
+  .clean((input) => Effect.succeed(input.trim()), {
     // The workflow object is not assignable to this step's string input.
     input: (_outputs, input) => input.text,
   })
   .decorate(decorate, { input: ({ clean }) => clean })
-  .finish(({ decorate }) => ({ text: decorate }))
+  .finish(({ decorate }) => Effect.succeed({ text: decorate }))
 ```
 
 Builder rules:
@@ -119,7 +124,7 @@ Builder rules:
 - Tasks/workflows, nodes and case helpers accept `title` / `description`;
   these affect inspector presentation, not identity or execution.
 
-Implementation rules apply to both core and Effect chains:
+Implementation rules:
 
 - Node input mappers take `(outputs, workflowInput)`. Without one, a node
   receives the workflow input, not the preceding output. A mapper is required
@@ -135,12 +140,12 @@ Implementation rules apply to both core and Effect chains:
   `items(outputs, workflowInput)` returns the item array; per-item input and
   idempotency mappers take `(outputs, item, workflowInput, index)`.
   Ordinary node/case idempotency mappers take `(outputs, workflowInput)`.
-- Core task/activity handlers take `(input, lifecycle, env)`; core `finish`
-  takes `(outputs, workflowInput, lifecycle, env)`. Both return a value or
-  Promise. `finish` runs on a coordinator; keep it quick.
-- `env` is one application-owned value satisfying every registered handler
-  (`Env<T>` intersects requirements). The engine neither constructs nor
-  disposes it. A handler ignoring env contributes no requirement.
+- Task/activity handlers take `(input, lifecycle)`; `finish` takes only
+  `(outputs, workflowInput)`. Each returns an Effect; acquire services by
+  yielding a `Context.Service`, not through a third argument. `finish` runs on
+  a coordinator; keep it quick.
+- `Requirements<T>` collects the services an implementation needs; the worker's
+  Context (standalone) or Layer (Neem) must provide them all.
 - `lifecycle.signal` cooperatively aborts with `WorkflowAttemptAbortError`;
   its `.type` is `timeout`, `leaseLost`, `cancelled` or `shutdown`.
   Late results after an abort are discarded. Attempt timeouts record
@@ -155,33 +160,27 @@ on their workflow's pool; coordinators advance workflows. Promote an activity
 to a task when it needs a different pool, reuse, standalone starts or its own
 child-run identity. Retry/timeout options are also available on activities.
 
-## Effect handlers
+## Effect schemas and handler runtime
 
-Import the builders from `@nmtjs/workflows/effect`. They accept synchronous,
+`@nmtjs/workflows/effect` also has `defineTask` / `defineWorkflow` for
+`effect/Schema` contracts. They accept synchronous,
 service-free `effect/Schema` codecs, including transforms such as
 `Schema.DateFromString`. `codec(schema)` derives the JSON encoding pair;
 `schemaOf(definition.input)` returns the original schema, or `undefined` for
 a schema not created through that adapter. Both helpers are re-exported from
 `@nmtjs/common/effect`.
 
-Effect task/activity handlers take `(input, lifecycle)`; Effect `finish`
-takes only `(outputs, workflowInput)`. Each returns an Effect; acquire services
-through Effect rather than a third argument.
-
 ```ts
-import {
-  defineTask as defineEffectTask,
-  implementTask as implementEffectTask,
-} from '@nmtjs/workflows/effect'
+import { defineTask, implementTask } from '@nmtjs/workflows/effect'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
-export const echo = defineEffectTask({
+export const echo = defineTask({
   name: 'content.echo',
   input: Schema.String,
   output: Schema.String,
 })
-export const echoImpl = implementEffectTask(echo, {
+export const echoImpl = implementTask(echo, {
   pool: 'content',
   handler: (input) => Effect.succeed(input),
 })
@@ -189,16 +188,14 @@ export const echoImpl = implementEffectTask(echo, {
 
 - `createHandlerRuntime(context)` produces `HandlerRuntime<R>`, whose
   `run(handler, signal)` runs an Effect in its own scope and returns a Promise
-  only after finalizers finish. The core stores this runtime as handler env.
+  only after finalizers finish. The Effect-free engine stores this runtime as
+  the handler env.
 - Interrupt-only failure caused by the signal rethrows `signal.reason`;
   a single ordinary failure/defect keeps its identity. Mixed causes become
   `WorkflowHandlerError`, retaining the Effect `Cause` in `.cause`.
-- Effect worker wrappers take `context` instead of `env` and return Promises.
-  `Requirements<T>` determines needed services. A core handler can join only
-  if the supplied handler runtime satisfies its whole env:
-  `[HandlerRuntime<R>] extends [E]`. An env demanding extra properties is
-  rejected even if it also extends `HandlerRuntime<R>`.
-- Effect Neem workers take one object with `workflows`, optional `tasks` /
+- The standalone worker functions in `/effect` take `context` instead of
+  `env` and return Promises.
+- Neem workers take one object with `workflows`, optional `tasks` /
   `schedules`, `runtime` and `layer`; see Neem integration below.
 
 ## Runtime client
@@ -334,14 +331,18 @@ The PostgreSQL contract is in [PostgreSQL](postgres.md).
 
 Standalone hosts use `runWorkflowWorker` / `runExecutionWorker` to drain
 currently claimable work, or `serveWorkflowWorker` / `serveExecutionWorker`
-with an abort `signal` for continuous service. Pass the adapter, implementations,
-`workerId`, env (or Effect context), and loop settings. Execution workers accept
-`pool`; omission serves all registered pools. Low-level idle polling uses
-`idleDelayMs`, not the Neem planner's `pollIntervalMs`.
+with an abort `signal` for continuous service. Import them from
+`@nmtjs/workflows/effect` and pass the adapter, implementations, `workerId`, an
+Effect `context`, and loop settings. The `/runtime` versions are the engine
+host API they wrap: they take the handler `env`,
+`createHandlerRuntime(context)`. Execution workers accept `pool`; omission
+serves all registered pools. Low-level idle polling uses `idleDelayMs`, not the
+Neem planner's `pollIntervalMs`.
 
 A supervisor can share `createHandlerRunner({ cleanupTimeoutMs?, onFatal? })`
-as `handlers` and await `drain()` before disposing env. Standalone workers do
-not perform Neem's complete registry validation.
+as `handlers` (with the `/runtime` loops) and await `drain()` before releasing
+the services handlers use. Standalone workers do not perform Neem's complete
+registry validation; call `verifyWorkflowsRegistry` once at startup for that.
 
 ### Redis / Valkey
 
@@ -413,21 +414,24 @@ definition snapshots or versions; join to the current catalog deliberately.
 ## Neem integration
 
 Use separate runtime, planner and worker modules, default-exporting the results
-shown below. The planner runs on the main thread without application imports;
-registry factories and setup run in each worker thread.
+shown below. The planner runs in Neem's host-runner thread without
+application imports; registry factories, the Layer and the adapter are built
+in each worker thread.
 
 ```ts
 import {
   createWorkflowsRuntime,
   defineWorkflowsPlanner,
-  defineWorkflowsWorker,
 } from '@nmtjs/workflows/neem'
-import { Pool } from 'pg'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
 import {
   createPostgresWorkflowConnection,
   createPostgresWorkflowRuntime,
   verifyPostgresWorkflowSchema,
 } from '@nmtjs/workflows/postgres'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import { Pool } from 'pg'
 
 // neem.runtime.ts
 const workflowsRuntime = createWorkflowsRuntime()({
@@ -446,29 +450,32 @@ const planner = defineWorkflowsPlanner(() => ({
 const worker = defineWorkflowsWorker({
   workflows: () => [prepareImpl],
   tasks: () => [decorateImpl],
-  setup: async () => {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-    try {
+  layer: () => Layer.succeed(Prefix, 'Prepared: '),
+  // Acquired in the worker's Scope: released on stop or a failed startup.
+  runtime: Effect.acquireRelease(
+    Effect.sync(() => new Pool({ connectionString: process.env.DATABASE_URL })),
+    (pool) => Effect.promise(() => pool.end()),
+  ).pipe(
+    Effect.flatMap((pool) => {
       const connection = createPostgresWorkflowConnection(pool)
-      await verifyPostgresWorkflowSchema(connection)
-      return {
-        runtime: createPostgresWorkflowRuntime({ connection }),
-        env: { prefix: 'Prepared: ' },
-        dispose: () => pool.end(),
-      }
-    } catch (error) {
-      // Setup owns acquisitions until it returns resources to the worker.
-      await pool.end()
-      throw error
-    }
-  },
+      return Effect.promise(() =>
+        verifyPostgresWorkflowSchema(connection),
+      ).pipe(Effect.as(createPostgresWorkflowRuntime({ connection })))
+    }),
+  ),
 })
 ```
 
-- Core worker options are `workflows: () => implementations`, optional
-  `tasks` / `schedules` factories, and `setup(ctx)`. Factories/setup may be
-  asynchronous. Setup returns `{ runtime, env?, dispose? }`; env is required
-  when handlers need it and must satisfy the entire registry.
+- Worker options are `workflows: () => implementations`, optional `tasks` /
+  `schedules` factories (which may be asynchronous), `runtime` and `layer`.
+  `runtime` is an `Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`;
+  `layer` is `(ctx) => Layer`, called with the Neem worker context once per
+  runtime start (after registry validation, again on each dev reload); build
+  logging services from `ctx.logger` rather than a second logger.
+  `Effect.log*` is not bridged to it.
+- The Layer must supply all handler and runtime requirements except `Scope`,
+  which the worker provides. Layer is optional only when no services are
+  needed; a missing service is a compile error.
 - `ctx.data` has `role: 'coordinator' | 'execution'`, optional `pool`,
   `settings` and declared `pools`. Size resources per thread.
 - Both coordinator and named pools accept `threads`, `concurrency`,
@@ -484,22 +491,12 @@ const worker = defineWorkflowsWorker({
 - Coordinators reconcile schedules and own maintenance; execution threads
   serve their named pool. Redis coordinators reject nonempty schedules.
 - Shutdown stops claims, aborts handlers with `shutdown`, joins loops, drains
-  handlers, disposes the runtime, then calls resource `dispose` even if adapter
-  disposal failed. Shutdown releases commands for redelivery.
-- Cleanup deadlines cover handler drain and resource disposal. A timeout
-  reports fatal failure for thread recycling; it does not authorize disposing
-  env still in use. Neem's 30,000 ms worker readiness timeout bounds `setup`.
-
-Effect workers use `defineWorkflowsWorker` from
-`@nmtjs/workflows/effect/neem` with the same registry factories and planner.
-`runtime` is an `Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`;
-`layer` is `(ctx) => Layer`, called with the Neem worker context once per
-runtime start (after registry validation, again on each dev reload); build logging services from `ctx.logger` rather than a second logger.
-`Effect.log*` is not bridged to it.
-The Layer must supply all handler and runtime requirements except `Scope`, which
-the worker provides. Layer is optional only when no services are needed.
-The worker disposes the runtime before closing the Layer after handlers drain.
-Its cleanup timer is armed when main exits, before scope finalizers, including
-startup failures after acquisition.
-Neem's outer stop deadline is 5,000 ms; a larger `cleanupTimeoutMs` does not
-extend it.
+  handlers, releases the runtime, then closes the Layer even if adapter
+  disposal failed. Shutdown releases commands for redelivery. A stop during
+  startup releases whatever the Layer and runtime acquired.
+- Cleanup deadlines cover handler drain, adapter and Layer finalizers; the
+  timer is armed when the worker exits once its Layer is built, including
+  startup failures after that. A timeout reports fatal failure for thread
+  recycling; it does not release services still in use. Neem's 30,000 ms worker readiness timeout
+  bounds startup, and its outer stop deadline is 5,000 ms; a larger
+  `cleanupTimeoutMs` does not extend it.

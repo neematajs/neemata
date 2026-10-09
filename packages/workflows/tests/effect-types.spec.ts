@@ -20,10 +20,12 @@ import {
 } from '../src/effect/index.ts'
 import { defineWorkflowsWorker } from '../src/effect/neem.ts'
 import {
-  defineTask as defineCoreTask,
-  defineWorkflow as defineCoreWorkflow,
   implementTask as implementCoreTask,
   implementWorkflow as implementCoreWorkflow,
+} from '../src/implement/index.ts'
+import {
+  defineTask as defineCoreTask,
+  defineWorkflow as defineCoreWorkflow,
 } from '../src/index.ts'
 import {
   createHandlerRunner,

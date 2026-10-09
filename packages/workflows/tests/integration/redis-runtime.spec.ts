@@ -16,12 +16,8 @@ import type { RunCoordinationWorkerClaim } from '../../src/runtime/commands.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
 import { Keys } from '../../src/adapters/redis/keys.ts'
 import { WakeEvents } from '../../src/adapters/redis/wake-events.ts'
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '../../src/index.ts'
+import { implementTask, implementWorkflow } from '../../src/implement/index.ts'
+import { defineTask, defineWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runExecutionWorker,

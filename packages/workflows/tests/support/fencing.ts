@@ -2,7 +2,8 @@ import { expect, it } from 'vitest'
 import * as z from 'zod'
 
 import type { WorkflowRuntimeAdapter } from '../../src/runtime/index.ts'
-import { defineTask, implementTask } from '../../src/index.ts'
+import { implementTask } from '../../src/implement/index.ts'
+import { defineTask } from '../../src/index.ts'
 import {
   createHandlerRunner,
   createWorkflowRuntimeClient,

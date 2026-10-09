@@ -16,9 +16,10 @@ Neemata supervises their processes and coordinates their durable work.
 | `@nmtjs/nuxt`        | Neem runtime for a Nuxt application                                                                    |
 | `@nmtjs/common`      | Utilities shared by the packages above                                                                 |
 
-The workflows core has no Effect dependency: definitions take Standard Schemas and
-handlers return values or Promises. `@nmtjs/workflows/effect` and `@nmtjs/effect`
-require **Effect 4** (`effect@^4.0.0`).
+Workflow contracts and the engine have no Effect dependency: definitions take
+Standard Schemas. Implementations are written with Effect through
+`@nmtjs/workflows/effect`, which, like `@nmtjs/effect`, requires **Effect 4**
+(`effect@^4.0.0`).
 
 ## Workflows with typed steps
 
@@ -28,12 +29,9 @@ names the execution pool it runs on:
 
 ```ts
 // workflow.ts
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '@nmtjs/workflows'
+import { defineTask, defineWorkflow } from '@nmtjs/workflows'
+import { implementTask, implementWorkflow } from '@nmtjs/workflows/effect'
+import * as Effect from 'effect/Effect'
 import * as z from 'zod'
 
 const normalize = defineTask({
@@ -44,7 +42,7 @@ const normalize = defineTask({
 
 export const normalizeTask = implementTask(normalize, {
   pool: 'default',
-  handler: (text) => text.trim().toLowerCase(),
+  handler: (text) => Effect.succeed(text.trim().toLowerCase()),
 })
 
 export const wordCount = defineWorkflow({
@@ -60,10 +58,10 @@ export const wordCountWorkflow = implementWorkflow(wordCount, {
   pool: 'default',
 })
   .normalized(normalize, { input: (_outputs, input) => input })
-  .counted((text) => (text ? text.split(/\s+/).length : 0), {
+  .counted((text) => Effect.succeed(text ? text.split(/\s+/).length : 0), {
     input: (outputs) => outputs.normalized,
   })
-  .finish((outputs) => outputs.counted)
+  .finish((outputs) => Effect.succeed(outputs.counted))
 ```
 
 Graphs also support branches, parallel steps, nested workflows, and bounded fan-out

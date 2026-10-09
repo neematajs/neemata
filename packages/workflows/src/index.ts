@@ -1,13 +1,9 @@
+// The Promise authoring chain stays internal: the Effect chain under
+// `/effect` is built on it and returns these implementation types.
 export type {
-  ActivityHandler,
   ActivityImplementation,
   AttemptLifecycle,
-  Env,
-  FinishHandler,
-  TaskHandler,
   TaskImplementation,
-  WorkflowImplementer,
-  WorkflowImplementationChain,
   WorkflowImplementation,
   WorkflowImplementationOptions,
 } from './implement/index.ts'
@@ -73,7 +69,6 @@ export {
   toStoredJsonSchema,
 } from './contract/index.ts'
 export type { ScheduleOptions } from './contract/index.ts'
-export { implementTask, implementWorkflow } from './implement/index.ts'
 export {
   WorkflowAttemptAbortError,
   WorkflowAttemptTimeoutError,

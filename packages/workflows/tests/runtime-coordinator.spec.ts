@@ -12,10 +12,8 @@ import {
   implementWorkflow,
   runWorkflowWorker,
 } from '../src/effect/index.ts'
-import {
-  defineWorkflow as defineStandardWorkflow,
-  implementWorkflow as implementStandardWorkflow,
-} from '../src/index.ts'
+import { implementWorkflow as implementStandardWorkflow } from '../src/implement/index.ts'
+import { defineWorkflow as defineStandardWorkflow } from '../src/index.ts'
 import { createRunLeaseScope } from '../src/runtime/coordinator.ts'
 import {
   createHandlerRunner,

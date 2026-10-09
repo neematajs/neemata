@@ -7,7 +7,8 @@ import {
   createPostgresWorkflowRuntime,
 } from '../src/adapters/postgres.ts'
 import { installPostgresWorkflowSchemaForTesting } from '../src/adapters/postgres/testing.ts'
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
+import { implementWorkflow } from '../src/implement/index.ts'
+import { defineWorkflow } from '../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runExecutionWorker,

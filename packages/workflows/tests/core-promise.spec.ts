@@ -1,14 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
-import type { Env } from '../src/index.ts'
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-  toStoredJsonSchema,
-} from '../src/index.ts'
+import type { Env } from '../src/implement/index.ts'
+import { implementTask, implementWorkflow } from '../src/implement/index.ts'
+import { defineTask, defineWorkflow, toStoredJsonSchema } from '../src/index.ts'
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,

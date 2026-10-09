@@ -10,14 +10,17 @@ Neemata provides shared utilities (`common`), Effect application hosting
 workflows, and Vite/Nuxt integration (`vite`, `nuxt`). Applications own their
 RPC/HTTP APIs and dependency wiring.
 
-- Workflows without Effect import from `@nmtjs/workflows`; Effect applications
-  import the contract and implementation builders from `@nmtjs/workflows/effect`.
+- Workflow contracts import from `@nmtjs/workflows` (Standard Schema, no
+  Effect) or `@nmtjs/workflows/effect` (`effect/Schema`). Implementations are
+  written with Effect: `implementTask` / `implementWorkflow` come only from
+  `@nmtjs/workflows/effect`.
 - Pubsub imports from `@nmtjs/pubsub`, `@nmtjs/pubsub/redis` and
   `@nmtjs/pubsub/effect`.
-- Neem workers import from `@nmtjs/workflows/neem` or
-  `@nmtjs/workflows/effect/neem`.
+- Neem runtime and planner import from `@nmtjs/workflows/neem`; the worker
+  from `@nmtjs/workflows/effect/neem`.
 - Effect adapters require the optional `effect` peer
-  `^4.0.0`. Core workflow and pubsub APIs are Effect-free.
+  `^4.0.0`. Workflow contracts, the workflow engine and core pubsub APIs are
+  Effect-free.
 - Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
   running Neem itself is covered by the `use-neem` skill.
 

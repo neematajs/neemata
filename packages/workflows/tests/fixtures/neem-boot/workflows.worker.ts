@@ -1,9 +1,10 @@
-import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
 import { createInMemoryWorkflowRuntime } from '@nmtjs/workflows/runtime'
+import * as Effect from 'effect/Effect'
 
 import { registry } from './registry.ts'
 
 export default defineWorkflowsWorker({
   ...registry,
-  setup: () => ({ runtime: createInMemoryWorkflowRuntime() }),
+  runtime: Effect.sync(() => createInMemoryWorkflowRuntime()),
 })
