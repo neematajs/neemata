@@ -498,6 +498,43 @@ describe.skipIf(!postgresTarget.url)(
       expect(await count('sample', 'id = $1', [id])).toBe(1)
     })
 
+    it('recovers start conflicts by tag', async () => {
+      const key = ['effect-sql-tagged', randomUUID()]
+      const idempotencyKey = ['effect-sql-tagged-idempotent', randomUUID()]
+      const holder = await client.start(
+        workflow,
+        { value: 'holder' },
+        { unique: { key } },
+      )
+      await client.start(workflow, { value: 'first' }, { idempotencyKey })
+
+      const recovered = await run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql.withTransaction(
+            Effect.all([
+              effectClient
+                .start(workflow, { value: 'duplicate' }, { unique: { key } })
+                .pipe(
+                  Effect.catchTag('WorkflowRunConflictError', (error) =>
+                    Effect.succeed(error.runId),
+                  ),
+                ),
+              effectClient
+                .start(workflow, { value: 'second' }, { idempotencyKey })
+                .pipe(
+                  Effect.catchTag('WorkflowIdempotencyConflictError', (error) =>
+                    Effect.succeed(error.workflowName),
+                  ),
+                ),
+            ]),
+          )
+        }),
+      )
+
+      expect(recovered).toEqual([holder.id, workflow.name])
+    })
+
     it('fails a statement past answerTimeoutMs as a typed SqlError and keeps the transaction usable', async () => {
       const bounded = createEffectSqlWorkflowClient(client, {
         answerTimeoutMs: 200,

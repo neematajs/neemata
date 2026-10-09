@@ -57,6 +57,13 @@ its logger, mode, and planner data.
 
 ## Lifetime
 
+The preset is the worker's entry point, so the worker must not call
+`NodeRuntime.runMain` or another platform `runMain`. Neem owns signals, stop, and
+the shutdown deadline, and the preset runs `main` under them. A program started
+with `runMain` runs outside that supervision: Neem's stop does not interrupt it,
+and its own signal handling and teardown can call `process.exit`, ending the
+thread instead of shutting it down cooperatively.
+
 - The layer is built lazily when Neem starts the worker. It must provide every
   service required by `main`; `main` also receives an application scope.
 - Call `ready(upstreams)` after resources are listening. `ready()` also supports

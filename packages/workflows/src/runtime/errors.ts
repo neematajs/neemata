@@ -10,6 +10,9 @@ import type { RuntimeRunStatus } from './status.ts'
  * without a follow-up query.
  */
 export class WorkflowRunConflictError extends Error {
+  // A plain discriminator, so Effect code can recover with `catchTag` while
+  // the core stays free of Effect.
+  readonly _tag = 'WorkflowRunConflictError'
   readonly runId: string
   readonly status: RuntimeRunStatus
   readonly key: readonly unknown[]
@@ -37,6 +40,7 @@ export class WorkflowRunConflictError extends Error {
  * different target or input, so the key cannot return that run.
  */
 export class WorkflowIdempotencyConflictError extends Error {
+  readonly _tag = 'WorkflowIdempotencyConflictError'
   readonly workflowName: string
 
   constructor(workflowName: string) {
