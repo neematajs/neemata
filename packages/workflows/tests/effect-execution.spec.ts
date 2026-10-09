@@ -4,8 +4,9 @@ import * as Cause from 'effect/Cause'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Logger from 'effect/Logger'
 import * as Schema from 'effect/Schema'
-import { pino, type Logger } from 'pino'
+import { pino, type Logger as Pino } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -426,7 +427,7 @@ it('builds the Layer from the worker context so services log through Neem', asyn
   })
   const adapter = createInMemoryWorkflowRuntime()
   await createWorkflowRuntimeClient(adapter).start(task, 3)
-  const layer = vi.fn((ctx: { logger: Logger }) =>
+  const layer = vi.fn((ctx: { logger: Pino }) =>
     Layer.succeed(logs, { info: (message) => ctx.logger.info(message) }),
   )
   const worker = defineWorkflowsWorker({
@@ -467,6 +468,151 @@ it('builds the Layer from the worker context so services log through Neem', asyn
       await reloaded.stop()
     }
   } finally {
+    channel.port1.close()
+    channel.port2.close()
+  }
+})
+
+it("routes Effect logs from handlers to Neem's worker logger", async () => {
+  const logged = Promise.withResolvers<void>()
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) =>
+      Effect.log('handled', input).pipe(
+        Effect.annotateLogs({ taskInput: input }),
+        Effect.tap(() => Effect.sync(() => logged.resolve())),
+        Effect.as(input),
+      ),
+  })
+  const adapter = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(adapter).start(task, 3)
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    runtime: Effect.succeed(adapter),
+  })
+  const lines: Record<string, unknown>[] = []
+  const logger = pino(
+    { level: 'info' },
+    { write: (line: string) => void lines.push(JSON.parse(line)) },
+  )
+  const channel = new MessageChannel()
+  const runtime = await worker.createRuntime({
+    mode: 'production',
+    name: 'logging',
+    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+    definition: worker.definition,
+    logger,
+    port: channel.port1,
+  })
+  try {
+    await runtime.start()
+    await logged.promise
+    expect(lines).toContainEqual(
+      expect.objectContaining({ msg: 'handled', message: 3, taskInput: 3 }),
+    )
+  } finally {
+    await runtime.stop()
+    channel.port1.close()
+    channel.port2.close()
+  }
+})
+
+it("reports engine errors to the application's Effect logger", async () => {
+  const failure = new Error('ack failed')
+  const reported = Promise.withResolvers<Logger.Options<unknown>>()
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) => Effect.succeed(input),
+  })
+  const base = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(base).start(task, 3)
+  const adapter = {
+    ...base,
+    attemptExecutor: {
+      ...base.attemptExecutor,
+      ack: () => Promise.reject(failure),
+    },
+  }
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    layer: () =>
+      Logger.layer([
+        Logger.make((options) => {
+          if (Cause.hasDies(options.cause)) reported.resolve(options)
+        }),
+      ]),
+    runtime: Effect.succeed(adapter),
+  })
+  const pinoError = vi.fn()
+  const logger = pino({ enabled: false })
+  logger.error = pinoError as any
+  const channel = new MessageChannel()
+  const runtime = await worker.createRuntime({
+    mode: 'production',
+    name: 'engine-errors',
+    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+    definition: worker.definition,
+    logger,
+    port: channel.port1,
+  })
+  try {
+    await runtime.start()
+    const { message, logLevel, cause } = await reported.promise
+    expect(logLevel).toBe('Error')
+    expect(message).toEqual(['Neem workflows worker error'])
+    expect(Cause.squash(cause)).toBe(failure)
+    expect(pinoError).not.toHaveBeenCalled()
+  } finally {
+    await Promise.resolve(runtime.stop()).catch(() => {})
+    channel.port1.close()
+    channel.port2.close()
+  }
+})
+
+it('falls back to the Pino logger when the application logger throws', async () => {
+  const failure = new Error('ack failed')
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) => Effect.succeed(input),
+  })
+  const base = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(base).start(task, 3)
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    layer: () =>
+      Logger.layer([
+        Logger.make((options) => {
+          if (Cause.hasDies(options.cause)) throw new Error('logger broke')
+        }),
+      ]),
+    runtime: Effect.succeed({
+      ...base,
+      attemptExecutor: {
+        ...base.attemptExecutor,
+        ack: () => Promise.reject(failure),
+      },
+    }),
+  })
+  const reported = Promise.withResolvers<unknown>()
+  const logger = pino({ enabled: false })
+  logger.error = ((record: unknown) => reported.resolve(record)) as any
+  const channel = new MessageChannel()
+  const runtime = await worker.createRuntime({
+    mode: 'production',
+    name: 'engine-errors-fallback',
+    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+    definition: worker.definition,
+    logger,
+    port: channel.port1,
+  })
+  try {
+    await runtime.start()
+    await expect(reported.promise).resolves.toEqual({ err: failure })
+  } finally {
+    await Promise.resolve(runtime.stop()).catch(() => {})
     channel.port1.close()
     channel.port2.close()
   }

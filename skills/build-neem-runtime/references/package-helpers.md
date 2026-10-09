@@ -161,8 +161,9 @@ One supervised fiber owns the scoped main and provided Layer. `stop()`
 interrupts and joins it, including finalizers; `finished` reflects its exit.
 Pre-readiness failure rejects start; post-readiness failure reaches Neem via
 `finished`. Background work must be composed into main or explicitly
-supervised. The preset requires the `effect@^4.0.0` peer and does not
-bridge Effect logging into `ctx.logger` automatically.
+supervised. The preset requires the `effect@^4.0.0` peer and routes
+`Effect.log*` to `ctx.logger` by default (`@nmtjs/common/effect`); a
+`Logger.layer` in the application's layer replaces that.
 
 ## Applying these patterns
 

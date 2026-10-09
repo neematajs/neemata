@@ -46,7 +46,8 @@
     }
   },
   "devDependencies": {
-    "effect": "^4.0.0"
+    "effect": "^4.0.0",
+    "pino": "^10.3.1"
   },
   "files": [
     "dist",

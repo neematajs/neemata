@@ -1,6 +1,7 @@
 import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import type * as Scope from 'effect/Scope'
 import { createFuture } from '@nmtjs/common'
+import { pinoLoggerLayer } from '@nmtjs/common/effect'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -36,9 +37,9 @@ export type WorkflowsRuntime<R = never> = Effect.Effect<
 
 /**
  * Builds the Layer once per runtime start, after registry validation; each
- * development reload calls it again in the same thread. `ctx.logger` is Neem's
- * worker logger, which Neem flushes on stop, and `ctx.data` names the role and
- * pool.
+ * development reload calls it again in the same thread. `ctx.data` names the
+ * role and pool. `Effect.log*` already reaches Neem's worker logger, so a
+ * logging service built from `ctx.logger` is unnecessary.
  */
 export type WorkflowsLayer<R> = (
   ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>,
@@ -137,8 +138,21 @@ export function defineWorkflowsWorker<
             env,
             workerId: ctx.name,
             signal: abort.signal,
-            onError: (error) =>
-              ctx.logger.error({ err: error }, 'Neem workflows worker error'),
+            // Through the worker's Effect logger, so an application's
+            // Logger.layer receives engine errors along with its own logs. A
+            // throwing logger must not reject the engine's reporting path.
+            onError: (error) => {
+              try {
+                Effect.runSyncWith(context)(
+                  Effect.logError(
+                    'Neem workflows worker error',
+                    Cause.die(error),
+                  ),
+                )
+              } catch {
+                ctx.logger.error({ err: error }, 'Neem workflows worker error')
+              }
+            },
           })
           void loop.catch(() => {})
           yield* Effect.addFinalizer(() =>
@@ -160,11 +174,15 @@ export function defineWorkflowsWorker<
           unknown
         >
         // Armed as the worker exits, before its scope closes: a startup step can
-        // fail with the adapter and the Layer already acquired.
+        // fail with the adapter and the Layer already acquired. Pino is provided
+        // outermost, so a Logger layer in the definition's Layer overrides it.
         fiber = Effect.runFork(
           Effect.scoped(
             main.pipe(Effect.onExit(() => armCleanupDeadline)),
-          ).pipe(Effect.provide(layer)),
+          ).pipe(
+            Effect.provide(layer),
+            Effect.provide(pinoLoggerLayer(ctx.logger)),
+          ),
         )
         fiber.addObserver((exit) => {
           if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)

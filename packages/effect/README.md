@@ -86,11 +86,38 @@ that ignores its AbortSignal can outlive interruption; the preset cannot kill th
 JavaScript work. Neem's worker shutdown deadline and thread termination remain the
 outer boundary.
 
-The preset does not currently bridge Effect logging into Neem's Pino logger.
-Applications receive `ctx.logger` and own their Effect logger configuration. A runtime
-rejection with a single non-interrupt cause keeps that failure's identity; several
-causes are rendered with `Cause.pretty` and kept as the error's `cause`. Structured
-Cause diagnostics for the host's logs remain a follow-up.
+A runtime rejection with a single non-interrupt cause keeps that failure's identity;
+several causes are rendered with `Cause.pretty` and kept as the error's `cause`.
+
+## Logging
+
+Log with Effect's own API (`Effect.log*`, `Effect.annotateLogs`, `Effect.withLogSpan`).
+The preset installs a logger that forwards every entry from the layer and main to
+Neem's worker logger (`ctx.logger`), so applications need no logging service and
+use `ctx.logger` directly only outside Effect. Each entry becomes one Pino record:
+
+- String parts are joined into `msg`. Other values stay structured under `message`,
+  so Pino's `redact` paths apply to them. Without string parts, Pino itself fills
+  `msg` from `err.message`, as for any `logger.error({ err })` call.
+- Log annotations become top-level fields. One named like a Pino or adapter field
+  (`level`, `time`, `msg`, `err`, ...) goes under `annotations` instead.
+- Log spans go under `spans` as elapsed milliseconds; `fiberId` names the fiber.
+- A failure cause and any `Error` parts go under `err`, each recorded as itself so
+  serializers and `redact` see its own fields; several become an `AggregateError`.
+  Interruption alone is not recorded as an error.
+
+Effect's `MinimumLogLevel` (default `Info`) filters before Pino's level does, so
+enable debug output in both. Like Effect's defaults, the installed set keeps
+`Logger.tracerLogger`, so logs still become events on the current span. A
+`Logger.layer` provided by the application's layer replaces the whole set; include
+`Logger.tracerLogger` in it to keep span events, or pass `{ mergeWithExisting: true }`
+to add loggers alongside Pino.
+
+The adapter is also available on its own:
+
+```ts
+import { makePinoLogger, pinoLoggerLayer } from '@nmtjs/common/effect'
+```
 
 ## Application and client boundary
 

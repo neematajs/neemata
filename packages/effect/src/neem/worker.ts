@@ -1,3 +1,4 @@
+import type { PinoLogger } from '@nmtjs/common/effect'
 import type {
   NeemRuntime,
   NeemRuntimeUpstream,
@@ -6,6 +7,7 @@ import type {
 } from '@nmtjs/neem'
 import type * as Layer from 'effect/Layer'
 import type * as Scope from 'effect/Scope'
+import { pinoLoggerLayer } from '@nmtjs/common/effect'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -30,13 +32,14 @@ export function defineEffectWorker<R, EL, EM, Data = unknown>(
   return defineRuntimeWorker({
     definition: undefined,
     createRuntime(ctx) {
-      return createWorkerRuntime(create(ctx))
+      return createWorkerRuntime(create(ctx), ctx.logger)
     },
   })
 }
 
 function createWorkerRuntime<R, EL, EM>(
   application: EffectApplication<R, EL, EM>,
+  logger: PinoLogger,
 ): NeemRuntime {
   const ready = Promise.withResolvers<readonly NeemRuntimeUpstream[]>()
   const finished = Promise.withResolvers<void>()
@@ -80,9 +83,12 @@ function createWorkerRuntime<R, EL, EM>(
 
       // The layer and main share the supervised lifetime. The fiber's Exit is
       // observed only after both application and service finalizers have run.
+      // Pino is provided outermost, so layer construction logs there too and a
+      // Logger layer inside the application's layer still overrides it.
       fiber = Effect.runFork(
         Effect.scoped(Effect.suspend(() => application.main(signal))).pipe(
           Effect.provide(application.layer),
+          Effect.provide(pinoLoggerLayer(logger)),
         ),
       )
       fiber.addObserver((result) => {

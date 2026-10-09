@@ -52,6 +52,7 @@
     }
   },
   "dependencies": {
+    "@nmtjs/common": "workspace:*",
     "@nmtjs/neem": "workspace:*"
   },
   "peerDependencies": {
