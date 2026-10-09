@@ -37,9 +37,9 @@ export type WorkflowsRuntime<R = never> = Effect.Effect<
 
 /**
  * Builds the Layer once per runtime start, after registry validation; each
- * development reload calls it again in the same thread. `ctx.logger` is Neem's
- * worker logger, which Neem flushes on stop, and `ctx.data` names the role and
- * pool.
+ * development reload calls it again in the same thread. `ctx.data` names the
+ * role and pool. `Effect.log*` already reaches Neem's worker logger, so a
+ * logging service built from `ctx.logger` is unnecessary.
  */
 export type WorkflowsLayer<R> = (
   ctx: NeemRuntimeWorkerContext<WorkflowsWorkerData, unknown>,
@@ -138,8 +138,21 @@ export function defineWorkflowsWorker<
             env,
             workerId: ctx.name,
             signal: abort.signal,
-            onError: (error) =>
-              ctx.logger.error({ err: error }, 'Neem workflows worker error'),
+            // Through the worker's Effect logger, so an application's
+            // Logger.layer receives engine errors along with its own logs. A
+            // throwing logger must not reject the engine's reporting path.
+            onError: (error) => {
+              try {
+                Effect.runSyncWith(context)(
+                  Effect.logError(
+                    'Neem workflows worker error',
+                    Cause.die(error),
+                  ),
+                )
+              } catch {
+                ctx.logger.error({ err: error }, 'Neem workflows worker error')
+              }
+            },
           })
           void loop.catch(() => {})
           yield* Effect.addFinalizer(() =>

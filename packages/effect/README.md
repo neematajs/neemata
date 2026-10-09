@@ -91,8 +91,10 @@ several causes are rendered with `Cause.pretty` and kept as the error's `cause`.
 
 ## Logging
 
-`Effect.log*` in the layer and main writes to Neem's worker logger (`ctx.logger`).
-Each entry becomes one Pino record:
+Log with Effect's own API (`Effect.log*`, `Effect.annotateLogs`, `Effect.withLogSpan`).
+The preset installs a logger that forwards every entry from the layer and main to
+Neem's worker logger (`ctx.logger`), so applications need no logging service and
+use `ctx.logger` directly only outside Effect. Each entry becomes one Pino record:
 
 - String parts are joined into `msg`. Other values stay structured under `message`,
   so Pino's `redact` paths apply to them. Without string parts, Pino itself fills

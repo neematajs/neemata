@@ -353,10 +353,14 @@ Scope for adapter acquisition, and each handler gets its own Scope.
 
 `layer` receives the Neem worker context, as `setup` does in the Promise worker.
 It is called once per runtime start, after registry validation, so each
-development reload builds a fresh Layer in the same thread. Build logging services from `ctx.logger`, the worker logger Neem
-flushes on stop, rather than creating a second logger in the worker. `Effect.log*`
-writes to it by default through `pinoLoggerLayer` from `@nmtjs/common/effect`;
-a `Logger.layer` in the Layer replaces it.
+development reload builds a fresh Layer in the same thread.
+
+Log with Effect's own API (`Effect.log*`, `Effect.annotateLogs`,
+`Effect.withLogSpan`) in handlers and services; no logging service is needed.
+The worker installs `pinoLoggerLayer` from `@nmtjs/common/effect`, which forwards
+every entry to `ctx.logger`, the worker logger Neem flushes on stop. Engine errors
+reported while the worker runs go through the same Effect logger. A `Logger.layer`
+in the Layer replaces it. Use `ctx.logger` directly only for code outside Effect.
 
 For attempts, typed failures and defects both use the existing retry policy.
 An `Effect.promise` rejection is a defect and still counts as a failed attempt.
