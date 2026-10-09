@@ -3,34 +3,35 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-} from '@nmtjs/workflows'
-import * as z from 'zod'
+} from '@nmtjs/workflows/effect'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
 
 const heavy = defineTask({
   name: 'neem-boot.heavy',
-  input: z.string(),
-  output: z.string(),
+  input: Schema.String,
+  output: Schema.String,
 })
 const unregistered = defineTask({
   name: 'neem-boot.unregistered',
-  input: z.string(),
-  output: z.string(),
+  input: Schema.String,
+  output: Schema.String,
 })
 const parent = defineWorkflow({
   name: 'neem-boot.parent',
-  input: z.string(),
-  output: z.string(),
+  input: Schema.String,
+  output: Schema.String,
 })
   .task('work', unregistered)
   .build()
 
 const heavyImpl = implementTask(heavy, {
   pool: 'heavy',
-  handler: (input) => input,
+  handler: (input) => Effect.succeed(input),
 })
 const parentImpl = implementWorkflow(parent, { pool: 'io' })
   .work(unregistered, { input: (_outputs, input) => input })
-  .finish(({ work }) => work)
+  .finish(({ work }) => Effect.succeed(work))
 
 // Chosen when the worker starts, so one build serves every registry; without
 // a choice the registry is valid.

@@ -5,20 +5,11 @@ import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import { pino } from 'pino'
 import { describe, expect, it } from 'vitest'
-import * as z from 'zod'
 
 import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
-import {
-  defineWorkflow as defineEffectWorkflow,
-  implementWorkflow as implementEffectWorkflow,
-} from '../src/effect/index.ts'
-import { defineWorkflowsWorker as defineEffectWorkflowsWorker } from '../src/effect/neem.ts'
-import {
-  defineSchedule,
-  defineWorkflow,
-  implementWorkflow,
-} from '../src/index.ts'
-import { defineWorkflowsWorker } from '../src/neem/index.ts'
+import { defineWorkflow, implementWorkflow } from '../src/effect/index.ts'
+import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import { defineSchedule } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   WorkflowCleanupTimeoutError,
@@ -27,12 +18,12 @@ import {
 
 const logger = pino({ enabled: false })
 
-const workflow = defineEffectWorkflow({
+const workflow = defineWorkflow({
   name: 'startup.empty',
   input: Schema.Struct({ id: Schema.String }),
   output: Schema.Struct({ id: Schema.String }),
 }).build()
-const workflowImpl = implementEffectWorkflow(workflow, { pool: 'test' }).finish(
+const workflowImpl = implementWorkflow(workflow, { pool: 'test' }).finish(
   (_outputs, input) => Effect.succeed({ id: input.id }),
 )
 const schedule = defineSchedule({
@@ -102,9 +93,9 @@ const settled = (promise: Promise<unknown>) =>
   ])
 
 describe('worker startup cleanup deadline', () => {
-  it('bounds a hanging adapter disposal after an Effect worker fails to start', async () => {
+  it('bounds a hanging adapter disposal after the worker fails to start', async () => {
     const adapter = createHangingAdapter()
-    const worker = defineEffectWorkflowsWorker({
+    const worker = defineWorkflowsWorker({
       workflows: () => [workflowImpl],
       schedules: () => [schedule],
       runtime: Effect.sync(() => adapter.runtime),
@@ -124,10 +115,10 @@ describe('worker startup cleanup deadline', () => {
     }
   })
 
-  it('bounds a hanging Layer finalizer after an Effect worker fails to start', async () => {
+  it('bounds a hanging Layer finalizer after the worker fails to start', async () => {
     const released = Promise.withResolvers<void>()
     const adapter = createHangingAdapter()
-    const worker = defineEffectWorkflowsWorker({
+    const worker = defineWorkflowsWorker({
       workflows: () => [workflowImpl],
       schedules: () => [schedule],
       runtime: Effect.sync(() => ({ ...adapter.runtime, dispose: () => {} })),
@@ -150,84 +141,14 @@ describe('worker startup cleanup deadline', () => {
       close()
     }
   })
-
-  it('bounds a hanging adapter disposal after a Promise worker fails to start', async () => {
-    const adapter = createHangingAdapter()
-    const core = defineWorkflow({
-      name: 'startup.core-empty',
-      input: z.object({ id: z.string() }),
-      output: z.object({ id: z.string() }),
-    }).build()
-    const coreImpl = implementWorkflow(core, { pool: 'test' }).finish(
-      (_outputs, input) => input,
-    )
-    const worker = defineWorkflowsWorker({
-      workflows: () => [coreImpl],
-      schedules: () => [
-        defineSchedule({
-          name: 'startup.core-schedule',
-          runnable: core,
-          input: { id: 'scheduled' },
-          every: '1h',
-        }),
-      ],
-      setup: () => ({ runtime: adapter.runtime }),
-    })
-    const { runtime, close } = await createCoordinator(worker)
-
-    try {
-      const start = runtime.start()
-      expect(await settled(start)).toBeInstanceOf(WorkflowCleanupTimeoutError)
-      expect(await settled(runtime.finished)).toBeInstanceOf(
-        WorkflowCleanupTimeoutError,
-      )
-    } finally {
-      adapter.release()
-      await runtime.stop().catch(() => {})
-      close()
-    }
-  })
 })
 
 describe('worker startup settings validation', () => {
   const invalid = { pollIntervalMs: 1, cleanupTimeoutMs: -1 }
 
-  it('rejects invalid Promise worker settings before setup acquires resources', async () => {
-    let setups = 0
-    let disposals = 0
-    const worker = defineWorkflowsWorker({
-      workflows: () => [],
-      setup: () => {
-        setups++
-        return {
-          runtime: {
-            ...createInMemoryWorkflowRuntime(),
-            dispose: () => {
-              disposals++
-            },
-          },
-          dispose: () => {
-            disposals++
-          },
-        }
-      },
-    })
-    const { runtime, close } = await createCoordinator(worker, invalid)
-
-    try {
-      await expect(runtime.start()).rejects.toThrow(
-        'Workflow cleanupTimeoutMs must be a finite non-negative number',
-      )
-      await runtime.stop().catch(() => {})
-      expect({ setups, disposals }).toEqual({ setups: 0, disposals: 0 })
-    } finally {
-      close()
-    }
-  })
-
-  it('rejects invalid Effect worker settings before building the Layer or adapter', async () => {
+  it('rejects invalid worker settings before building the Layer or adapter', async () => {
     let acquired = 0
-    const worker = defineEffectWorkflowsWorker({
+    const worker = defineWorkflowsWorker({
       workflows: () => [],
       runtime: Effect.sync(() => {
         acquired++

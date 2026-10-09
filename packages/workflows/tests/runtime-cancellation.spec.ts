@@ -2,12 +2,8 @@ import { describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
 import type { CancellationPolicy } from '../src/index.ts'
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '../src/index.ts'
+import { implementTask, implementWorkflow } from '../src/implement/index.ts'
+import { defineTask, defineWorkflow } from '../src/index.ts'
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,

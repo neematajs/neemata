@@ -68,11 +68,6 @@
       "types": "./src/neem/host.ts",
       "import": "./dist/neem/host.js",
       "module-sync": "./dist/neem/host.js"
-    },
-    "./neem/worker-entry": {
-      "types": "./src/neem/worker-entry.ts",
-      "import": "./dist/neem/worker-entry.js",
-      "module-sync": "./dist/neem/worker-entry.js"
     }
   },
   "publishConfig": {
@@ -136,11 +131,6 @@
         "types": "./dist/neem/host.d.ts",
         "import": "./dist/neem/host.js",
         "module-sync": "./dist/neem/host.js"
-      },
-      "./neem/worker-entry": {
-        "types": "./dist/neem/worker-entry.d.ts",
-        "import": "./dist/neem/worker-entry.js",
-        "module-sync": "./dist/neem/worker-entry.js"
       }
     }
   },

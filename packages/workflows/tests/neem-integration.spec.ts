@@ -12,6 +12,7 @@ import * as Schema from 'effect/Schema'
 import { pino } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -619,6 +620,260 @@ describe('workflows Neem integration', () => {
 
     await host.start?.()
     await host.stop?.()
+  })
+})
+
+// The resource guarantees the removed Promise worker proved, held by the
+// adapter and the Layer of the one Neem worker.
+describe('workflows Neem worker resources', () => {
+  const logger = pino({ enabled: false })
+  const greeter = Context.Service<{ readonly greet: (name: string) => string }>(
+    'test/greeter',
+  )
+  const greet = defineTask({
+    name: 'neem.resources.greet',
+    input: Schema.String,
+    output: Schema.String,
+  })
+  const greetImpl = implementTask(greet, {
+    pool: 'test',
+    handler: (name) =>
+      Effect.gen(function* () {
+        return (yield* greeter).greet(name)
+      }),
+  })
+  const config = { workflows: () => [], tasks: () => [greetImpl] }
+  const greeterLayer = Layer.succeed(greeter, {
+    greet: (name: string) => `Hello, ${name}`,
+  })
+
+  async function create(
+    worker: ReturnType<typeof defineWorkflowsWorker>,
+    data: WorkflowsWorkerData = {
+      role: 'execution',
+      settings: { pollIntervalMs: 1, cleanupTimeoutMs: 20 },
+    },
+  ) {
+    const channel = new MessageChannel()
+    const runtime = await worker.createRuntime({
+      mode: 'development',
+      name: `workflows:execution:${data.pool ?? 0}`,
+      data,
+      logger,
+      definition: worker.definition,
+      port: channel.port1,
+    })
+    return {
+      runtime,
+      close: () => {
+        channel.port1.close()
+        channel.port2.close()
+      },
+    }
+  }
+
+  it('releases the adapter before the Layer its handlers ran in', async () => {
+    const order: string[] = []
+    const adapter = createInMemoryWorkflowRuntime()
+    const worker = defineWorkflowsWorker({
+      ...config,
+      runtime: Effect.sync(() => ({
+        ...adapter,
+        dispose: () => void order.push('adapter'),
+      })),
+      layer: () =>
+        Layer.merge(
+          greeterLayer,
+          Layer.effectDiscard(
+            Effect.addFinalizer(() => Effect.sync(() => order.push('layer'))),
+          ),
+        ),
+    })
+    const { runtime, close } = await create(worker)
+
+    try {
+      await runtime.start()
+      const client = createWorkflowRuntimeClient(adapter)
+      const run = await client.start(greet, 'Ada')
+      await vi.waitFor(async () =>
+        expect((await client.get(run.id))?.run.output).toBe('Hello, Ada'),
+      )
+      await runtime.stop()
+
+      await expect(runtime.finished).resolves.toBeUndefined()
+      expect(order).toEqual(['adapter', 'layer'])
+    } finally {
+      close()
+    }
+  })
+
+  it('releases what the Layer acquired when a stop arrives during its build', async () => {
+    const entered = Promise.withResolvers<void>()
+    const build = Promise.withResolvers<void>()
+    const release = vi.fn()
+    const acquire = vi.fn(createInMemoryWorkflowRuntime)
+    const worker = defineWorkflowsWorker({
+      ...config,
+      runtime: Effect.sync(acquire),
+      layer: () =>
+        Layer.effect(
+          greeter,
+          Effect.acquireRelease(
+            Effect.promise(async () => {
+              entered.resolve()
+              await build.promise
+              return { greet: (name: string) => name }
+            }),
+            () => Effect.sync(release),
+          ),
+        ),
+    })
+    const { runtime, close } = await create(worker)
+
+    try {
+      const startup = expect(runtime.start()).rejects.toThrow(
+        'stopped before readiness',
+      )
+      await entered.promise
+      const stopped = runtime.stop()
+      build.resolve()
+
+      await startup
+      await stopped
+      await expect(runtime.finished).resolves.toBeUndefined()
+      expect(release).toHaveBeenCalledOnce()
+      expect(acquire).not.toHaveBeenCalled()
+    } finally {
+      close()
+    }
+  })
+
+  it('runs each task on the pool its implementation names', async () => {
+    const where = defineTask({
+      name: 'neem.resources.where',
+      input: Schema.String,
+      output: Schema.String,
+    })
+    const pool = Context.Service<string | undefined>('test/pool')
+    const adapter = createInMemoryWorkflowRuntime()
+    const claims: { workerId: string; taskNames: readonly string[] }[] = []
+    const observed: WorkflowRuntimeAdapter = {
+      ...adapter,
+      attemptExecutor: {
+        ...adapter.attemptExecutor,
+        claim: (claim) => {
+          claims.push(claim)
+          return adapter.attemptExecutor.claim(claim)
+        },
+      },
+    }
+    const worker = defineWorkflowsWorker({
+      workflows: () => [],
+      tasks: () => [
+        implementTask(where, {
+          pool: 'pdf',
+          handler: () =>
+            Effect.gen(function* () {
+              return `ran on ${yield* pool}`
+            }),
+        }),
+      ],
+      runtime: Effect.succeed(observed),
+      layer: (ctx) => Layer.succeed(pool, ctx.data.pool),
+    })
+    const start = async (name: string) => {
+      const { runtime, close } = await create(worker, {
+        role: 'execution',
+        pool: name,
+        settings: { pollIntervalMs: 1 },
+        pools: ['io', 'pdf'],
+      })
+      await runtime.start()
+      return async () => {
+        await runtime.stop()
+        close()
+      }
+    }
+    const client = createWorkflowRuntimeClient(adapter)
+    const run = await client.start(where, 'x')
+
+    // Another pool's worker polls without asking for the task, so never claims it.
+    const stopOther = await start('io')
+    try {
+      await vi.waitFor(() =>
+        expect(
+          claims.filter((claim) => claim.workerId.endsWith(':io')).length,
+        ).toBeGreaterThanOrEqual(3),
+      )
+      for (const claim of claims)
+        expect(claim.taskNames).not.toContain(where.name)
+      expect((await client.get(run.id))?.run.status).toBe('queued')
+      const stopPdf = await start('pdf')
+      try {
+        await vi.waitFor(async () =>
+          expect((await client.get(run.id))?.run.output).toBe('ran on pdf'),
+        )
+      } finally {
+        await stopPdf()
+      }
+    } finally {
+      await stopOther()
+    }
+  })
+
+  it('releases the Layer even when the adapter fails to dispose', async () => {
+    const release = vi.fn()
+    const worker = defineWorkflowsWorker({
+      ...config,
+      runtime: Effect.sync(() => ({
+        ...createInMemoryWorkflowRuntime(),
+        dispose: () => {
+          throw new Error('adapter stuck')
+        },
+      })),
+      layer: () =>
+        Layer.effect(
+          greeter,
+          Effect.acquireRelease(
+            Effect.sync(() => ({ greet: (name: string) => name })),
+            () => Effect.sync(release),
+          ),
+        ),
+    })
+    const { runtime, close } = await create(worker)
+
+    try {
+      await runtime.start()
+      await expect(runtime.stop()).rejects.toThrow('adapter stuck')
+      expect(release).toHaveBeenCalledOnce()
+    } finally {
+      close()
+    }
+  })
+
+  it('reports a Layer build failure through start and finished', async () => {
+    const acquire = vi.fn(createInMemoryWorkflowRuntime)
+    const worker = defineWorkflowsWorker({
+      ...config,
+      runtime: Effect.sync(acquire),
+      layer: () =>
+        Layer.effect(
+          greeter,
+          Effect.sync(() => {
+            throw new Error('no database')
+          }),
+        ),
+    })
+    const { runtime, close } = await create(worker)
+
+    try {
+      await expect(runtime.start()).rejects.toThrow('no database')
+      await expect(runtime.finished).rejects.toThrow('no database')
+      expect(acquire).not.toHaveBeenCalled()
+    } finally {
+      await Promise.resolve(runtime.stop()).catch(() => {})
+      close()
+    }
   })
 })
 

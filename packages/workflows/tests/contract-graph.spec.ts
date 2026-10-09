@@ -3,11 +3,11 @@ import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
 import { defineTask, defineWorkflow } from '../src/effect/index.ts'
+import { implementWorkflow as implementStandardWorkflow } from '../src/implement/index.ts'
 import {
   defineSchedule,
   defineTask as defineStandardTask,
   defineWorkflow as defineStandardWorkflow,
-  implementWorkflow as implementStandardWorkflow,
 } from '../src/index.ts'
 
 describe('workflow contract graph', () => {

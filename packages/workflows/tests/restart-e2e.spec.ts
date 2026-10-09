@@ -16,9 +16,9 @@ type RuntimeEvent = { event: string; [key: string]: unknown }
 
 const runtimeEventPrefix = 'NEEM_RUNTIME_EVENT '
 
-describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
+describe('Neem workflows runtime restart', () => {
   it('rotates worker generations without rebuilding planner topology', async () => {
-    const fixture = await createFixture(mode)
+    const fixture = await createFixture()
     const neem = spawnNeem([
       'dev',
       '--config',
@@ -79,7 +79,7 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
   }, 60_000)
 
   it('omits DevEngine instrumentation from production worker artifacts', async () => {
-    const fixture = await createFixture(mode)
+    const fixture = await createFixture()
     const neem = spawnNeem([
       'build',
       '--config',
@@ -108,20 +108,13 @@ describe.each(['Promise', 'Effect'])('Neem %s runtime restart', (mode) => {
   }, 60_000)
 })
 
-async function createFixture(mode: string) {
+async function createFixture() {
   const tempRoot = resolve(import.meta.dirname, '.tmp')
   const dir = await createTempDir('restart-', tempRoot)
   const fixtureDir = resolve(dir, 'fixture')
   await cp(resolve(import.meta.dirname, 'fixtures/restart'), fixtureDir, {
     recursive: true,
   })
-
-  if (mode === 'Effect') {
-    await cp(
-      resolve(fixtureDir, 'effect.worker.ts'),
-      resolve(fixtureDir, 'workflows.worker.ts'),
-    )
-  }
 
   const configFile = resolve(fixtureDir, 'neem.config.ts')
   const markerFile = resolve(fixtureDir, 'marker.ts')

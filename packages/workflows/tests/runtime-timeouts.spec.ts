@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
-import { defineWorkflow, implementWorkflow } from '../src/index.ts'
+import { implementWorkflow } from '../src/implement/index.ts'
+import { defineWorkflow } from '../src/index.ts'
 import {
   createInMemoryWorkflowRuntime,
   createWorkflowRuntimeClient,

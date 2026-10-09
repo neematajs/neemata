@@ -29,58 +29,54 @@ const invalidRegistries = [
   },
 ]
 
-describe.each(['Promise', 'Effect'])(
-  'Neem boot with the %s workflows worker',
-  (worker) => {
-    it.each(bootModes)(
-      'serves a complete registry in %s',
-      async (mode) => {
-        const neem = await boot(worker, mode)
+describe('Neem boot with the workflows worker', () => {
+  it.each(bootModes)(
+    'serves a complete registry in %s',
+    async (mode) => {
+      const neem = await boot(mode)
 
-        // Proves the marker the failure cases rely on is emitted on success.
-        await waitFor(
-          () => neem.stdout().includes(serverReady),
-          30_000,
-          () => formatOutput(neem),
-        )
-        const exit = await neem.stop({ killAfterMs: 5_000 })
-        expect(exit, formatOutput(neem)).toEqual({ code: 0, signal: null })
-      },
-      60_000,
-    )
+      // Proves the marker the failure cases rely on is emitted on success.
+      await waitFor(
+        () => neem.stdout().includes(serverReady),
+        30_000,
+        () => formatOutput(neem),
+      )
+      const exit = await neem.stop({ killAfterMs: 5_000 })
+      expect(exit, formatOutput(neem)).toEqual({ code: 0, signal: null })
+    },
+    60_000,
+  )
 
-    it.each(
-      bootModes.flatMap((mode) =>
-        invalidRegistries.map((invalid) => ({ mode, ...invalid })),
-      ),
-    )(
-      'aborts $mode boot for the $registry registry',
-      async ({ mode, registry, error }) => {
-        const neem = await boot(worker, mode, registry)
+  it.each(
+    bootModes.flatMap((mode) =>
+      invalidRegistries.map((invalid) => ({ mode, ...invalid })),
+    ),
+  )(
+    'aborts $mode boot for the $registry registry',
+    async ({ mode, registry, error }) => {
+      const neem = await boot(mode, registry)
 
-        const exit = await neem.waitForExit()
-        // A child can exit before its piped output has been read.
-        await Promise.all([
-          finished(neem.child.stdout!),
-          finished(neem.child.stderr!),
-        ])
-        const output = formatOutput(neem)
-        expect(exit.signal, output).toBeNull()
-        expect(exit.code, output).not.toBe(0)
-        expect(neem.stderr(), output).toContain(error)
-        expect(neem.stdout(), output).not.toContain(serverReady)
-      },
-      60_000,
-    )
-  },
-)
+      const exit = await neem.waitForExit()
+      // A child can exit before its piped output has been read.
+      await Promise.all([
+        finished(neem.child.stdout!),
+        finished(neem.child.stderr!),
+      ])
+      const output = formatOutput(neem)
+      expect(exit.signal, output).toBeNull()
+      expect(exit.code, output).not.toBe(0)
+      expect(neem.stderr(), output).toContain(error)
+      expect(neem.stdout(), output).not.toContain(serverReady)
+    },
+    60_000,
+  )
+})
 
 async function boot(
-  worker: string,
   mode: (typeof bootModes)[number],
   registry?: string,
 ): Promise<SpawnedNeem> {
-  const fixture = await createFixture(worker)
+  const fixture = await createFixture()
   const env = registry ? { WORKFLOWS_REGISTRY: registry } : {}
   if (mode === 'development') {
     return spawnNeem(
@@ -98,18 +94,12 @@ async function boot(
   return spawnNode([resolve(fixture.outDir, 'start.js')], { env })
 }
 
-async function createFixture(worker: string) {
+async function createFixture() {
   const tempRoot = resolve(import.meta.dirname, '.tmp')
   const dir = await createTempDir('neem-boot-', tempRoot)
   const fixtureDir = resolve(dir, 'fixture')
   const source = resolve(import.meta.dirname, 'fixtures/neem-boot')
   await cp(source, fixtureDir, { recursive: true })
-  if (worker === 'Effect') {
-    await cp(
-      resolve(fixtureDir, 'effect.worker.ts'),
-      resolve(fixtureDir, 'workflows.worker.ts'),
-    )
-  }
   return {
     configFile: resolve(fixtureDir, 'neem.config.ts'),
     outDir: resolve(dir, '.neem'),

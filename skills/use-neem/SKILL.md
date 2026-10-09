@@ -29,7 +29,7 @@ runtime workers, runtime planners, or host/worker `MessagePort` protocols, use
 - [Metrics](references/metrics.md) - metrics plugin, `/metrics` server,
   default metrics injection, Pushgateway, and lifecycle/health observations.
 - [Package Integration](references/package-integration.md) - package-owned
-  runtime helpers, workflows planner/worker contracts, Promise versus Effect
-  resources, and Redis client ownership.
+  runtime helpers, workflows planner/worker contracts, worker runtime and
+  Layer resources, and Redis client ownership.
 - [Effect Applications](references/effect.md) - `createEffectRuntime`,
   `defineEffectWorker`, Layer requirements, readiness, and supervised shutdown.

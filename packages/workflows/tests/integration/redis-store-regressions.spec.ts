@@ -10,11 +10,8 @@ import type { StoredRun } from '../../src/runtime/state.ts'
 import { createRedisWorkflowRuntime } from '../../src/adapters/redis.ts'
 import { QueueScripts } from '../../src/adapters/redis/scripts.ts'
 import { StoreScripts } from '../../src/adapters/redis/store-scripts.ts'
-import {
-  defineTask,
-  defineWorkflow,
-  implementWorkflow,
-} from '../../src/index.ts'
+import { implementWorkflow } from '../../src/implement/index.ts'
+import { defineTask, defineWorkflow } from '../../src/index.ts'
 import {
   createWorkflowRuntimeClient,
   runWorkflowWorker,

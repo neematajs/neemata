@@ -50,98 +50,17 @@ Coordinator and each pool accept `threads`, `concurrency`, `leaseMs`,
 integers. Concurrency is per thread, not cluster-wide. Coordinators advance
 runs, reconcile schedules, and maintain state; execution pools run handlers.
 
-### Promise Worker
+### Workflows Worker
 
-`defineWorkflowsWorker` takes `{ workflows, tasks?, schedules?, setup }`.
-Registry fields are sync/async factories returning arrays of implementations
-(or schedule definitions). `setup(ctx)` runs once per thread and returns
-`{ runtime, env?, dispose? }`:
-
-- `runtime` is a `WorkflowRuntimeAdapter` shared by that thread's loops.
-- `env` is the application value passed to Promise handlers and workflow
-  `finish`; it must satisfy every registered implementation's env requirements.
-  It is optional only when no implementation requires it. It is unrelated to
-  `NeemConfig.env`/`process.env`.
-- `dispose()` releases caller-owned resources after adapter disposal. It may
-  be sync or async. Clean up acquisitions yourself if `setup` throws before
-  returning resources.
-- `ctx` includes `logger`, `mode`, `name`, and `data`; `data` carries `role`
-  (`'coordinator' | 'execution'`), optional `pool`, `settings`, and declared
-  `pools`. Every thread builds its own clients; all participating threads must
-  point to the same durable backend/namespace. An in-memory adapter does not
-  share state across Neem threads.
-
-This minimal task-only worker uses the `jobs` pool from the planner above:
-
-```ts
-// neem.worker.ts
-import { defineTask, implementTask } from '@nmtjs/workflows'
-import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
-import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
-import { Redis } from 'ioredis'
-import * as z from 'zod'
-
-const normalize = defineTask({
-  name: 'normalize',
-  input: z.string(),
-  output: z.string(),
-})
-const implementation = implementTask(normalize, {
-  pool: 'jobs',
-  handler: (input) => input.trim(),
-})
-
-export default defineWorkflowsWorker({
-  workflows: () => [],
-  tasks: () => [implementation],
-  setup() {
-    const redis = new Redis({
-      maxRetriesPerRequest: 1,
-      commandTimeout: 2_000,
-    })
-    const runtime = createRedisWorkflowRuntime({
-      client: redis,
-      keyPrefix: 'jobs:',
-    })
-
-    return {
-      runtime,
-      async dispose() {
-        // The adapter closes its subscriber; this thread owns the command client.
-        try {
-          await redis.quit()
-        } finally {
-          redis.disconnect()
-        }
-      },
-    }
-  },
-})
-```
-
-Startup rejects undeclared implementation pools, missing child/task/schedule
-implementations, duplicate implementations of one name, and references using
-a different definition object with the same name. Repeating the same
-implementation object is deduplicated. Share definition modules between
-references and implementations. Schedules require an adapter with a scheduler;
-Redis does not provide one.
-
-On stop the worker stops claims, aborts attempts, joins engine loops, drains
-handlers, disposes the adapter, then calls resource `dispose` (even if adapter
-disposal throws). Stop during setup waits for setup and disposes returned
-resources. Cleanup overruns fail `finished` for Neem supervision; resources
-are not released while handlers still use them. A requested stop has Neem's
-separate hard [5,000 ms thread deadline](cli.md#start-failure-and-shutdown).
-
-### Effect Workflows Worker
-
-Use `defineWorkflowsWorker` from `@nmtjs/workflows/effect/neem`, with the same
+Use `defineWorkflowsWorker` from `@nmtjs/workflows/effect/neem`, with the
 runtime declaration helper and planner from `@nmtjs/workflows/neem`.
-Effect task/workflow implementations come from `@nmtjs/workflows/effect`.
-Install the optional peer `effect@^4.0.0` when using this API.
+Task/workflow implementations come from `@nmtjs/workflows/effect`, the only
+authoring API; contracts may come from either `@nmtjs/workflows` or
+`@nmtjs/workflows/effect`. Install the optional peer `effect@^4.0.0`.
 
-This worker takes `{ workflows, tasks?, schedules?, runtime, layer? }`, not
-Promise `setup`/`env`/`dispose`:
+The worker takes `{ workflows, tasks?, schedules?, runtime, layer? }`.
+Registry fields are sync/async factories returning arrays of implementations
+(or schedule definitions).
 
 - `runtime` is an Effect yielding a `WorkflowRuntimeAdapter`; it may require
   services and `Scope.Scope`. It is an Effect value, not a Context service tag
@@ -153,14 +72,73 @@ Promise `setup`/`env`/`dispose`:
   remaining inputs. It is required when services are needed, otherwise
   optional. Build logging services from `ctx.logger`, which Neem flushes on
   stop; `Effect.log*` is not bridged to it.
-- The worker supplies a shared Effect handler runtime per thread. Services
-  replace the Promise API's explicit handler env value.
-- Worker/handler cleanup precedes adapter disposal, then scoped resources and
-  Layer finalization. The helper calls `runtime.dispose()` itself; finalizers
-  you register close the command clients/pools the adapter does not own.
-- `cleanupTimeoutMs` bounds handler and worker cleanup while supervised. An
-  overrun fails `finished` so Neem can recycle the thread, including its healthy
-  sibling attempts. On requested stop it cannot extend Neem's host deadline.
+- `ctx` includes `logger`, `mode`, `name`, and `data`; `data` carries `role`
+  (`'coordinator' | 'execution'`), optional `pool`, `settings`, and declared
+  `pools`. Every thread builds its own clients; all participating threads must
+  point to the same durable backend/namespace. An in-memory adapter does not
+  share state across Neem threads.
+- Handlers resolve services from the Layer; there is no separate handler env
+  value. It is unrelated to `NeemConfig.env`/`process.env` either way.
+
+This minimal task-only worker uses the `jobs` pool from the planner above:
+
+```ts
+// neem.worker.ts
+import { defineTask } from '@nmtjs/workflows'
+import { implementTask } from '@nmtjs/workflows/effect'
+import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
+import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
+import * as Effect from 'effect/Effect'
+import { Redis } from 'ioredis'
+import * as z from 'zod'
+
+const normalize = defineTask({
+  name: 'normalize',
+  input: z.string(),
+  output: z.string(),
+})
+const implementation = implementTask(normalize, {
+  pool: 'jobs',
+  handler: (input) => Effect.succeed(input.trim()),
+})
+
+export default defineWorkflowsWorker({
+  workflows: () => [],
+  tasks: () => [implementation],
+  runtime: Effect.acquireRelease(
+    Effect.sync(
+      () => new Redis({ maxRetriesPerRequest: 1, commandTimeout: 2_000 }),
+    ),
+    // The adapter closes its subscriber; this thread owns the command client.
+    (redis) =>
+      Effect.promise(() => redis.quit()).pipe(
+        Effect.ensuring(Effect.sync(() => redis.disconnect())),
+      ),
+  ).pipe(
+    Effect.map((redis) =>
+      createRedisWorkflowRuntime({ client: redis, keyPrefix: 'jobs:' }),
+    ),
+  ),
+})
+```
+
+Startup rejects undeclared implementation pools, missing child/task/schedule
+implementations, duplicate implementations of one name, and references using
+a different definition object with the same name. Repeating the same
+implementation object is deduplicated. Share definition modules between
+references and implementations. Schedules require an adapter with a scheduler;
+Redis does not provide one.
+
+On stop the worker stops claims, aborts attempts, joins engine loops, drains
+handlers, calls `runtime.dispose()` itself, then runs the scoped finalizers you
+registered and the Layer's, even if adapter disposal throws. A stop or failure
+during startup releases whatever was acquired. Cleanup overruns fail
+`finished` for Neem supervision; resources are not released while handlers
+still use them. `cleanupTimeoutMs` bounds handler and worker cleanup while
+supervised; an overrun lets Neem recycle the thread, including its healthy
+sibling attempts. A requested stop has Neem's separate hard
+[5,000 ms thread deadline](cli.md#start-failure-and-shutdown), which
+`cleanupTimeoutMs` cannot extend.
 
 This workflows helper owns coordinator/execution loops and readiness; it is
 separate from the application-owned `main(ready)` API in `@nmtjs/effect`.
@@ -170,8 +148,8 @@ separate from the application-owned `main(ready)` API in `@nmtjs/effect`.
 `createRedisWorkflowRuntime` accepts the driver-neutral `WorkflowRedisClient`
 surface implemented by `ioredis` and `iovalkey`: command methods, event handling,
 and connection/duplication methods. It is not a `node-redis` client adapter.
-Create one command client per owning thread in Promise `setup`, or acquire it
-in the Effect worker's runtime scope/Layer, never in `neem.config.ts`.
+Create one command client per owning thread, acquired in the worker's runtime
+scope or Layer, never in `neem.config.ts`.
 
 - Keep both `maxRetriesPerRequest` and `commandTimeout` finite; the example's
   `1` and `2_000` are starting values, not enforced runtime defaults. Never use
@@ -179,7 +157,7 @@ in the Effect worker's runtime scope/Layer, never in `neem.config.ts`.
   across reconnects. Reconnection for future commands can remain enabled.
 - `runtime.dispose()` closes only the duplicated Pub/Sub client (falling back
   to disconnect if quit fails). The caller must close the command client after
-  adapter disposal via resource `dispose` or an Effect finalizer.
+  adapter disposal via an Effect finalizer.
 - Use standalone or Sentinel-managed Redis/Valkey, not Redis Cluster. Keep
   the namespace shared for threads of one workflows runtime and isolate
   independent runtimes with distinct `keyPrefix` values.
