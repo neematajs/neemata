@@ -133,5 +133,5 @@ loggers, minimum log level and annotations in place where it is built, so the
 application's Logger layers and `MinimumLogLevel` apply. Fields such as `channel`
 become log annotations and errors the entry's cause. An explicit `logger` still
 takes precedence. `make` builds the service synchronously and logs only through an
-explicit `logger`; `loggerFromContext(yield* Effect.context())` gives it, or a
-Redis adapter, the same Effect-backed logger.
+explicit `logger`; `loggerFromContext(yield* Effect.context())` from
+`@nmtjs/common/effect` gives it, or a Redis adapter, the same Effect-backed logger.

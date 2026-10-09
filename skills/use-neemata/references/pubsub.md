@@ -133,8 +133,8 @@ idle subscriptions, including ones never read, can be released.
 
 `@nmtjs/pubsub/effect` requires the optional peer `effect`
 `^4.0.0`. It exports `defineChannel`, `PubSub`, `PubSubError`,
-`PubSubConnectionLostError`, `make`, `layer`, and `codec` / `schemaOf` /
-`loggerFromContext` from `@nmtjs/common/effect`.
+`PubSubConnectionLostError`, `make`, `layer`, and `codec` / `schemaOf` from
+`@nmtjs/common/effect`.
 
 ```ts
 import {
@@ -177,8 +177,8 @@ disposing the adapter. Own its lifetime in the application.
   logger never breaks publish/subscribe. An explicit `logger` (Pino-style)
   still wins.
 - `make` is synchronous and logs only through an explicit `logger`. Pass
-  `loggerFromContext(yield* Effect.context())` for Effect logging there or to
-  `createRedisAdapter(client, logger)`.
+  `loggerFromContext(yield* Effect.context())` (from `@nmtjs/common/effect`)
+  for Effect logging there or to `createRedisAdapter(client, logger)`.
 
 The service's `publish` returns `Effect<boolean, PubSubError>`;
 `subscribe(channel, params, events?)` returns
