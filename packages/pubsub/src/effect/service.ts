@@ -1,4 +1,5 @@
 import type * as Scope from 'effect/Scope'
+import { loggerFromContext } from '@nmtjs/common/effect'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -52,6 +53,10 @@ export class PubSub extends Context.Service<
   }
 >()('@nmtjs/pubsub/PubSub') {}
 
+/**
+ * Builds the service synchronously, so it logs only through an explicit
+ * `options.logger`; `layer` defaults that to Effect's logger.
+ */
 export function make(options: PubSubManagerOptions): PubSub['Service'] {
   const manager = new PubSubManager(options)
   return {
@@ -113,6 +118,18 @@ function releasable<A>(
   }
 }
 
-/** The adapter's lifetime stays with whoever built it. */
+/**
+ * The adapter's lifetime stays with whoever built it. Without
+ * `options.logger`, the manager logs through the Effect loggers, log level and
+ * annotations in place where the layer is built.
+ */
 export const layer = (options: PubSubManagerOptions): Layer.Layer<PubSub> =>
-  Layer.succeed(PubSub, make(options))
+  Layer.effect(
+    PubSub,
+    Effect.map(Effect.context<never>(), (context) =>
+      make({
+        ...options,
+        logger: options.logger ?? loggerFromContext(context),
+      }),
+    ),
+  )

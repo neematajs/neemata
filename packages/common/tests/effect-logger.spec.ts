@@ -1,5 +1,6 @@
 import { Writable } from 'node:stream'
 
+import type * as LogLevel from 'effect/LogLevel'
 import type { Level, Logger as Pino } from 'pino'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -9,7 +10,11 @@ import * as References from 'effect/References'
 import { pino, stdSerializers } from 'pino'
 import { describe, expect, it } from 'vitest'
 
-import { makePinoLogger, pinoLoggerLayer } from '../src/effect.ts'
+import {
+  loggerFromContext,
+  makePinoLogger,
+  pinoLoggerLayer,
+} from '../src/effect.ts'
 
 function capture(level: Level = 'trace', redact?: string[]) {
   const records: Record<string, any>[] = []
@@ -277,5 +282,123 @@ describe('Pino logger', () => {
     )
     expect(records.map(({ msg }) => msg)).toEqual(['both'])
     expect(seen).toEqual([['both']])
+  })
+})
+
+describe('logger from context', () => {
+  type Entry = {
+    level: string
+    message: unknown
+    cause: Cause.Cause<unknown>
+    annotations: Record<string, unknown>
+  }
+
+  function contextLogger(
+    minimum: LogLevel.LogLevel = 'All',
+    write?: (entry: Entry) => void,
+  ) {
+    const entries: Entry[] = []
+    const logger = Logger.make<unknown, void>(
+      ({ logLevel, message, cause, fiber }) => {
+        const entry = {
+          level: logLevel,
+          message,
+          cause,
+          annotations: fiber.getRef(References.CurrentLogAnnotations),
+        }
+        if (write) write(entry)
+        else entries.push(entry)
+      },
+    )
+    const context = Effect.runSync(
+      Effect.context<never>().pipe(
+        Effect.annotateLogs('service', 'pubsub'),
+        Effect.provide(Logger.layer([logger])),
+        Effect.provideService(References.MinimumLogLevel, minimum),
+      ),
+    )
+    return { logger: loggerFromContext(context), entries }
+  }
+
+  it('maps each Pino method to the Effect level of the same name', () => {
+    const { logger, entries } = contextLogger()
+    logger.fatal({}, 'fatal')
+    logger.error({}, 'error')
+    logger.warn({}, 'warn')
+    logger.info({}, 'info')
+    logger.debug({}, 'debug')
+    logger.trace({}, 'trace')
+    expect(entries.map(({ level, message }) => [level, message])).toEqual([
+      ['Fatal', ['fatal']],
+      ['Error', ['error']],
+      ['Warn', ['warn']],
+      ['Info', ['info']],
+      ['Debug', ['debug']],
+      ['Trace', ['trace']],
+    ])
+  })
+
+  it("skips and reports levels below the context's MinimumLogLevel", () => {
+    const { logger, entries } = contextLogger('Warn')
+    logger.info({ quiet: true }, 'info')
+    logger.warn({ loud: true }, 'warn')
+    expect(entries.map(({ message }) => message)).toEqual([['warn']])
+    expect(logger.isLevelEnabled('info')).toBe(false)
+    expect(logger.isLevelEnabled('warn')).toBe(true)
+    expect(logger.isLevelEnabled('toString')).toBe(false)
+  })
+
+  it('adds object fields to the annotations of the context', () => {
+    const { logger, entries } = contextLogger()
+    logger.debug({ channel: 'room:a', service: 'override' }, 'opened')
+    expect(entries[0]).toMatchObject({
+      message: ['opened'],
+      annotations: { channel: 'room:a', service: 'override' },
+    })
+    expect(Cause.hasFails(entries[0].cause)).toBe(false)
+  })
+
+  it('reports Error fields and a bare Error as the cause', () => {
+    const { logger, entries } = contextLogger()
+    const error = new Error('boom')
+    logger.error({ channel: 'room:a', error }, 'failed')
+    logger.error(error)
+    expect(entries[0].annotations).toEqual({
+      service: 'pubsub',
+      channel: 'room:a',
+    })
+    expect(entries[0].message).toEqual(['failed'])
+    expect(Cause.squash(entries[0].cause)).toBe(error)
+    expect(Cause.squash(entries[1].cause)).toBe(error)
+  })
+
+  it('takes a bare message', () => {
+    const { logger, entries } = contextLogger()
+    logger.info('started')
+    expect(entries[0].message).toEqual(['started'])
+  })
+
+  it('round-trips fields through a Pino-backed Effect logger', () => {
+    const { logger: pino, records } = capture()
+    const context = Effect.runSync(
+      Effect.context<never>().pipe(Effect.provide(pinoLoggerLayer(pino))),
+    )
+    const error = new Error('boom')
+    loggerFromContext(context).warn({ channel: 'room:a', error }, 'failed')
+    expect(records[0]).toMatchObject({
+      level: 40,
+      msg: 'failed',
+      channel: 'room:a',
+      err: { type: 'Error', message: 'boom' },
+    })
+  })
+
+  it('contains a failing Effect logger', () => {
+    const { logger } = contextLogger('All', () => {
+      throw new Error('logger failed')
+    })
+    expect(() =>
+      logger.error({ error: new Error('x') }, 'failed'),
+    ).not.toThrow()
   })
 })

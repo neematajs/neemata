@@ -1,7 +1,9 @@
 import type * as Layer from 'effect/Layer'
-import type * as LogLevel from 'effect/LogLevel'
 import * as Cause from 'effect/Cause'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
 import * as Logger from 'effect/Logger'
+import * as LogLevel from 'effect/LogLevel'
 import * as References from 'effect/References'
 
 type PinoLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
@@ -9,10 +11,11 @@ type PinoLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
 /**
  * The part of a Pino logger the adapter uses, so this package needs no Pino
  * dependency; Neem's `ctx.logger` and any `pino()` instance satisfy it.
+ * `Input` widens what a call takes, as Pino also takes a bare message or Error.
  */
-export type PinoLogger = {
+export type PinoLogger<Input = object> = {
   isLevelEnabled(level: string): boolean
-} & Record<PinoLevel, (record: object, msg?: string) => void>
+} & Record<PinoLevel, (record: Input, msg?: string) => void>
 
 // "All" and "None" are thresholds for MinimumLogLevel, never entry levels.
 const levels: Record<LogLevel.LogLevel, PinoLevel | undefined> = {
@@ -136,4 +139,86 @@ function causeErrors(cause: Cause.Cause<unknown>): unknown[] | undefined {
     else if (Cause.isDieReason(reason)) (errors ??= []).push(reason.defect)
   }
   return errors
+}
+
+const severities: Record<PinoLevel, LogLevel.Severity> = {
+  fatal: 'Fatal',
+  error: 'Error',
+  warn: 'Warn',
+  info: 'Info',
+  debug: 'Debug',
+  trace: 'Trace',
+}
+
+/**
+ * A Pino-shaped logger for Promise-based code that writes through the Effect
+ * loggers in `context`, so a service wrapping such code logs wherever the
+ * application sends its Effect logs.
+ *
+ * A call's object fields become log annotations, and Error values among them
+ * (or the object itself, if an Error) become the entry's cause. Entries carry
+ * the annotations and spans of `context`, not of the fiber that made the call.
+ * A failing Effect logger is ignored rather than thrown into the caller.
+ */
+export function loggerFromContext(
+  context: Context.Context<never>,
+): PinoLogger<unknown> {
+  // MinimumLogLevel is fixed for `context`; reading it once lets disabled
+  // levels, such as trace on a publish path, return before allocating.
+  const minimum = Context.get(context, References.MinimumLogLevel)
+  const run = Effect.runSyncWith(context)
+  const enabled = (level: PinoLevel) =>
+    LogLevel.isGreaterThanOrEqualTo(severities[level], minimum)
+
+  const method = (level: PinoLevel) => {
+    if (!enabled(level)) return () => {}
+    const log = Effect.logWithLevel(severities[level])
+    return (record: unknown, msg?: string) => {
+      try {
+        run(entry(log, record, msg))
+      } catch {}
+    }
+  }
+
+  return {
+    isLevelEnabled: (level) =>
+      Object.hasOwn(severities, level) && enabled(level as PinoLevel),
+    fatal: method('fatal'),
+    error: method('error'),
+    warn: method('warn'),
+    info: method('info'),
+    debug: method('debug'),
+    trace: method('trace'),
+  }
+}
+
+function entry(
+  log: (...message: ReadonlyArray<unknown>) => Effect.Effect<void>,
+  record: unknown,
+  msg: string | undefined,
+): Effect.Effect<void> {
+  const parts: unknown[] = msg === undefined ? [] : [msg]
+  let annotations: Record<string, unknown> | undefined
+  // Effect's loggers report errors from the cause; makePinoLogger writes it
+  // to Pino's `err`, where Pino's serializer keeps the message and stack.
+  // Pino also accepts a bare message or Error in place of the object.
+  if (record instanceof Error) parts.push(Cause.fail(record))
+  else if (
+    typeof record !== 'object' ||
+    record === null ||
+    Array.isArray(record)
+  ) {
+    if (record !== undefined) parts.push(record)
+  } else {
+    for (const key in record) {
+      if (!Object.hasOwn(record, key)) continue
+      const value = (record as Record<string, unknown>)[key]
+      if (value instanceof Error) parts.push(Cause.fail(value))
+      else assign((annotations ??= {}), key, value)
+    }
+  }
+  const logged = log(...parts)
+  return annotations === undefined
+    ? logged
+    : Effect.annotateLogs(logged, annotations)
 }
