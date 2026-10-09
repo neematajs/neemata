@@ -471,3 +471,48 @@ it('builds the Layer from the worker context so services log through Neem', asyn
     channel.port2.close()
   }
 })
+
+it("routes Effect logs from handlers to Neem's worker logger", async () => {
+  const logged = Promise.withResolvers<void>()
+  const implementation = implementTask(task, {
+    pool: 'test',
+    handler: (input) =>
+      Effect.log('handled', input).pipe(
+        Effect.annotateLogs({ taskInput: input }),
+        Effect.tap(() => Effect.sync(() => logged.resolve())),
+        Effect.as(input),
+      ),
+  })
+  const adapter = createInMemoryWorkflowRuntime()
+  await createWorkflowRuntimeClient(adapter).start(task, 3)
+  const worker = defineWorkflowsWorker({
+    workflows: () => [],
+    tasks: () => [implementation],
+    runtime: Effect.succeed(adapter),
+  })
+  const lines: Record<string, unknown>[] = []
+  const logger = pino(
+    { level: 'info' },
+    { write: (line: string) => void lines.push(JSON.parse(line)) },
+  )
+  const channel = new MessageChannel()
+  const runtime = await worker.createRuntime({
+    mode: 'production',
+    name: 'logging',
+    data: { role: 'execution', settings: { pollIntervalMs: 1 } },
+    definition: worker.definition,
+    logger,
+    port: channel.port1,
+  })
+  try {
+    await runtime.start()
+    await logged.promise
+    expect(lines).toContainEqual(
+      expect.objectContaining({ msg: 'handled', message: 3, taskInput: 3 }),
+    )
+  } finally {
+    await runtime.stop()
+    channel.port1.close()
+    channel.port2.close()
+  }
+})

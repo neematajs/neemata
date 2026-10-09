@@ -68,3 +68,6 @@ export function schemaOf(
 ): EffectSchema | undefined {
   return declared && 'decode' in declared ? schemas.get(declared) : undefined
 }
+
+export type { PinoLogger } from './effect-logger.ts'
+export { makePinoLogger, pinoLoggerLayer } from './effect-logger.ts'

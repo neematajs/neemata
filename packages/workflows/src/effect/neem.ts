@@ -1,6 +1,7 @@
 import type { NeemRuntimeWorkerContext } from '@nmtjs/neem'
 import type * as Scope from 'effect/Scope'
 import { createFuture } from '@nmtjs/common'
+import { pinoLoggerLayer } from '@nmtjs/common/effect'
 import { defineRuntimeWorker } from '@nmtjs/neem'
 import * as Cause from 'effect/Cause'
 import * as Effect from 'effect/Effect'
@@ -160,11 +161,15 @@ export function defineWorkflowsWorker<
           unknown
         >
         // Armed as the worker exits, before its scope closes: a startup step can
-        // fail with the adapter and the Layer already acquired.
+        // fail with the adapter and the Layer already acquired. Pino is provided
+        // outermost, so a Logger layer in the definition's Layer overrides it.
         fiber = Effect.runFork(
           Effect.scoped(
             main.pipe(Effect.onExit(() => armCleanupDeadline)),
-          ).pipe(Effect.provide(layer)),
+          ).pipe(
+            Effect.provide(layer),
+            Effect.provide(pinoLoggerLayer(ctx.logger)),
+          ),
         )
         fiber.addObserver((exit) => {
           if (cleanupTimer !== undefined) clearTimeout(cleanupTimer)

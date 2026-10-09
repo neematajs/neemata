@@ -495,7 +495,8 @@ Effect workers use `defineWorkflowsWorker` from
 `runtime` is an `Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`;
 `layer` is `(ctx) => Layer`, called with the Neem worker context once per
 runtime start (after registry validation, again on each dev reload); build logging services from `ctx.logger` rather than a second logger.
-`Effect.log*` is not bridged to it.
+`Effect.log*` writes to it by default (`pinoLoggerLayer` from
+`@nmtjs/common/effect`); a `Logger.layer` in the Layer replaces that.
 The Layer must supply all handler and runtime requirements except `Scope`, which
 the worker provides. Layer is optional only when no services are needed.
 The worker disposes the runtime before closing the Layer after handlers drain.

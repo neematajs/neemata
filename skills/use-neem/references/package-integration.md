@@ -152,7 +152,8 @@ Promise `setup`/`env`/`dispose`:
   finish, and the runtime Effect, excluding the provided scope; it must have no
   remaining inputs. It is required when services are needed, otherwise
   optional. Build logging services from `ctx.logger`, which Neem flushes on
-  stop; `Effect.log*` is not bridged to it.
+  stop; `Effect.log*` writes to it by default, and a `Logger.layer` in the
+  Layer replaces that.
 - The worker supplies a shared Effect handler runtime per thread. Services
   replace the Promise API's explicit handler env value.
 - Worker/handler cleanup precedes adapter disposal, then scoped resources and

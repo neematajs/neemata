@@ -355,7 +355,8 @@ Scope for adapter acquisition, and each handler gets its own Scope.
 It is called once per runtime start, after registry validation, so each
 development reload builds a fresh Layer in the same thread. Build logging services from `ctx.logger`, the worker logger Neem
 flushes on stop, rather than creating a second logger in the worker. `Effect.log*`
-is not bridged to it; configure Effect's logger in the Layer if you need that.
+writes to it by default through `pinoLoggerLayer` from `@nmtjs/common/effect`;
+a `Logger.layer` in the Layer replaces it.
 
 For attempts, typed failures and defects both use the existing retry policy.
 An `Effect.promise` rejection is a defect and still counts as a failed attempt.

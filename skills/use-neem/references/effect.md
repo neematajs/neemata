@@ -84,5 +84,8 @@ non-cooperative Promise work or guarantee completion of uninterruptible cleanup.
 A single non-interruption cause is squashed to its underlying failure; several
 are rendered with `Cause.pretty` and retained as an error cause inside the
 worker. The host receives a serialized summary (`NeemWorkerError`), not a
-structured Effect Cause. Effect logging is not automatically bridged to Pino:
-use `ctx.logger` or configure Effect logging in the application.
+structured Effect Cause. `Effect.log*` writes to the worker's Pino logger by
+default: strings form `msg`, other values stay under `message`, annotations
+become fields, and a failure cause or `Error` parts go under `err`. A
+`Logger.layer` in the application's layer replaces that. `@nmtjs/common/effect`
+exports `makePinoLogger` and `pinoLoggerLayer` for use elsewhere.

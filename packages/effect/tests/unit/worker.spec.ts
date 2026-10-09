@@ -4,6 +4,7 @@ import type { NeemRuntime } from '@nmtjs/neem'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Logger from 'effect/Logger'
 import { pino } from 'pino'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -16,7 +17,10 @@ class Resource extends Context.Service<Resource, string>()('Resource') {}
 const runtimes: NeemRuntime[] = []
 const channels: MessageChannel[] = []
 
-async function create<R, EL, EM>(application: EffectApplication<R, EL, EM>) {
+async function create<R, EL, EM>(
+  application: EffectApplication<R, EL, EM>,
+  logger = pino({ enabled: false }),
+) {
   const channel = new MessageChannel()
   channels.push(channel)
   const runtime = await defineEffectWorker(() => application).createRuntime({
@@ -24,7 +28,7 @@ async function create<R, EL, EM>(application: EffectApplication<R, EL, EM>) {
     definition: undefined,
     mode: 'production',
     name: 'api:0',
-    logger: pino({ enabled: false }),
+    logger,
     port: channel.port1,
   })
   runtimes.push(runtime)
@@ -42,6 +46,38 @@ afterEach(async () => {
 })
 
 describe('Effect worker lifetime', () => {
+  it("logs through Neem's worker logger unless the application's layer overrides it", async () => {
+    const lines: Record<string, unknown>[] = []
+    const logger = pino(
+      { level: 'info' },
+      { write: (line: string) => void lines.push(JSON.parse(line)) },
+    )
+    const logs = (layer: Layer.Layer<never>) =>
+      create(
+        {
+          layer,
+          main: (ready) =>
+            Effect.gen(function* () {
+              yield* Effect.log('main')
+              yield* ready()
+              yield* Effect.never
+            }),
+        },
+        logger,
+      ).then((runtime) => runtime.start())
+
+    await logs(Layer.effectDiscard(Effect.log('layer')))
+    expect(lines.map(({ msg }) => msg)).toEqual(['layer', 'main'])
+
+    lines.length = 0
+    const custom: unknown[] = []
+    await logs(
+      Logger.layer([Logger.make(({ message }) => custom.push(message))]),
+    )
+    expect(lines).toEqual([])
+    expect(custom).toEqual([['main']])
+  })
+
   it('keeps runtime declarations pure and allows a custom planner', () => {
     expect(createEffectRuntime({ name: 'api' }).planner).toBe(
       '@nmtjs/effect/neem/planner',
