@@ -84,10 +84,24 @@ describe('Pino logger', () => {
       requestId: 'r-1',
       attempt: 2,
       spans: { handler: expect.any(Number) },
-      fiberId: expect.stringMatching(/^#\d+$/),
+      fiberId: expect.any(Number),
     })
     expect(records[0]).not.toHaveProperty('message')
     expect(records[0]).not.toHaveProperty('err')
+  })
+
+  it('keeps a __proto__ annotation and span label as fields', async () => {
+    const { logger, records } = capture()
+    await run(
+      logger,
+      Effect.log('hello').pipe(
+        Effect.annotateLogs('__proto__', 'annotated'),
+        Effect.withLogSpan('__proto__'),
+      ),
+    )
+    expect(Object.hasOwn(records[0], '__proto__')).toBe(false)
+    expect(Object.hasOwn(records[0].annotations, '__proto__')).toBe(true)
+    expect(Object.hasOwn(records[0].spans, '__proto__')).toBe(true)
   })
 
   it('joins string parts into msg and keeps other values structured', async () => {

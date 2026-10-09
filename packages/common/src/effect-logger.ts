@@ -27,8 +27,10 @@ const levels: Record<LogLevel.LogLevel, PinoLevel | undefined> = {
 }
 
 // Fields Pino writes itself or this adapter owns. An annotation with one of
-// these names goes under `annotations` instead of overwriting it.
+// these names goes under `annotations` instead of overwriting it. Pino also
+// fails on a top-level `__proto__` field, looking it up among its serializers.
 const reserved = new Set([
+  '__proto__',
   'level',
   'time',
   'pid',
@@ -48,40 +50,49 @@ const reserved = new Set([
 export function makePinoLogger(
   logger: PinoLogger,
 ): Logger.Logger<unknown, void> {
+  // Runs for every entry, so it avoids intermediate arrays and closures and
+  // allocates only what the record keeps.
   return Logger.make(({ message, logLevel, cause, fiber, date }) => {
     const level = levels[logLevel]
     if (level === undefined || !logger.isLevelEnabled(level)) return
 
     const record: Record<string, unknown> = {}
+    const annotations = fiber.getRef(References.CurrentLogAnnotations)
     let clashing: Record<string, unknown> | undefined
-    for (const [key, value] of Object.entries(
-      fiber.getRef(References.CurrentLogAnnotations),
-    )) {
-      if (reserved.has(key)) (clashing ??= {})[key] = value
-      else record[key] = value
+    for (const key in annotations) {
+      if (!Object.hasOwn(annotations, key)) continue
+      if (reserved.has(key)) assign((clashing ??= {}), key, annotations[key])
+      else record[key] = annotations[key]
     }
-    if (clashing) record.annotations = clashing
+    if (clashing !== undefined) record.annotations = clashing
     const spans = fiber.getRef(References.CurrentLogSpans)
     if (spans.length > 0) {
       const now = date.getTime()
-      record.spans = Object.fromEntries(
-        spans.map(([label, start]) => [label, now - start]),
-      )
+      const elapsed: Record<string, number> = {}
+      for (let i = 0; i < spans.length; i++)
+        assign(elapsed, spans[i][0], now - spans[i][1])
+      record.spans = elapsed
     }
-    record.fiberId = `#${fiber.id}`
+    record.fiberId = fiber.id
 
-    const errors = causeErrors(cause)
-    const text: string[] = []
-    const values: unknown[] = []
-    for (const part of Array.isArray(message) ? message : [message]) {
-      if (typeof part === 'string') text.push(part)
+    let errors = causeErrors(cause)
+    let msg: string | undefined
+    let values: unknown[] | undefined
+    // Effect.log always passes an array; only a direct caller passes one value.
+    const parts: ReadonlyArray<unknown> = Array.isArray(message)
+      ? message
+      : [message]
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      if (typeof part === 'string')
+        msg = msg === undefined ? part : `${msg} ${part}`
       // Pino serializes an Error's message and stack only under `err`.
-      else if (part instanceof Error) errors.push(part)
-      else values.push(part)
+      else if (part instanceof Error) (errors ??= []).push(part)
+      else (values ??= []).push(part)
     }
-    if (values.length > 0)
+    if (values !== undefined)
       record.message = values.length === 1 ? values[0] : values
-    if (errors.length > 0)
+    if (errors !== undefined)
       record.err =
         errors.length === 1
           ? errors[0]
@@ -89,8 +100,8 @@ export function makePinoLogger(
 
     // Values stay structured only: a formatted copy in msg would escape Pino's
     // path-based redaction.
-    if (text.length > 0) logger[level](record, text.join(' '))
-    else logger[level](record)
+    if (msg === undefined) logger[level](record)
+    else logger[level](record, msg)
   })
 }
 
@@ -99,13 +110,27 @@ export function pinoLoggerLayer(logger: PinoLogger): Layer.Layer<never> {
   return Logger.layer([makePinoLogger(logger)])
 }
 
-function causeErrors(cause: Cause.Cause<unknown>): unknown[] {
+// Annotation keys and span labels come from the application; plain assignment
+// of `__proto__` would replace the object's prototype instead of adding a field.
+function assign(target: Record<string, unknown>, key: string, value: unknown) {
+  if (key === '__proto__')
+    Object.defineProperty(target, key, {
+      value,
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  else target[key] = value
+}
+
+function causeErrors(cause: Cause.Cause<unknown>): unknown[] | undefined {
   // An interruption is how supervised work stops, not a failure to report.
   // Failures keep their identity, so serializers and redaction see their own
   // fields; rendering would copy those fields into message text.
-  return cause.reasons.flatMap((reason) =>
-    Cause.isInterruptReason(reason)
-      ? []
-      : [Cause.isFailReason(reason) ? reason.error : reason.defect],
-  )
+  let errors: unknown[] | undefined
+  for (const reason of cause.reasons) {
+    if (Cause.isFailReason(reason)) (errors ??= []).push(reason.error)
+    else if (Cause.isDieReason(reason)) (errors ??= []).push(reason.defect)
+  }
+  return errors
 }
