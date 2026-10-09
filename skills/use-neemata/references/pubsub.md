@@ -172,9 +172,10 @@ disposing the adapter. Own its lifetime in the application.
   `MinimumLogLevel` and annotations of the context it is built in: configure
   logging once with Effect's Logger layers. Fields (`channel`, ...) become log
   annotations and Error fields the entry's cause; levels below
-  `MinimumLogLevel` cost nothing. Entries carry the build context's
-  annotations, not the calling fiber's. A throwing Effect logger never breaks
-  publish/subscribe. An explicit `logger` (Pino-style) still wins.
+  `MinimumLogLevel` skip building and running the Effect. Entries carry the
+  build context's annotations, not the calling fiber's. A throwing Effect
+  logger never breaks publish/subscribe. An explicit `logger` (Pino-style)
+  still wins.
 - `make` is synchronous and logs only through an explicit `logger`. Pass
   `loggerFromContext(yield* Effect.context())` for Effect logging there or to
   `createRedisAdapter(client, logger)`.
