@@ -194,11 +194,12 @@ export const echoImpl = implementEffectTask(echo, {
   a single ordinary failure/defect keeps its identity. Mixed causes become
   `WorkflowHandlerError` (`_tag: 'WorkflowHandlerError'`), retaining the Effect
   `Cause` in `.cause`.
-- Effect worker wrappers take `context` instead of `env` and return Promises.
-  `Requirements<T>` determines needed services. A core handler can join only
-  if the supplied handler runtime satisfies its whole env:
-  `[HandlerRuntime<R>] extends [E]`. An env demanding extra properties is
-  rejected even if it also extends `HandlerRuntime<R>`.
+- Effect standalone workers (see Adapters and standalone workers) take no
+  `env` and return Effects whose requirements are `Requirements<T>` of their
+  implementations. A core handler can join only if the handler runtime
+  satisfies its whole env: `[HandlerRuntime<R>] extends [E]`. An env demanding
+  extra properties leaves an unprovidable requirement even if it also extends
+  `HandlerRuntime<R>`.
 - Effect Neem workers take one object with `workflows`, optional `tasks` /
   `schedules`, `runtime` and `layer`; see Neem integration below.
 
@@ -254,6 +255,27 @@ builders. Identity rules:
   `key` and `scope`. It and `WorkflowIdempotencyConflictError` carry a `_tag`
   of their class name, so Effect code (such as the Effect SQL client) can
   recover them with `Effect.catchTag`.
+
+Effect code uses `WorkflowClient` from `@nmtjs/workflows/effect`, a
+`Context.Service` built with `WorkflowClient.layer(client)` /
+`WorkflowClient.make(client)` over a Promise client (whose adapter stays owned
+by its creator). Methods mirror the Promise client and return Effects:
+`start` / `restart` fail with the two conflict errors (recover with
+`Effect.catchTag`), and every other rejection is a defect. Each call runs in a
+`WorkflowClient.<method>` span; interrupting a call stops waiting but cannot
+cancel the operation. There is no `connection` option: transactional starts use
+`createEffectSqlWorkflowClient` ([PostgreSQL](postgres.md)).
+
+```ts
+const runId =
+  yield *
+  workflows.start(prepare, input, { unique: { key: ['prepare', 'd1'] } }).pipe(
+    Effect.map((run) => run.id),
+    Effect.catchTag('WorkflowRunConflictError', (conflict) =>
+      Effect.succeed(conflict.runId),
+    ),
+  )
+```
 
 Reads return stored JSON, except `start` / `restart`, which decode input and
 completed output with the definition:
@@ -324,6 +346,11 @@ while the run remains stored and the watcher runs. Coarse change events have no
 polling backstop. There is no event-history API, `family` option or
 `afterEventId` cursor.
 
+`WorkflowClient.watch(id, options?)` takes the same options without `signal`
+and returns `Stream<WatchEvent>`. Interrupting the consumer aborts the watch
+before releasing it, so an idle watch (waiting for a poll) stops at once; each
+run of the stream watches anew.
+
 ## Adapters and standalone workers
 
 All built-in adapters expose `atomicCompletion`. PostgreSQL executes completion
@@ -338,9 +365,42 @@ The PostgreSQL contract is in [PostgreSQL](postgres.md).
 Standalone hosts use `runWorkflowWorker` / `runExecutionWorker` to drain
 currently claimable work, or `serveWorkflowWorker` / `serveExecutionWorker`
 with an abort `signal` for continuous service. Pass the adapter, implementations,
-`workerId`, env (or Effect context), and loop settings. Execution workers accept
+`workerId`, env, and loop settings. Execution workers accept
 `pool`; omission serves all registered pools. Low-level idle polling uses
 `idleDelayMs`, not the Neem planner's `pollIntervalMs`.
+
+`@nmtjs/workflows/effect` exports the same four names as Effects, taking the
+same input without `env`, `signal`, `onError` or `handlers`:
+
+- `serveWorkflowWorker` / `serveExecutionWorker` return
+  `Effect<never, never, R>`: they serve until interrupted, so a process can run
+  one as its main program under `NodeRuntime.runMain`. Interruption stops
+  claims, aborts handlers (attempts are released for redelivery) and waits for
+  them and their finalizers before completing, so the caller's Scope and Layer
+  are released only afterwards.
+- `runWorkflowWorker` / `runExecutionWorker` drain claimable work and succeed
+  with `{ processed }`.
+- `R` is the implementations' `Requirements<T>`; handlers take their services
+  from the worker Effect's context.
+- Non-fatal engine errors (a failed command or maintenance pass) are logged
+  with `Effect.logError('Workflow worker error', cause)`, reaching a
+  `Logger.layer`. A failed claim or a handler overrunning `cleanupTimeoutMs`
+  dies, but only after that handler returns; `onFatal` reports the overrun.
+
+```ts
+const main = Effect.gen(function* () {
+  const adapter = yield* acquireAdapter // Effect.acquireRelease around the adapter
+  return yield* serveExecutionWorker({
+    ...adapter,
+    workflows: [],
+    tasks: [decorateImpl],
+    pool: 'content',
+    workerId: `content-${process.pid}`,
+  })
+})
+
+NodeRuntime.runMain(main.pipe(Effect.scoped, Effect.provide(AppLayer)))
+```
 
 A supervisor can share `createHandlerRunner({ cleanupTimeoutMs?, onFatal? })`
 as `handlers` and await `drain()` before disposing env. Standalone workers do
@@ -506,3 +566,9 @@ Its cleanup timer is armed when main exits, before scope finalizers, including
 startup failures after acquisition.
 Neem's outer stop deadline is 5,000 ms; a larger `cleanupTimeoutMs` does not
 extend it.
+Do not call `NodeRuntime.runMain` (or another platform `runMain`) in the
+worker module: the worker is the thread's entry point. Neem owns signals, stop
+and the shutdown deadline. A `runMain` program runs outside that supervision:
+Neem's stop does not interrupt it, and its own signal handling and teardown can
+`process.exit` the thread instead of a cooperative stop. `runMain` is for the
+standalone Effect workers.

@@ -98,7 +98,9 @@ caller's session, and fail conflicts with `WorkflowRunConflictError` /
 `WorkflowIdempotencyConflictError` while the transaction stays usable. Both are
 tagged with their class name, like `SqlError`, so `Effect.catchTag` recovers
 one of them. Outside a
-transaction they use the workflow pool like the Promise client.
+transaction they use the workflow pool like the Promise client. For the rest of
+the client API in Effect code, wrap the same Promise client with
+`WorkflowClient.layer(client)` from `@nmtjs/workflows/effect`.
 
 ## Timestamps and runtime options
 

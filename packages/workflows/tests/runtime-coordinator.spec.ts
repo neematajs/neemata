@@ -10,7 +10,6 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   defineWorkflow as defineStandardWorkflow,
@@ -31,7 +30,7 @@ import {
   startWorkflowRun,
   type WorkflowStore,
 } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import { fromPromise, runWorkflowWorker } from './support/effect.ts'
 
 describe('workflow runtime coordinator', () => {
   const createTestContext = () => {

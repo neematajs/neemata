@@ -25,13 +25,12 @@ import {
   defineTask,
   defineWorkflow,
   implementWorkflow,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import {
   createWorkflowRuntimeClient,
   type WorkflowRuntimeAtomicContinuation,
 } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import { fromPromise, runWorkflowWorker } from './support/effect.ts'
 
 const createPgliteConnection = (db = new PGlite()) =>
   createPostgresWorkflowConnection(db)

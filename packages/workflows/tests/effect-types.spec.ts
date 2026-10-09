@@ -1,5 +1,6 @@
 import type * as SqlClient from 'effect/sql/SqlClient'
 import type * as SqlError from 'effect/sql/SqlError'
+import type * as Stream from 'effect/Stream'
 import type { Logger } from 'pino'
 import * as Cause from 'effect/Cause'
 import * as Context from 'effect/Context'
@@ -11,7 +12,12 @@ import * as z from 'zod'
 
 import type { WorkflowPostgresConnection } from '../src/adapters/postgres.ts'
 import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
-import type { WorkflowRuntimeClient } from '../src/runtime/index.ts'
+import type {
+  WatchEvent,
+  WorkerLoopResult,
+  WorkflowRuntimeClient,
+} from '../src/runtime/index.ts'
+import type { RunnableRun, WorkflowRun } from '../src/types/index.ts'
 import {
   createHandlerRuntime,
   defineTask,
@@ -20,6 +26,9 @@ import {
   implementWorkflow,
   runExecutionWorker,
   runWorkflowWorker,
+  serveExecutionWorker,
+  serveWorkflowWorker,
+  WorkflowClient,
   WorkflowHandlerError,
   type HandlerRuntime,
   type Requirements,
@@ -180,16 +189,32 @@ it('retains services from direct, branch and parallel activities', () => {
   ).toBeDefined()
 })
 
-it('requires a standalone worker context to cover its handlers', () => {
+it('requires standalone Effect workers to be provided their handlers services', () => {
   const worker = {
     ...createInMemoryWorkflowRuntime(),
     workflows: [],
     tasks: [implementation],
     workerId: 'typed',
   }
+  // Building the Effects runs nothing.
+  expectTypeOf(runExecutionWorker(worker)).toEqualTypeOf<
+    Effect.Effect<WorkerLoopResult, never, Service>
+  >()
+  expectTypeOf(serveExecutionWorker(worker)).toEqualTypeOf<
+    Effect.Effect<never, never, Service>
+  >()
+  const serviceFree = implementWorkflow(workflow, { pool: 'test' }).finish(
+    (_outputs, input) => Effect.succeed(input),
+  )
+  expectTypeOf(
+    serveWorkflowWorker({ ...worker, workflows: [serviceFree] }),
+  ).toEqualTypeOf<Effect.Effect<never, never, never>>()
+  // Thunks: only the call's types matter, the workers must not run.
+  void (() =>
+    Effect.runPromise(runExecutionWorker(worker).pipe(Effect.provide(layer()))))
+  // @ts-expect-error Nothing provides Service.
+  void (() => Effect.runPromise(runExecutionWorker(worker)))
   const context = Context.make(Service, { value: 1 })
-  // Thunks: only the call's types matter, the worker must not run.
-  void (() => runExecutionWorker({ ...worker, context }))
   // A supervisor that drains handlers itself passes the runtime as their env.
   const handlers = createHandlerRunner()
   void (() =>
@@ -209,8 +234,6 @@ it('requires a standalone worker context to cover its handlers', () => {
     }))
   // @ts-expect-error Handlers that require services need an env.
   void (() => runStoredExecutionWorker({ ...worker, handlers }))
-  // @ts-expect-error The empty context cannot provide Service.
-  void (() => runExecutionWorker({ ...worker, context: Context.empty() }))
 })
 
 it('supports scoped handlers and adapter factories with services', () => {
@@ -345,37 +368,34 @@ describe('core handlers in Effect workers', () => {
       workflows: [],
       workerId: 'core-handlers',
     }
-    const context = Context.make(Service, { value: 1 })
+    const withDb = runExecutionWorker({ ...worker, tasks: [needsDb] })
     // Thunks: only the call's types matter, the workers must not run.
     void (() =>
-      // @ts-expect-error The context cannot carry the task's db.
-      runExecutionWorker({ ...worker, tasks: [needsDb], context }))
-    void (() =>
-      runWorkflowWorker({
-        ...worker,
-        workflows: [finishNeedsDb],
-        // @ts-expect-error Nor the finish handler's.
-        context: Context.empty(),
-      }))
-    void (() =>
-      runExecutionWorker({
-        ...worker,
-        tasks: [envless],
-        context: Context.empty(),
-      }))
-    void (() =>
+      Effect.runPromise(
+        // @ts-expect-error No service can carry the task's db.
+        withDb.pipe(Effect.provideService(Service, { value: 1 })),
+      ))
+    const finishWithDb = runWorkflowWorker({
+      ...worker,
+      workflows: [finishNeedsDb],
+    })
+    // @ts-expect-error Nor the finish handler's.
+    void (() => Effect.runPromise(finishWithDb))
+    expectTypeOf<
+      Effect.Services<
+        ReturnType<typeof runExecutionWorker<never, typeof envless>>
+      >
+    >().toEqualTypeOf<never>()
+    expectTypeOf(
       runExecutionWorker({
         ...worker,
         tasks: [envless, usesRuntime, effectTask],
-        context,
-      }))
+      }),
+    ).toEqualTypeOf<Effect.Effect<WorkerLoopResult, never, Service>>()
     const erased: any[] = [needsDb]
-    void (() =>
-      runExecutionWorker({
-        ...worker,
-        tasks: erased,
-        context: Context.empty(),
-      }))
+    expectTypeOf(
+      runExecutionWorker({ ...worker, tasks: erased }),
+    ).toEqualTypeOf<Effect.Effect<WorkerLoopResult, never, never>>()
   })
 })
 
@@ -437,14 +457,13 @@ describe('core handler env subtypes in Effect workers', () => {
       workflows: [],
       workerId: 'core-env-subtypes',
     }
+    const withDb = runExecutionWorker({ ...worker, tasks: [needsDbToo] })
     // Thunk: only the call's types matter, the worker must not run.
     void (() =>
-      runExecutionWorker({
-        ...worker,
-        tasks: [needsDbToo],
-        // @ts-expect-error The context cannot carry the task's db.
-        context: Context.make(Service, { value: 1 }),
-      }))
+      Effect.runPromise(
+        // @ts-expect-error No service can carry the task's db.
+        withDb.pipe(Effect.provideService(Service, { value: 1 })),
+      ))
 
     expect(
       defineWorkflowsWorker({
@@ -637,6 +656,47 @@ describe('tagged workflow errors', () => {
     expectTypeOf<Effect.Error<typeof restarted>>().toEqualTypeOf<
       WorkflowRunConflictError | SqlError.SqlError
     >()
+  })
+
+  it('types the Effect client error channels and requirements', () => {
+    const started = Effect.gen(function* () {
+      const client = yield* WorkflowClient
+      return yield* client.start(workflow, 1)
+    })
+    expectTypeOf<Effect.Success<typeof started>>().toEqualTypeOf<
+      WorkflowRun<typeof workflow>
+    >()
+    expectTypeOf<Effect.Error<typeof started>>().toEqualTypeOf<
+      WorkflowRunConflictError | WorkflowIdempotencyConflictError
+    >()
+    expectTypeOf<
+      Effect.Services<typeof started>
+    >().toEqualTypeOf<WorkflowClient>()
+
+    const recovered = started.pipe(
+      Effect.catchTag('WorkflowRunConflictError', (error) =>
+        Effect.succeed(error.runId),
+      ),
+    )
+    expectTypeOf<
+      Effect.Error<typeof recovered>
+    >().toEqualTypeOf<WorkflowIdempotencyConflictError>()
+
+    const client = WorkflowClient.make(
+      {} as WorkflowRuntimeClient<WorkflowPostgresConnection>,
+    )
+    expectTypeOf(client.restart('run')).toEqualTypeOf<
+      Effect.Effect<
+        RunnableRun,
+        WorkflowRunConflictError | WorkflowIdempotencyConflictError
+      >
+    >()
+    expectTypeOf<Effect.Error<ReturnType<typeof client.get>>>().toBeNever()
+    expectTypeOf<Effect.Error<ReturnType<typeof client.cancel>>>().toBeNever()
+    expectTypeOf(client.watch('run')).toEqualTypeOf<Stream.Stream<WatchEvent>>()
+    // Joining a caller's transaction is the Effect SQL client's job.
+    // @ts-expect-error The Effect client takes no connection.
+    void client.start(task, 1, { connection: {} })
   })
 
   it('recovers each tagged error by tag at runtime', () => {

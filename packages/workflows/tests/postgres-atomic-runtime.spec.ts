@@ -15,11 +15,13 @@ import {
   defineWorkflow,
   implementTask,
   implementWorkflow,
-  runExecutionWorker,
-  runWorkflowWorker,
 } from '../src/effect/index.ts'
 import { createWorkflowRuntimeClient } from '../src/runtime/index.ts'
-import { fromPromise } from './support/effect.ts'
+import {
+  fromPromise,
+  runExecutionWorker,
+  runWorkflowWorker,
+} from './support/effect.ts'
 
 type Row = Record<string, unknown>
 
