@@ -6,6 +6,7 @@ import * as Exit from 'effect/Exit'
 
 /** Retain mixed failures and finalizer defects instead of squashing their Cause. */
 export class WorkflowHandlerError extends Error {
+  readonly _tag = 'WorkflowHandlerError'
   declare readonly cause: Cause.Cause<unknown>
 
   constructor(cause: Cause.Cause<unknown>) {

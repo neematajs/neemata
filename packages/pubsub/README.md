@@ -111,7 +111,7 @@ const program = Effect.gen(function* () {
   const messages = yield* pubsub.subscribe(room, { roomId })
   // Live from here: a message published now is delivered.
   yield* pubsub.publish(room.events.message, { roomId }, { text: 'hello' })
-  yield* Stream.runForEach(messages, handle)
+  yield* Stream.runForEach(messages, (message) => handle(message))
 })
 
 program.pipe(Effect.scoped, Effect.provide(layer({ adapter })))

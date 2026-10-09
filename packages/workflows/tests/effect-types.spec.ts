@@ -1,4 +1,7 @@
+import type * as SqlClient from 'effect/sql/SqlClient'
+import type * as SqlError from 'effect/sql/SqlError'
 import type { Logger } from 'pino'
+import * as Cause from 'effect/Cause'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
@@ -6,7 +9,9 @@ import * as Schema from 'effect/Schema'
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import * as z from 'zod'
 
+import type { WorkflowPostgresConnection } from '../src/adapters/postgres.ts'
 import type { WorkflowsWorkerData } from '../src/neem/runtime.ts'
+import type { WorkflowRuntimeClient } from '../src/runtime/index.ts'
 import {
   createHandlerRuntime,
   defineTask,
@@ -15,20 +20,25 @@ import {
   implementWorkflow,
   runExecutionWorker,
   runWorkflowWorker,
+  WorkflowHandlerError,
   type HandlerRuntime,
   type Requirements,
 } from '../src/effect/index.ts'
 import { defineWorkflowsWorker } from '../src/effect/neem.ts'
+import { createEffectSqlWorkflowClient } from '../src/effect/postgres.ts'
 import {
   defineTask as defineCoreTask,
   defineWorkflow as defineCoreWorkflow,
   implementTask as implementCoreTask,
   implementWorkflow as implementCoreWorkflow,
 } from '../src/index.ts'
+import { toStoredError } from '../src/runtime/errors.ts'
 import {
   createHandlerRunner,
   createInMemoryWorkflowRuntime,
   runExecutionWorker as runStoredExecutionWorker,
+  WorkflowIdempotencyConflictError,
+  WorkflowRunConflictError,
 } from '../src/runtime/index.ts'
 
 class Service extends Context.Service<Service, { value: number }>()(
@@ -594,5 +604,80 @@ describe('Effect chain: mapper required for incompatible step inputs', () => {
           activity: activity((input) => Effect.succeed(input + 1)),
         }),
       })
+  })
+})
+
+describe('tagged workflow errors', () => {
+  it('narrows the Effect SQL start error channel with catchTag', () => {
+    const client = createEffectSqlWorkflowClient(
+      {} as WorkflowRuntimeClient<WorkflowPostgresConnection>,
+    )
+    const started = client.start(workflow, 1)
+
+    const recovered = started.pipe(
+      Effect.catchTag('WorkflowRunConflictError', (error) => {
+        expectTypeOf(error).toEqualTypeOf<WorkflowRunConflictError>()
+        return Effect.succeed(error.runId)
+      }),
+    )
+    expectTypeOf<Effect.Error<typeof recovered>>().toEqualTypeOf<
+      WorkflowIdempotencyConflictError | SqlError.SqlError
+    >()
+    expectTypeOf<
+      Effect.Services<typeof recovered>
+    >().toEqualTypeOf<SqlClient.SqlClient>()
+
+    const restarted = client
+      .restart('run')
+      .pipe(
+        Effect.catchTag('WorkflowIdempotencyConflictError', (error) =>
+          Effect.succeed(error.workflowName),
+        ),
+      )
+    expectTypeOf<Effect.Error<typeof restarted>>().toEqualTypeOf<
+      WorkflowRunConflictError | SqlError.SqlError
+    >()
+  })
+
+  it('recovers each tagged error by tag at runtime', () => {
+    const conflict = new WorkflowRunConflictError({
+      runId: 'holder',
+      status: 'running',
+      key: ['key'],
+      scope: 'active',
+    })
+    const idempotency = new WorkflowIdempotencyConflictError('typed')
+    const handler = new WorkflowHandlerError(Cause.fail('failed'))
+
+    const recover = (
+      error:
+        | WorkflowRunConflictError
+        | WorkflowIdempotencyConflictError
+        | WorkflowHandlerError,
+    ) =>
+      Effect.runSync(
+        Effect.fail(error).pipe(
+          Effect.catchTags({
+            WorkflowRunConflictError: (error) => Effect.succeed(error.runId),
+            WorkflowIdempotencyConflictError: (error) =>
+              Effect.succeed(error.workflowName),
+            WorkflowHandlerError: (error) =>
+              Effect.succeed(Cause.squash(error.cause)),
+          }),
+        ),
+      )
+
+    expect(recover(conflict)).toBe('holder')
+    expect(recover(idempotency)).toBe('typed')
+    expect(recover(handler)).toBe('failed')
+  })
+
+  it('keeps the tag out of stored errors', () => {
+    const error = new WorkflowIdempotencyConflictError('typed')
+    expect(toStoredError(error)).toEqual({
+      name: 'WorkflowIdempotencyConflictError',
+      message: 'Conflicting idempotent run [typed]',
+      stack: error.stack,
+    })
   })
 })

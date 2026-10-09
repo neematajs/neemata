@@ -607,9 +607,11 @@ const admitTurn = Effect.gen(function* () {
   commits, and wake notifications are delivered only on commit. `cancel` works the
   same way: the cancellation and the wakes it dispatches commit with the caller.
 - A unique or idempotency-key conflict fails with `WorkflowRunConflictError` or
-  `WorkflowIdempotencyConflictError`, and SQL failures fail with `SqlError`. The
-  savepoint is rolled back, so the caller's transaction stays usable. Other failures,
-  such as input that does not match its schema, are defects.
+  `WorkflowIdempotencyConflictError`, and SQL failures fail with `SqlError`. All
+  three carry a `_tag`, so `Effect.catchTag('WorkflowRunConflictError', ...)` or
+  `Match.tag` can handle one of them. The savepoint is rolled back, so the
+  caller's transaction stays usable. Other failures, such as input that does not
+  match its schema, are defects.
 - The savepoint is Effect SQL's own nested `withTransaction`, so concurrent starts
   in one transaction take turns with each other and with the caller's other nested
   transactions. As with any nested `withTransaction`, a start still waiting for its

@@ -192,7 +192,8 @@ export const echoImpl = implementEffectTask(echo, {
   only after finalizers finish. The core stores this runtime as handler env.
 - Interrupt-only failure caused by the signal rethrows `signal.reason`;
   a single ordinary failure/defect keeps its identity. Mixed causes become
-  `WorkflowHandlerError`, retaining the Effect `Cause` in `.cause`.
+  `WorkflowHandlerError` (`_tag: 'WorkflowHandlerError'`), retaining the Effect
+  `Cause` in `.cause`.
 - Effect worker wrappers take `context` instead of `env` and return Promises.
   `Requirements<T>` determines needed services. A core handler can join only
   if the supplied handler runtime satisfies its whole env:
@@ -250,7 +251,9 @@ builders. Identity rules:
 - Definition `unique` may be a key function or
   `{ key: (input) => [...], scope?, behavior? }`.
 - `WorkflowRunConflictError` from `/runtime` carries `runId`, `status`,
-  `key` and `scope`.
+  `key` and `scope`. It and `WorkflowIdempotencyConflictError` carry a `_tag`
+  of their class name, so Effect code (such as the Effect SQL client) can
+  recover them with `Effect.catchTag`.
 
 Reads return stored JSON, except `start` / `restart`, which decode input and
 completed output with the definition:

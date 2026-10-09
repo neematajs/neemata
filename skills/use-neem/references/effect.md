@@ -65,6 +65,11 @@ acquisition in the Layer/main Effect, not an async factory. The factory receives
 - Keep main alive after readiness. Compose essential background work into main,
   or explicitly join/supervise its fibers. Forking work in a Layer does not
   automatically make its failure fail main.
+- Do not call `NodeRuntime.runMain` (or another platform `runMain`) in the
+  worker: the preset is the entry point. Neem owns signals, stop and the
+  shutdown deadline. A `runMain` program runs outside that supervision: Neem's
+  stop does not interrupt it, and its own signal handling and teardown can
+  `process.exit` the thread instead of a cooperative stop.
 
 ## Lifetime and Diagnostics
 
