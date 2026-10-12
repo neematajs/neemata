@@ -263,13 +263,17 @@ async function dispatchMap<T extends MapDeclaration>(
         continue
       }
 
+      // Every pass revisits every child, so re-settling rows persisted on an
+      // earlier pass would cost store reads quadratic in the map size.
       if (childRun.status === 'completed') {
-        await input.store.completeNodeChild({
-          runId: input.run.id,
-          nodeName: input.node.name,
-          childKey: child.childKey,
-          output: childRun.output,
-        })
+        if (child.status !== 'completed') {
+          await input.store.completeNodeChild({
+            runId: input.run.id,
+            nodeName: input.node.name,
+            childKey: child.childKey,
+            output: childRun.output,
+          })
+        }
         byOrdinal[child.ordinal] = {
           item: child.item,
           index: child.ordinal,
@@ -291,12 +295,14 @@ async function dispatchMap<T extends MapDeclaration>(
       }
 
       const error = callbacks.failedChildError(childRun)
-      await input.store.failNodeChild({
-        runId: input.run.id,
-        nodeName: input.node.name,
-        childKey: child.childKey,
-        error,
-      })
+      if (child.status !== 'failed') {
+        await input.store.failNodeChild({
+          runId: input.run.id,
+          nodeName: input.node.name,
+          childKey: child.childKey,
+          error,
+        })
+      }
       failedChildren += 1
       failure ??= error
       continue

@@ -3342,6 +3342,102 @@ describe('workflow runtime coordinator', () => {
     })
   })
 
+  it('settles each mapTask child row once across coordination passes', async () => {
+    const embeddingTask = defineTask({
+      name: 'map.settle-once-embedding',
+      input: Schema.Struct({ text: Schema.String }),
+      output: Schema.Struct({ id: Schema.String }),
+    })
+    const workflow = defineWorkflow({
+      name: 'map-task-settle-once-workflow',
+      input: Schema.Struct({ texts: Schema.Array(Schema.String) }),
+      output: Schema.Struct({ ids: Schema.Array(Schema.String) }),
+    })
+      .mapTask('embeddings', embeddingTask, {
+        item: Schema.String,
+        concurrency: 1,
+      })
+      .build()
+
+    const implementation = implementWorkflow(workflow, { pool: 'test' })
+      .embeddings(embeddingTask, {
+        items: (_outputs, input) => input.texts,
+        input: (_outputs, item) => ({ text: item }),
+      })
+      .finish(({ embeddings }) =>
+        fromPromise(() => ({
+          ids: embeddings.items.map((item) => item.output.id),
+        })),
+      )
+
+    const runtime = createInMemoryWorkflowRuntime()
+    const completeNodeChild = vi.spyOn(runtime.store, 'completeNodeChild')
+    const failNodeChild = vi.spyOn(runtime.store, 'failNodeChild')
+    const context = createTestContext()
+    const texts = ['alpha', 'bad', 'beta', 'gamma']
+    const run = await runtime.store.createRun({
+      workflowName: workflow.name,
+      input: { texts },
+    })
+    const continueParent = () =>
+      continueWorkflowRun({
+        store: runtime.store,
+        runCoordinationExecutor: runtime.runCoordinationExecutor,
+        attemptExecutor: runtime.attemptExecutor,
+        handlers: createHandlerRunner(),
+        env: createHandlerRuntime(context),
+        workflows: [implementation],
+        workerId: 'coordinator-1',
+        command: {
+          kind: 'continueRun' as const,
+          runId: run.id,
+          workflowName: workflow.name,
+        },
+      })
+
+    // concurrency 1 settles one child before each pass, the schedule where
+    // re-settling earlier children on every pass grows quadratically.
+    await continueParent()
+    for (const [ordinal, text] of texts.entries()) {
+      const snapshot = await runtime.store.loadRunSnapshot(run.id)
+      const childRunId = snapshot!.children[ordinal]!.childRunId!
+      if (text === 'bad') {
+        await runtime.store.failRun({
+          runId: childRunId,
+          error: new Error('mapped task failed'),
+        })
+      } else {
+        await runtime.store.completeRun({
+          runId: childRunId,
+          output: { id: `embedding:${text}` },
+        })
+      }
+      await continueParent()
+    }
+
+    const final = await runtime.store.loadRunSnapshot(run.id)
+    expect(final?.run.status).toBe('failed')
+    expect(final?.nodes[0]?.status).toBe('failed')
+    expect(
+      final?.children.map((child) => [child.ordinal, child.status]),
+    ).toStrictEqual([
+      [0, 'completed'],
+      [1, 'failed'],
+      [2, 'completed'],
+      [3, 'completed'],
+    ])
+    expect(
+      completeNodeChild.mock.calls.map(([params]) => params.childKey),
+    ).toStrictEqual(
+      final!.children
+        .filter((child) => child.status === 'completed')
+        .map((child) => child.childKey),
+    )
+    expect(
+      failNodeChild.mock.calls.map(([params]) => params.childKey),
+    ).toStrictEqual([final!.children[1]!.childKey])
+  })
+
   it('runs mapTask items and fails the parent after every item settles', async () => {
     const embeddingTask = defineTask({
       name: 'map.settled-embedding',
