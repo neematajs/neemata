@@ -1,6 +1,7 @@
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunSnapshot, StoredNodeChild, StoredRun } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
+import { continueRunCommand } from '../commands.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { createRunLeaseScope } from './lease.ts'
 
@@ -59,11 +60,7 @@ async function cancelChildRun(input: {
   }
 
   await input.store.requestRunCancellation({ runId: run.id })
-  await input.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: run.id,
-    workflowName: run.workflowName,
-  })
+  await input.runCoordinationExecutor.enqueue(continueRunCommand(run))
   const lease = await input.store.acquireRunLease({
     runId: run.id,
     leaseMs: CHILD_CANCELLATION_LEASE_MS,

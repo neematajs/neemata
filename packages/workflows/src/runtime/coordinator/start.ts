@@ -11,10 +11,14 @@ import type {
   WorkflowInput,
   Timestamp,
 } from '../../types/index.ts'
+import type { RouteRef } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { StoredRun } from '../state.ts'
 import type { CreateRunInput, WorkflowStore } from '../store.ts'
 import { encodeStoredValue } from '../codec.ts'
+import { continueRunCommand } from '../commands.ts'
+import { runDefinitionInput } from '../definition.ts'
+import { routeLabel } from '../registry.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import {
   normalizeRunUnique,
@@ -111,6 +115,7 @@ export async function startWorkflowRun<
     tags: metadata.tags,
     idempotencyKey: metadata.idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
+    ...runDefinitionInput(input.workflow),
   }
 
   if (input.atomicStart) {
@@ -127,11 +132,7 @@ export async function startWorkflowRun<
   const run = await input.store.createRun(runInput)
 
   try {
-    const command = {
-      kind: 'continueRun',
-      runId: run.id,
-      workflowName: input.workflow.name,
-    } as const
+    const command = continueRunCommand(run)
     if (input.startAt) {
       await input.runCoordinationExecutor.enqueueDelayed(command, input.startAt)
     } else {
@@ -179,6 +180,7 @@ export async function startTaskRun<
     tags: input.tags ?? resolveTags(input.task.tags, taskInput),
     idempotencyKey,
     ...(unique === undefined ? {} : { unique }),
+    ...runDefinitionInput(input.task),
   }
 
   if (input.atomicStart) {
@@ -202,6 +204,7 @@ export async function startTaskRun<
     attemptExecutor: input.attemptExecutor,
     runCoordinationExecutor: input.runCoordinationExecutor,
     taskName: input.task.name,
+    revision: run.executionRevision,
     taskRunId: run.id,
     taskInput: storedInput,
     idempotencyKey,
@@ -236,13 +239,17 @@ function assertNoStartConnection(connection: unknown) {
 }
 
 function assertImplementationTarget(
-  implementationTarget: { readonly name: string } | undefined,
-  target: { readonly name: string },
+  implementationTarget: RouteRef | undefined,
+  target: RouteRef,
   label: string,
 ) {
-  if (implementationTarget && implementationTarget.name !== target.name) {
+  if (
+    implementationTarget &&
+    (implementationTarget.name !== target.name ||
+      implementationTarget.revision !== target.revision)
+  ) {
     throw new Error(
-      `${label} [${implementationTarget.name}] does not match [${target.name}]`,
+      `${label} [${routeLabel(implementationTarget)}] does not match [${routeLabel(target)}]`,
     )
   }
 }

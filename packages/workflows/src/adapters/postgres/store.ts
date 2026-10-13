@@ -1,6 +1,7 @@
 import type { RunSnapshot } from '../../runtime/state.ts'
 import type { WorkflowStore } from '../../runtime/store.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import { validateFailedRunRetry } from '../../runtime/store.ts'
 import { createAttemptExecutor } from './executor.ts'
@@ -201,6 +202,9 @@ const createUnfencedStore = (
               runId: root.id,
               workflowName: root.workflowName,
               taskName: root.taskName ?? root.name,
+              ...(root.executionRevision === undefined
+                ? {}
+                : { revision: root.executionRevision }),
               nodeName: '$task',
               childKey: child.childKey,
               attemptId: attempt.id,
@@ -211,11 +215,7 @@ const createUnfencedStore = (
           } else {
             const runCoordinationExecutor =
               createRunCoordinationExecutor(commands)
-            await runCoordinationExecutor.enqueue({
-              kind: 'continueRun',
-              runId: root.id,
-              workflowName: root.workflowName,
-            })
+            await runCoordinationExecutor.enqueue(continueRunCommand(root))
           }
           return root
         })

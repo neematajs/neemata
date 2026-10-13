@@ -208,7 +208,7 @@ describe('workflow runtime interfaces', () => {
     expectTypeOf<StoredNode>().toHaveProperty('status')
     expectTypeOf<StoredAttempt>().toHaveProperty('status')
     expectTypeOf<ContinueWorkflowRunResult>().toExtend<{
-      status: 'processed' | 'busy' | 'ignored'
+      status: 'processed' | 'busy' | 'ignored' | 'unroutable'
     }>()
     expectTypeOf<WorkerCommandResult>().toExtend<{
       status: 'processed' | 'released'

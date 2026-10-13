@@ -1,4 +1,4 @@
-import type { ContinueRunCommand } from '../../runtime/commands.ts'
+import type { ContinueRunCommand, RouteRef } from '../../runtime/commands.ts'
 import type {
   CommandReleaseOptions,
   RunCoordinationExecutor,
@@ -31,6 +31,42 @@ type ReleasedCommandRow = {
   readonly delivery_count: number
   readonly last_error: unknown
   readonly run_at: Timestamp
+}
+
+/**
+ * Matches commands on exactly the served `(name, revision)` routes, appending
+ * its values to `params`. A row-value `IN` never matches a NULL revision, so
+ * the unversioned lane is a predicate of its own: a route without a revision
+ * serves `revision IS NULL` only and is never a wildcard. Undefined when no
+ * route is served.
+ */
+export function routesSql(
+  nameColumn: 'workflow_name' | 'task_name',
+  routes: readonly RouteRef[],
+  params: unknown[],
+) {
+  function push(value: string) {
+    params.push(value)
+    return `$${params.length}`
+  }
+
+  const unversioned: string[] = []
+  const versioned: string[] = []
+  for (const { name, revision } of routes) {
+    if (revision === undefined) unversioned.push(push(name))
+    else versioned.push(`(${push(name)}, ${push(revision)})`)
+  }
+
+  const lanes: string[] = []
+  if (unversioned.length > 0) {
+    lanes.push(
+      `(revision IS NULL AND ${nameColumn} IN (${unversioned.join(', ')}))`,
+    )
+  }
+  if (versioned.length > 0) {
+    lanes.push(`(${nameColumn}, revision) IN (${versioned.join(', ')})`)
+  }
+  return lanes.length === 0 ? undefined : `(${lanes.join(' OR ')})`
 }
 
 // One source for the dead-letter threshold so the release path and the
@@ -126,14 +162,15 @@ export const createPostgresWorkflowCommandHelpers = (
       `
       WITH upserted AS (
         INSERT INTO workflow_commands (
-          id, kind, run_id, workflow_name, payload, run_at
+          id, kind, run_id, workflow_name, revision, payload, run_at
         )
-        VALUES ($1, 'continue', $2, $3, $4::jsonb, COALESCE($5, now()))
+        VALUES ($1, 'continue', $2, $3, $6, $4::jsonb, COALESCE($5, now()))
         ON CONFLICT (run_id) WHERE kind = 'continue' AND lease_token IS NULL
         DO UPDATE
         SET run_at = LEAST(workflow_commands.run_at, EXCLUDED.run_at),
             payload = EXCLUDED.payload,
-            workflow_name = EXCLUDED.workflow_name
+            workflow_name = EXCLUDED.workflow_name,
+            revision = EXCLUDED.revision
         RETURNING run_at
       )
       SELECT pg_notify('${WORKFLOW_COMMANDS_CHANNEL}', 'continue')
@@ -146,6 +183,7 @@ export const createPostgresWorkflowCommandHelpers = (
         command.workflowName,
         json(command),
         timestampParam(runAt),
+        command.revision ?? null,
       ],
     )
   }
@@ -205,6 +243,7 @@ export const createPostgresWorkflowCommandHelpers = (
             kind,
             run_id,
             workflow_name,
+            revision,
             payload,
             run_at,
             priority,
@@ -217,6 +256,7 @@ export const createPostgresWorkflowCommandHelpers = (
             kind,
             run_id,
             workflow_name,
+            revision,
             payload,
             run_at,
             priority,
@@ -385,13 +425,12 @@ export const createRunCoordinationExecutor = (
     },
     async claim(worker) {
       await ready
-      if (worker.workflowNames.length === 0) return null
-      const workflowList = worker.workflowNames
-        .map((_, index) => `$${index + 1}`)
-        .join(', ')
+      const params: unknown[] = []
+      const served = routesSql('workflow_name', worker.workflows, params)
+      if (served === undefined) return null
       const claimed = await claimCommand(
-        `kind = 'continue' AND workflow_name IN (${workflowList})`,
-        [...worker.workflowNames],
+        `kind = 'continue' AND ${served}`,
+        params,
         worker.workerId,
         worker.leaseMs,
       )

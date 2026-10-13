@@ -78,6 +78,19 @@ export class Keys {
     return `${this.prefix}unique:${scope}:${digest(value)}`
   }
 
+  /**
+   * Graphs and revisions are shared by every run of the namespace. They sit
+   * outside each family's keys and its `externalKeys`, so no terminal
+   * transition, expiry or deletion of a family reaches them.
+   */
+  graphs() {
+    return `${this.prefix}definitions:graphs`
+  }
+
+  revisions() {
+    return `${this.prefix}definitions:revisions`
+  }
+
   activeRuns() {
     return `${this.prefix}runs:active`
   }

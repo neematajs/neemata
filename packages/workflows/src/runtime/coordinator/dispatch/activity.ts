@@ -85,6 +85,7 @@ export async function dispatchActivityNode(
     attemptExecutor: input.attemptExecutor,
     runCoordinationExecutor: input.runCoordinationExecutor,
     workflowName: input.workflow.workflow.name,
+    revision: input.run.executionRevision,
     activityName: input.node.activity.name,
     runId: input.run.id,
     nodeName: input.node.name,

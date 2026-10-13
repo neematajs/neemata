@@ -14,6 +14,7 @@ import type {
 import type { WorkflowRuntimeAtomicCompletion } from '../../runtime/worker.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import { isTerminalRunStatus } from '../../runtime/status.ts'
@@ -197,11 +198,7 @@ export function createRedisWorkflowRuntime(
     try {
       if (stored.kind === 'workflow') {
         await continueQueue.enqueueWithMarker(
-          {
-            kind: 'continueRun',
-            runId: stored.id,
-            workflowName: stored.workflowName,
-          },
+          continueRunCommand(stored),
           markerKey,
           started.startAt,
         )
@@ -215,7 +212,7 @@ export function createRedisWorkflowRuntime(
             attemptQueue.enqueueWithMarker(command, markerKey, options?.runAt),
         }
         // A join can repair another caller's interrupted start. Its payload,
-        // identity and schedule must come from that persisted run.
+        // identity, revision and schedule must come from that persisted run.
         const dispatch: Mutable<DispatchTaskRunAttemptInput> = {
           store,
           runCoordinationExecutor,
@@ -230,6 +227,9 @@ export function createRedisWorkflowRuntime(
         }
         if (stored.idempotencyKey !== undefined) {
           dispatch.idempotencyKey = stored.idempotencyKey
+        }
+        if (stored.executionRevision !== undefined) {
+          dispatch.revision = stored.executionRevision
         }
         await dispatchTaskRunAttempt(dispatch)
       }

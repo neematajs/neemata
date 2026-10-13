@@ -66,10 +66,10 @@ describe('workflow worker runtime', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [task.name],
+      tasks: [{ name: task.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -227,10 +227,10 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
     const completionClaimed = await completionRuntime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [completionTask.name],
+      tasks: [{ name: completionTask.name }],
       leaseMs: 30_000,
     })
     expect(completionClaimed).not.toBeNull()
@@ -277,10 +277,10 @@ describe('workflow worker runtime', () => {
       input: { text: 'alpha' },
     })
     const retryClaimed = await retryRuntime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [retryTask.name],
+      tasks: [{ name: retryTask.name }],
       leaseMs: 30_000,
     })
     expect(retryClaimed).not.toBeNull()
@@ -343,10 +343,10 @@ describe('workflow worker runtime', () => {
       workerId: 'workflow-worker-1',
     })
     const reconcileClaimed = await reconcileRuntime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [reconcileTask.name],
+      tasks: [{ name: reconcileTask.name }],
       leaseMs: 30_000,
     })
     expect(reconcileClaimed).not.toBeNull()
@@ -415,10 +415,10 @@ describe('workflow worker runtime', () => {
       workerId: 'workflow-worker-1',
     })
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [task.name],
+      tasks: [{ name: task.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()

@@ -504,10 +504,9 @@ const commandKind = (
 const matchesClaim = <T>(item: Item<T>, claim: Pick<Claim<T>, 'leaseToken'>) =>
   item.leaseToken === claim.leaseToken
 
-const selectorCanClaim = (selector: ClaimSelector) => {
-  if (selector.workflowNames.length > 0) return true
-  if (!('taskNames' in selector)) return false
-  return selector.taskNames.length > 0
+function selectorCanClaim(selector: ClaimSelector) {
+  if (selector.workflows.length > 0) return true
+  return 'tasks' in selector && selector.tasks.length > 0
 }
 
 const scriptResult = (value: unknown): string[] => {

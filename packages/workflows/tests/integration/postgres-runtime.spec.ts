@@ -293,9 +293,9 @@ describe.skipIf(!postgresTarget.url)(
         workerId: 'coordinator-crash',
       })
       const claimed = await runtime.attemptExecutor.claim({
-        taskNames: [],
+        tasks: [],
         workerId: 'activity-crashed',
-        workflowNames: [workflow.name],
+        workflows: [{ name: workflow.name }],
         activityNames: ['content'],
         leaseMs: 50,
       })

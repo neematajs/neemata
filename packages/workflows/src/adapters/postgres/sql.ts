@@ -181,6 +181,16 @@ const uniqueOf = (row: JsonRecord): Pick<StoredRun, 'unique'> =>
         },
       }
 
+// Both are NULL on runs created before revisions existed.
+function definitionOf(
+  row: JsonRecord,
+): Pick<StoredRun, 'executionRevision' | 'graphHash'> {
+  return {
+    ...optional('executionRevision', row.execution_revision as string | null),
+    ...optional('graphHash', row.graph_hash as string | null),
+  }
+}
+
 export const mapRun = (row: JsonRecord): StoredRun => ({
   id: row.id as string,
   kind: row.kind as StoredRun['kind'],
@@ -200,6 +210,7 @@ export const mapRun = (row: JsonRecord): StoredRun => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   ...uniqueOf(row),
+  ...definitionOf(row),
   version: row.version as number,
   activeSince: timestampColumn(row.active_since),
   createdAt: timestampColumn(row.created_at),
@@ -223,6 +234,7 @@ export const mapRunSummary = (row: JsonRecord): RunSummary => ({
     fromOptional(row.idempotency_key) as readonly unknown[] | undefined,
   ),
   ...uniqueOf(row),
+  ...definitionOf(row),
   version: row.version as number,
   activeSince: timestampColumn(row.active_since),
   createdAt: timestampColumn(row.created_at),

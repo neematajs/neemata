@@ -297,9 +297,12 @@ export async function enqueueContinueRun(
   runCoordinationExecutor: RunCoordinationExecutor,
   command: EnqueueContinueRunCommand,
 ): Promise<void> {
+  // An attempt of a workflow run carries that run's name and revision.
+  const { runId, workflowName, revision } = command
   await runCoordinationExecutor.enqueue({
     kind: 'continueRun',
-    runId: command.runId,
-    workflowName: command.workflowName,
+    runId,
+    workflowName,
+    ...(revision === undefined ? {} : { revision }),
   })
 }

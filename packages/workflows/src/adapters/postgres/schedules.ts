@@ -1,12 +1,16 @@
+import type { GraphPresentation } from '../../inspector/graph.ts'
 import type { WorkflowRuntimeAdapter } from '../../runtime/client.ts'
 import type { WorkflowScheduler } from '../../runtime/scheduler.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
+import type { MissingDefinitions } from './definitions.ts'
+import { prepareRunDefinition } from '../../runtime/definition.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
   startStoredScheduleRun,
   type StoredWorkflowSchedule,
 } from '../../runtime/scheduler.ts'
+import { assertDefinitions, saveDefinitions } from './definitions.ts'
 import { id, json, many, one, timestampColumn, timestampParam } from './sql.ts'
 
 type PostgresWorkflowSchedulerContext = {
@@ -22,6 +26,9 @@ type ScheduleRow = {
   readonly name: string
   readonly runnable_kind: 'workflow' | 'task'
   readonly runnable_name: string
+  readonly execution_revision: string | null
+  readonly graph_hash: string | null
+  readonly graph_presentation: GraphPresentation | null
   readonly input: unknown
   readonly tags: unknown
   readonly cron: string | null
@@ -43,10 +50,25 @@ export function createPostgresWorkflowScheduler(
       await ready
       const date = Date.now()
       const normalized = normalizeScheduleDefinitions(entries, date)
+      const definitions = normalized.map((entry) => prepareRunDefinition(entry))
       await db.transaction(async (tx) => {
         await tx.query(
           `SELECT pg_advisory_xact_lock(hashtext('workflow_schedules_reconcile'))`,
         )
+        // Every entry is checked before the first write, and the definitions
+        // commit with the schedule rows, so a fire never lacks what it pins.
+        const missing: MissingDefinitions[] = []
+        for (const [index, entry] of normalized.entries()) {
+          const runnable = {
+            kind: entry.runnableKind,
+            name: entry.runnableName,
+          }
+          missing.push(
+            await assertDefinitions(tx, runnable, definitions[index]!),
+          )
+        }
+        await saveDefinitions(tx, mergeMissing(missing))
+
         if (normalized.length === 0) {
           await tx.query(`DELETE FROM workflow_schedules`)
           return
@@ -68,6 +90,9 @@ export function createPostgresWorkflowScheduler(
                 name,
                 runnable_kind,
                 runnable_name,
+                execution_revision,
+                graph_hash,
+                graph_presentation,
                 input,
                 tags,
                 cron,
@@ -82,6 +107,9 @@ export function createPostgresWorkflowScheduler(
                 $2,
                 $3,
                 $4,
+                $12,
+                $13,
+                $14::jsonb,
                 $5::jsonb,
                 $6::jsonb,
                 $7,
@@ -94,6 +122,9 @@ export function createPostgresWorkflowScheduler(
               ON CONFLICT (name) DO UPDATE
               SET runnable_kind = EXCLUDED.runnable_kind,
                   runnable_name = EXCLUDED.runnable_name,
+                  execution_revision = EXCLUDED.execution_revision,
+                  graph_hash = EXCLUDED.graph_hash,
+                  graph_presentation = EXCLUDED.graph_presentation,
                   input = EXCLUDED.input,
                   tags = EXCLUDED.tags,
                   cron = EXCLUDED.cron,
@@ -124,6 +155,11 @@ export function createPostgresWorkflowScheduler(
               entry.enabled,
               timestampParam(entry.nextRunAt),
               timestampParam(date),
+              entry.executionRevision ?? null,
+              entry.graphHash,
+              entry.graphPresentation === undefined
+                ? null
+                : json(entry.graphPresentation),
             ],
           )
         }
@@ -256,12 +292,40 @@ export function createPostgresWorkflowScheduler(
   }
 }
 
+function compareText(left: string, right: string) {
+  if (left === right) return 0
+  return left < right ? -1 : 1
+}
+
+// One sorted pass over what every entry lacks keeps the lock order of a single
+// start. Duplicates stay in: the save compares the second against the first.
+function mergeMissing(missing: readonly MissingDefinitions[]) {
+  const graphs = missing
+    .flatMap((entry) => entry.graphs)
+    .sort((left, right) => compareText(left.graphHash, right.graphHash))
+  const revisions = missing
+    .flatMap((entry) => entry.revisions)
+    .sort((left, right) => compareText(left.key, right.key))
+
+  return { graphs, revisions }
+}
+
 function mapSchedule(row: ScheduleRow): StoredWorkflowSchedule {
+  const {
+    execution_revision: executionRevision,
+    graph_hash: graphHash,
+    graph_presentation: graphPresentation,
+  } = row
+
   return {
     id: row.id,
     name: row.name,
     runnableKind: row.runnable_kind,
     runnableName: row.runnable_name,
+    // All three are NULL on schedules saved before revisions existed.
+    ...(executionRevision === null ? {} : { executionRevision }),
+    ...(graphHash === null ? {} : { graphHash }),
+    ...(graphPresentation === null ? {} : { graphPresentation }),
     // The driver has already decoded jsonb; parsing a string input again
     // would read application data as another JSON document.
     input: row.input,

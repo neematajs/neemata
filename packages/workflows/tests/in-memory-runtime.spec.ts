@@ -107,7 +107,7 @@ describe('in-memory runtime isolation', () => {
 
     const worker = {
       workerId: 'shared-worker',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     }
     const [leftClaim, rightClaim] = await Promise.all([
@@ -211,7 +211,7 @@ describe('in-memory adapter', () => {
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(workflow, {})
     const continuation = await runtime.runCoordinationExecutor.claim({
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       workerId: 'coordinator',
       leaseMs: 30_000,
     })
@@ -227,8 +227,8 @@ describe('in-memory adapter', () => {
 
     await client.start(task, {})
     const attempt = await runtime.attemptExecutor.claim({
-      workflowNames: [],
-      taskNames: [task.name],
+      workflows: [],
+      tasks: [{ name: task.name }],
       workerId: 'execution',
       leaseMs: 30_000,
     })
@@ -262,7 +262,7 @@ describe('in-memory adapter', () => {
     const runtime = createInMemoryWorkflowRuntime()
     const client = createWorkflowRuntimeClient(runtime)
     const worker = {
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       workerId: 'coordinator',
       leaseMs: 100,
     }
@@ -314,8 +314,8 @@ describe('in-memory adapter', () => {
     const claimedRunIds: string[] = []
     for (let index = 0; index < created.length; index += 1) {
       const attempt = await runtime.attemptExecutor.claim({
-        workflowNames: [],
-        taskNames: [task.name],
+        workflows: [],
+        tasks: [{ name: task.name }],
         workerId: 'execution',
         leaseMs: 30_000,
       })

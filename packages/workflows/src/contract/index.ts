@@ -373,6 +373,8 @@ export type TaskOptions<
   OutputSchema extends SchemaBound<K>,
 > = {
   name: Name
+  /** See `WorkflowDefinition.revision`. */
+  revision?: string
   title?: string
   description?: string
   input: InputSchema & SchemaCheck<K, InputSchema>
@@ -403,6 +405,8 @@ export type WorkflowOptions<
   OutputSchema extends SchemaBound<K> | undefined,
 > = {
   name: Name
+  /** See `WorkflowDefinition.revision`. */
+  revision?: string
   title?: string
   description?: string
   input: InputSchema & SchemaCheck<K, InputSchema>
@@ -462,6 +466,17 @@ function assertCaseKeys<Cases extends object>(
     }
   }
   return cases
+}
+
+function assertRevision(kind: 'task' | 'workflow', options: object) {
+  if (!('revision' in options) || options.revision === undefined) return
+  const { revision } = options
+  if (typeof revision !== 'string' || revision === '') {
+    const name = 'name' in options ? String(options.name) : ''
+    throw new Error(
+      `Invalid ${kind} revision [${name}]: expected a non-empty string`,
+    )
+  }
 }
 
 function assertMapConcurrency(options: { readonly concurrency?: number }) {
@@ -531,6 +546,7 @@ class WorkflowDraftBuilder<Name extends string> {
 
   task(name: string, task: AnyTaskDefinition, options?: any) {
     assertNodeName(name, this.nodes)
+    this.assertPinned(name, task)
     return this.withNode(
       Object.freeze({ kind: 'task', name, task, ...options }),
     )
@@ -538,6 +554,7 @@ class WorkflowDraftBuilder<Name extends string> {
 
   workflow(name: string, workflow: AnyWorkflowDefinition, options?: any) {
     assertNodeName(name, this.nodes)
+    this.assertPinned(name, workflow)
     return this.withNode(
       Object.freeze({ kind: 'workflow', name, workflow, ...options }),
     )
@@ -558,10 +575,13 @@ class WorkflowDraftBuilder<Name extends string> {
             ? undefined
             : this.toCodec(options.output),
         cases: Object.freeze(
-          assertCaseKeys(
-            'branch case',
+          this.assertPinnedCases(
             name,
-            options.cases(createBranchCaseHelpers(this.toCodec)),
+            assertCaseKeys(
+              'branch case',
+              name,
+              options.cases(createBranchCaseHelpers(this.toCodec)),
+            ),
           ),
         ),
       }),
@@ -579,10 +599,13 @@ class WorkflowDraftBuilder<Name extends string> {
           ? {}
           : { description: options.description }),
         cases: Object.freeze(
-          assertCaseKeys(
-            'parallel member',
+          this.assertPinnedCases(
             name,
-            casesFactory(createBranchCaseHelpers(this.toCodec)),
+            assertCaseKeys(
+              'parallel member',
+              name,
+              casesFactory(createBranchCaseHelpers(this.toCodec)),
+            ),
           ),
         ),
       }),
@@ -592,6 +615,7 @@ class WorkflowDraftBuilder<Name extends string> {
   mapTask(name: string, task: AnyTaskDefinition, options: any) {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
+    this.assertPinned(name, task)
     return this.withNode(
       Object.freeze({
         kind: 'mapTask',
@@ -605,6 +629,7 @@ class WorkflowDraftBuilder<Name extends string> {
   mapWorkflow(name: string, workflow: AnyWorkflowDefinition, options: any) {
     assertNodeName(name, this.nodes)
     assertMapConcurrency(options)
+    this.assertPinned(name, workflow)
     return this.withNode(
       Object.freeze({
         kind: 'mapWorkflow',
@@ -619,6 +644,9 @@ class WorkflowDraftBuilder<Name extends string> {
     return Object.freeze({
       kind: 'workflow',
       name: this.options.name,
+      ...(this.options.revision === undefined
+        ? {}
+        : { revision: this.options.revision }),
       ...(this.options.title === undefined
         ? {}
         : { title: this.options.title }),
@@ -633,6 +661,31 @@ class WorkflowDraftBuilder<Name extends string> {
       idempotency: this.options.idempotency,
       unique: this.options.unique,
     })
+  }
+
+  // A versioned run is pinned to exact code, which an unversioned target
+  // cannot provide: its name resolves to whatever is deployed.
+  private assertPinned(
+    nodeName: string,
+    target: AnyTaskDefinition | AnyWorkflowDefinition,
+  ) {
+    const { name, revision } = this.options
+    if (revision === undefined || target.revision !== undefined) return
+    throw new Error(
+      `Workflow [${name}@${revision}] node [${nodeName}] references unversioned ${target.kind} [${target.name}]: every task and child workflow of a versioned workflow must declare a revision`,
+    )
+  }
+
+  private assertPinnedCases<Cases extends BranchCaseMap>(
+    nodeName: string,
+    cases: Cases,
+  ): Cases {
+    for (const member of Object.values(cases)) {
+      if (member.kind === 'activity') continue
+      const { target } = member as BranchCaseDefinition<'task' | 'workflow'>
+      this.assertPinned(nodeName, target)
+    }
+    return cases
   }
 
   private withNode(node: WorkflowNode) {
@@ -667,10 +720,20 @@ export function createContract<K extends SchemaKind>(
   readonly defineWorkflow: DefineWorkflow<K>
 } {
   return {
-    defineTask: (options) =>
-      Object.freeze({ kind: 'task', ...withCodecs(options, toCodec) }) as any,
-    defineWorkflow: (options) =>
-      new WorkflowDraftBuilder(withCodecs(options, toCodec), toCodec) as any,
+    defineTask: (options) => {
+      assertRevision('task', options)
+      return Object.freeze({
+        kind: 'task',
+        ...withCodecs(options, toCodec),
+      }) as any
+    },
+    defineWorkflow: (options) => {
+      assertRevision('workflow', options)
+      return new WorkflowDraftBuilder(
+        withCodecs(options, toCodec),
+        toCodec,
+      ) as any
+    },
   }
 }
 

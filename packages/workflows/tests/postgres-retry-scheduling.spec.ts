@@ -84,8 +84,8 @@ describe('postgres retry scheduling', () => {
         }
         const worker = {
           workerId: 'release-worker',
-          workflowNames: [run.workflowName],
-          taskNames: [],
+          workflows: [{ name: run.workflowName }],
+          tasks: [],
           leaseMs: 30_000,
         }
         await runtime.runCoordinationExecutor.enqueue(continueCommand)

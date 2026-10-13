@@ -7,6 +7,7 @@ import type {
   AnyScheduleDefinition,
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  RunnableDefinition,
   Timestamp,
 } from '../../types/index.ts'
 import type { ClaimedAttempt, ClaimedCommand } from '../commands.ts'
@@ -17,12 +18,14 @@ import type {
   WorkflowWakeEvents,
 } from '../wake-events.ts'
 import { continueWorkflowRun } from '../coordinator.ts'
+import { refKey } from '../definition.ts'
 import { StaleWriteFenceError } from '../errors.ts'
 import {
   createHandlerRunner,
   type HandlerRunner,
   type HandlerRunnerOptions,
 } from '../handler.ts'
+import { routeLabel, routeRef } from '../registry.ts'
 import { runActivityAttempt } from './activity-attempt.ts'
 import {
   runAtomicContinuation,
@@ -232,14 +235,12 @@ function workflowDriver(
   input: RunWorkflowWorkerInput,
   handlers: HandlerRunner,
 ): WorkerDriver<ClaimedCommand> {
-  const workflowNames = input.workflows.map(
-    (implementation) => implementation.workflow.name,
-  )
+  const workflows = input.workflows.map(({ workflow }) => routeRef(workflow))
   return {
     claim: () =>
       input.runCoordinationExecutor.claim({
         workerId: input.workerId,
-        workflowNames,
+        workflows,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
     abandon: (claimed) => input.runCoordinationExecutor.release(claimed),
@@ -261,6 +262,13 @@ function workflowDriver(
             command: claimed.command,
             leaseMs,
           })
+          if (result.status === 'unroutable') {
+            await scoped.runCoordinationExecutor.release(claimed, {
+              reason: 'unroutable',
+              error: result.error,
+            })
+            return false
+          }
           if (result.status !== 'processed') {
             await scoped.runCoordinationExecutor.release(claimed)
             return false
@@ -315,25 +323,24 @@ function executionDriver(
   input: RunExecutionWorkerInput,
   handlers: HandlerRunner,
 ): WorkerDriver<ClaimedAttempt> {
-  // A workflow's activities all run on its pool, so its name routes them.
+  // A workflow's activities all run on its pool, so its route routes them.
+  // Revisions of one name may sit on different pools: each is its own route.
   const served = <T extends { readonly pool: string }>(
     implementations: readonly T[],
   ) =>
     input.pool === undefined
       ? implementations
       : implementations.filter(({ pool }) => pool === input.pool)
-  const workflowNames = served(input.workflows).map(
-    (implementation) => implementation.workflow.name,
+  const workflows = served(input.workflows).map(({ workflow }) =>
+    routeRef(workflow),
   )
-  const taskNames = served(input.tasks).map(
-    (implementation) => implementation.task.name,
-  )
+  const tasks = served(input.tasks).map(({ task }) => routeRef(task))
   return {
     claim: () =>
       input.attemptExecutor.claim({
         workerId: input.workerId,
-        workflowNames,
-        taskNames,
+        workflows,
+        tasks,
         leaseMs: input.leaseMs ?? DEFAULT_LEASE_MS,
       }),
     abandon: (claimed) => input.attemptExecutor.release(claimed),
@@ -375,6 +382,8 @@ export type VerifyWorkflowsRegistryInput = {
  * Checks that what a deployment serves is complete, before any worker starts. A
  * gap would otherwise leave durable commands stalled forever, and the worker
  * entry points accept partial lists on purpose, so hosts call this at startup.
+ * Revisions of one name are separate entries: each needs its own implementation
+ * and its own targets.
  */
 export function verifyWorkflowsRegistry({
   workflows,
@@ -382,191 +391,106 @@ export function verifyWorkflowsRegistry({
   schedules = [],
   pools,
 }: VerifyWorkflowsRegistryInput): void {
-  // The execution registry refuses a second implementation of a name only when
-  // it is built, at claim time, where it would fail unrelated work as well.
-  const duplicates = [
-    ...findDuplicateNames(
-      'workflow',
-      workflows.map(({ workflow }) => workflow.name),
-    ),
-    ...findDuplicateNames(
-      'task',
-      tasks.map(({ task }) => task.name),
-    ),
+  const definitions = [
+    ...workflows.map(({ workflow }) => workflow),
+    ...tasks.map(({ task }) => task),
   ]
-  if (duplicates.length > 0) {
+  // The execution registry refuses a second implementation of a route only when
+  // it is built, at claim time, where it would fail unrelated work as well.
+  const registered = new Map<string, RunnableDefinition>()
+  const duplicates = new Set<string>()
+  for (const definition of definitions) {
+    const key = refKey(definition)
+    if (registered.has(key)) duplicates.add(definitionLabel(definition))
+    registered.set(key, definition)
+  }
+  if (duplicates.size > 0) {
     throw new Error(
-      `Implementations [${duplicates.join(', ')}] are registered more than once; a workflow or task takes exactly one implementation`,
+      `Implementations [${Array.from(duplicates).join(', ')}] are registered more than once; a workflow or task takes exactly one implementation per revision`,
     )
   }
 
-  const registeredWorkflows = new Set(
-    workflows.map((implementation) => implementation.workflow.name),
-  )
-  const missingWorkflows = collectChildWorkflowNames(workflows).filter(
-    (name) => !registeredWorkflows.has(name),
-  )
-  if (missingWorkflows.length > 0) {
+  const targets = collectTargets(workflows)
+  const missing = { workflow: new Set<string>(), task: new Set<string>() }
+  for (const target of targets) {
+    if (registered.has(refKey(target))) continue
+    missing[target.kind].add(routeLabel(target))
+  }
+  if (missing.workflow.size > 0) {
     throw new Error(
-      `Workflows [${missingWorkflows.join(', ')}] referenced by registered workflows have no registered implementation`,
+      `Workflows [${Array.from(missing.workflow).join(', ')}] referenced by registered workflows have no registered implementation`,
     )
   }
-  const registeredTasks = new Set(
-    tasks.map((implementation) => implementation.task.name),
-  )
-  const missingTasks = collectWorkflowTaskNames(workflows).filter(
-    (name) => !registeredTasks.has(name),
-  )
-  if (missingTasks.length > 0) {
+  if (missing.task.size > 0) {
     throw new Error(
-      `Tasks [${missingTasks.join(', ')}] referenced by registered workflows have no registered implementation`,
+      `Tasks [${Array.from(missing.task).join(', ')}] referenced by registered workflows have no registered implementation`,
     )
   }
 
-  // A schedule starts its target by name as well: an unregistered one would
+  // A schedule starts its target by route as well: an unregistered one would
   // fire runs nobody can claim, and a same-named copy would encode its input
   // with another schema than the implementation decodes with.
-  const registered = {
-    workflow: new Map(
-      workflows.map(({ workflow }) => [workflow.name, workflow]),
-    ),
-    task: new Map(tasks.map(({ task }) => [task.name, task])),
+  const unserved = new Set<string>()
+  const conflicts = new Set<string>()
+  for (const { runnable } of schedules) {
+    const known = registered.get(refKey(runnable))
+    if (known === undefined) unserved.add(routeLabel(runnable))
+    else if (known !== runnable) conflicts.add(routeLabel(runnable))
   }
-  const targets = schedules.map(({ runnable }) => ({
-    runnable,
-    registered: registered[runnable.kind].get(runnable.name),
-  }))
-  const missingTargets = targets.filter((target) => !target.registered)
-  if (missingTargets.length > 0) {
-    const names = new Set(missingTargets.map(({ runnable }) => runnable.name))
+  if (unserved.size > 0) {
     throw new Error(
-      `Workflows or tasks [${[...names].join(', ')}] targeted by schedules have no registered implementation`,
+      `Workflows or tasks [${Array.from(unserved).join(', ')}] targeted by schedules have no registered implementation`,
     )
   }
 
-  const conflicts = [
-    ...new Set([
-      ...findConflictingDefinitions(workflows, tasks),
-      ...targets
-        .filter((target) => target.registered !== target.runnable)
-        .map(({ runnable }) => runnable.name),
-    ]),
-  ]
-  if (conflicts.length > 0) {
+  // Children and tasks are resolved by route, so a copy of a definition would be
+  // encoded with one schema and decoded with another, and is the only way
+  // workflows could start each other in a cycle: definitions cannot reference
+  // each other as objects.
+  for (const target of targets) {
+    if (registered.get(refKey(target)) !== target) {
+      conflicts.add(routeLabel(target))
+    }
+  }
+  if (conflicts.size > 0) {
     throw new Error(
-      `Definitions [${conflicts.join(', ')}] exist as more than one object; a reference and its registered implementation must share one definition`,
+      `Definitions [${Array.from(conflicts).join(', ')}] exist as more than one object; a reference and its registered implementation must share one definition`,
     )
   }
 
   if (pools) {
     const declared = new Set(pools)
-    const undeclared = [...collectImplementationPools(workflows, tasks)].filter(
-      (pool) => !declared.has(pool),
-    )
-    if (undeclared.length > 0) {
+    const undeclared = new Set<string>()
+    for (const { pool } of [...workflows, ...tasks]) {
+      if (!declared.has(pool)) undeclared.add(pool)
+    }
+    if (undeclared.size > 0) {
       throw new Error(
-        `Execution pools [${undeclared.join(', ')}] named by implementations are not declared`,
+        `Execution pools [${Array.from(undeclared).join(', ')}] named by implementations are not declared`,
       )
     }
   }
 }
 
-function findDuplicateNames(
-  kind: 'workflow' | 'task',
-  names: readonly string[],
-) {
-  const seen = new Set<string>()
-  const duplicates = new Set<string>()
-  for (const name of names) {
-    if (seen.has(name)) duplicates.add(`${kind}:${name}`)
-    seen.add(name)
-  }
-  return duplicates
+function definitionLabel(definition: RunnableDefinition) {
+  return `${definition.kind}:${routeLabel(definition)}`
 }
 
-/** Every pool named by an implementation, for checking against declared pools. */
-function collectImplementationPools(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'pool'>[],
-  tasks: readonly Pick<AnyTaskImplementation, 'pool'>[],
-): ReadonlySet<string> {
-  return new Set([...workflows, ...tasks].map(({ pool }) => pool))
-}
-
-/**
- * Names that more than one definition object carries. Children and tasks are
- * resolved by name, so a same-named copy would be encoded with one schema and
- * decoded with another, and is the only way workflows could start each other in
- * a cycle: definitions cannot reference each other as objects.
- */
-function findConflictingDefinitions(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'workflow' | 'nodes'>[],
-  tasks: readonly Pick<AnyTaskImplementation, 'task'>[],
-): readonly string[] {
-  // Workflows and tasks are separate namespaces, as in the registry.
-  const seen = {
-    workflow: new Map<string, object>(),
-    task: new Map<string, object>(),
-  }
-  const conflicts = new Set<string>()
-  const add = (definition: AnyWorkflowDefinition | AnyTaskDefinition) => {
-    const known = seen[definition.kind].get(definition.name)
-    if (known === undefined)
-      seen[definition.kind].set(definition.name, definition)
-    else if (known !== definition) conflicts.add(definition.name)
-  }
-  for (const { task } of tasks) add(task)
-  for (const { workflow, nodes } of workflows) {
-    add(workflow)
+/** Every task and child workflow the workflows reference, each object once. */
+function collectTargets(
+  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
+): ReadonlySet<RunnableDefinition> {
+  const targets = new Set<RunnableDefinition>()
+  for (const { nodes } of workflows) {
     for (const node of nodes) {
       if (node.kind === 'branch' || node.kind === 'parallel') {
-        for (const member of Object.values(node.cases))
-          if (member.kind !== 'activity') add(member.target)
-      } else if (node.kind !== 'activity') add(node.target)
-    }
-  }
-  return [...conflicts]
-}
-
-function collectWorkflowTaskNames(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
-): readonly string[] {
-  const names = new Set<string>()
-  for (const workflow of workflows) {
-    for (const node of workflow.nodes) {
-      if (node.kind === 'task' || node.kind === 'mapTask') {
-        names.add(node.target.name)
-        continue
-      }
-
-      if (node.kind === 'branch' || node.kind === 'parallel') {
         for (const member of Object.values(node.cases)) {
-          if (member.kind === 'task') names.add(member.target.name)
+          if (member.kind !== 'activity') targets.add(member.target)
         }
+      } else if (node.kind !== 'activity') {
+        targets.add(node.target)
       }
     }
   }
-
-  return [...names]
-}
-
-function collectChildWorkflowNames(
-  workflows: readonly Pick<AnyWorkflowImplementation, 'nodes'>[],
-): readonly string[] {
-  const names = new Set<string>()
-  for (const workflow of workflows) {
-    for (const node of workflow.nodes) {
-      if (node.kind === 'workflow' || node.kind === 'mapWorkflow') {
-        names.add(node.target.name)
-        continue
-      }
-
-      if (node.kind === 'branch' || node.kind === 'parallel') {
-        for (const member of Object.values(node.cases)) {
-          if (member.kind === 'workflow') names.add(member.target.name)
-        }
-      }
-    }
-  }
-
-  return [...names]
+  return targets
 }

@@ -39,7 +39,7 @@ export async function dispatchTaskNode(
     ...input,
     nodeName: input.node.name,
     childKey: SELF_CHILD_KEY,
-    taskName: input.node.target.name,
+    target: declaration.task,
     timeout: declaration.timeout ?? declaration.task.timeout,
     retry: declaration.retry ?? declaration.task.retry,
     resolveIdempotencyKey: () =>

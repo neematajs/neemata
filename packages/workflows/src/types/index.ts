@@ -133,6 +133,8 @@ export type TaskDefinition<
 > = {
   readonly kind: 'task'
   readonly name: Name
+  /** See `WorkflowDefinition.revision`. */
+  readonly revision?: string
   readonly title?: string
   readonly description?: string
   readonly input: Schema
@@ -355,6 +357,13 @@ export type WorkflowDefinition<
 > = {
   readonly kind: 'workflow'
   readonly name: Name
+  /**
+   * Opaque execution revision, compared only for equality. A run started from
+   * this definition is pinned to it: only workers that register exactly this
+   * `(name, revision)` execute it. Absent, the definition belongs to the
+   * unversioned lane, where the name alone selects whatever code is deployed.
+   */
+  readonly revision?: string
   readonly title?: string
   readonly description?: string
   readonly input: Schema
@@ -407,6 +416,11 @@ export type WorkflowRun<
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
+  /** The definition revision this run is pinned to; absent on unversioned runs. */
+  readonly executionRevision?: string
+  /** Hash of the structural graph saved with the run; absent on runs that predate it. */
+  readonly graphHash?: string
+  /** Optimistic concurrency counter of the run record, unrelated to its revision. */
   readonly version: number
   readonly createdAt: Timestamp
   readonly updatedAt: Timestamp
@@ -426,6 +440,11 @@ export type TaskRun<Task extends AnyTaskDefinition = AnyTaskDefinition> = {
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
+  /** The definition revision this run is pinned to; absent on unversioned runs. */
+  readonly executionRevision?: string
+  /** Hash of the structural graph saved with the run; absent on runs that predate it. */
+  readonly graphHash?: string
+  /** Optimistic concurrency counter of the run record, unrelated to its revision. */
   readonly version: number
   readonly createdAt: Timestamp
   readonly updatedAt: Timestamp
@@ -442,6 +461,15 @@ export type RunnableRun<
     : never
 
 export type RunnableDefinition = AnyWorkflowDefinition | AnyTaskDefinition
+
+/** Names one runnable; `revision` absent names its unversioned lane. */
+export type RunnableRef = {
+  readonly kind: RunKind
+  readonly name: string
+  readonly revision?: string
+}
+
+export type RunnableRevision = RunnableRef & { readonly revision: string }
 
 export type RunnableInput<Runnable extends RunnableDefinition> =
   Runnable extends AnyWorkflowDefinition

@@ -1,5 +1,6 @@
 import { CronExpressionParser } from 'cron-parser'
 
+import type { DefinitionBundle, GraphPresentation } from '../inspector/graph.ts'
 import type {
   AnyScheduleDefinition,
   RunKind,
@@ -10,15 +11,27 @@ import type { AttemptExecutor, RunCoordinationExecutor } from './executors.ts'
 import type { StoredRun } from './state.ts'
 import type { WorkflowStore } from './store.ts'
 import { encodeStoredValue } from './codec.ts'
+import { continueRunCommand } from './commands.ts'
 import { dispatchTaskRunAttempt } from './coordinator/attempt.ts'
 import { resolveTags } from './coordinator/codec.ts'
+import { runDefinitionInput } from './definition.ts'
 import { parseDurationMs } from './duration.ts'
+import { WorkflowIdempotencyConflictError } from './errors.ts'
+import { isTerminalRunStatus } from './status.ts'
 
 export type StoredWorkflowSchedule = {
   readonly id: string
   readonly name: string
   readonly runnableKind: RunKind
   readonly runnableName: string
+  /**
+   * The revision and graph of the runnable the schedule was last reconciled
+   * with. Every fire pins its run to them; a reconcile moves future slots only.
+   * All three are absent on schedules saved before revisions existed.
+   */
+  readonly executionRevision?: string
+  readonly graphHash?: string
+  readonly graphPresentation?: GraphPresentation
   readonly input: unknown
   readonly tags: Readonly<Record<string, string>>
   readonly cron?: string
@@ -53,6 +66,11 @@ export type NormalizedScheduleEntry = {
   readonly name: string
   readonly runnableKind: RunKind
   readonly runnableName: string
+  readonly executionRevision?: string
+  readonly graphHash: string
+  readonly graphPresentation?: GraphPresentation
+  /** Saved atomically with the schedule, so a fire never lacks its definitions. */
+  readonly definitions: DefinitionBundle
   readonly input: unknown
   readonly tags: Readonly<Record<string, string>>
   readonly cron?: string
@@ -86,11 +104,17 @@ export function normalizeScheduleDefinition(
   const storedInput = encodeScheduleInput(definition)
   const nextRunAt =
     definition.immediately === true ? now : nextScheduleRunAt(cadence, now, now)
+  const { executionRevision, graphHash, graphPresentation, definitions } =
+    runDefinitionInput(definition.runnable)
 
   return {
     name: definition.name,
     runnableKind,
     runnableName,
+    ...(executionRevision === undefined ? {} : { executionRevision }),
+    graphHash: graphHash!,
+    ...(graphPresentation === undefined ? {} : { graphPresentation }),
+    definitions: definitions!,
     input: storedInput,
     tags: definition.tags ?? resolveTags(definition.runnable.tags, input) ?? {},
     ...cadence,
@@ -106,12 +130,14 @@ export function nextStoredScheduleRunAt(
   return nextScheduleRunAt(schedule, now, schedule.nextRunAt)
 }
 
+type ScheduleRuntime = {
+  readonly store: WorkflowStore
+  readonly runCoordinationExecutor: RunCoordinationExecutor
+  readonly attemptExecutor: AttemptExecutor
+}
+
 export async function startStoredScheduleRun(
-  runtime: {
-    readonly store: WorkflowStore
-    readonly runCoordinationExecutor: RunCoordinationExecutor
-    readonly attemptExecutor: AttemptExecutor
-  },
+  runtime: ScheduleRuntime,
   schedule: StoredWorkflowSchedule,
   slot: Timestamp | 'manual',
 ): Promise<StoredRun> {
@@ -123,7 +149,8 @@ export async function startStoredScheduleRun(
       ? ['$schedule', schedule.name, 'manual', crypto.randomUUID()]
       : ['$schedule', schedule.name, slot]
   const tags = { ...schedule.tags, schedule: schedule.name }
-  const run = await runtime.store.createRun({
+  const { executionRevision, graphHash, graphPresentation } = schedule
+  const run = await createSlotRun(runtime, {
     kind: schedule.runnableKind,
     name: schedule.runnableName,
     workflowName: schedule.runnableName,
@@ -133,28 +160,61 @@ export async function startStoredScheduleRun(
     input: schedule.input,
     tags,
     idempotencyKey,
+    ...(executionRevision === undefined ? {} : { executionRevision }),
+    ...(graphHash === undefined ? {} : { graphHash }),
+    ...(graphPresentation === undefined ? {} : { graphPresentation }),
   })
+  // The slot's run may be one an earlier fire created and never acknowledged,
+  // and by now be settled, or pinned to the schedule's previous target. So the
+  // dispatch is derived from the run, never from the schedule.
+  if (isTerminalRunStatus(run.status)) return run
 
-  if (schedule.runnableKind === 'task') {
+  if (run.kind === 'task') {
     await dispatchTaskRunAttempt({
       store: runtime.store,
       attemptExecutor: runtime.attemptExecutor,
       runCoordinationExecutor: runtime.runCoordinationExecutor,
-      taskName: schedule.runnableName,
+      taskName: run.taskName ?? run.name,
+      revision: run.executionRevision,
       taskRunId: run.id,
-      taskInput: schedule.input,
-      idempotencyKey,
+      taskInput: run.input,
+      idempotencyKey: run.idempotencyKey,
       throwOnDispatchFailure: true,
     })
     return run
   }
 
-  await runtime.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: run.id,
-    workflowName: schedule.runnableName,
-  })
+  await runtime.runCoordinationExecutor.enqueue(continueRunCommand(run))
   return run
+}
+
+/**
+ * A fire that crashed after creating its run leaves the slot unacknowledged.
+ * When the schedule was reconciled meanwhile with another revision, input or
+ * target, firing the slot again conflicts on its key. That key is derived by
+ * schedulers alone, so the run holding it is this slot's run: the fire adopts
+ * it instead of failing forever or creating a second one. Client idempotency
+ * is untouched; only this scheduler-owned key is recovered this way.
+ */
+async function createSlotRun(
+  runtime: ScheduleRuntime,
+  input: Parameters<WorkflowStore['createRun']>[0],
+): Promise<StoredRun> {
+  try {
+    return await runtime.store.createRun(input)
+  } catch (error) {
+    if (!(error instanceof WorkflowIdempotencyConflictError)) throw error
+    if (error.runId === undefined) throw error
+    const [existing] = await runtime.store.loadRuns([error.runId])
+    if (
+      !existing ||
+      JSON.stringify(existing.idempotencyKey) !==
+        JSON.stringify(input.idempotencyKey)
+    ) {
+      throw error
+    }
+    return existing
+  }
 }
 
 function encodeScheduleInput(definition: ScheduleDefinition): unknown {

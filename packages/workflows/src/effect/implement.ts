@@ -83,7 +83,7 @@ export type FinishHandler<R, Outputs, Input, Output> = (
 ) => Effect.Effect<Output, unknown, R>
 
 // Stored handlers receive the worker's runtime as their env and run through it.
-function storedHandler<R, Input, Output>(
+export function storedHandler<R, Input, Output>(
   handler: TaskHandler<R, Input, Output>,
 ): StoredTaskHandler<HandlerRuntime<R>, Input, Output> {
   return (input, lifecycle, runtime) =>

@@ -285,7 +285,7 @@ describe('retention with unreaped dead commands', () => {
 
     const claimed = await runtime.runCoordinationExecutor.claim({
       workerId: 'retention-worker',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()

@@ -73,6 +73,31 @@
       "types": "./src/neem/worker-entry.ts",
       "import": "./dist/neem/worker-entry.js",
       "module-sync": "./dist/neem/worker-entry.js"
+    },
+    "./native-effect": {
+      "types": "./src/native-effect/index.ts",
+      "import": "./dist/native-effect/index.js",
+      "module-sync": "./dist/native-effect/index.js"
+    },
+    "./native-effect/sql": {
+      "types": "./src/native-effect/sql.ts",
+      "import": "./dist/native-effect/sql.js",
+      "module-sync": "./dist/native-effect/sql.js"
+    },
+    "./native-effect/inspect": {
+      "types": "./src/native-effect/inspect.ts",
+      "import": "./dist/native-effect/inspect.js",
+      "module-sync": "./dist/native-effect/inspect.js"
+    },
+    "./native-effect/neem": {
+      "types": "./src/native-effect/neem.ts",
+      "import": "./dist/native-effect/neem.js",
+      "module-sync": "./dist/native-effect/neem.js"
+    },
+    "./experimental": {
+      "types": "./src/experimental/index.ts",
+      "import": "./dist/experimental/index.js",
+      "module-sync": "./dist/experimental/index.js"
     }
   },
   "publishConfig": {
@@ -141,6 +166,31 @@
         "types": "./dist/neem/worker-entry.d.ts",
         "import": "./dist/neem/worker-entry.js",
         "module-sync": "./dist/neem/worker-entry.js"
+      },
+      "./native-effect": {
+        "types": "./dist/native-effect/index.d.ts",
+        "import": "./dist/native-effect/index.js",
+        "module-sync": "./dist/native-effect/index.js"
+      },
+      "./native-effect/sql": {
+        "types": "./dist/native-effect/sql.d.ts",
+        "import": "./dist/native-effect/sql.js",
+        "module-sync": "./dist/native-effect/sql.js"
+      },
+      "./native-effect/inspect": {
+        "types": "./dist/native-effect/inspect.d.ts",
+        "import": "./dist/native-effect/inspect.js",
+        "module-sync": "./dist/native-effect/inspect.js"
+      },
+      "./native-effect/neem": {
+        "types": "./dist/native-effect/neem.d.ts",
+        "import": "./dist/native-effect/neem.js",
+        "module-sync": "./dist/native-effect/neem.js"
+      },
+      "./experimental": {
+        "types": "./dist/experimental/index.d.ts",
+        "import": "./dist/experimental/index.js",
+        "module-sync": "./dist/experimental/index.js"
       }
     }
   },
@@ -155,12 +205,16 @@
     "cron-parser": "^5.6.1"
   },
   "peerDependencies": {
+    "@nmtjs/effect": "workspace:*",
     "drizzle-orm": ">=1.0.0-rc.4 <2.0.0",
-    "effect": "^4.0.0",
+    "effect": "^4.0.4",
     "ioredis": "^5.10.1",
     "iovalkey": "^0.3.3"
   },
   "peerDependenciesMeta": {
+    "@nmtjs/effect": {
+      "optional": true
+    },
     "drizzle-orm": {
       "optional": true
     },
@@ -181,13 +235,15 @@
     "README.md"
   ],
   "devDependencies": {
-    "@effect/sql-pg": "^4.0.0",
+    "@effect/platform-node": "4.0.4",
+    "@effect/sql-pg": "4.0.4",
     "@electric-sql/pglite": "^0.5.3",
+    "@nmtjs/effect": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.10",
     "@types/pg": "^8.20.0",
     "drizzle-kit": "1.0.0-rc.4",
     "drizzle-orm": "1.0.0-rc.4",
-    "effect": "^4.0.0",
+    "effect": "4.0.4",
     "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3",
     "pg": "^8.22.0",

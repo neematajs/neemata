@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import * as z from 'zod'
 
+import type { RouteRef } from '../src/runtime/commands.ts'
 import {
   defineTask,
   defineWorkflow,
@@ -44,8 +45,8 @@ function failingOnce<Args extends unknown[], T>(
 async function claimTask(runtime: Runtime, taskName: string) {
   const claimed = await runtime.attemptExecutor.claim({
     workerId: 'reaper',
-    workflowNames: [],
-    taskNames: [taskName],
+    workflows: [],
+    tasks: [{ name: taskName }],
     leaseMs: 30_000,
   })
   expect(claimed).not.toBeNull()
@@ -54,13 +55,13 @@ async function claimTask(runtime: Runtime, taskName: string) {
 
 const claimAttempt = (
   runtime: Runtime,
-  names: { readonly workflowNames?: string[]; readonly taskNames?: string[] },
+  routes: { readonly workflows?: RouteRef[]; readonly tasks?: RouteRef[] },
   leaseMs = LEASE_MS,
 ) =>
   runtime.attemptExecutor.claim({
     workerId: 'reaper',
-    workflowNames: names.workflowNames ?? [],
-    taskNames: names.taskNames ?? [],
+    workflows: routes.workflows ?? [],
+    tasks: routes.tasks ?? [],
     leaseMs,
   })
 
@@ -270,7 +271,7 @@ describe('retry after a claim takeover', () => {
       workerId: 'reaper',
     }
     const run = await client.start(task, 'x')
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
     const claimA = (await claimAttempt(runtime, names))!
 
     // A records the failure, then stalls past its lease before creating the
@@ -329,7 +330,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(task, 'hi')
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
 
     await expect(
       runTaskAttempt({
@@ -380,7 +381,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     }
     const run = await client.start(workflow, 'hi')
     await runWorkflowWorker(workers)
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
 
     await expect(
       runTaskAttempt({
@@ -436,7 +437,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     }
     const run = await client.start(workflow, 'hi')
     await runWorkflowWorker(workers)
-    const names = { workflowNames: [workflow.name] }
+    const names = { workflows: [{ name: workflow.name }] }
 
     await expect(
       runActivityAttempt({
@@ -477,7 +478,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
       workerId: 'reaper',
     }
     const run = await client.start(task, 'x')
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
 
     await expect(
       runTaskAttempt({
@@ -535,7 +536,7 @@ describe('reaping a dead command whose outcome was already recorded', () => {
     const workers = { ...runtime, workflows: [implementation], tasks: [] }
     await createWorkflowRuntimeClient(runtime).start(workflow, 'x')
     await runWorkflowWorker({ ...workers, workerId: 'reaper' })
-    const names = { workflowNames: [workflow.name] }
+    const names = { workflows: [{ name: workflow.name }] }
 
     await expect(
       runActivityAttempt({
@@ -574,7 +575,7 @@ describe('reaping under a lost run lease', () => {
     const client = createWorkflowRuntimeClient(runtime)
     const lost = await client.start(task, 'lost')
     const kept = await client.start(task, 'kept')
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
     await claimAttempt(runtime, names)
     await claimAttempt(runtime, names)
     await wait(LEASE_EXPIRED_MS)
@@ -609,7 +610,7 @@ describe('reaping an attempt a stalled worker retried meanwhile', () => {
     const runtime = createInMemoryWorkflowRuntime({ maxDeliveries: 1 })
     const client = createWorkflowRuntimeClient(runtime)
     const run = await client.start(task, 'x')
-    const names = { taskNames: [task.name] }
+    const names = { tasks: [{ name: task.name }] }
     const { command } = (await claimAttempt(runtime, names))!
     await deadLetter(runtime, names)
 
@@ -704,8 +705,8 @@ describe('coordinator redispatch of a retry', () => {
 
     const claimed = (await runtime.attemptExecutor.claim({
       workerId: 'reaper',
-      workflowNames: [],
-      taskNames: [slow.name],
+      workflows: [],
+      tasks: [{ name: slow.name }],
       leaseMs: 30_000,
     }))!
     // The worker dies between creating the retry and dispatching it.
@@ -783,14 +784,14 @@ describe('coordinator redispatch of a retry', () => {
     const claims = [
       (await runtime.attemptExecutor.claim({
         workerId: 'reaper',
-        workflowNames: [workflow.name],
-        taskNames: [],
+        workflows: [{ name: workflow.name }],
+        tasks: [],
         leaseMs: 30_000,
       }))!,
       (await runtime.attemptExecutor.claim({
         workerId: 'reaper',
-        workflowNames: [workflow.name],
-        taskNames: [],
+        workflows: [{ name: workflow.name }],
+        tasks: [],
         leaseMs: 30_000,
       }))!,
     ]

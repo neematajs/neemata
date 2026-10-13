@@ -4,6 +4,8 @@ import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { itemChildKey } from '../../child-key.ts'
 import { decodeStoredValue } from '../../codec.ts'
+import { continueRunCommand } from '../../commands.ts'
+import { childRunDefinitionInput } from '../../definition.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt } from '../attempt.ts'
 import { loadChildRuns } from '../children.ts'
@@ -73,7 +75,8 @@ export async function dispatchMapTaskNode(
         store: input.store,
         attemptExecutor: input.attemptExecutor,
         runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.node.target.name,
+        taskName: childRun.name,
+        revision: childRun.executionRevision,
         taskRunId: childRun.id,
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
@@ -87,16 +90,18 @@ export async function dispatchMapTaskNode(
         nodeName: input.node.name,
         childKey: child.childKey,
         childKind: 'task',
-        childName: input.node.target.name,
+        childName: declaration.task.name,
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
+        ...childRunDefinitionInput(input.run, declaration.task),
       })
       await dispatchTaskRunAttempt({
         store: input.store,
         attemptExecutor: input.attemptExecutor,
         runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.node.target.name,
+        taskName: ensured.childRun.name,
+        revision: ensured.childRun.executionRevision,
         taskRunId: ensured.childRun.id,
         taskInput: nodeInput,
         idempotencyKey,
@@ -118,11 +123,7 @@ export async function dispatchMapWorkflowNode(
     childKind: 'workflow',
     inputLabel: 'workflow',
     redispatchActiveChild: async ({ childRun }) => {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: childRun.id,
-        workflowName: childRun.workflowName,
-      })
+      await input.runCoordinationExecutor.enqueue(continueRunCommand(childRun))
     },
     startChild: async ({ child, nodeInput, idempotencyKey, declaration }) => {
       const ensured = await input.store.ensureChildRun({
@@ -130,17 +131,16 @@ export async function dispatchMapWorkflowNode(
         nodeName: input.node.name,
         childKey: child.childKey,
         childKind: 'workflow',
-        childName: input.node.target.name,
+        childName: declaration.workflow.name,
         input: nodeInput,
         rootRunId: input.run.rootRunId,
         idempotencyKey,
         cancellation: declaration.cancellation,
+        ...childRunDefinitionInput(input.run, declaration.workflow),
       })
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: ensured.childRun.id,
-        workflowName: input.node.target.name,
-      })
+      await input.runCoordinationExecutor.enqueue(
+        continueRunCommand(ensured.childRun),
+      )
       return ensured.childRun
     },
     failedChildError: (childRun) =>
@@ -252,6 +252,9 @@ async function dispatchMap<T extends MapDeclaration>(
             input: childRun.input,
             rootRunId: input.run.rootRunId,
             idempotencyKey: childRun.idempotencyKey,
+            // The link exists already, so this replays it for the run it has.
+            executionRevision: childRun.executionRevision,
+            graphHash: childRun.graphHash,
           })
           activeChildren += 1
         }

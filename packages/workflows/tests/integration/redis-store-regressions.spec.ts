@@ -292,7 +292,7 @@ for (const target of targets) {
           expect(
             await runtime.runCoordinationExecutor.claim({
               workerId: 'retry-delete',
-              workflowNames: ['retry-delete'],
+              workflows: [{ name: 'retry-delete' }],
               leaseMs: 1000,
             }),
           ).not.toBeNull()
@@ -372,7 +372,7 @@ for (const target of targets) {
           expect(reads.length).toBeLessThan(10)
           const claim = await runtime.runCoordinationExecutor.claim({
             workerId: 'retry',
-            workflowNames: [run.workflowName],
+            workflows: [{ name: run.workflowName }],
             leaseMs: 1000,
           })
           expect(claim?.command.runId).toBe(run.id)
@@ -407,7 +407,7 @@ for (const target of targets) {
           })
           const claim = await runtime.runCoordinationExecutor.claim({
             workerId: name,
-            workflowNames: [name],
+            workflows: [{ name: name }],
             leaseMs: 1000,
           })
           await runtime.runCoordinationExecutor.release(claim!, {
@@ -877,8 +877,8 @@ for (const target of targets) {
         await expect(
           runtime.attemptExecutor.claim({
             workerId: 'early',
-            workflowNames: [],
-            taskNames: ['first', 'second'],
+            workflows: [],
+            tasks: [{ name: 'first' }, { name: 'second' }],
             leaseMs: 1_000,
           }),
         ).resolves.toBeNull()
@@ -899,7 +899,7 @@ for (const target of targets) {
         await expect(
           runtime.runCoordinationExecutor.claim({
             workerId: 'replay',
-            workflowNames: ['terminal-replay'],
+            workflows: [{ name: 'terminal-replay' }],
             leaseMs: 1_000,
           }),
         ).resolves.toBeNull()

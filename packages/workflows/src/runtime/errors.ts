@@ -1,6 +1,6 @@
 import { serializeError } from '@nmtjs/common'
 
-import type { RunUniqueScope } from '../types/index.ts'
+import type { RunnableRef, RunUniqueScope } from '../types/index.ts'
 import type { StoredError } from './state.ts'
 import type { RuntimeRunStatus } from './status.ts'
 
@@ -14,21 +14,32 @@ export class WorkflowRunConflictError extends Error {
   readonly status: RuntimeRunStatus
   readonly key: readonly unknown[]
   readonly scope: RunUniqueScope
+  /**
+   * Set when a `join` was refused because the run holding the key is another
+   * workflow, task or revision than the one requested: joining would hand the
+   * caller a run typed by a contract it was not created with.
+   */
+  readonly holder?: RunnableRef
 
   constructor(details: {
     readonly runId: string
     readonly status: RuntimeRunStatus
     readonly key: readonly unknown[]
     readonly scope: RunUniqueScope
+    readonly holder?: RunnableRef
   }) {
+    const { holder } = details
     super(
-      `Run [${details.runId}] already holds unique key [scope: ${details.scope}]`,
+      holder === undefined
+        ? `Run [${details.runId}] already holds unique key [scope: ${details.scope}]`
+        : `Run [${details.runId}] of ${formatRunnableRef(holder)} already holds unique key [scope: ${details.scope}] and cannot be joined as another workflow, task or revision`,
     )
     this.name = 'WorkflowRunConflictError'
     this.runId = details.runId
     this.status = details.status
     this.key = details.key
     this.scope = details.scope
+    if (holder !== undefined) this.holder = holder
   }
 }
 
@@ -38,12 +49,35 @@ export class WorkflowRunConflictError extends Error {
  */
 export class WorkflowIdempotencyConflictError extends Error {
   readonly workflowName: string
+  /** The run that owns the key, whenever the store found one. */
+  readonly runId?: string
 
-  constructor(workflowName: string) {
+  constructor(workflowName: string, runId?: string) {
     super(`Conflicting idempotent run [${workflowName}]`)
     this.name = 'WorkflowIdempotencyConflictError'
     this.workflowName = workflowName
+    if (runId !== undefined) this.runId = runId
   }
+}
+
+/**
+ * A definition does not match what is saved for it: a revision whose graph or
+ * child bindings differ from its stored manifest, or a graph record whose
+ * content differs from its hash. A revision is immutable once saved, so the
+ * changed definition needs a new revision.
+ */
+export class WorkflowDefinitionConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkflowDefinitionConflictError'
+  }
+}
+
+/** `workflow [name@revision]`, or `workflow [name]` for the unversioned lane. */
+export function formatRunnableRef({ kind, name, revision }: RunnableRef) {
+  return revision === undefined
+    ? `${kind} [${name}]`
+    : `${kind} [${name}@${revision}]`
 }
 
 /**

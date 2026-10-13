@@ -10,6 +10,7 @@ import type {
 import type { AttemptCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { DeadWorkflowCommand, WorkflowStore } from '../store.ts'
+import { continueRunCommand } from '../commands.ts'
 import { cancelRunDescendants } from '../coordinator/cancel.ts'
 import { createRunLeaseScope, isRunLeaseLost } from '../coordinator/lease.ts'
 import { parseDurationMs } from '../duration.ts'
@@ -154,7 +155,10 @@ export async function reapDeadWorkflowCommands(
                     resolveRetry: () =>
                       attemptCommand.kind === 'taskAttempt'
                         ? (attemptCommand.retry ??
-                          registry.getTask(attemptCommand.taskName)?.task.retry)
+                          registry.getTask(
+                            attemptCommand.taskName,
+                            attemptCommand.revision,
+                          )?.task.retry)
                         : resolveActivityAttemptRetry(registry, attemptCommand),
                   },
                 )
@@ -213,11 +217,9 @@ export async function reapDeadWorkflowCommands(
       } else {
         // Workflow runs get a coordination pass: the coordinator sees the
         // failed node/child and fails the run after all fan-in siblings settle.
-        await scopedInput.runCoordinationExecutor.enqueue({
-          kind: 'continueRun',
-          runId: command.runId,
-          workflowName: command.workflowName ?? run.workflowName,
-        })
+        await scopedInput.runCoordinationExecutor.enqueue(
+          continueRunCommand(run),
+        )
       }
 
       await scopedInput.store.markDeadCommandReaped(command.id)
@@ -286,9 +288,12 @@ export async function timeoutExpiredWorkflowRuns(
     // Filtering by the current retry epoch in the store keeps the batch limit honest:
     // every returned run is already expired, so newer runs can never crowd
     // older expired ones out of the page.
+    // A run is swept only with the timeout of the exact revision it runs:
+    // another revision's policy would be a guess.
     const { runs } = await input.store.listRuns({
       kind: 'workflow',
       name: implementation.workflow.name,
+      executionRevision: implementation.workflow.revision ?? null,
       status: ['queued', 'running', 'waiting', 'cancelling'],
       activeBefore: now - timeoutMs,
       limit: input.batchSize,
@@ -315,11 +320,7 @@ export async function timeoutExpiredWorkflowRuns(
         // run. The run's own continuation is the durable intent: it cannot
         // pass while this lease is held, and a pass over a failed run replays
         // the descendant cancellation and the parent wake until they land.
-        await input.runCoordinationExecutor.enqueue({
-          kind: 'continueRun',
-          runId: run.id,
-          workflowName: run.workflowName,
-        })
+        await input.runCoordinationExecutor.enqueue(continueRunCommand(run))
         // Failing first keeps the timeout error: were the nodes cancelled
         // before a lost `failRun`, that continuation would cancel the run.
         const failed = await scoped.store.failRun({

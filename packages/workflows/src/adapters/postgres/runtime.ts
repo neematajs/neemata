@@ -11,6 +11,7 @@ import type {
 } from '../../runtime/worker.ts'
 import type { WorkflowPostgresConnection } from './connection.ts'
 import { SELF_CHILD_KEY } from '../../runtime/child-key.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
 import { normalizePruneBatchSize } from '../../runtime/store.ts'
 import { createAttemptExecutor } from './executor.ts'
 import { createRunCoordinationExecutor } from './queue.ts'
@@ -42,6 +43,13 @@ export function createPostgresWorkflowRuntime(params: {
 
   const store = createPostgresWorkflowStore({ db, ready })
 
+  // A runtime on a transaction of this one. It keeps `maxDeliveries`: a
+  // command released from inside a transaction dead-letters at the same
+  // threshold as one released outside it.
+  function scoped(connection: WorkflowPostgresConnection) {
+    return createPostgresWorkflowRuntime({ connection, maxDeliveries })
+  }
+
   const commandContext = { db, ready, maxDeliveries }
   const runCoordinationExecutor = createRunCoordinationExecutor(commandContext)
   const attemptExecutor = createAttemptExecutor(commandContext)
@@ -53,18 +61,14 @@ export function createPostgresWorkflowRuntime(params: {
   const atomicStart: WorkflowRuntimeAtomicStart<WorkflowPostgresConnection> = {
     startWorkflowRun: ({ run, startAt, connection }) =>
       (connection ?? db).transaction(async (tx) => {
-        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        const runtime = scoped(tx)
         const { run: started, created } = await createStoredRunWithState(
           tx,
           run,
         )
         if (!created) return started
 
-        const command = {
-          kind: 'continueRun',
-          runId: started.id,
-          workflowName: started.workflowName,
-        } as const
+        const command = continueRunCommand(started)
         if (startAt) {
           await runtime.runCoordinationExecutor.enqueueDelayed(command, startAt)
         } else {
@@ -81,7 +85,7 @@ export function createPostgresWorkflowRuntime(params: {
       connection,
     }) =>
       (connection ?? db).transaction(async (tx) => {
-        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        const runtime = scoped(tx)
         const { run: started, created } = await createStoredRunWithState(
           tx,
           run,
@@ -115,6 +119,9 @@ export function createPostgresWorkflowRuntime(params: {
             kind: 'taskAttempt',
             workflowName: taskName,
             taskName,
+            ...(started.executionRevision === undefined
+              ? {}
+              : { revision: started.executionRevision }),
             runId: started.id,
             nodeName: TASK_RUN_NODE_NAME,
             childKey: SELF_CHILD_KEY,
@@ -135,10 +142,7 @@ export function createPostgresWorkflowRuntime(params: {
     {
       run: (connection, handler) =>
         connection.transaction(async (tx) => {
-          const runtime = createPostgresWorkflowRuntime({
-            connection: tx,
-            maxDeliveries,
-          })
+          const runtime = scoped(tx)
           return await handler({
             store: runtime.store,
             runCoordinationExecutor: runtime.runCoordinationExecutor,
@@ -150,7 +154,7 @@ export function createPostgresWorkflowRuntime(params: {
   const atomicCompletion: WorkflowRuntimeAtomicCompletion = {
     run: (handler) =>
       db.transaction(async (tx) => {
-        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        const runtime = scoped(tx)
         return await handler({
           store: runtime.store,
           runCoordinationExecutor: runtime.runCoordinationExecutor,
@@ -162,7 +166,7 @@ export function createPostgresWorkflowRuntime(params: {
   const atomicContinuation: WorkflowRuntimeAtomicContinuation = {
     run: (handler) =>
       db.transaction(async (tx) => {
-        const runtime = createPostgresWorkflowRuntime({ connection: tx })
+        const runtime = scoped(tx)
         return await handler({
           store: runtime.store,
           runCoordinationExecutor: runtime.runCoordinationExecutor,
@@ -190,8 +194,7 @@ export function createPostgresWorkflowRuntime(params: {
   const scheduler = createPostgresWorkflowScheduler({
     db,
     ready,
-    createRuntime: (connection) =>
-      createPostgresWorkflowRuntime({ connection, maxDeliveries }),
+    createRuntime: scoped,
   })
 
   return {

@@ -62,7 +62,7 @@ for (const target of redisTargets) {
         await runtime.runCoordinationExecutor.enqueue(command)
         const claimed = await runtime.runCoordinationExecutor.claim({
           workerId: 'worker',
-          workflowNames: [workflowName],
+          workflows: [{ name: workflowName }],
           leaseMs: 30_000,
         })
         expect(claimed?.command).toStrictEqual(command)
@@ -116,7 +116,10 @@ for (const target of redisTargets) {
         await expect(
           runtime.runCoordinationExecutor.claim({
             workerId: 'worker',
-            workflowNames: ['queue-before-flush', 'queue-after-flush'],
+            workflows: [
+              { name: 'queue-before-flush' },
+              { name: 'queue-after-flush' },
+            ],
             leaseMs: 30_000,
           }),
         ).resolves.toBeNull()

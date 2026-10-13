@@ -2,6 +2,7 @@ import type { AttemptCommand, ClaimedAttempt } from '../../runtime/commands.ts'
 import type { AttemptExecutor } from '../../runtime/executors.ts'
 import type { ClaimedQueueItem, QueueItem } from './commands.ts'
 import type { State } from './state.ts'
+import { servesRoute } from '../../runtime/commands.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import {
   claimQueued,
@@ -76,11 +77,12 @@ export function createAttemptExecutor(state: State): AttemptExecutor {
     },
     async claim(worker) {
       function eligible(command: AttemptCommand) {
+        const { revision } = command
         if (command.kind === 'taskAttempt') {
-          return worker.taskNames.includes(command.taskName)
+          return servesRoute(worker.tasks, command.taskName, revision)
         }
         return (
-          worker.workflowNames.includes(command.workflowName) &&
+          servesRoute(worker.workflows, command.workflowName, revision) &&
           (worker.activityNames === undefined ||
             worker.activityNames.includes(command.activityName))
         )

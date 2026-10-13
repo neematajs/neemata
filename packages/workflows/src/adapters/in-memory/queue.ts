@@ -3,6 +3,7 @@ import type { RunCoordinationExecutor } from '../../runtime/executors.ts'
 import type { Timestamp } from '../../types/index.ts'
 import type { QueueItem } from './commands.ts'
 import type { State } from './state.ts'
+import { servesRoute } from '../../runtime/commands.ts'
 import {
   claimQueued,
   matchesClaim,
@@ -119,7 +120,11 @@ export function createRunCoordinationExecutor(
     },
     async claim(worker) {
       function eligible(command: ContinueRunCommand) {
-        return worker.workflowNames.includes(command.workflowName)
+        return servesRoute(
+          worker.workflows,
+          command.workflowName,
+          command.revision,
+        )
       }
       reclaimExpiredLeases(
         state,

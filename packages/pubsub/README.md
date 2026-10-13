@@ -1,7 +1,7 @@
 # @nmtjs/pubsub
 
 Typed, ephemeral publish/subscribe across workers, processes and servers, for
-[Effect](https://effect.website) (`^4.0.0`).
+[Effect](https://effect.website) (`^4.0.4`).
 
 Delivery is at most once: there is no replay, and messages published while a
 subscriber is disconnected are lost. Subscribers need their own way to recover a

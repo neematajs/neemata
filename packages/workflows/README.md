@@ -19,7 +19,7 @@ import {
 `@nmtjs/workflows/effect` exports the same four functions for Effect
 applications: definitions take `effect/Schema` schemas, and handlers return
 Effects whose services come from the worker. It needs the optional `effect` peer
-(`^4.0.0`), as does the Effect worker in `@nmtjs/workflows/effect/neem`; only
+(`^4.0.4`), as does the Effect worker in `@nmtjs/workflows/effect/neem`; only
 stable Effect modules are imported. Definitions
 and implementations from either entry point are interchangeable everywhere else.
 
@@ -134,6 +134,261 @@ verifyWorkflowsRegistry({
 
 Pool `concurrency` is capacity per process, not a limit: three instances of a
 pool with two slots run six handlers. Cluster-wide limits are not implemented.
+
+## Revisions: pinning runs to the code that started them
+
+By default a run is identified by name only: whatever implementation of
+`billing.invoice` is deployed when a command is claimed executes it, so a
+deployment changes the code under runs that are already in flight. Declaring a
+`revision` on a definition pins its runs instead:
+
+```ts
+const charge = defineTask({
+  name: 'billing.charge',
+  revision: '2026-10-13',
+  input: Invoice,
+  output: Receipt,
+})
+
+const invoice = defineWorkflow({
+  name: 'billing.invoice',
+  revision: '2026-10-13',
+  input: Order,
+  output: Receipt,
+})
+  .activity('price', { input: Order, output: Invoice })
+  .task('charge', charge)
+  .build()
+
+// Pinned to billing.invoice@2026-10-13, and so is every child it starts.
+const run = await client.start(invoice, order)
+run.executionRevision // '2026-10-13'
+run.graphHash // 64 hex characters
+```
+
+A revision is an opaque, non-empty string compared only for equality. It is
+never parsed, sorted or treated as "latest". An implementation inherits the
+revision of the definition it implements, and a worker may register any number
+of revisions of one name side by side:
+
+```ts
+defineWorkflowsWorker({
+  workflows: () => [invoiceV1Implementation, invoiceV2Implementation],
+  tasks: () => [chargeV1Implementation, chargeV2Implementation],
+  setup,
+})
+```
+
+A definition without a `revision` belongs to the **unversioned lane** and
+behaves exactly as before. `undefined` is that lane, never a wildcard: an
+unversioned implementation does not run versioned runs and a versioned one does
+not run unversioned runs.
+
+### Three identities, kept apart
+
+| Field               | Identifies                                                                   | Changes when                 |
+| ------------------- | ---------------------------------------------------------------------------- | ---------------------------- |
+| `executionRevision` | the code a run executes: `(kind, name, revision)`                            | you declare a new `revision` |
+| `graphHash`         | the run's topology: names, kinds and order of nodes and cases                | the graph changes shape      |
+| `version`           | one stored record, for optimistic concurrency (`retry({ expectedVersion })`) | every write to that record   |
+
+`graphHash` is the SHA-256 of a canonical, label-free JSON projection of the
+definition. Titles, descriptions, retry and timeout policies, schemas, handlers
+and revisions are not part of it. It says two definitions have the same shape; it
+does not say they behave the same. Two revisions with the same graph have the
+same hash and are still different code.
+
+### What a revision binds
+
+Starting a versioned run saves an immutable **manifest** for its revision: the
+graph hash plus the exact revision of every task and child workflow it
+references, including branch alternatives and parallel members a run may never
+take. Consequences:
+
+- A versioned workflow may only reference versioned tasks and workflows.
+  `defineWorkflow` throws otherwise, because an unversioned target would resolve
+  to whatever is deployed. An unversioned workflow may reference anything.
+- A child's revision is part of its parent's manifest, not of the parent's
+  graph hash. Moving a workflow to a new revision of a task therefore needs a
+  new revision of the workflow, even though its graph hash stays the same.
+- Changing the graph or a child binding under a revision that is already saved
+  is rejected: `start()` throws `WorkflowDefinitionConflictError` and creates
+  nothing. A worker that registers such a definition never executes a run with
+  it either: the command is released as unroutable, dead-letters, and the
+  reaper fails the run with the same error.
+- **Compatible hotfixes are your responsibility.** Handler bodies, schemas,
+  retry and timeout policies and labels may change under an unchanged revision,
+  and none of that is detected. Do it only when runs already in flight can
+  continue on the new code: stored inputs and node outputs must still decode,
+  and a handler must still accept what an earlier attempt checkpointed. When in
+  doubt, declare a new revision.
+
+### Deploying a new revision
+
+1. Deploy workers that serve both `invoice@v1` and `invoice@v2` (and both
+   revisions of what they reference). Application code that imports the v2
+   contract starts v2 runs; runs in flight stay on v1, as do the children they
+   create later.
+2. Wait until no v1 run is active (the query below returns nothing).
+3. Remove the v1 code.
+
+```ts
+const { runs } = await client.list({
+  name: 'billing.invoice',
+  executionRevision: 'v1',
+  status: ['queued', 'running', 'waiting', 'cancelling'],
+})
+```
+
+Work is routed by `(name, revision)`, and a worker never claims a command it has
+no code for. If a revision stops being served while runs still need it, their
+commands stay queued: nothing is claimed, no delivery is counted, nothing is
+dead-lettered. Deploying that revision again resumes them where they stopped,
+including a delivery whose worker crashed. This also means:
+
+- A run of an unserved revision waits indefinitely and **is not timed out**. The
+  `timeout` backstop is a policy of the definition, so a coordinator sweeps only
+  runs of revisions it serves; applying another revision's timeout would be a
+  guess.
+- Cancelling a workflow run of an unserved revision records `cancelling` and
+  settles when a coordinator serving that revision returns. Settling needs no
+  code of the run, only a coordinator that claims its route. Task runs, and
+  children cancelled through a parent that is served, settle immediately.
+- `retry()` reopens a run on the revision it has. Nothing checks that some
+  worker serves it.
+- Revisions of one name may be implemented for different pools: each is its own
+  route.
+
+To move a run off a revision you no longer want to serve, restart it on the
+current one (below). There is no automatic migration of runs between revisions.
+
+### start, restart, retry
+
+`start(definition, input)` runs the definition it is given and pins
+`definition.revision`. There is no "current" lookup in `start`: which revision
+new runs get is decided by which contract your application imports.
+
+`restart(runId, { revision })` creates a new run from a terminal one:
+
+- `'original'` (default) uses the definition the run was created from: the same
+  revision, or the unversioned definition for an unversioned run. It throws when
+  the client does not know that definition.
+- `'latest'` uses the client's `current` definition of the same kind and name,
+  after decoding the run's stored input with that definition's input schema. An
+  input the new schema rejects fails before anything is created. This is a
+  validation, not a migration: nothing transforms the stored input.
+
+```ts
+const client = createWorkflowRuntimeClient({
+  ...runtime,
+  // What restart can resolve; several revisions of one name are fine.
+  definitions: [invoiceV1, invoiceV2],
+  // What `latest` means. Explicit, at most one per kind and name.
+  current: [invoiceV2],
+})
+
+await client.restart(run.id) // invoice@v1 again
+await client.restart(run.id, { revision: 'latest' }) // invoice@v2
+```
+
+`retry(runId)` never changes what a run is pinned to: the run keeps its id,
+revision and graph hash.
+
+### Idempotency and unique keys across revisions
+
+Both key spaces stay global, so a deployment cannot create a second live
+operation for the same business key.
+
+- **Idempotency key.** A replay returns the existing run only for the same
+  revision. The same key started with another revision throws
+  `WorkflowIdempotencyConflictError`, which carries the existing `runId`. A
+  caller that retries a start across a deployment should keep using the
+  contract it first started with. Graph hashes are not compared.
+- **Unique key, `reject`.** Unchanged: any run holding the key rejects the start.
+- **Unique key, `join`.** Joins only a run of the same kind, name and revision.
+  Otherwise it throws `WorkflowRunConflictError` with the existing `runId` and a
+  `holder` naming what holds the key, instead of returning a run typed by a
+  contract it was not created with.
+
+Two unversioned runs keep the previous behavior in every case, including a
+`join` across different workflows.
+
+### Schedules
+
+A schedule records the revision and graph of its `runnable` when it is
+reconciled, and every fire pins its run to them. Reconciling with a new revision
+affects future slots only. If a scheduler creates a slot's run and crashes
+before recording the slot, the next fire adopts that run, even after a
+deployment changed the schedule's revision, input or target: a slot is never
+fired twice and never stuck.
+
+### Unversioned runs and upgrading
+
+Runs, commands and schedules written before revisions existed have no revision
+and no saved graph. They are not backfilled and stay in the unversioned lane,
+with the guarantee they always had: their name resolves to the unversioned code
+deployed now. New unversioned runs save their own graph for inspection and are
+otherwise unchanged.
+
+Giving an existing name its first `revision` does not move its in-flight runs:
+keep the unversioned implementation registered until they drain, or restart them
+with `{ revision: 'latest' }`. Rolling back to a build without revisions is only
+safe while no versioned run exists; see the adapter sections for the upgrade
+order.
+
+Saved graphs and manifests are shared by all runs and are kept when runs are
+deleted, pruned or expire. They are small and bounded by how many revisions you
+have ever deployed, not by how many runs you start. Nothing collects them yet.
+
+## Inspecting historical runs
+
+`client.inspect(runId)` returns the run's detail together with the graph it was
+created with, read from the store alone. It needs no definition or
+implementation, so a management surface can render a run whose code is long
+gone:
+
+```ts
+const inspection = await client.inspect(runId)
+if (!inspection) return notFound()
+
+const { detail, definition } = inspection
+if (definition.source === 'saved') {
+  definition.structure // nodes and cases in declared order, with alternatives
+  definition.presentation // the titles and descriptions the run was created with
+  definition.revision?.bindings // which revision each target slot runs
+} else {
+  definition.reason // 'legacy' | 'missing-graph' | 'invalid-graph'
+}
+```
+
+- `saved` is authoritative: declared order, every branch case and parallel
+  member, whether or not the run took it.
+- `observed` means no trustworthy graph exists for the run: it predates saved
+  graphs, its graph record is missing, or the record does not match its hash.
+  `detail` still lists every node, child, attempt and child run. It carries no
+  definition order, no unused alternatives and no labels, and none are filled in
+  from the definition deployed today. Sort by timestamps or names for display
+  if you must, and do not present the result as the workflow's graph.
+- Labels are saved per run. Relabelling a definition changes neither its hash
+  nor what older runs display.
+
+`client.getDefinition(ref)` loads a saved revision and its graph by
+`{ kind, name, revision }`, for previewing a binding's target before, or without,
+a run of it: a child that has not started, or a branch case that was not taken.
+Such a preview has the target's structure but not its labels, which are saved
+only with runs. A child run that exists has its own `inspect()`.
+
+`get`, `getDetail`, `getNode`, `getFamily`, `list` and `listSummaries` are
+unchanged apart from the two new run fields, and
+`list({ executionRevision })` filters by revision (`null` selects unversioned
+runs).
+
+Graph types and helpers come from `@nmtjs/workflows/inspector`, which imports no
+Node API and is safe to bundle for a browser. Send `inspect()` results to a
+frontend as JSON and render them there with `renderWorkflowGraph(structure,
+presentation)`, which returns the same shape `serializeWorkflowGraph` produces
+for a deployed definition. Hashing (`hashStructure`) lives in the runtime entry
+point and stays on the server.
 
 ## Neem integration
 
@@ -505,6 +760,39 @@ explicitly instead of silently evicting one part of a workflow family. Terminal
 retention bounds historical state, but capacity must still cover the maximum
 concurrent active state and ready/claimed queue backlog.
 
+### Revisions on Redis
+
+No data migration is needed: families, signatures and queue items written by
+earlier versions are read as unversioned and keep working.
+
+Versioned commands are indexed under their own route namespace
+(`route:rev:<kind>:<name>:<revision>`, every part length-prefixed), and
+unversioned commands keep the keys they always had. Saved graphs and revision
+manifests live in two namespace-wide hashes, `definitions:graphs` and
+`definitions:revisions`. They are outside every family, never get a TTL and
+survive `deleteRun`, pruning and terminal retention; a run's labels live with
+its family and expire with it. Capacity planning should count one small entry
+per graph and per revision ever deployed.
+
+**Upgrade with all old processes stopped before the first versioned run is
+started.** A rolling upgrade is safe only while every definition is still
+unversioned. An older build does not know revisions and treats every run as
+unversioned, so once a versioned run exists these of its operations are unsafe:
+
+- its reaper, timeout sweep, cancellation, `retry()` and `requeueDeadCommand`
+  enqueue commands without a revision, onto unversioned routes;
+- a start that reuses a versioned run's idempotency or unique key returns that
+  run without comparing revisions.
+
+That it only claims unversioned routes does not make it safe: the commands above
+land on exactly those routes, where an older worker would run them with
+unversioned code. The current build repairs what it finds (it moves a command
+indexed on a route it does not belong to, restores the revision when it wakes
+the same run, and refuses to execute a command whose revision differs from its
+run's), but it cannot stop an older process from acting first. The same order
+applies to a rollback: drain or restart versioned runs before starting a build
+without revisions.
+
 ## Timestamps
 
 Every time the runtime reads or returns is a `Timestamp`: Unix milliseconds, as
@@ -607,9 +895,13 @@ const admitTurn = Effect.gen(function* () {
   commits, and wake notifications are delivered only on commit. `cancel` works the
   same way: the cancellation and the wakes it dispatches commit with the caller.
 - A unique or idempotency-key conflict fails with `WorkflowRunConflictError` or
-  `WorkflowIdempotencyConflictError`, and SQL failures fail with `SqlError`. The
-  savepoint is rolled back, so the caller's transaction stays usable. Other failures,
-  such as input that does not match its schema, are defects.
+  `WorkflowIdempotencyConflictError`, a definition that differs from what is
+  saved under its revision fails with `WorkflowDefinitionConflictError`, and SQL
+  failures fail with `SqlError`. The savepoint is rolled back, so the caller's
+  transaction stays usable. Other failures, such as input that does not match
+  its schema, are defects.
+- `restart` takes the same `revision: 'original' | 'latest'` option as the
+  Promise client.
 - The savepoint is Effect SQL's own nested `withTransaction`, so concurrent starts
   in one transaction take turns with each other and with the caller's other nested
   transactions. As with any nested `withTransaction`, a start still waiting for its
@@ -689,7 +981,7 @@ verification:
 
 ```sql
 INSERT INTO workflow_schema_version (id, version)
-VALUES (1, 4)
+VALUES (1, 5)
 ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
 ```
 
@@ -712,9 +1004,12 @@ UIs should supply the version they displayed to reject stale retry requests.
 `client.restart(runId, options)` creates a new root run from the stored input.
 It accepts failed, completed and cancelled roots, plus the same start options
 as `start()`. This is the old `retry()` behavior. Definitions are required by
-`restart()` for name resolution; in-place `retry()` is registry-free. Existing
-uniqueness and idempotency rules still apply to a restart. In-place retry always
-rejects an occupied uniqueness key, even when the constraint normally joins.
+`restart()` to resolve the run's kind, name and revision; in-place `retry()` is
+registry-free and never changes a run's revision. `restart` takes
+`revision: 'original' | 'latest'`, described under
+[Revisions](#start-restart-retry). Existing uniqueness and idempotency rules
+still apply to a restart. In-place retry always rejects an occupied uniqueness
+key, even when the constraint normally joins.
 
 All `parallel`, `mapTask` and `mapWorkflow` nodes wait for every child to settle.
 Failures do not cancel siblings or stop admission of pending map items. A node
@@ -791,3 +1086,150 @@ CREATE INDEX workflow_commands_attempt_idx
 UPDATE workflow_schema_version SET version = 4 WHERE id = 1;
 COMMIT;
 ```
+
+## Schema version 5 migration
+
+Apply after the version 4 migration, with every process of the previous version
+stopped: workers, schedulers and clients. It adds the tables and columns behind
+[revisions](#revisions-pinning-runs-to-the-code-that-started-them) and saved
+graphs. Every new column is nullable without a default, so no table is rewritten
+and no row is touched: existing runs, commands and schedules keep `NULL` and
+stay unversioned. Nothing is backfilled.
+
+```sql
+BEGIN;
+
+SET LOCAL lock_timeout = '5s';
+
+DO $$
+DECLARE
+  installed integer;
+BEGIN
+  SELECT version INTO installed FROM workflow_schema_version WHERE id = 1;
+  IF installed IS DISTINCT FROM 4 THEN
+    RAISE EXCEPTION
+      'workflow schema generation is %, this upgrade applies to generation 4 only',
+      COALESCE(installed::text, 'missing');
+  END IF;
+END
+$$;
+
+-- Shared by every run and schedule that names them and never deleted with one.
+-- structure and bindings hold canonical JSON as text: saved definitions are
+-- compared byte for byte, which jsonb's own key order would not allow.
+CREATE TABLE workflow_graphs (
+  graph_hash text PRIMARY KEY,
+  structure text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE workflow_revisions (
+  kind workflow_run_kind NOT NULL,
+  name text NOT NULL,
+  revision text NOT NULL,
+  graph_hash text NOT NULL,
+  bindings text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT workflow_revisions_pkey PRIMARY KEY (kind, name, revision),
+  CONSTRAINT workflow_revisions_graph_key
+    UNIQUE (kind, name, revision, graph_hash),
+  CONSTRAINT workflow_revisions_graph_fk
+    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash)
+);
+
+ALTER TABLE workflow_runs
+  ADD COLUMN execution_revision text,
+  ADD COLUMN graph_hash text,
+  ADD COLUMN graph_presentation jsonb;
+
+-- No ON DELETE action in either direction: deleting or pruning a run never
+-- deletes a graph or a revision, and a referenced one cannot be deleted.
+-- The revision reference is MATCH SIMPLE, so unversioned runs are not checked.
+ALTER TABLE workflow_runs
+  ADD CONSTRAINT workflow_runs_revision_graph_chk
+    CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL) NOT VALID,
+  ADD CONSTRAINT workflow_runs_graph_fk
+    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash) NOT VALID,
+  ADD CONSTRAINT workflow_runs_revision_fk
+    FOREIGN KEY (kind, name, execution_revision, graph_hash)
+    REFERENCES workflow_revisions (kind, name, revision, graph_hash) NOT VALID;
+
+-- The run's revision, copied for routing. NULL is the unversioned lane.
+ALTER TABLE workflow_commands
+  ADD COLUMN revision text;
+
+ALTER TABLE workflow_schedules
+  ADD COLUMN execution_revision text,
+  ADD COLUMN graph_hash text,
+  ADD COLUMN graph_presentation jsonb;
+
+ALTER TABLE workflow_schedules
+  ADD CONSTRAINT workflow_schedules_revision_graph_chk
+    CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL) NOT VALID,
+  ADD CONSTRAINT workflow_schedules_graph_fk
+    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash) NOT VALID,
+  ADD CONSTRAINT workflow_schedules_revision_fk
+    FOREIGN KEY (runnable_kind, runnable_name, execution_revision, graph_hash)
+    REFERENCES workflow_revisions (kind, name, revision, graph_hash) NOT VALID;
+
+UPDATE workflow_schema_version SET version = 5 WHERE id = 1;
+
+COMMIT;
+
+-- Validation scans each table without blocking reads or writes.
+ALTER TABLE workflow_runs
+  VALIDATE CONSTRAINT workflow_runs_revision_graph_chk;
+ALTER TABLE workflow_runs
+  VALIDATE CONSTRAINT workflow_runs_graph_fk;
+ALTER TABLE workflow_runs
+  VALIDATE CONSTRAINT workflow_runs_revision_fk;
+ALTER TABLE workflow_schedules
+  VALIDATE CONSTRAINT workflow_schedules_revision_graph_chk;
+ALTER TABLE workflow_schedules
+  VALIDATE CONSTRAINT workflow_schedules_graph_fk;
+ALTER TABLE workflow_schedules
+  VALIDATE CONSTRAINT workflow_schedules_revision_fk;
+```
+
+The first transaction only changes the catalog. It takes brief `ACCESS
+EXCLUSIVE` locks on `workflow_runs`, `workflow_commands` and
+`workflow_schedules`, bounded by `lock_timeout`; on a timeout nothing has
+changed and it can be run again. The workflow tables are referenced
+unqualified, so set `search_path` first when they live in another schema.
+
+`workflow_graphs` and `workflow_revisions` are shared by all runs and
+schedules. Nothing cascades into them: deleting or pruning runs never removes a
+graph or a revision, and a run cannot name a graph other than its revision's.
+`createSchema()` exports both as `tables.graphs` and `tables.revisions`.
+
+Schemas generated from an earlier `createSchema()` have
+`workflow_commands_claim_idx` ordered `priority DESC NULLS LAST`, which the
+claim query cannot scan in order; `createSchema()` now declares the
+`NULLS FIRST` order the installer always used. The upgrade above leaves the
+index alone and `verifyPostgresWorkflowSchema` does not check its order. Your
+next generated migration will rebuild it; on a large `workflow_commands` table,
+do that with `CREATE INDEX CONCURRENTLY` under a new name, then drop the old
+index and rename.
+
+`verifyPostgresWorkflowSchema` accepts only its own generation, so a process
+that verifies at startup cannot run against the wrong schema in either
+direction. A process of the previous version that skips verification would keep
+running on the upgraded schema and must not: it claims work by name alone, so
+it would execute versioned runs with whatever code it has, and the commands it
+writes carry no revision. Stop it before any definition declares a `revision`,
+and for the same reason drain or restart versioned runs before rolling back.
+
+## Experimental: native Effect engine
+
+`@nmtjs/workflows/native-effect` is a separate, experimental engine in which
+Effect's own durable workflow runtime owns execution. It adds signals and
+in-workflow timers and trades away several features documented above. It runs
+beside this engine, shares no tables with it and migrates nothing. See
+[src/native-effect/README.md](./src/native-effect/README.md).
+
+## Experimental: single-source authoring
+
+`@nmtjs/workflows/experimental` declares a task or a workflow once and builds
+the contract and the implementation documented above from that one declaration.
+It is an authoring layer only: this engine runs what it builds, unchanged. See
+[src/experimental/README.md](./src/experimental/README.md).

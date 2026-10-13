@@ -4,8 +4,10 @@ const workflows = createSchema()
 
 export const WorkflowAttemptTable = workflows.tables.attempts
 export const WorkflowCommandTable = workflows.tables.commands
+export const WorkflowGraphTable = workflows.tables.graphs
 export const WorkflowNodeChildTable = workflows.tables.nodeChildren
 export const WorkflowNodeTable = workflows.tables.nodes
+export const WorkflowRevisionTable = workflows.tables.revisions
 export const WorkflowRunLeaseTable = workflows.tables.runLeases
 export const WorkflowRunTable = workflows.tables.runs
 export const WorkflowScheduleTable = workflows.tables.schedules

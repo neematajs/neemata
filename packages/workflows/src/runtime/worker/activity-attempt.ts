@@ -17,10 +17,12 @@ import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { parseChildKey } from '../child-key.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
+import { findDefinitionConflict } from '../definition.ts'
 import { parseDurationMs } from '../duration.ts'
 import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
 import {
   createWorkflowRuntimeRegistry,
+  routeLabel,
   type WorkflowRuntimeRegistry,
 } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
@@ -120,11 +122,18 @@ export async function runActivityAttempt(
     )
   }
 
-  if (snapshot?.run.workflowName !== command.workflowName) {
+  const route = routeLabel({
+    name: command.workflowName,
+    revision: command.revision,
+  })
+  if (
+    snapshot?.run.workflowName !== command.workflowName ||
+    snapshot.run.executionRevision !== command.revision
+  ) {
     await input.attemptExecutor.release(input.claimed, {
       reason: 'unroutable',
       error: new Error(
-        `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
+        `Run [${command.runId}] does not match command route [${route}]`,
       ),
     })
     return { status: 'released' }
@@ -133,15 +142,28 @@ export async function runActivityAttempt(
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows,
   })
-  const workflow = registry.getWorkflow(command.workflowName) as
-    | WorkflowImplementation
-    | undefined
+  const workflow = registry.getWorkflow(
+    command.workflowName,
+    command.revision,
+  ) as WorkflowImplementation | undefined
   if (!workflow) {
     await input.attemptExecutor.release(input.claimed, {
       reason: 'unroutable',
-      error: new Error(
-        `No registered workflow implementation [${command.workflowName}]`,
-      ),
+      error: new Error(`No registered workflow implementation [${route}]`),
+    })
+    return { status: 'released' }
+  }
+
+  // The run row, not the command, decides what the attempt is pinned to.
+  const conflict = await findDefinitionConflict(
+    input.store,
+    snapshot.run,
+    workflow.workflow,
+  )
+  if (conflict) {
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: conflict,
     })
     return { status: 'released' }
   }
@@ -300,9 +322,10 @@ export function resolveActivityAttemptRetry(
   registry: WorkflowRuntimeRegistry,
   command: ActivityAttemptCommand,
 ): RetryPolicy | undefined {
-  const workflow = registry.getWorkflow(command.workflowName) as
-    | WorkflowImplementation
-    | undefined
+  const workflow = registry.getWorkflow(
+    command.workflowName,
+    command.revision,
+  ) as WorkflowImplementation | undefined
   return workflow && resolveActivityAttemptNode(workflow, command)?.retry
 }
 

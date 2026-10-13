@@ -1,4 +1,5 @@
 import type { RunnableNodeImplementation } from '../../../implement/index.ts'
+import type { AnyWorkflowDefinition } from '../../../types/index.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { SELF_CHILD_KEY } from '../../child-key.ts'
 import { isTerminalNodeStatus } from '../../status.ts'
@@ -36,7 +37,7 @@ export async function dispatchWorkflowNode(
     ...input,
     nodeName: input.node.name,
     childKey: SELF_CHILD_KEY,
-    workflowName: input.node.target.name,
+    target: input.node.target as AnyWorkflowDefinition,
     cancellation:
       declaration.kind === 'workflow' ? declaration.cancellation : undefined,
     resolveIdempotencyKey: () =>

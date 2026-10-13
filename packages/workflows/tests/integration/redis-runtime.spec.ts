@@ -225,14 +225,14 @@ for (const target of targets) {
         expect(
           await runtime.runCoordinationExecutor.claim({
             workerId: 'wrong-worker',
-            workflowNames: ['other'],
+            workflows: [{ name: 'other' }],
             leaseMs: 1_000,
           }),
         ).toBeNull()
 
         const first = await runtime.runCoordinationExecutor.claim({
           workerId: 'worker-1',
-          workflowNames: ['chat-stream'],
+          workflows: [{ name: 'chat-stream' }],
           leaseMs: 1_000,
         })
         expect(first?.command).toStrictEqual(immediate)
@@ -241,7 +241,7 @@ for (const target of targets) {
         expect(
           await runtime.runCoordinationExecutor.claim({
             workerId: 'worker-1',
-            workflowNames: ['chat-stream'],
+            workflows: [{ name: 'chat-stream' }],
             leaseMs: 1_000,
           }),
         ).toBeNull()
@@ -249,7 +249,7 @@ for (const target of targets) {
         await wait(100)
         const second = await runtime.runCoordinationExecutor.claim({
           workerId: 'worker-1',
-          workflowNames: ['chat-stream'],
+          workflows: [{ name: 'chat-stream' }],
           leaseMs: 1_000,
         })
         expect(second?.command).toStrictEqual(delayed)
@@ -265,7 +265,7 @@ for (const target of targets) {
         })
         const worker = {
           workerId: 'worker',
-          workflowNames: ['recoverable'],
+          workflows: [{ name: 'recoverable' }],
           leaseMs: 30,
         }
         const stale = await runtime.runCoordinationExecutor.claim(worker)
@@ -300,7 +300,7 @@ for (const target of targets) {
             async (_, index) =>
               await runtime.runCoordinationExecutor.claim({
                 workerId: `worker-${index}`,
-                workflowNames: ['parallel'],
+                workflows: [{ name: 'parallel' }],
                 leaseMs: 1_000,
               }),
           ),
@@ -345,7 +345,7 @@ for (const target of targets) {
 
         const worker = {
           workerId: 'routed-worker',
-          workflowNames: ['routed'],
+          workflows: [{ name: 'routed' }],
           leaseMs: 1_000,
         }
         let claim = await runtime.runCoordinationExecutor.claim(worker)
@@ -373,7 +373,7 @@ for (const target of targets) {
 
         const worker = {
           workerId: 'contention-worker',
-          workflowNames: ['contended-enqueue'],
+          workflows: [{ name: 'contended-enqueue' }],
           leaseMs: 1_000,
         }
         const claim = await runtime.runCoordinationExecutor.claim(worker)
@@ -477,7 +477,7 @@ for (const target of targets) {
 
         const claim = await runtime.runCoordinationExecutor.claim({
           workerId: 'repair-worker',
-          workflowNames: ['repair-start'],
+          workflows: [{ name: 'repair-start' }],
           leaseMs: 1_000,
         })
         expect(claim?.command.runId).toBe(stored.id)
@@ -487,7 +487,7 @@ for (const target of targets) {
         await expect(
           runtime.runCoordinationExecutor.claim({
             workerId: 'repair-worker',
-            workflowNames: ['repair-start'],
+            workflows: [{ name: 'repair-start' }],
             leaseMs: 1_000,
           }),
         ).resolves.toBeNull()
@@ -508,7 +508,7 @@ for (const target of targets) {
         expect(run.status).toBe('queued')
         const claim = await runtime.runCoordinationExecutor.claim({
           workerId: 'ambiguous-workflow-worker',
-          workflowNames: ['ambiguous-workflow-start'],
+          workflows: [{ name: 'ambiguous-workflow-start' }],
           leaseMs: 1_000,
         })
         expect(claim?.command.runId).toBe(run.id)
@@ -536,8 +536,8 @@ for (const target of targets) {
         expect(run.status).toBe('queued')
         const claim = await runtime.attemptExecutor.claim({
           workerId: 'ambiguous-task-worker',
-          workflowNames: [],
-          taskNames: ['ambiguous-task-start'],
+          workflows: [],
+          tasks: [{ name: 'ambiguous-task-start' }],
           leaseMs: 1_000,
         })
         expect(claim?.command.runId).toBe(run.id)
@@ -597,7 +597,7 @@ for (const target of targets) {
         await runtime.runCoordinationExecutor.enqueue(command)
         const worker = {
           workerId: 'crashed-worker',
-          workflowNames: ['worker-crash'],
+          workflows: [{ name: 'worker-crash' }],
           leaseMs: 80,
         }
         const abandoned = await runtime.runCoordinationExecutor.claim(worker)
@@ -709,7 +709,7 @@ for (const target of targets) {
           })
           const claim = await claimContinue(runtime, {
             workerId: 'memory-pressure-worker',
-            workflowNames: ['memory-pressure-recovered'],
+            workflows: [{ name: 'memory-pressure-recovered' }],
             leaseMs: 1_000,
           })
           expect(claim?.command.runId).toBe(recoveredRunId)
@@ -751,7 +751,7 @@ for (const target of targets) {
         await runtime.runCoordinationExecutor.enqueue(interrupted)
         const worker = {
           workerId: 'network-recovery-worker',
-          workflowNames: ['network-recovery'],
+          workflows: [{ name: 'network-recovery' }],
           leaseMs: 1_000,
         }
         const firstClaim = await claimContinue(runtime, worker)
@@ -788,7 +788,7 @@ for (const target of targets) {
           expect(restored?.run.input).toStrictEqual({ persisted: true })
           const claim = await claimContinue(runtime, {
             workerId: 'restart-worker',
-            workflowNames: ['service-restart'],
+            workflows: [{ name: 'service-restart' }],
             leaseMs: 1_000,
           })
           expect(claim?.command.runId).toBe(run.id)

@@ -1,7 +1,12 @@
+import type { GraphPresentation } from '../../inspector/graph.ts'
 import type {
   AttemptCommand,
   ContinueRunCommand,
 } from '../../runtime/commands.ts'
+import type {
+  PreparedGraph,
+  PreparedRevision,
+} from '../../runtime/definition.ts'
 import type { StoredWorkflowSchedule } from '../../runtime/scheduler.ts'
 import type {
   StoredAttempt,
@@ -44,6 +49,10 @@ export function createState(maxDeliveries = 20) {
   const nodes = new Map<string, StoredNode>()
   const attempts = new Map<string, StoredAttempt>()
   const children = new Map<string, StoredNodeChild>()
+  // Shared by every run and schedule, and never pruned with them.
+  const graphs = new Map<string, PreparedGraph>()
+  const revisions = new Map<string, PreparedRevision>()
+  const presentations = new Map<string, GraphPresentation>()
   const runIdempotencyKeys = new Map<string, string>()
   // in-process twins of the partial unique indexes: active entries are
   // released on terminal transitions, all-scope entries live with the run
@@ -73,6 +82,9 @@ export function createState(maxDeliveries = 20) {
     nodes,
     attempts,
     children,
+    graphs,
+    revisions,
+    presentations,
     runIdempotencyKeys,
     activeUniqueRunKeys,
     allUniqueRunKeys,

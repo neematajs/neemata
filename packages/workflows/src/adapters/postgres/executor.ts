@@ -9,7 +9,7 @@ import type { StoredRun } from '../../runtime/state.ts'
 import type { PostgresWorkflowCommandContext } from './queue.ts'
 import { DEFAULT_LEASE_MS } from '../../runtime/executors.ts'
 import { withWriteFenceCheck } from './fence.ts'
-import { createPostgresWorkflowCommandHelpers } from './queue.ts'
+import { createPostgresWorkflowCommandHelpers, routesSql } from './queue.ts'
 import {
   WORKFLOW_COMMANDS_CHANNEL,
   id,
@@ -52,13 +52,14 @@ export const createAttemptExecutor = (
             kind,
             run_id,
             workflow_name,
+            revision,
             activity_name,
             node_name,
             attempt_id,
             payload,
             run_at
           )
-          SELECT $1, 'activity', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          SELECT $1, 'activity', $2, $3, $9, $4, $5, $6, $7::jsonb, COALESCE($8, now())
           WHERE NOT EXISTS (
             SELECT 1 FROM workflow_commands WHERE attempt_id = $6
           )
@@ -77,6 +78,7 @@ export const createAttemptExecutor = (
           command.attemptId,
           json(command),
           timestampParam(options?.runAt),
+          command.revision ?? null,
         ],
       )
     },
@@ -90,13 +92,14 @@ export const createAttemptExecutor = (
             kind,
             run_id,
             workflow_name,
+            revision,
             task_name,
             node_name,
             attempt_id,
             payload,
             run_at
           )
-          SELECT $1, 'task', $2, $3, $4, $5, $6, $7::jsonb, COALESCE($8, now())
+          SELECT $1, 'task', $2, $3, $9, $4, $5, $6, $7::jsonb, COALESCE($8, now())
           WHERE NOT EXISTS (
             SELECT 1 FROM workflow_commands WHERE attempt_id = $6
           )
@@ -115,42 +118,35 @@ export const createAttemptExecutor = (
           command.attemptId,
           json(command),
           timestampParam(options?.runAt),
+          command.revision ?? null,
         ],
       )
     },
     async claim(worker) {
       await ready
       const params: unknown[] = []
-      const placeholders = (values: readonly string[]) =>
-        values
-          .map((value) => {
-            params.push(value)
-            return `$${params.length}`
-          })
-          .join(', ')
       const eligible: string[] = []
 
-      if (
-        worker.workflowNames.length > 0 &&
-        worker.activityNames?.length !== 0
-      ) {
-        const activity = [
-          `kind = 'activity'`,
-          `workflow_name IN (${placeholders(worker.workflowNames)})`,
-        ]
+      // An activity runs under its workflow run's revision, so its route is
+      // the workflow's; an empty activity filter serves no activity at all.
+      const workflows =
+        worker.activityNames?.length === 0
+          ? undefined
+          : routesSql('workflow_name', worker.workflows, params)
+      if (workflows !== undefined) {
+        const activity = [`kind = 'activity'`, workflows]
         if (worker.activityNames !== undefined) {
-          activity.push(
-            `activity_name IN (${placeholders(worker.activityNames)})`,
-          )
+          const names = worker.activityNames.map((name) => {
+            params.push(name)
+            return `$${params.length}`
+          })
+          activity.push(`activity_name IN (${names.join(', ')})`)
         }
         eligible.push(`(${activity.join(' AND ')})`)
       }
 
-      if (worker.taskNames.length > 0) {
-        eligible.push(
-          `(kind = 'task' AND task_name IN (${placeholders(worker.taskNames)}))`,
-        )
-      }
+      const tasks = routesSql('task_name', worker.tasks, params)
+      if (tasks !== undefined) eligible.push(`(kind = 'task' AND ${tasks})`)
 
       if (eligible.length === 0) return null
       return claimAttempt(eligible, params, worker.workerId, worker.leaseMs)

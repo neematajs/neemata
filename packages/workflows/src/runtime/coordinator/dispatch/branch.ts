@@ -4,6 +4,7 @@ import type {
 } from '../../../implement/index.ts'
 import type {
   AnyTaskDefinition,
+  AnyWorkflowDefinition,
   BranchCaseDefinition,
 } from '../../../types/index.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
@@ -138,7 +139,7 @@ export async function dispatchBranchNode(
       ...input,
       nodeName: input.node.name,
       childKey,
-      workflowName: selected.target.name,
+      target: selected.target as AnyWorkflowDefinition,
       cancellation:
         selectedDeclaration.kind === 'workflow'
           ? (selectedDeclaration as BranchCaseDefinition<'workflow'>)
@@ -182,7 +183,7 @@ export async function dispatchBranchNode(
       ...input,
       nodeName: input.node.name,
       childKey,
-      taskName: taskTarget.name,
+      target: taskTarget,
       timeout: taskDeclaration.timeout ?? taskTarget.timeout,
       retry: taskDeclaration.retry ?? taskTarget.retry,
       resolveIdempotencyKey: () =>
@@ -245,6 +246,7 @@ export async function dispatchBranchNode(
     attemptExecutor: input.attemptExecutor,
     runCoordinationExecutor: input.runCoordinationExecutor,
     workflowName: input.workflow.workflow.name,
+    revision: input.run.executionRevision,
     activityName: selected.activity.name,
     runId: input.run.id,
     nodeName: input.node.name,

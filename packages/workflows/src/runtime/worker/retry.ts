@@ -94,9 +94,10 @@ async function dispatchAttempt(
   options: { readonly runAt?: Timestamp } | undefined,
 ): Promise<void> {
   const { id: attemptId, leaseToken, input, idempotencyKey } = attempt
-  const { workflowName, runId, nodeName, childKey } = command
+  const { workflowName, revision, runId, nodeName, childKey } = command
   const shared = {
     workflowName,
+    ...(revision === undefined ? {} : { revision }),
     runId,
     nodeName,
     childKey,

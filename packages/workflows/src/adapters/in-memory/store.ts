@@ -5,6 +5,7 @@ import type {
 } from '../../runtime/state.ts'
 import type { WorkflowStore } from '../../runtime/store.ts'
 import type { State } from './state.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
 import { WorkflowRunConflictError } from '../../runtime/errors.ts'
 import { validateFailedRunRetry } from '../../runtime/store.ts'
 import { queueItem } from './commands.ts'
@@ -175,6 +176,9 @@ export function createStore(state: State): WorkflowStore {
             runId: root.id,
             workflowName: root.workflowName,
             taskName: root.taskName ?? root.name,
+            ...(root.executionRevision === undefined
+              ? {}
+              : { revision: root.executionRevision }),
             nodeName: '$task',
             childKey: child.childKey,
             attemptId: attempt.id,
@@ -185,11 +189,7 @@ export function createStore(state: State): WorkflowStore {
         )
         wake.command('task')
       } else {
-        enqueueContinue(state, {
-          kind: 'continueRun',
-          runId: root.id,
-          workflowName: root.workflowName,
-        })
+        enqueueContinue(state, continueRunCommand(root))
       }
       return root
     },

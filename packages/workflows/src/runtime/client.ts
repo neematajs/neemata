@@ -3,9 +3,17 @@ import type {
   WorkflowImplementation,
 } from '../implement/index.ts'
 import type {
+  RunDefinitionInspection,
+  RunInspection,
+  SavedDefinition,
+} from '../inspector/index.ts'
+import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
+  RunKind,
   RunnableDefinition,
+  RunnableRef,
+  RunnableRevision,
   RunnableRun,
   RunUniqueConstraint,
   TaskInput,
@@ -29,6 +37,7 @@ import type {
   PruneTerminalRunsResult,
   RunDetail,
   RunFamilyEntry,
+  RunSummary,
   WorkflowRetentionPruner,
   WorkflowStore,
 } from './store.ts'
@@ -38,11 +47,16 @@ import type {
   WorkflowRuntimeAtomicContinuation,
   WorkflowRuntimeOperationContext,
 } from './worker.ts'
+import { parseStructure } from '../inspector/graph.ts'
 import { decodeStoredValue } from './codec.ts'
+import { continueRunCommand } from './commands.ts'
 import { startTaskRun, startWorkflowRun } from './coordinator.ts'
 import { cancelRunAndWakeParent } from './coordinator/sinks.ts'
+import { graphConflict, hashStructure, refKey } from './definition.ts'
+import { formatRunnableRef } from './errors.ts'
 import {
   createWorkflowRuntimeRegistry,
+  routeLabel,
   type RegisteredTaskImplementation,
   type RegisteredWorkflowImplementation,
   type WorkflowRuntimeRegistry,
@@ -72,6 +86,19 @@ export type WorkflowRuntimeStartOptions<Connection = never> = {
    */
   readonly connection?: Connection
 }
+
+export type WorkflowRuntimeRestartOptions<Connection = never> =
+  WorkflowRuntimeStartOptions<Connection> & {
+    /**
+     * `original` (the default) restarts with the definition the run was created
+     * from: the same revision, or the unversioned definition for an unversioned
+     * run. It fails when this client does not know that definition. `latest`
+     * restarts with the client's `current` definition of the same kind and
+     * name, after checking the run's stored input against that definition's
+     * input schema: an incompatible input fails before anything is created.
+     */
+    readonly revision?: 'original' | 'latest'
+  }
 
 export type WorkflowRuntimeCancelOptions<Connection = never> = {
   /**
@@ -150,11 +177,20 @@ export type CreateWorkflowRuntimeClientInput<Connection = never> =
     readonly workflows?: readonly RegisteredWorkflowImplementation[]
     readonly tasks?: readonly RegisteredTaskImplementation[]
     /**
-     * Name→definition source for `restart()` and future by-name operations.
-     * Definitions live in leaf modules both sides can import, so management
-     * surfaces resolve stored names without touching implementation code.
+     * Definition source for `restart()`, which resolves a stored run back to
+     * the definition of its kind, name and revision. Definitions live in leaf
+     * modules both sides can import, so management surfaces resolve stored
+     * runs without touching implementation code. Several revisions of one name
+     * may be listed.
      */
     readonly definitions?: readonly RunnableDefinition[]
+    /**
+     * The definition `restart(id, { revision: 'latest' })` restarts with, at
+     * most one per kind and name. Explicit on purpose: revisions are opaque, so
+     * nothing here is inferred from their order or text. `start()` never reads
+     * this list; it runs the definition it is given.
+     */
+    readonly current?: readonly RunnableDefinition[]
   }
 
 export type WorkflowRuntimeClient<Connection = never> = {
@@ -183,9 +219,22 @@ export type WorkflowRuntimeClient<Connection = never> = {
   /** Resubmits a terminal run and returns the decoded view, like start(). */
   readonly restart: (
     runId: string,
-    options?: WorkflowRuntimeStartOptions<Connection>,
+    options?: WorkflowRuntimeRestartOptions<Connection>,
   ) => Promise<RunnableRun>
   readonly get: (runId: string) => Promise<RunSnapshot | undefined>
+  /**
+   * The run's detail with the graph it was created with, read from the store
+   * alone. A run without a usable saved graph is reported as observed-only;
+   * the definition deployed today is never substituted for it.
+   */
+  readonly inspect: (runId: string) => Promise<RunInspection | undefined>
+  /**
+   * A saved revision and its graph, for previewing what a run's bindings
+   * reference: children it has not created yet, or alternatives it never took.
+   */
+  readonly getDefinition: (
+    ref: RunnableRevision,
+  ) => Promise<SavedDefinition | undefined>
   readonly list: (filter?: ListRunsFilter) => Promise<ListRunsResult>
   readonly listSummaries: (
     filter?: ListRunsFilter,
@@ -229,7 +278,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
     workflows: input.workflows,
     tasks: input.tasks,
   })
-  const definitions = createDefinitionIndex(registry, input.definitions)
+  const definitions = createDefinitionIndex(registry, input)
 
   const start = (async (
     runnable: AnyWorkflowDefinition | AnyTaskDefinition,
@@ -310,7 +359,7 @@ export function createWorkflowRuntimeClient<Connection = never>(
           return run
         },
         definitions,
-        start,
+        start as StartRunnable<Connection>,
         runId,
         options,
       ),
@@ -327,6 +376,8 @@ export function createWorkflowRuntimeClient<Connection = never>(
         cancelRun(runtime, runId),
       ),
     get: (runId) => input.store.loadRunSnapshot(runId),
+    inspect: (runId) => inspectRun(input.store, runId),
+    getDefinition: (ref) => loadSavedDefinition(input.store, ref),
     list: (filter) => input.store.listRuns(filter),
     listSummaries: (filter) => input.store.listRunSummaries(filter),
     getDetail: (runId) => input.store.loadRunDetail(runId),
@@ -383,11 +434,7 @@ async function cancelRun(
     })
   }
 
-  await runtime.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: run.id,
-    workflowName: run.workflowName,
-  })
+  await runtime.runCoordinationExecutor.enqueue(continueRunCommand(run))
   return run
 }
 
@@ -517,65 +564,75 @@ async function pruneRuns(
 }
 
 /**
- * Name→definition maps backing `restart()`. Seeded from registered
- * implementations (their definitions ride along anyway) and extended by the
- * explicit `definitions` input, so restart works identically whether the client
- * was built for execution or as a registry-free enqueue/management surface.
+ * The definitions backing `restart()`, by kind, name and revision. Seeded from
+ * registered implementations (their definitions ride along anyway) and
+ * extended by the explicit `definitions` and `current` inputs, so restart works
+ * identically whether the client was built for execution or as a registry-free
+ * enqueue/management surface.
  */
-type WorkflowDefinitionIndex = {
-  readonly workflows: ReadonlyMap<string, AnyWorkflowDefinition>
-  readonly tasks: ReadonlyMap<string, AnyTaskDefinition>
+type DefinitionIndex = {
+  readonly find: (ref: RunnableRef) => RunnableDefinition | undefined
+  readonly current: (
+    kind: RunKind,
+    name: string,
+  ) => RunnableDefinition | undefined
 }
 
 function createDefinitionIndex(
   registry: WorkflowRuntimeRegistry,
-  definitions: readonly RunnableDefinition[] | undefined,
-): WorkflowDefinitionIndex {
-  const workflows = new Map<string, AnyWorkflowDefinition>()
-  const tasks = new Map<string, AnyTaskDefinition>()
+  input: Pick<CreateWorkflowRuntimeClientInput, 'definitions' | 'current'>,
+): DefinitionIndex {
+  const known = new Map<string, RunnableDefinition>()
+  for (const { workflow } of registry.workflows) {
+    known.set(refKey(workflow), workflow)
+  }
+  for (const { task } of registry.tasks) known.set(refKey(task), task)
 
-  for (const implementation of registry.workflows.values()) {
-    workflows.set(implementation.workflow.name, implementation.workflow)
-  }
-  for (const implementation of registry.tasks.values()) {
-    tasks.set(implementation.task.name, implementation.task)
-  }
-  for (const definition of definitions ?? []) {
-    // Two objects under one name would make by-name resolution ambiguous and
+  const current = new Map<string, RunnableDefinition>()
+  const explicit = [...(input.definitions ?? []), ...(input.current ?? [])]
+  for (const definition of explicit) {
+    const key = refKey(definition)
+    const existing = known.get(key)
+    // Two objects under one revision would make resolution ambiguous and
     // `start()`'s definition↔implementation identity check a coin toss.
-    switch (definition.kind) {
-      case 'workflow': {
-        const existing = workflows.get(definition.name)
-        if (existing && existing !== definition) {
-          throw new Error(
-            `Conflicting workflow definition [${definition.name}]: another definition or registered implementation uses the same name`,
-          )
-        }
-        workflows.set(definition.name, definition)
-        break
-      }
-      case 'task': {
-        const existing = tasks.get(definition.name)
-        if (existing && existing !== definition) {
-          throw new Error(
-            `Conflicting task definition [${definition.name}]: another definition or registered implementation uses the same name`,
-          )
-        }
-        tasks.set(definition.name, definition)
-        break
-      }
+    if (existing && existing !== definition) {
+      throw new Error(
+        `Conflicting ${definition.kind} definition [${routeLabel(definition)}]: another definition or registered implementation uses the same name`,
+      )
     }
+    known.set(key, definition)
+  }
+  for (const definition of input.current ?? []) {
+    const { kind, name } = definition
+    const key = refKey({ kind, name })
+    const existing = current.get(key)
+    if (existing && existing !== definition) {
+      throw new Error(
+        `More than one current ${kind} [${name}]: [${routeLabel(existing)}] and [${routeLabel(definition)}]`,
+      )
+    }
+    current.set(key, definition)
   }
 
-  return { workflows, tasks }
+  return {
+    find: (ref) => known.get(refKey(ref)),
+    current: (kind, name) => current.get(refKey({ kind, name })),
+  }
 }
+
+/** `start` without its per-kind overloads, for a definition resolved at run time. */
+type StartRunnable<Connection> = (
+  definition: RunnableDefinition,
+  input: unknown,
+  options?: WorkflowRuntimeStartOptions<Connection>,
+) => Promise<RunnableRun>
 
 async function restartRun<Connection>(
   loadRun: (runId: string) => Promise<StoredRun | undefined>,
-  definitions: WorkflowDefinitionIndex,
-  start: WorkflowRuntimeClient<Connection>['start'],
+  definitions: DefinitionIndex,
+  start: StartRunnable<Connection>,
   runId: string,
-  options?: WorkflowRuntimeStartOptions<Connection>,
+  options: WorkflowRuntimeRestartOptions<Connection> = {},
 ): Promise<RunnableRun> {
   const run = await loadRun(runId)
   if (!run) throw new Error(`Run [${runId}] not found`)
@@ -586,49 +643,120 @@ async function restartRun<Connection>(
     throw new Error(`Run [${runId}] is not a root run`)
   }
 
-  switch (run.kind) {
-    case 'workflow': {
-      const workflow = definitions.workflows.get(run.workflowName)
-      if (!workflow) {
-        throw new Error(
-          `Cannot restart run [${runId}]: no workflow definition [${run.workflowName}] is known to this client — pass it via 'definitions' (or its implementation via 'workflows') to createWorkflowRuntimeClient`,
-        )
-      }
-      return await start(
-        workflow,
-        decodeStoredValue(
-          workflow.input,
-          run.input,
-          `workflow input [${workflow.name}]`,
-        ),
-        {
-          tags: run.tags,
-          // scope 'all' constraints conflict with the terminal run itself on
-          // retry — surfaced honestly; override via options.unique if intended
-          ...(run.unique === undefined ? {} : { unique: run.unique }),
-          ...options,
-        },
+  const { revision: selection = 'original', ...startOptions } = options
+  const { kind } = run
+  const name = kind === 'task' ? (run.taskName ?? run.name) : run.workflowName
+  let definition: RunnableDefinition | undefined
+
+  if (selection === 'latest') {
+    definition = definitions.current(kind, name)
+    if (!definition) {
+      throw new Error(
+        `Cannot restart run [${runId}] with the latest revision: no current ${kind} [${name}] is configured — pass it via 'current' to createWorkflowRuntimeClient`,
       )
     }
-    case 'task': {
-      const taskName = run.taskName ?? run.name
-      const task = definitions.tasks.get(taskName)
-      if (!task) {
-        throw new Error(
-          `Cannot restart run [${runId}]: no task definition [${taskName}] is known to this client — pass it via 'definitions' (or its implementation via 'tasks') to createWorkflowRuntimeClient`,
-        )
-      }
-      return await start(
-        task,
-        decodeStoredValue(task.input, run.input, `task input [${task.name}]`),
-        {
-          tags: run.tags,
-          ...(run.unique === undefined ? {} : { unique: run.unique }),
-          ...options,
-        },
+  } else {
+    const ref = { kind, name, revision: run.executionRevision }
+    definition = definitions.find(ref)
+    if (!definition) {
+      const plural = kind === 'task' ? 'tasks' : 'workflows'
+      throw new Error(
+        `Cannot restart run [${runId}]: no ${kind} definition [${routeLabel(ref)}] is known to this client — pass it via 'definitions' (or its implementation via '${plural}') to createWorkflowRuntimeClient, or restart with { revision: 'latest' }`,
       )
     }
   }
+
+  // Decoding is the compatibility check for `latest`: a stored input the
+  // selected definition's schema rejects throws here, before any write.
+  const input = decodeStoredValue(
+    definition.input,
+    run.input,
+    `${kind} input [${routeLabel(definition)}]`,
+  )
+  const startWith = {
+    tags: run.tags,
+    // scope 'all' constraints conflict with the terminal run itself on
+    // retry — surfaced honestly; override via options.unique if intended
+    ...(run.unique === undefined ? {} : { unique: run.unique }),
+    ...startOptions,
+  }
+
+  return await start(definition, input, startWith)
+}
+
+async function inspectRun(
+  store: WorkflowStore,
+  runId: string,
+): Promise<RunInspection | undefined> {
+  const detail = await store.loadRunDetail(runId)
+  if (!detail) return undefined
+
+  const definition = await inspectRunDefinition(store, detail.run)
+  return { detail, definition }
+}
+
+/** A stored graph is trusted only when it still hashes to the key it is under. */
+function verifiedStructure(graphHash: string, raw: unknown) {
+  try {
+    const structure = parseStructure(raw)
+    return hashStructure(structure) === graphHash ? structure : undefined
+  } catch (error) {
+    if (error instanceof TypeError) return undefined
+    throw error
+  }
+}
+
+async function inspectRunDefinition(
+  store: WorkflowStore,
+  run: RunSummary,
+): Promise<RunDefinitionInspection> {
+  const { id, kind, name, graphHash, executionRevision } = run
+  if (graphHash === undefined) return { source: 'observed', reason: 'legacy' }
+
+  const graph = await store.loadGraph(graphHash)
+  if (!graph) return { source: 'observed', reason: 'missing-graph' }
+
+  const structure = verifiedStructure(graphHash, graph.structure)
+  if (!structure || structure.kind !== kind || structure.name !== name) {
+    return { source: 'observed', reason: 'invalid-graph' }
+  }
+
+  const presentation = await store.loadGraphPresentation(id)
+  let revision =
+    executionRevision === undefined
+      ? undefined
+      : await store.loadRevision({ kind, name, revision: executionRevision })
+  // Bindings of another graph say nothing about this one.
+  if (revision?.graphHash !== graphHash) revision = undefined
+
+  return {
+    source: 'saved',
+    graphHash,
+    structure,
+    ...(presentation === undefined ? {} : { presentation }),
+    ...(revision === undefined ? {} : { revision }),
+  }
+}
+
+async function loadSavedDefinition(
+  store: WorkflowStore,
+  ref: RunnableRevision,
+): Promise<SavedDefinition | undefined> {
+  const revision = await store.loadRevision(ref)
+  if (!revision) return undefined
+
+  const { graphHash } = revision
+  const stored = await store.loadGraph(graphHash)
+  if (!stored) return undefined
+
+  const structure = verifiedStructure(graphHash, stored.structure)
+  if (!structure) {
+    throw graphConflict(
+      graphHash,
+      `saved for ${formatRunnableRef(ref)} does not match its hash`,
+    )
+  }
+  return { revision, graph: { graphHash, structure } }
 }
 
 function normalizeDebounce(debounceMs: number | undefined): number {
@@ -645,11 +773,11 @@ function getWorkflowImplementation<WorkflowDef extends AnyWorkflowDefinition>(
   registry: WorkflowRuntimeRegistry,
   workflow: WorkflowDef,
 ) {
-  const implementation = registry.getWorkflow(workflow.name)
+  const implementation = registry.getWorkflow(workflow.name, workflow.revision)
   if (!implementation) return undefined
   if (implementation.workflow !== workflow) {
     throw new Error(
-      `Registered workflow implementation [${workflow.name}] does not match declaration`,
+      `Registered workflow implementation [${routeLabel(workflow)}] does not match declaration`,
     )
   }
 
@@ -660,11 +788,11 @@ function getTaskImplementation<TaskDef extends AnyTaskDefinition>(
   registry: WorkflowRuntimeRegistry,
   task: TaskDef,
 ) {
-  const implementation = registry.getTask(task.name)
+  const implementation = registry.getTask(task.name, task.revision)
   if (!implementation) return undefined
   if (implementation.task !== task) {
     throw new Error(
-      `Registered task implementation [${task.name}] does not match declaration`,
+      `Registered task implementation [${routeLabel(task)}] does not match declaration`,
     )
   }
 

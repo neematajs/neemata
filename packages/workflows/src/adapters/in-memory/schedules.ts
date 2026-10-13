@@ -4,11 +4,13 @@ import type {
   WorkflowScheduler,
 } from '../../runtime/scheduler.ts'
 import type { State } from './state.ts'
+import { prepareRunDefinition } from '../../runtime/definition.ts'
 import {
   nextStoredScheduleRunAt,
   normalizeScheduleDefinitions,
   startStoredScheduleRun,
 } from '../../runtime/scheduler.ts'
+import { assertDefinitions, saveDefinitions } from './store-runs.ts'
 
 function normalizeScheduleLimit(limit: number | undefined) {
   if (limit === undefined) return 100
@@ -39,6 +41,17 @@ export function createScheduler(
     async reconcile(entries) {
       const date = now()
       const normalizedEntries = normalizeScheduleDefinitions(entries, date)
+      // Definitions are saved before any schedule changes, each entry checked
+      // against what the entries before it saved: two entries cannot disagree
+      // about one revision, and a conflict leaves the schedules as they were.
+      // Definitions an earlier entry saved stay; they are valid and shared.
+      for (const entry of normalizedEntries) {
+        const definition = prepareRunDefinition(entry)
+        const runnable = { kind: entry.runnableKind, name: entry.runnableName }
+        assertDefinitions(state, runnable, definition)
+        saveDefinitions(state, definition)
+      }
+
       const names = new Set(normalizedEntries.map((entry) => entry.name))
       for (const scheduleName of schedules.keys()) {
         if (!names.has(scheduleName)) schedules.delete(scheduleName)
@@ -58,6 +71,13 @@ export function createScheduler(
           name: normalized.name,
           runnableKind: normalized.runnableKind,
           runnableName: normalized.runnableName,
+          ...(normalized.executionRevision === undefined
+            ? {}
+            : { executionRevision: normalized.executionRevision }),
+          graphHash: normalized.graphHash,
+          ...(normalized.graphPresentation === undefined
+            ? {}
+            : { graphPresentation: normalized.graphPresentation }),
           input: normalized.input,
           tags: normalized.tags,
           ...(normalized.cron === undefined ? {} : { cron: normalized.cron }),

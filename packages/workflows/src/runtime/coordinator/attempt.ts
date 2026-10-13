@@ -21,6 +21,8 @@ export type DispatchTaskRunAttemptInput = {
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly taskName: string
+  /** The task run's `executionRevision`. */
+  readonly revision?: string
   readonly taskRunId: string
   readonly taskInput: unknown
   readonly idempotencyKey?: readonly unknown[]
@@ -74,6 +76,7 @@ export async function dispatchTaskRunAttempt(
     runCoordinationExecutor: input.runCoordinationExecutor,
     workflowName: input.taskName,
     taskName: input.taskName,
+    revision: input.revision,
     runId: input.taskRunId,
     nodeName: TASK_RUN_NODE_NAME,
     childKey: SELF_CHILD_KEY,
@@ -103,6 +106,8 @@ export async function dispatchActivityAttempt(input: {
   readonly attemptExecutor: AttemptExecutor
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflowName: string
+  /** The workflow run's `executionRevision`. */
+  readonly revision?: string
   readonly activityName: string
   readonly runId: string
   readonly nodeName: string
@@ -120,6 +125,7 @@ export async function dispatchActivityAttempt(input: {
       {
         kind: 'activityAttempt',
         workflowName: input.workflowName,
+        ...(input.revision === undefined ? {} : { revision: input.revision }),
         activityName: input.activityName,
         runId: input.runId,
         nodeName: input.nodeName,
@@ -142,6 +148,7 @@ export async function dispatchTaskAttempt(input: {
   readonly runCoordinationExecutor: RunCoordinationExecutor
   readonly workflowName: string
   readonly taskName: string
+  readonly revision?: string
   readonly runId: string
   readonly nodeName: string
   readonly childKey: string
@@ -161,6 +168,7 @@ export async function dispatchTaskAttempt(input: {
         kind: 'taskAttempt',
         workflowName: input.workflowName,
         taskName: input.taskName,
+        ...(input.revision === undefined ? {} : { revision: input.revision }),
         runId: input.runId,
         nodeName: input.nodeName,
         childKey: input.childKey,

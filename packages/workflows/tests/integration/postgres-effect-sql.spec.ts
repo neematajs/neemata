@@ -24,6 +24,7 @@ import { defineTask, defineWorkflow } from '../../src/effect/index.ts'
 import { createEffectSqlWorkflowClient } from '../../src/effect/postgres.ts'
 import {
   createWorkflowRuntimeClient,
+  WorkflowDefinitionConflictError,
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
 } from '../../src/runtime/index.ts'
@@ -496,6 +497,40 @@ describe.skipIf(!postgresTarget.url)(
       expect(poolUses).toBe(0)
       expect(conflict).toBeInstanceOf(WorkflowIdempotencyConflictError)
       expect(await count('sample', 'id = $1', [id])).toBe(1)
+    })
+
+    it('fails a definition conflict as a typed error and keeps the transaction usable', async () => {
+      const name = `effect-sql-revision-${randomUUID()}`
+      const input = Schema.Struct({ value: Schema.String })
+      const saved = defineWorkflow({ name, revision: 'v1', input }).build()
+      // The same revision with another graph: an edit without a new revision.
+      const edited = defineWorkflow({ name, revision: 'v1', input })
+        .activity('added', { input, output: input })
+        .build()
+      await client.start(saved, { value: 'first' })
+      poolUses = 0
+      const id = sampleId()
+
+      const conflict = await run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              const error = yield* Effect.flip(
+                effectClient.start(edited, { value: 'second' }),
+              )
+
+              yield* insertSample(id)
+              return error
+            }),
+          )
+        }),
+      )
+
+      expect(poolUses).toBe(0)
+      expect(conflict).toBeInstanceOf(WorkflowDefinitionConflictError)
+      expect(await count('sample', 'id = $1', [id])).toBe(1)
+      expect(await count('workflow_runs', 'name = $1', [name])).toBe(1)
     })
 
     it('fails a statement past answerTimeoutMs as a typed SqlError and keeps the transaction usable', async () => {

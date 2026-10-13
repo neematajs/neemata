@@ -718,10 +718,10 @@ describe('workflow runtime coordinator', () => {
     })
     const childRunId = (await client.get(run.id))?.children[0]?.childRunId
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [task.name],
+      tasks: [{ name: task.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -1722,9 +1722,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -1856,9 +1856,9 @@ describe('workflow runtime coordinator', () => {
     expect(activityCommands[0]?.payload.activityName).not.toContain('fallback')
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -2285,9 +2285,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -2394,10 +2394,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [task.name],
+      tasks: [{ name: task.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -2535,9 +2535,9 @@ describe('workflow runtime coordinator', () => {
 
     for (let index = 0; index < 2; index += 1) {
       const claimed = await runtime.attemptExecutor.claim({
-        taskNames: [],
+        tasks: [],
         workerId: 'activity-worker-1',
-        workflowNames: [workflow.name],
+        workflows: [{ name: workflow.name }],
         leaseMs: 30_000,
       })
       expect(claimed).not.toBeNull()
@@ -2637,9 +2637,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -2774,9 +2774,9 @@ describe('workflow runtime coordinator', () => {
     )!.childRunId!
 
     const activityClaim = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(activityClaim).not.toBeNull()
@@ -2792,10 +2792,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const taskClaim = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(taskClaim).not.toBeNull()
@@ -2915,9 +2915,9 @@ describe('workflow runtime coordinator', () => {
     expect(childRunId).toBeTypeOf('string')
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       activityNames: ['sections.fail'],
       leaseMs: 30_000,
     })
@@ -3053,10 +3053,10 @@ describe('workflow runtime coordinator', () => {
 
     for (const _ of [0, 1]) {
       const claimed = await runtime.attemptExecutor.claim({
-        workflowNames: [],
+        workflows: [],
         activityNames: [],
         workerId: 'task-worker-1',
-        taskNames: [embeddingTask.name],
+        tasks: [{ name: embeddingTask.name }],
         leaseMs: 30_000,
       })
       expect(claimed).not.toBeNull()
@@ -3169,10 +3169,10 @@ describe('workflow runtime coordinator', () => {
     expect(runtime.inspect().taskCommands).toHaveLength(2)
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed?.command.runId).toBe(failedRunId)
@@ -3500,10 +3500,10 @@ describe('workflow runtime coordinator', () => {
 
     for (const _ of [0, 1]) {
       const claimed = await runtime.attemptExecutor.claim({
-        workflowNames: [],
+        workflows: [],
         activityNames: [],
         workerId: 'task-worker-1',
-        taskNames: [embeddingTask.name],
+        tasks: [{ name: embeddingTask.name }],
         leaseMs: 30_000,
       })
       expect(claimed).not.toBeNull()
@@ -5172,9 +5172,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5236,9 +5236,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5333,9 +5333,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5418,9 +5418,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5493,9 +5493,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [workflow.name],
+      workflows: [{ name: workflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5559,9 +5559,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: ['missing-workflow'],
+      workflows: [{ name: 'missing-workflow' }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5857,10 +5857,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -5963,10 +5963,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -6044,10 +6044,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -6131,10 +6131,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -6229,10 +6229,10 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'task-worker-1',
-      taskNames: [embeddingTask.name],
+      tasks: [{ name: embeddingTask.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -6368,9 +6368,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker',
-      workflowNames: [childWorkflow.name],
+      workflows: [{ name: childWorkflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()
@@ -7150,9 +7150,9 @@ describe('workflow runtime coordinator', () => {
     })
 
     const claimed = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker',
-      workflowNames: [childWorkflow.name],
+      workflows: [{ name: childWorkflow.name }],
       leaseMs: 30_000,
     })
     expect(claimed).not.toBeNull()

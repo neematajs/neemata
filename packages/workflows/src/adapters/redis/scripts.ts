@@ -3,6 +3,27 @@ import { WRITE_FENCE } from './fence.ts'
 
 // Every queue mutation maintains these indexes in the same Lua execution.
 // Length prefixes keep arbitrary workflow/activity names collision-free.
+//
+// A command without a revision keeps the keys it always had:
+//   route:workflow:<len>:<name>
+//   route:task:<len>:<name>
+//   route:activity:<len>:<workflow>[:<len>:<activity>]
+// A command with a revision is indexed under a tagged namespace instead:
+//   route:rev:workflow:<len>:<name>:<len>:<revision>
+//   route:rev:task:<len>:<name>:<len>:<revision>
+//   route:rev:activity:<len>:<workflow>:<len>:<revision>[:<len>:<activity>]
+// The segment after `route:` is a literal chosen here, never caller text, so
+// no unversioned key (`workflow`, `task`, `activity`) can equal a versioned
+// one (`rev`) whatever the names hold. An optional untagged revision segment
+// would not have that property: `activity:<workflow>:<revision>` is
+// byte-identical to `activity:<workflow>:<activity>` for a revision named like
+// an activity. Inside each namespace every caller-supplied part is length
+// prefixed, so the parts decode one way only, and the suffix after the last
+// part (`:ready`, `:claimed`) cannot be read as another `:<len>:` part.
+//
+// `commandRoutes` (where a command is indexed), `selectedRoutes` (which
+// indexes a claim reads) and `eligible` (the per-command check) all go through
+// `routeKey` and `revisionOf`, so they cannot disagree about a lane.
 export const QUEUE_INDEXES = `
 local function queueBase(items)
   return string.sub(items, 1, #items - 6)
@@ -12,19 +33,32 @@ local function routePart(value)
   return tostring(#value) .. ':' .. value
 end
 
+-- Absent is the unversioned lane. Anything but a string counts as absent, so a
+-- JSON null can never be read as a revision of its own.
+local function revisionOf(value)
+  if type(value.revision) == 'string' then return value.revision end
+  return nil
+end
+
+local function routeKey(items, kind, name, revision)
+  local base = queueBase(items) .. ':route:'
+  if revision == nil then return base .. kind .. ':' .. routePart(name) end
+  return base .. 'rev:' .. kind .. ':' .. routePart(name) .. ':' .. routePart(revision)
+end
+
 local function runCommands(items, runId)
   return queueBase(items) .. ':run:' .. runId
 end
 
 local function commandRoutes(items, payload)
-  local base = queueBase(items) .. ':route:'
+  local revision = revisionOf(payload)
   if payload.kind == 'continueRun' then
-    return { base .. 'workflow:' .. routePart(payload.workflowName) }
+    return { routeKey(items, 'workflow', payload.workflowName, revision) }
   end
   if payload.kind == 'taskAttempt' then
-    return { base .. 'task:' .. routePart(payload.taskName) }
+    return { routeKey(items, 'task', payload.taskName, revision) }
   end
-  local workflow = base .. 'activity:' .. routePart(payload.workflowName)
+  local workflow = routeKey(items, 'activity', payload.workflowName, revision)
   return { workflow, workflow .. ':' .. routePart(payload.activityName) }
 end
 
@@ -79,26 +113,35 @@ local function contains(values, expected)
   return false
 end
 
+-- Exact (name, revision): nil equals nil only, so the unversioned lane is
+-- served by routes without a revision and by nothing else.
+local function serves(routes, name, revision)
+  if not routes then return false end
+  for _, route in ipairs(routes) do
+    if route.name == name and revisionOf(route) == revision then return true end
+  end
+  return false
+end
+
 local function selectedRoutes(items, routing)
   local routes = {}
   local seen = {}
-  local base = queueBase(items)
   local function include(route)
     if not seen[route] then
       seen[route] = true
       table.insert(routes, route)
     end
   end
-  if string.sub(base, -9) == ':continue' then
-    for _, name in ipairs(routing.workflowNames) do
-      include(base .. ':route:workflow:' .. routePart(name))
+  if string.sub(queueBase(items), -9) == ':continue' then
+    for _, workflow in ipairs(routing.workflows) do
+      include(routeKey(items, 'workflow', workflow.name, revisionOf(workflow)))
     end
   else
-    for _, name in ipairs(routing.taskNames or {}) do
-      include(base .. ':route:task:' .. routePart(name))
+    for _, task in ipairs(routing.tasks or {}) do
+      include(routeKey(items, 'task', task.name, revisionOf(task)))
     end
-    for _, workflow in ipairs(routing.workflowNames) do
-      local route = base .. ':route:activity:' .. routePart(workflow)
+    for _, workflow in ipairs(routing.workflows) do
+      local route = routeKey(items, 'activity', workflow.name, revisionOf(workflow))
       if not routing.activityNames then
         include(route)
       else
@@ -112,13 +155,14 @@ local function selectedRoutes(items, routing)
 end
 
 local function eligible(payload, routing)
+  local revision = revisionOf(payload)
   if payload.kind == 'continueRun' then
-    return contains(routing.workflowNames, payload.workflowName)
+    return serves(routing.workflows, payload.workflowName, revision)
   end
   if payload.kind == 'taskAttempt' then
-    return contains(routing.taskNames, payload.taskName)
+    return serves(routing.tasks, payload.taskName, revision)
   end
-  if not contains(routing.workflowNames, payload.workflowName) then return false end
+  if not serves(routing.workflows, payload.workflowName, revision) then return false end
   return not routing.activityNames or contains(routing.activityNames, payload.activityName)
 end
 `
@@ -305,7 +349,12 @@ for cleanup = 1, tonumber(ARGV[1]) do
       addClaimed(KEYS[1], item, leaseExpiresAt)
       return { 'claimed', id, raw }
     else
+      -- Indexed on a route it does not belong to, which only a binary without
+      -- revision routing produces. Move it to its own routes instead of
+      -- dropping the entry, or no worker would ever find it again.
       redis.call('ZREM', indexKey, id)
+      local ready = redis.call('ZSCORE', KEYS[2], id)
+      if ready then addReady(KEYS[1], item, ready) end
     end
   end
 end
@@ -407,7 +456,12 @@ while routes[position] and budget > 0 do
           end
         end
       else
+        -- See the claim script: a lease indexed on a foreign route is moved to
+        -- its own, where a worker that serves it takes the expiry over.
         redis.call('ZREM', indexKey, id)
+        if item.leaseExpiresAt and redis.call('ZSCORE', KEYS[3], id) then
+          addClaimed(KEYS[1], item, item.leaseExpiresAt)
+        end
       end
     end
   end

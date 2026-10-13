@@ -1,4 +1,4 @@
-export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 4
+export const WORKFLOW_POSTGRES_SCHEMA_VERSION = 5
 export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   version: WORKFLOW_POSTGRES_SCHEMA_VERSION,
   enums: [
@@ -51,6 +51,8 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   },
   tables: [
     'workflow_schema_version',
+    'workflow_graphs',
+    'workflow_revisions',
     'workflow_schedules',
     'workflow_runs',
     'workflow_nodes',
@@ -62,10 +64,20 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
   constraints: [
     'workflow_schema_version_pkey',
     'workflow_schema_version_singleton_chk',
+    'workflow_graphs_pkey',
+    'workflow_revisions_pkey',
+    'workflow_revisions_graph_key',
+    'workflow_revisions_graph_fk',
     'workflow_schedules_pkey',
     'workflow_schedules_name_key',
     'workflow_schedules_cadence_chk',
+    'workflow_schedules_revision_graph_chk',
+    'workflow_schedules_graph_fk',
+    'workflow_schedules_revision_fk',
     'workflow_runs_pkey',
+    'workflow_runs_revision_graph_chk',
+    'workflow_runs_graph_fk',
+    'workflow_runs_revision_fk',
     'workflow_nodes_pkey',
     'workflow_attempts_pkey',
     'workflow_attempts_child_attempt_key',
@@ -122,6 +134,79 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       table: 'workflow_schedules',
       type: 'u',
       columns: ['name'],
+    },
+    workflow_graphs_pkey: {
+      table: 'workflow_graphs',
+      type: 'p',
+      columns: ['graph_hash'],
+    },
+    workflow_revisions_pkey: {
+      table: 'workflow_revisions',
+      type: 'p',
+      columns: ['kind', 'name', 'revision'],
+    },
+    workflow_revisions_graph_key: {
+      table: 'workflow_revisions',
+      type: 'u',
+      columns: ['kind', 'name', 'revision', 'graph_hash'],
+    },
+    // Runs and schedules reference shared definitions and must never delete
+    // them, nor be deleted with them: `onDelete: 'a'` is NO ACTION.
+    workflow_revisions_graph_fk: {
+      table: 'workflow_revisions',
+      type: 'f',
+      columns: ['graph_hash'],
+      references: { table: 'workflow_graphs', columns: ['graph_hash'] },
+      onDelete: 'a',
+    },
+    workflow_runs_graph_fk: {
+      table: 'workflow_runs',
+      type: 'f',
+      columns: ['graph_hash'],
+      references: { table: 'workflow_graphs', columns: ['graph_hash'] },
+      onDelete: 'a',
+    },
+    workflow_runs_revision_fk: {
+      table: 'workflow_runs',
+      type: 'f',
+      columns: ['kind', 'name', 'execution_revision', 'graph_hash'],
+      references: {
+        table: 'workflow_revisions',
+        columns: ['kind', 'name', 'revision', 'graph_hash'],
+      },
+      onDelete: 'a',
+    },
+    workflow_runs_revision_graph_chk: {
+      table: 'workflow_runs',
+      type: 'c',
+      check: 'execution_revision IS NULL OR graph_hash IS NOT NULL',
+    },
+    workflow_schedules_graph_fk: {
+      table: 'workflow_schedules',
+      type: 'f',
+      columns: ['graph_hash'],
+      references: { table: 'workflow_graphs', columns: ['graph_hash'] },
+      onDelete: 'a',
+    },
+    workflow_schedules_revision_fk: {
+      table: 'workflow_schedules',
+      type: 'f',
+      columns: [
+        'runnable_kind',
+        'runnable_name',
+        'execution_revision',
+        'graph_hash',
+      ],
+      references: {
+        table: 'workflow_revisions',
+        columns: ['kind', 'name', 'revision', 'graph_hash'],
+      },
+      onDelete: 'a',
+    },
+    workflow_schedules_revision_graph_chk: {
+      table: 'workflow_schedules',
+      type: 'c',
+      check: 'execution_revision IS NULL OR graph_hash IS NOT NULL',
     },
   },
   indexDefinitions: {
@@ -230,11 +315,27 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       version: { type: 'int4', nullable: false },
       installed_at: { type: 'timestamptz', nullable: false },
     },
+    workflow_graphs: {
+      graph_hash: { type: 'text', nullable: false },
+      structure: { type: 'text', nullable: false },
+      created_at: { type: 'timestamptz', nullable: false },
+    },
+    workflow_revisions: {
+      kind: { type: 'workflow_run_kind', nullable: false },
+      name: { type: 'text', nullable: false },
+      revision: { type: 'text', nullable: false },
+      graph_hash: { type: 'text', nullable: false },
+      bindings: { type: 'text', nullable: false },
+      created_at: { type: 'timestamptz', nullable: false },
+    },
     workflow_schedules: {
       id: { type: 'uuid', nullable: false },
       name: { type: 'text', nullable: false },
       runnable_kind: { type: 'workflow_run_kind', nullable: false },
       runnable_name: { type: 'text', nullable: false },
+      execution_revision: { type: 'text', nullable: true },
+      graph_hash: { type: 'text', nullable: true },
+      graph_presentation: { type: 'jsonb', nullable: true },
       input: { type: 'jsonb', nullable: false },
       tags: { type: 'jsonb', nullable: false },
       cron: { type: 'text', nullable: true },
@@ -263,6 +364,9 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       unique_key: { type: 'jsonb', nullable: true },
       unique_scope: { type: 'text', nullable: true },
       unique_behavior: { type: 'text', nullable: true },
+      execution_revision: { type: 'text', nullable: true },
+      graph_hash: { type: 'text', nullable: true },
+      graph_presentation: { type: 'jsonb', nullable: true },
       version: { type: 'int4', nullable: false },
       active_since: { type: 'timestamptz', nullable: false },
       created_at: { type: 'timestamptz', nullable: false },
@@ -330,6 +434,7 @@ export const WORKFLOW_POSTGRES_SCHEMA_MANIFEST = {
       kind: { type: 'workflow_command_kind', nullable: false },
       run_id: { type: 'uuid', nullable: false },
       workflow_name: { type: 'text', nullable: true },
+      revision: { type: 'text', nullable: true },
       task_name: { type: 'text', nullable: true },
       activity_name: { type: 'text', nullable: true },
       node_name: { type: 'text', nullable: true },

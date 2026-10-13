@@ -18,7 +18,7 @@ Neemata supervises their processes and coordinates their durable work.
 
 The workflows core has no Effect dependency: definitions take Standard Schemas and
 handlers return values or Promises. `@nmtjs/workflows/effect`, `@nmtjs/effect` and
-`@nmtjs/pubsub` require **Effect 4** (`effect@^4.0.0`).
+`@nmtjs/pubsub` require **Effect 4** (`effect@^4.0.4`).
 
 ## Workflows with typed steps
 

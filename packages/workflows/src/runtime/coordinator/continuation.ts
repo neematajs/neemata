@@ -4,8 +4,9 @@ import type { ContinueRunCommand } from '../commands.ts'
 import type { AttemptExecutor, RunCoordinationExecutor } from '../executors.ts'
 import type { RunLease, WorkflowStore } from '../store.ts'
 import { decodeStoredValue, decodeNodeOutput } from '../codec.ts'
+import { findDefinitionConflict } from '../definition.ts'
 import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
-import { createWorkflowRuntimeRegistry } from '../registry.ts'
+import { createWorkflowRuntimeRegistry, routeLabel } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import { advanceWorkflowRun } from './advance.ts'
@@ -37,9 +38,13 @@ export type ContinueWorkflowRunInput = {
   readonly leaseMs?: number
 }
 
-export type ContinueWorkflowRunResult = {
-  readonly status: 'processed' | 'busy' | 'ignored'
-}
+export type ContinueWorkflowRunResult =
+  | { readonly status: 'processed' | 'busy' | 'ignored' }
+  /**
+   * No registered code may advance this run: the caller releases the command
+   * as unroutable, so it dead-letters and the reaper fails the run with `error`.
+   */
+  | { readonly status: 'unroutable'; readonly error: Error }
 
 export async function continueWorkflowRun(
   input: ContinueWorkflowRunInput,
@@ -47,7 +52,8 @@ export async function continueWorkflowRun(
   const registry = createWorkflowRuntimeRegistry({
     workflows: input.workflows,
   })
-  const implementation = registry.getWorkflow(input.command.workflowName)
+  const { workflowName, revision } = input.command
+  const implementation = registry.getWorkflow(workflowName, revision)
   if (!implementation) return { status: 'ignored' }
 
   const leaseMs = input.leaseMs ?? 30_000
@@ -72,8 +78,17 @@ export async function continueWorkflowRun(
         )
         const snapshot = await store.loadRunSnapshot(input.command.runId)
         if (!snapshot) return { status: 'ignored' }
-        if (snapshot.run.workflowName !== input.command.workflowName) {
+        if (snapshot.run.workflowName !== workflowName) {
           return { status: 'ignored' }
+        }
+        // The command's revision only routed it here; the run is the authority.
+        if (snapshot.run.executionRevision !== revision) {
+          return {
+            status: 'unroutable',
+            error: new Error(
+              `Run [${snapshot.run.id}] does not match command route [${routeLabel({ name: workflowName, revision })}]`,
+            ),
+          }
         }
         if (snapshot.run.status === 'cancelling') {
           await cancelRunAndWakeParent({
@@ -127,6 +142,16 @@ export async function continueWorkflowRun(
           })
           return { status: 'processed' }
         }
+
+        // Everything above settles from stored state alone. From here on the
+        // registered code decides what runs next, so it must be the code this
+        // run was created against.
+        const conflict = await findDefinitionConflict(
+          store,
+          snapshot.run,
+          implementation.workflow,
+        )
+        if (conflict) return { status: 'unroutable', error: conflict }
 
         const outputs: Record<string, unknown> = Object.create(null)
         let workflowInput: unknown

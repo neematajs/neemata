@@ -56,6 +56,89 @@ local function mappedRun(prefix, mapping)
 end
 `
 
+// Structures, manifests and presentations cross Lua as opaque strings and are
+// compared byte for byte with the canonical text TypeScript prepared: cjson
+// would reorder their keys and turn an empty array into an object. They follow
+// the fixed arguments as flat lists:
+//   graphHash, revisionKey, presentation,
+//   graphCount, (hash, json)..., revisionCount, (key, graphHash, json)...
+// The revisions hash holds two fields per revision, `manifest:<key>` with the
+// manifest and `graph:<key>` with its graph hash, so the hash a run must match
+// is read without decoding the manifest.
+const DEFINITIONS = `
+local function readDefinition(first)
+  local definition = {
+    graphHash = ARGV[first],
+    revisionKey = ARGV[first + 1],
+    presentation = ARGV[first + 2],
+    graphs = {},
+    revisions = {}
+  }
+  local position = first + 3
+  for _ = 1, tonumber(ARGV[position]) do
+    table.insert(definition.graphs, { hash = ARGV[position + 1], json = ARGV[position + 2] })
+    position = position + 2
+  end
+  position = position + 1
+  for _ = 1, tonumber(ARGV[position]) do
+    table.insert(definition.revisions, {
+      key = ARGV[position + 1],
+      graphHash = ARGV[position + 2],
+      json = ARGV[position + 3]
+    })
+    position = position + 3
+  end
+  return definition
+end
+
+-- Read-only. A script error does not undo earlier writes, so every reason to
+-- refuse a run's definitions is found here, before the first write.
+local function definitionRefusal(definition, graphs, revisions)
+  local provided = {}
+  for _, graph in ipairs(definition.graphs) do
+    local saved = redis.call('HGET', graphs, graph.hash)
+    if saved and saved ~= graph.json then return { 'graph-conflict', graph.hash } end
+    provided[graph.hash] = true
+  end
+  local bound = false
+  for _, revision in ipairs(definition.revisions) do
+    local saved = redis.call('HGET', revisions, 'manifest:' .. revision.key)
+    if saved and saved ~= revision.json then return { 'revision-conflict', revision.key } end
+    if revision.key == definition.revisionKey then bound = revision.graphHash end
+  end
+  if definition.graphHash == '' then return nil end
+  if not provided[definition.graphHash] and
+    redis.call('HEXISTS', graphs, definition.graphHash) == 0 then
+    return { 'missing-graph' }
+  end
+  if definition.revisionKey == '' then return nil end
+  bound = bound or redis.call('HGET', revisions, 'graph:' .. definition.revisionKey)
+  if not bound then return { 'missing-revision' } end
+  if bound ~= definition.graphHash then return { 'revision-graph', bound } end
+  return nil
+end
+
+-- Never overwrites: a saved graph or revision is immutable, and an equal one
+-- was already verified above.
+local function saveDefinition(definition, graphs, revisions, meta, runId)
+  for _, graph in ipairs(definition.graphs) do
+    redis.call('HSETNX', graphs, graph.hash, graph.json)
+  end
+  for _, revision in ipairs(definition.revisions) do
+    local field = 'manifest:' .. revision.key
+    if redis.call('HEXISTS', revisions, field) == 0 then
+      -- One command, so a manifest never exists without its graph hash.
+      redis.call('HSET', revisions, field, revision.json, 'graph:' .. revision.key, revision.graphHash)
+    end
+  end
+  -- Kept in the family's own meta hash, so it expires and is deleted with the
+  -- family, also by a binary that does not know the field.
+  if definition.presentation ~= '' then
+    redis.call('HSET', meta, 'presentation:' .. runId, definition.presentation)
+  end
+end
+`
+
 const SCRIPTS = {
   reopenFailedRun: `
 ${QUEUE_INDEXES}
@@ -213,7 +296,12 @@ return { 'updated', redis.call('HGET', KEYS[2], ARGV[6]) }
 `,
   createRun: `
 ${FAMILY_HELPERS}
+${DEFINITIONS}
 local run = cjson.decode(ARGV[1])
+local definition = readDefinition(10)
+local refusal = definitionRefusal(definition, KEYS[8], KEYS[9])
+if refusal then return refusal end
+
 local idempotent = mappedRun(ARGV[8], ARGV[5])
 if idempotent then return { 'idempotent', idempotent[3], idempotent[4], idempotent[5] } end
 
@@ -238,6 +326,7 @@ if redis.call('EXISTS', KEYS[1]) == 0 then
     'nonTerminalCount', '0')
 end
 
+saveDefinition(definition, KEYS[8], KEYS[9], KEYS[1], run.id)
 local order = redis.call('INCR', KEYS[6])
 redis.call('HSET', KEYS[2], run.id, ARGV[1])
 redis.call('HSET', KEYS[3], run.id, order)
@@ -270,6 +359,7 @@ return { 'created', ARGV[1], ARGV[2], ARGV[9] }
 ${WRITE_FENCE}
 ${FAMILY_HELPERS}
 ${RECORD_HELPERS}
+${DEFINITIONS}
 local childRaw = redis.call('HGET', KEYS[3], ARGV[1])
 if not childRaw then return { 'missing-child' } end
 if tonumber(redis.call('HGET', KEYS[1], 'nonTerminalCount') or '0') == 0 then
@@ -287,17 +377,23 @@ if child.childRunId then
 end
 if isTerminal(child.status) then return { 'terminal-child' } end
 
+local definition = readDefinition(10)
+local refusal = definitionRefusal(definition, KEYS[9], KEYS[10])
+if refusal then return refusal end
+
 local runRaw = ARGV[2]
 local created = true
 local idempotent = mappedRun(ARGV[8], ARGV[6])
 if idempotent then
+  -- The signature carries the revision, so another revision's run is refused.
   if idempotent[2] ~= requested.rootRunId or idempotent[4] ~= ARGV[3] then
-    return { 'conflict' }
+    return { 'idempotency-conflict', idempotent[1] }
   end
   runRaw = idempotent[3]
   requested = cjson.decode(runRaw)
   created = false
 else
+  saveDefinition(definition, KEYS[9], KEYS[10], KEYS[1], requested.id)
   local order = redis.call('INCR', KEYS[7])
   redis.call('HSET', KEYS[2], requested.id, runRaw)
   redis.call('HSET', KEYS[4], requested.id, order)

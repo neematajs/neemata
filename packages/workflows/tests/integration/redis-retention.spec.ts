@@ -90,9 +90,9 @@ for (const target of redisTargets) {
           // The claiming worker then disappears, leaving the route unserved.
           const claim = await runtime.attemptExecutor.claim({
             workerId: 'vanishing',
-            workflowNames: [run.workflowName],
+            workflows: [{ name: run.workflowName }],
             activityNames: ['claimed'],
-            taskNames: [],
+            tasks: [],
             leaseMs: 60_000,
           })
           expect(claim).not.toBeNull()
@@ -129,8 +129,8 @@ for (const target of redisTargets) {
           await runtime.attemptExecutor.dispatchActivity(dead)
           const deadClaim = await runtime.attemptExecutor.claim({
             workerId: 'dead-worker',
-            workflowNames: ['dead-family'],
-            taskNames: [],
+            workflows: [{ name: 'dead-family' }],
+            tasks: [],
             leaseMs: 60_000,
           })
           await runtime.attemptExecutor.release(deadClaim!, {
@@ -147,14 +147,14 @@ for (const target of redisTargets) {
           )
           const continued = await runtime.runCoordinationExecutor.claim({
             workerId: 'live-worker',
-            workflowNames: [run.workflowName],
+            workflows: [{ name: run.workflowName }],
             leaseMs: 60_000,
           })
           expect(continued?.command).toStrictEqual(live)
           const executed = await runtime.attemptExecutor.claim({
             workerId: 'live-worker',
-            workflowNames: [run.workflowName],
-            taskNames: [],
+            workflows: [{ name: run.workflowName }],
+            tasks: [],
             leaseMs: 60_000,
           })
           expect(executed?.command).toStrictEqual(attempt)

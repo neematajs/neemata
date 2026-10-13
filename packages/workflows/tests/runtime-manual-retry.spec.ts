@@ -702,8 +702,8 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
       const client = createWorkflowRuntimeClient(runtime)
       const run = await client.start(task, 42)
       const claim = await runtime.attemptExecutor.claim({
-        taskNames: [task.name],
-        workflowNames: [],
+        tasks: [{ name: task.name }],
+        workflows: [],
         workerId: 'old-worker',
         leaseMs: 30_000,
       })
@@ -851,7 +851,7 @@ for (const adapter of ['memory', 'postgres', 'redis', 'valkey'] as const) {
       }).build()
       const run = await client.start(workflow, {})
       const claimed = await runtime.runCoordinationExecutor.claim({
-        workflowNames: [workflow.name],
+        workflows: [{ name: workflow.name }],
         workerId: 'coordinator',
         leaseMs: 30_000,
       })

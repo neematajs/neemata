@@ -9,6 +9,8 @@ import type {
 import type { StoredNodeChild, StoredRun } from '../../state.ts'
 import type { AdvanceCtx, AdvanceOutcome } from '../context.ts'
 import { memberChildKey } from '../../child-key.ts'
+import { continueRunCommand } from '../../commands.ts'
+import { childRunDefinitionInput } from '../../definition.ts'
 import { isTerminalNodeStatus, isTerminalRunStatus } from '../../status.ts'
 import { dispatchTaskRunAttempt, dispatchActivityAttempt } from '../attempt.ts'
 import { loadChildRuns } from '../children.ts'
@@ -196,13 +198,12 @@ export async function dispatchParallelNode(
               ? (memberDeclaration as BranchCaseDefinition<'workflow'>)
                   .cancellation
               : undefined,
+          ...childRunDefinitionInput(input.run, member.target),
         })
         if (member.kind === 'workflow') {
-          await input.runCoordinationExecutor.enqueue({
-            kind: 'continueRun',
-            runId: created.childRun.id,
-            workflowName: member.target.name,
-          })
+          await input.runCoordinationExecutor.enqueue(
+            continueRunCommand(created.childRun),
+          )
         } else {
           const taskDeclaration = memberDeclaration as BranchCaseDefinition<
             'task',
@@ -215,7 +216,8 @@ export async function dispatchParallelNode(
             store: input.store,
             attemptExecutor: input.attemptExecutor,
             runCoordinationExecutor: input.runCoordinationExecutor,
-            taskName: taskTarget.name,
+            taskName: created.childRun.name,
+            revision: created.childRun.executionRevision,
             taskRunId: created.childRun.id,
             taskInput: nodeInput,
             idempotencyKey,
@@ -266,6 +268,7 @@ export async function dispatchParallelNode(
         attemptExecutor: input.attemptExecutor,
         runCoordinationExecutor: input.runCoordinationExecutor,
         workflowName: input.workflow.workflow.name,
+        revision: input.run.executionRevision,
         activityName: member.activity.name,
         runId: input.run.id,
         nodeName: input.node.name,
@@ -337,11 +340,7 @@ async function redispatchParallelChildRun(
   childRun: StoredRun,
 ): Promise<void> {
   if (member.kind === 'workflow') {
-    await input.runCoordinationExecutor.enqueue({
-      kind: 'continueRun',
-      runId: childRun.id,
-      workflowName: childRun.workflowName,
-    })
+    await input.runCoordinationExecutor.enqueue(continueRunCommand(childRun))
     return
   }
   if (member.kind !== 'task') return
@@ -359,7 +358,8 @@ async function redispatchParallelChildRun(
     store: input.store,
     attemptExecutor: input.attemptExecutor,
     runCoordinationExecutor: input.runCoordinationExecutor,
-    taskName: taskTarget.name,
+    taskName: childRun.name,
+    revision: childRun.executionRevision,
     taskRunId: childRun.id,
     taskInput: childRun.input,
     idempotencyKey: childRun.idempotencyKey,

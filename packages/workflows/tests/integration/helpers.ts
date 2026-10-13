@@ -83,7 +83,9 @@ async function truncateWorkflowTables(pool: PgPool) {
       workflow_node_children,
       workflow_attempts,
       workflow_nodes,
-      workflow_runs
+      workflow_runs,
+      workflow_revisions,
+      workflow_graphs
     RESTART IDENTITY CASCADE
   `)
 }

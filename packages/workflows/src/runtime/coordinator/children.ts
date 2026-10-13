@@ -1,4 +1,6 @@
 import type {
+  AnyTaskDefinition,
+  AnyWorkflowDefinition,
   CancellationPolicy,
   DurationString,
   RetryPolicy,
@@ -7,6 +9,8 @@ import type { StoredNodeChild } from '../state.ts'
 import type { WorkflowStore } from '../store.ts'
 import type { AdvanceCtx, AdvanceOutcome } from './context.ts'
 import { parseChildKey } from '../child-key.ts'
+import { continueRunCommand } from '../commands.ts'
+import { childRunDefinitionInput } from '../definition.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { dispatchTaskRunAttempt } from './attempt.ts'
 import { decodeWorkflowNodeOutput } from './codec.ts'
@@ -34,7 +38,7 @@ export async function dispatchChildTaskRun(
   input: AdvanceCtx & {
     readonly nodeName: string
     readonly childKey: string
-    readonly taskName: string
+    readonly target: AnyTaskDefinition
     readonly timeout?: DurationString
     readonly retry?: RetryPolicy
     readonly resolveNodeInput: () => unknown
@@ -67,7 +71,8 @@ export async function dispatchChildTaskRun(
         store: input.store,
         attemptExecutor: input.attemptExecutor,
         runCoordinationExecutor: input.runCoordinationExecutor,
-        taskName: input.taskName,
+        taskName: childRun.name,
+        revision: childRun.executionRevision,
         taskRunId: child.childRunId,
         taskInput: childRun.input,
         idempotencyKey: childRun.idempotencyKey,
@@ -147,16 +152,18 @@ export async function dispatchChildTaskRun(
     nodeName: input.nodeName,
     childKey: input.childKey,
     childKind: 'task',
-    childName: input.taskName,
+    childName: input.target.name,
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
+    ...childRunDefinitionInput(input.run, input.target),
   })
   await dispatchTaskRunAttempt({
     store: input.store,
     attemptExecutor: input.attemptExecutor,
     runCoordinationExecutor: input.runCoordinationExecutor,
-    taskName: input.taskName,
+    taskName: ensured.childRun.name,
+    revision: ensured.childRun.executionRevision,
     taskRunId: ensured.childRun.id,
     taskInput: nodeInput,
     idempotencyKey,
@@ -174,7 +181,7 @@ export async function dispatchChildWorkflow(
   input: AdvanceCtx & {
     readonly nodeName: string
     readonly childKey: string
-    readonly workflowName: string
+    readonly target: AnyWorkflowDefinition
     readonly cancellation?: CancellationPolicy
     readonly resolveNodeInput: () => unknown
     readonly resolveIdempotencyKey?: () => readonly unknown[] | undefined
@@ -202,11 +209,7 @@ export async function dispatchChildWorkflow(
     }
 
     if (!isTerminalRunStatus(childRun.status)) {
-      await input.runCoordinationExecutor.enqueue({
-        kind: 'continueRun',
-        runId: child.childRunId,
-        workflowName: childRun.workflowName,
-      })
+      await input.runCoordinationExecutor.enqueue(continueRunCommand(childRun))
       await input.store.waitNode({
         runId: input.run.id,
         nodeName: input.nodeName,
@@ -281,18 +284,17 @@ export async function dispatchChildWorkflow(
     nodeName: input.nodeName,
     childKey: input.childKey,
     childKind: 'workflow',
-    childName: input.workflowName,
+    childName: input.target.name,
     input: nodeInput,
     rootRunId: input.run.rootRunId,
     idempotencyKey,
     cancellation: input.cancellation,
+    ...childRunDefinitionInput(input.run, input.target),
   })
 
-  await input.runCoordinationExecutor.enqueue({
-    kind: 'continueRun',
-    runId: ensured.childRun.id,
-    workflowName: input.workflowName,
-  })
+  await input.runCoordinationExecutor.enqueue(
+    continueRunCommand(ensured.childRun),
+  )
   await input.store.waitNode({
     runId: input.run.id,
     nodeName: input.nodeName,

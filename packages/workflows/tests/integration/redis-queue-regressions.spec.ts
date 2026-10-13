@@ -97,8 +97,8 @@ for (const target of targets) {
         const attemptCommand = activityCommand(run.id, run.workflowName, 'step')
         const worker = {
           workerId: 'release-worker',
-          workflowNames: [run.workflowName],
-          taskNames: [],
+          workflows: [{ name: run.workflowName }],
+          tasks: [],
           leaseMs: 30_000,
         }
         await runtime.runCoordinationExecutor.enqueue(continuationCommand)
@@ -129,17 +129,16 @@ for (const target of targets) {
         const { client, runtime } = createHarness()
         const worker = {
           workerId: 'batch',
-          workflowNames: Array.from(
-            { length: 300 },
-            (_, index) => `workflow-${index}`,
-          ),
+          workflows: Array.from({ length: 300 }, (_, index) => ({
+            name: `workflow-${index}`,
+          })),
           leaseMs: 30_000,
         }
         const calls = vi.spyOn(client, 'evalsha')
         expect(await runtime.runCoordinationExecutor.claim(worker)).toBeNull()
         expect(calls).toHaveBeenCalledTimes(4)
         const run = await runtime.store.createRun({
-          workflowName: worker.workflowNames[0]!,
+          workflowName: worker.workflows[0]!.name,
           input: null,
         })
         await runtime.attemptExecutor.dispatchActivity({
@@ -156,7 +155,7 @@ for (const target of targets) {
         })
         const claim = await runtime.attemptExecutor.claim({
           ...worker,
-          taskNames: [],
+          tasks: [],
         })
         expect(claim).not.toBeNull()
         await runtime.store.completeRun({ runId: run.id, output: null })
@@ -327,7 +326,7 @@ for (const target of targets) {
         const latest = { ...first, generation: 3 }
         const worker = {
           workerId: 'coalesced',
-          workflowNames: [run.workflowName],
+          workflows: [{ name: run.workflowName }],
           leaseMs: 50,
         }
         await runtime.runCoordinationExecutor.enqueue(first)
@@ -384,7 +383,7 @@ for (const target of targets) {
         const latest = { ...first, generation: 3 }
         const worker = {
           workerId: 'released-coalesced',
-          workflowNames: [run.workflowName],
+          workflows: [{ name: run.workflowName }],
           leaseMs: 30_000,
         }
 
@@ -432,7 +431,7 @@ for (const target of targets) {
         const latest = { ...first, generation: 3 }
         const worker = {
           workerId: 'requeued-dedup',
-          workflowNames: [run.workflowName],
+          workflows: [{ name: run.workflowName }],
           leaseMs: 30_000,
         }
 
@@ -560,7 +559,7 @@ for (const target of targets) {
         })
         const claim = await runtime.runCoordinationExecutor.claim({
           workerId: 'orphan-heads',
-          workflowNames: [live.workflowName],
+          workflows: [{ name: live.workflowName }],
           leaseMs: 1000,
         })
         expect(claim?.command.runId).toBe(live.id)
@@ -583,7 +582,7 @@ for (const target of targets) {
         expect(
           await runtime.runCoordinationExecutor.claim({
             workerId: 'idle',
-            workflowNames: ['empty'],
+            workflows: [{ name: 'empty' }],
             leaseMs: 1000,
           }),
         ).toBeNull()
@@ -600,34 +599,34 @@ for (const target of targets) {
         expect(
           await runtime.attemptExecutor.claim({
             workerId: 'none',
-            workflowNames: ['a'],
+            workflows: [{ name: 'a' }],
             activityNames: [],
-            taskNames: [],
+            tasks: [],
             leaseMs: 1000,
           }),
         ).toBeNull()
         const exact = await runtime.attemptExecutor.claim({
           workerId: 'exact',
-          workflowNames: ['a'],
+          workflows: [{ name: 'a' }],
           activityNames: ['b:c'],
-          taskNames: [],
+          tasks: [],
           leaseMs: 1000,
         })
         expect(exact?.command).toStrictEqual(second)
         await runtime.attemptExecutor.ack(exact!)
         const wildcard = await runtime.attemptExecutor.claim({
           workerId: 'wildcard',
-          workflowNames: ['a:b'],
-          taskNames: [],
+          workflows: [{ name: 'a:b' }],
+          tasks: [],
           leaseMs: 1000,
         })
         expect(wildcard?.command).toStrictEqual(first)
         await runtime.attemptExecutor.ack(wildcard!)
         const last = await runtime.attemptExecutor.claim({
           workerId: 'unicode',
-          workflowNames: ['工作:🧩'],
+          workflows: [{ name: '工作:🧩' }],
           activityNames: [''],
-          taskNames: [],
+          tasks: [],
           leaseMs: 1000,
         })
         expect(last?.command).toStrictEqual(unicode)
@@ -651,7 +650,7 @@ for (const target of targets) {
         await runtime.runCoordinationExecutor.enqueueDelayed(later, now - 500)
         const claim = await runtime.runCoordinationExecutor.claim({
           workerId: 'fair',
-          workflowNames: ['first', 'second'],
+          workflows: [{ name: 'first' }, { name: 'second' }],
           leaseMs: 1000,
         })
         expect(claim?.command).toStrictEqual(older)
@@ -664,8 +663,8 @@ for (const target of targets) {
         await runtime.attemptExecutor.dispatchActivity(command)
         const worker = {
           workerId: 'renewed',
-          workflowNames: ['renewed'],
-          taskNames: [],
+          workflows: [{ name: 'renewed' }],
+          tasks: [],
           leaseMs: 100,
         }
         const claim = await runtime.attemptExecutor.claim(worker)
@@ -689,7 +688,7 @@ for (const target of targets) {
         )
         const worker = {
           workerId: 'offline-worker',
-          workflowNames: ['offline-route'],
+          workflows: [{ name: 'offline-route' }],
           leaseMs: 60_000,
         }
         let claimed = 0
@@ -724,7 +723,7 @@ for (const target of targets) {
         await expect(
           runtime.runCoordinationExecutor.claim({
             workerId: 'other-worker',
-            workflowNames: ['other-route'],
+            workflows: [{ name: 'other-route' }],
             leaseMs: 1_000,
           }),
         ).resolves.toBeNull()
@@ -755,9 +754,9 @@ for (const target of targets) {
         await runtime.attemptExecutor.dispatchActivity(claimed)
         const claimedAttempt = await runtime.attemptExecutor.claim({
           workerId: 'cleanup-claimed-worker',
-          workflowNames: ['cleanup-workflow'],
+          workflows: [{ name: 'cleanup-workflow' }],
           activityNames: ['claimed'],
-          taskNames: [],
+          tasks: [],
           leaseMs: 30_000,
         })
         await runtime.attemptExecutor.dispatchActivity(target)
@@ -782,9 +781,9 @@ for (const target of targets) {
         await runtime.attemptExecutor.ack(claimedAttempt!)
         const unrelatedAttempt = await runtime.attemptExecutor.claim({
           workerId: 'cleanup-unrelated-worker',
-          workflowNames: ['cleanup-workflow'],
+          workflows: [{ name: 'cleanup-workflow' }],
           activityNames: ['unrelated'],
-          taskNames: [],
+          tasks: [],
           leaseMs: 30_000,
         })
         expect(unrelatedAttempt?.command).toStrictEqual(unrelated)
@@ -792,9 +791,9 @@ for (const target of targets) {
         await expect(
           runtime.attemptExecutor.claim({
             workerId: 'cleanup-target-worker',
-            workflowNames: ['cleanup-workflow'],
+            workflows: [{ name: 'cleanup-workflow' }],
             activityNames: ['target'],
-            taskNames: [],
+            tasks: [],
             leaseMs: 30_000,
           }),
         ).resolves.toBeNull()
@@ -829,9 +828,9 @@ for (const target of targets) {
         vi.spyOn(Date, 'now').mockReturnValue(localNow - 60_000)
         const claim = await runtime.attemptExecutor.claim({
           workerId: 'skewed-worker',
-          workflowNames: ['clock-workflow'],
+          workflows: [{ name: 'clock-workflow' }],
           activityNames: ['content'],
-          taskNames: [],
+          tasks: [],
           leaseMs: 30_000,
         })
         vi.restoreAllMocks()
@@ -840,9 +839,9 @@ for (const target of targets) {
         await expect(
           runtime.attemptExecutor.claim({
             workerId: 'normal-worker',
-            workflowNames: ['clock-workflow'],
+            workflows: [{ name: 'clock-workflow' }],
             activityNames: ['content'],
-            taskNames: [],
+            tasks: [],
             leaseMs: 30_000,
           }),
         ).resolves.toBeNull()
@@ -855,9 +854,9 @@ for (const target of targets) {
         await wait(70)
         const redelivered = await runtime.attemptExecutor.claim({
           workerId: 'normal-worker',
-          workflowNames: ['clock-workflow'],
+          workflows: [{ name: 'clock-workflow' }],
           activityNames: ['content'],
-          taskNames: [],
+          tasks: [],
           leaseMs: 30_000,
         })
         expect(redelivered?.command).toStrictEqual(command)
@@ -882,7 +881,7 @@ for (const target of targets) {
           })
           const claimed = await runtime.runCoordinationExecutor.claim({
             workerId: 'claimed-worker',
-            workflowNames: [run.workflowName],
+            workflows: [{ name: run.workflowName }],
             leaseMs: 60_000,
           })
           expect(claimed).not.toBeNull()
@@ -891,9 +890,9 @@ for (const target of targets) {
           await runtime.attemptExecutor.dispatchActivity(deadAttempt)
           const deadClaim = await runtime.attemptExecutor.claim({
             workerId: 'dead-worker',
-            workflowNames: [run.workflowName],
+            workflows: [{ name: run.workflowName }],
             activityNames: ['dead'],
-            taskNames: [],
+            tasks: [],
             leaseMs: 60_000,
           })
           await runtime.attemptExecutor.release(deadClaim!, {
@@ -918,15 +917,15 @@ for (const target of targets) {
           await expect(
             runtime.runCoordinationExecutor.claim({
               workerId: 'orphan-cleaner',
-              workflowNames: ['unrelated'],
+              workflows: [{ name: 'unrelated' }],
               leaseMs: 1_000,
             }),
           ).resolves.toBeNull()
           await expect(
             runtime.attemptExecutor.claim({
               workerId: 'attempt-orphan-cleaner',
-              workflowNames: ['unrelated'],
-              taskNames: ['unrelated'],
+              workflows: [{ name: 'unrelated' }],
+              tasks: [{ name: 'unrelated' }],
               leaseMs: 1_000,
             }),
           ).resolves.toBeNull()

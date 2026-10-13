@@ -82,6 +82,7 @@ function deleteRunTrees(state: State, treeIds: ReadonlySet<string>) {
     nodes,
     attempts,
     children,
+    presentations,
     runIdempotencyKeys,
     activeUniqueRunKeys,
     allUniqueRunKeys,
@@ -94,8 +95,10 @@ function deleteRunTrees(state: State, treeIds: ReadonlySet<string>) {
 
   if (treeIds.size === 0) return
 
+  // Graphs and revisions stay: other runs and schedules share them.
   for (const runId of treeIds) {
     runs.delete(runId)
+    presentations.delete(runId)
     runLeases.delete(runId)
   }
   for (const [key, runId] of runIdempotencyKeys) {

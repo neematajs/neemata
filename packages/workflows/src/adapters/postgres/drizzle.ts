@@ -19,6 +19,8 @@ import {
 
 type TableKey =
   | 'schemaVersion'
+  | 'graphs'
+  | 'revisions'
   | 'schedules'
   | 'runs'
   | 'nodes'
@@ -76,6 +78,8 @@ const commandKindValues = ['continue', 'activity', 'task'] as const
 
 const tableNames = {
   schemaVersion: 'workflow_schema_version',
+  graphs: 'workflow_graphs',
+  revisions: 'workflow_revisions',
   schedules: 'workflow_schedules',
   runs: 'workflow_runs',
   nodes: 'workflow_nodes',
@@ -132,6 +136,49 @@ export function createSchema(options?: CreateSchemaOptions) {
     },
     (t) => [check('workflow_schema_version_singleton_chk', sql`${t.id} = 1`)],
   )
+  // Definitions are shared by every run and schedule that names them and are
+  // never deleted with one, so nothing here cascades from a run. `structure`
+  // and `bindings` hold canonical JSON as text: they are compared byte for
+  // byte, which jsonb's own key order and number format would not allow.
+  const graphs = createTable(tableNames.graphs, {
+    graphHash: text('graph_hash').primaryKey(),
+    structure: text('structure').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  })
+  const revisions = createTable(
+    tableNames.revisions,
+    {
+      kind: enums.runKind('kind').notNull(),
+      name: text('name').notNull(),
+      revision: text('revision').notNull(),
+      graphHash: text('graph_hash').notNull(),
+      bindings: text('bindings').notNull(),
+      createdAt: timestamp('created_at', { withTimezone: true })
+        .notNull()
+        .defaultNow(),
+    },
+    (t) => [
+      primaryKey({
+        name: 'workflow_revisions_pkey',
+        columns: [t.kind, t.name, t.revision],
+      }),
+      // Lets a run or schedule reference a revision together with its graph,
+      // so neither can name a graph its revision was not saved with.
+      unique('workflow_revisions_graph_key').on(
+        t.kind,
+        t.name,
+        t.revision,
+        t.graphHash,
+      ),
+      foreignKey({
+        name: 'workflow_revisions_graph_fk',
+        columns: [t.graphHash],
+        foreignColumns: [graphs.graphHash],
+      }),
+    ],
+  )
   const runs = createTable(
     tableNames.runs,
     {
@@ -152,6 +199,10 @@ export function createSchema(options?: CreateSchemaOptions) {
       uniqueKey: jsonb('unique_key'),
       uniqueScope: text('unique_scope'),
       uniqueBehavior: text('unique_behavior'),
+      // All three are NULL on runs created before revisions existed.
+      executionRevision: text('execution_revision'),
+      graphHash: text('graph_hash'),
+      graphPresentation: jsonb('graph_presentation'),
       version: integer('version').notNull(),
       activeSince: timestamp('active_since', { withTimezone: true })
         .notNull()
@@ -212,6 +263,26 @@ export function createSchema(options?: CreateSchemaOptions) {
         columns: [t.parentRunId, t.parentNodeName],
         foreignColumns: [nodes.runId, nodes.name],
       }).onDelete('cascade'),
+      check(
+        'workflow_runs_revision_graph_chk',
+        sql`${t.executionRevision} IS NULL OR ${t.graphHash} IS NOT NULL`,
+      ),
+      foreignKey({
+        name: 'workflow_runs_graph_fk',
+        columns: [t.graphHash],
+        foreignColumns: [graphs.graphHash],
+      }),
+      // MATCH SIMPLE: an unversioned run has no revision and is not checked.
+      foreignKey({
+        name: 'workflow_runs_revision_fk',
+        columns: [t.kind, t.name, t.executionRevision, t.graphHash],
+        foreignColumns: [
+          revisions.kind,
+          revisions.name,
+          revisions.revision,
+          revisions.graphHash,
+        ],
+      }),
     ],
   )
   const schedules = createTable(
@@ -221,6 +292,11 @@ export function createSchema(options?: CreateSchemaOptions) {
       name: text('name').notNull(),
       runnableKind: enums.runKind('runnable_kind').notNull(),
       runnableName: text('runnable_name').notNull(),
+      // What the next fire pins its run to; NULL on schedules saved before
+      // revisions existed.
+      executionRevision: text('execution_revision'),
+      graphHash: text('graph_hash'),
+      graphPresentation: jsonb('graph_presentation'),
       input: jsonb('input').notNull(),
       tags: jsonb('tags').notNull().default({}),
       cron: text('cron'),
@@ -242,6 +318,30 @@ export function createSchema(options?: CreateSchemaOptions) {
         'workflow_schedules_cadence_chk',
         sql`(${t.cron} IS NULL) <> (${t.everyMs} IS NULL)`,
       ),
+      check(
+        'workflow_schedules_revision_graph_chk',
+        sql`${t.executionRevision} IS NULL OR ${t.graphHash} IS NOT NULL`,
+      ),
+      foreignKey({
+        name: 'workflow_schedules_graph_fk',
+        columns: [t.graphHash],
+        foreignColumns: [graphs.graphHash],
+      }),
+      foreignKey({
+        name: 'workflow_schedules_revision_fk',
+        columns: [
+          t.runnableKind,
+          t.runnableName,
+          t.executionRevision,
+          t.graphHash,
+        ],
+        foreignColumns: [
+          revisions.kind,
+          revisions.name,
+          revisions.revision,
+          revisions.graphHash,
+        ],
+      }),
     ],
   )
   const nodes = createTable(
@@ -379,6 +479,9 @@ export function createSchema(options?: CreateSchemaOptions) {
       kind: enums.commandKind('kind').notNull(),
       runId: uuid('run_id').notNull(),
       workflowName: text('workflow_name'),
+      // The run's revision, copied for routing: a claim matches it exactly,
+      // and NULL is the unversioned lane.
+      revision: text('revision'),
       taskName: text('task_name'),
       activityName: text('activity_name'),
       nodeName: text('node_name'),
@@ -405,9 +508,12 @@ export function createSchema(options?: CreateSchemaOptions) {
         .on(t.attemptId)
         .where(sql.raw('attempt_id IS NOT NULL')),
       // dead-lettered commands accumulate until retention prunes them; keep
-      // them out of the claim scan's index entirely
+      // them out of the claim scan's index entirely. NULLS FIRST is what the
+      // claim's `ORDER BY priority DESC` means: drizzle's default for a
+      // descending column is NULLS LAST, an order the claim cannot scan, so
+      // it would sort every ready command of the kind instead.
       index('workflow_commands_claim_idx')
-        .on(t.kind, t.priority.desc(), t.runAt, t.createdAt, t.id)
+        .on(t.kind, t.priority.desc().nullsFirst(), t.runAt, t.createdAt, t.id)
         .where(sql.raw('dead_at IS NULL')),
       index('workflow_commands_dead_idx')
         .on(t.deadAt)
@@ -426,6 +532,8 @@ export function createSchema(options?: CreateSchemaOptions) {
   return {
     tables: {
       schemaVersion,
+      graphs,
+      revisions,
       schedules,
       runs,
       nodes,

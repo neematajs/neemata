@@ -243,9 +243,9 @@ describe('Effect workflow execution', () => {
     }
     const claimed = await attemptExecutor.claim({
       workerId: 'lease',
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
-      taskNames: [task.name],
+      tasks: [{ name: task.name }],
       leaseMs: 15,
     })
     if (!claimed) throw new Error('Expected attempt')

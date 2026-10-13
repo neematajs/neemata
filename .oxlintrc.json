@@ -63,7 +63,11 @@
       }
     },
     {
-      "files": ["packages/workflows/src/effect/**"],
+      "files": [
+        "packages/workflows/src/effect/**",
+        "packages/workflows/src/native-effect/**",
+        "packages/workflows/src/experimental/**"
+      ],
       "rules": {
         "no-restricted-imports": "off"
       }

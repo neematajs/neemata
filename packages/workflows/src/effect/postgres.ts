@@ -15,6 +15,7 @@ import type {
 } from '../adapters/postgres/connection.ts'
 import type {
   WorkflowRuntimeClient,
+  WorkflowRuntimeRestartOptions,
   WorkflowRuntimeStartOptions,
 } from '../runtime/client.ts'
 import type { StoredRun } from '../runtime/state.ts'
@@ -29,6 +30,7 @@ import type {
 } from '../types/index.ts'
 import { createPostgresWorkflowNestedConnection } from '../adapters/postgres/connection.ts'
 import {
+  WorkflowDefinitionConflictError,
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
 } from '../runtime/errors.ts'
@@ -38,9 +40,17 @@ export type EffectSqlWorkflowStartOptions = Omit<
   'connection'
 >
 
+export type EffectSqlWorkflowRestartOptions = Omit<
+  WorkflowRuntimeRestartOptions,
+  'connection'
+>
+
 export type EffectSqlWorkflowStartError =
   | WorkflowRunConflictError
   | WorkflowIdempotencyConflictError
+  // A start saves the definition it runs: one that differs from what is
+  // already saved under its revision is refused, and nothing is written.
+  | WorkflowDefinitionConflictError
   | SqlError.SqlError
 
 export type EffectSqlWorkflowClient = {
@@ -73,7 +83,7 @@ export type EffectSqlWorkflowClient = {
   /** Resubmits a terminal run; joins an open transaction like `start`. */
   readonly restart: (
     runId: string,
-    options?: EffectSqlWorkflowStartOptions,
+    options?: EffectSqlWorkflowRestartOptions,
   ) => Effect.Effect<
     RunnableRun,
     EffectSqlWorkflowStartError,
@@ -198,6 +208,7 @@ const createTransactionSession = (
 const isStartError = (error: unknown): error is EffectSqlWorkflowStartError =>
   error instanceof WorkflowRunConflictError ||
   error instanceof WorkflowIdempotencyConflictError ||
+  error instanceof WorkflowDefinitionConflictError ||
   SqlError.isSqlError(error)
 
 /**
@@ -285,7 +296,7 @@ export function createEffectSqlWorkflowClient(
     })
   }
 
-  function restart(runId: string, options?: EffectSqlWorkflowStartOptions) {
+  function restart(runId: string, options?: EffectSqlWorkflowRestartOptions) {
     return run(isStartError, (connection) => {
       return client.restart(runId, { ...options, connection })
     })

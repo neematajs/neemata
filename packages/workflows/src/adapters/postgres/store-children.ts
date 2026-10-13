@@ -206,6 +206,7 @@ export const createPostgresWorkflowChildStore = (
         if (
           childRun.kind !== params.childKind ||
           childRun.name !== params.childName ||
+          childRun.executionRevision !== params.executionRevision ||
           !sameValue(childRun.input, params.input) ||
           !sameOptionalValue(childRun.idempotencyKey, params.idempotencyKey)
         ) {
@@ -251,6 +252,10 @@ export const createPostgresWorkflowChildStore = (
               rootRunId: params.rootRunId,
               tags: params.tags,
               idempotencyKey: params.idempotencyKey,
+              executionRevision: params.executionRevision,
+              graphHash: params.graphHash,
+              graphPresentation: params.graphPresentation,
+              definitions: params.definitions,
             },
             { recoverUniqueViolation: false },
           )

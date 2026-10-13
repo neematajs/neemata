@@ -5,6 +5,7 @@ export type {
   ClaimedCommand,
   ContinueRunCommand,
   ExecutionWorkerClaim,
+  RouteRef,
   RunCoordinationWorkerClaim,
   TaskAttemptCommand,
 } from './commands.ts'
@@ -17,6 +18,7 @@ export type {
   WorkflowRuntimeCallerConnection,
   WorkflowRuntimeCancelOptions,
   WorkflowRuntimeClient,
+  WorkflowRuntimeRestartOptions,
   WorkflowRuntimeStartOptions,
 } from './client.ts'
 export {
@@ -40,9 +42,11 @@ export type {
 } from './executors.ts'
 export {
   StaleWriteFenceError,
+  WorkflowDefinitionConflictError,
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
 } from './errors.ts'
+export { hashStructure } from './definition.ts'
 export { createHandlerRunner, WorkflowCleanupTimeoutError } from './handler.ts'
 export type { HandlerRunner, HandlerRunnerOptions } from './handler.ts'
 export { createInMemoryWorkflowRuntime } from '../adapters/in-memory.ts'
@@ -117,6 +121,7 @@ export type {
   PruneTerminalRunsParams,
   PruneTerminalRunsResult,
   RequestRunCancellationParams,
+  RunDefinitionInput,
   RunDetail,
   RunFamilyEntry,
   RunLease,

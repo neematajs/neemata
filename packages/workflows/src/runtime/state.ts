@@ -35,6 +35,12 @@ export type StoredRun = {
   readonly tags: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
+  /**
+   * Immutable for the run's life, like `graphHash`: no status, lease or retry
+   * transition changes what a run is pinned to.
+   */
+  readonly executionRevision?: string
+  readonly graphHash?: string
   readonly version: number
   readonly activeSince: Timestamp
   readonly createdAt: Timestamp

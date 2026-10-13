@@ -71,8 +71,17 @@ const stableJsonValue = (value: unknown): unknown => {
 export const valueKey = (value: unknown) =>
   JSON.stringify(stableJsonValue(value))
 
-export const runSignature = (run: CreateRunInput) =>
-  valueKey([
+/**
+ * Stored signatures are compared byte for byte, in Lua and against runs created
+ * before revisions existed, so an unversioned run keeps exactly the array it
+ * always had. A versioned run wraps that array in an object: no object text
+ * equals an array text, so neither lane can replay a run of the other, and a
+ * binary that predates revisions reports a conflict instead of adopting a
+ * versioned run. `graphHash` is absent: it is not part of a run's identity.
+ */
+export function runSignature(run: CreateRunInput) {
+  const { executionRevision: revision } = run
+  const unversioned = valueKey([
     run.kind ?? 'workflow',
     run.name ?? run.taskName ?? run.workflowName,
     run.workflowName,
@@ -83,6 +92,19 @@ export const runSignature = (run: CreateRunInput) =>
     run.idempotencyKey,
     run.input,
   ])
+  if (revision === undefined) return unversioned
+  return valueKey({ revision, run: unversioned })
+}
+
+/** Field of the revisions hash holding a manifest's canonical JSON. */
+export function manifestField(key: string) {
+  return `manifest:${key}`
+}
+
+/** Field of a family's meta hash holding the labels one run was created with. */
+export function presentationField(runId: string) {
+  return `presentation:${runId}`
+}
 
 export const sameValue = (left: unknown, right: unknown) =>
   valueKey(left) === valueKey(right)

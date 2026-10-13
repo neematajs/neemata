@@ -17,7 +17,7 @@ const sameStringArray = (left: unknown, right: readonly string[]) => {
     normalized.every((item, index) => item === right[index])
   )
 }
-const normalizeIndexPredicate = (value: unknown) =>
+const normalizeExpression = (value: unknown) =>
   typeof value === 'string'
     ? value
         .replaceAll('"', '')
@@ -119,6 +119,10 @@ export async function verifyPostgresWorkflowSchema(
       table_name: string
       type: string
       columns: unknown
+      referenced_table: string | null
+      referenced_columns: unknown
+      on_delete: string
+      check_expression: string | null
     }>(
       db,
       `
@@ -126,17 +130,27 @@ export async function verifyPostgresWorkflowSchema(
             c.conname AS name,
             rel.relname AS table_name,
             c.contype AS type,
-            array_remove(array_agg(att.attname ORDER BY ord.ordinality), NULL) AS columns
+            (
+              SELECT array_agg(att.attname ORDER BY ord.ordinality)
+              FROM unnest(c.conkey) WITH ORDINALITY AS ord(attnum, ordinality)
+              JOIN pg_attribute att
+                ON att.attrelid = c.conrelid AND att.attnum = ord.attnum
+            ) AS columns,
+            ref.relname AS referenced_table,
+            (
+              SELECT array_agg(att.attname ORDER BY ord.ordinality)
+              FROM unnest(c.confkey) WITH ORDINALITY AS ord(attnum, ordinality)
+              JOIN pg_attribute att
+                ON att.attrelid = c.confrelid AND att.attnum = ord.attnum
+            ) AS referenced_columns,
+            c.confdeltype AS on_delete,
+            pg_get_expr(c.conbin, c.conrelid) AS check_expression
           FROM pg_constraint c
           JOIN pg_class rel ON rel.oid = c.conrelid
           JOIN pg_namespace n ON n.oid = rel.relnamespace
-          LEFT JOIN unnest(c.conkey) WITH ORDINALITY AS ord(attnum, ordinality)
-            ON true
-          LEFT JOIN pg_attribute att
-            ON att.attrelid = rel.oid AND att.attnum = ord.attnum
+          LEFT JOIN pg_class ref ON ref.oid = c.confrelid
           WHERE n.nspname = current_schema()
             AND c.conname = ANY($1)
-          GROUP BY c.conname, rel.relname, c.contype
         `,
       [Object.keys(WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraintDefinitions)],
     ),
@@ -196,34 +210,40 @@ export async function verifyPostgresWorkflowSchema(
     ...WORKFLOW_POSTGRES_SCHEMA_MANIFEST.indexes,
   ].filter((name) => !existing.has(name))
 
+  // version first: when code and database disagree on schema generation,
+  // "expected v1, found vN" diagnoses it (stale build / missed migration),
+  // whereas the objects an older generation lacks, and the structural
+  // mismatches below, would only obscure that cause
+  const expectedVersion = WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version
+  const versionRow = existing.has('workflow_schema_version')
+    ? await one<{ id: number; version: number }>(
+        db,
+        `
+          SELECT id, version
+          FROM workflow_schema_version
+          WHERE id = 1
+        `,
+      )
+    : undefined
+
+  if (versionRow && versionRow.version !== expectedVersion) {
+    const hint =
+      versionRow.version < expectedVersion
+        ? `apply the application-owned schema upgrades up to generation ${expectedVersion} first`
+        : 'the database was upgraded for a newer @nmtjs/workflows'
+    throw new Error(
+      `Unsupported workflow Postgres schema version [${versionRow.version}], expected [${expectedVersion}]: ${hint}`,
+    )
+  }
+
   if (missing.length > 0) {
     throw new Error(
       `Missing workflow Postgres schema objects: ${missing.join(', ')}`,
     )
   }
 
-  // version first: when code and database disagree on schema generation,
-  // "expected v1, found vN" diagnoses it (stale build / missed migration),
-  // whereas the structural mismatches below would only obscure that cause
-  const versionRow = await one<{
-    id: number
-    version: number
-  }>(
-    db,
-    `
-      SELECT id, version
-      FROM workflow_schema_version
-      WHERE id = 1
-    `,
-  )
-
   if (!versionRow) {
     throw new Error('Missing workflow Postgres schema version')
-  }
-  if (versionRow.version !== WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version) {
-    throw new Error(
-      `Unsupported workflow Postgres schema version [${versionRow.version}], expected [${WORKFLOW_POSTGRES_SCHEMA_MANIFEST.version}]`,
-    )
   }
 
   const labelsByEnum = new Map<string, string[]>()
@@ -257,14 +277,25 @@ export async function verifyPostgresWorkflowSchema(
     WORKFLOW_POSTGRES_SCHEMA_MANIFEST.constraintDefinitions,
   )) {
     const actual = constraintsByName.get(name)
-    if (
-      !actual ||
-      actual.table_name !== expected.table ||
-      actual.type !== expected.type ||
-      !sameStringArray(actual.columns, expected.columns)
-    ) {
-      invalidConstraints.push(name)
-    }
+    // A check lists its columns in table order, which an upgrade and a fresh
+    // install need not share, so it is identified by its expression instead.
+    const valid =
+      actual !== undefined &&
+      actual.table_name === expected.table &&
+      actual.type === expected.type &&
+      (!('columns' in expected) ||
+        sameStringArray(actual.columns, expected.columns)) &&
+      (!('references' in expected) ||
+        (actual.referenced_table === expected.references.table &&
+          sameStringArray(
+            actual.referenced_columns,
+            expected.references.columns,
+          ) &&
+          actual.on_delete === expected.onDelete)) &&
+      (!('check' in expected) ||
+        normalizeExpression(actual.check_expression) ===
+          normalizeExpression(expected.check))
+    if (!valid) invalidConstraints.push(name)
   }
 
   if (invalidConstraints.length > 0) {
@@ -290,7 +321,7 @@ export async function verifyPostgresWorkflowSchema(
       'directions' in expected
         ? expected.directions
         : expected.columns.map(() => 'ASC')
-    const predicate = normalizeIndexPredicate(
+    const predicate = normalizeExpression(
       'predicate' in expected ? expected.predicate : undefined,
     )
     if (
@@ -299,7 +330,7 @@ export async function verifyPostgresWorkflowSchema(
       actual.unique !== expected.unique ||
       !sameStringArray(actual.columns, expected.columns) ||
       !sameStringArray(actual.directions, directions) ||
-      normalizeIndexPredicate(actual.predicate) !== predicate
+      normalizeExpression(actual.predicate) !== predicate
     ) {
       invalidIndexes.push(name)
     }

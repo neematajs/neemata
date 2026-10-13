@@ -27,6 +27,8 @@ export type {
   RetryPolicy,
   RunnableDefinition,
   RunnableInput,
+  RunnableRef,
+  RunnableRevision,
   RunnableRun,
   RunKind,
   RunIdempotencyBuilder,

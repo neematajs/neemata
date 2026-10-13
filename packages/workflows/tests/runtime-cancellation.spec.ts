@@ -242,7 +242,7 @@ describe('child workflow cancellation policy', () => {
       workflowName: parent.name,
     })
     const continuation = await runtime.runCoordinationExecutor.claim({
-      workflowNames: [parent.name],
+      workflows: [{ name: parent.name }],
       workerId: 'cancellation',
       leaseMs: 30_000,
     })
@@ -557,8 +557,8 @@ describe('a task worker settling a cancellation it observed', () => {
     await runtime.store.requestRunCancellation({ runId: childRunId })
     const claimed = (await runtime.attemptExecutor.claim({
       workerId: 'A',
-      workflowNames: [],
-      taskNames: [task.name],
+      workflows: [],
+      tasks: [{ name: task.name }],
       leaseMs: 30,
     }))!
 

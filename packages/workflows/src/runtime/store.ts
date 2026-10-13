@@ -1,7 +1,14 @@
 import type {
+  DefinitionBundle,
+  GraphPresentation,
+  RevisionManifest,
+  StoredGraph,
+} from '../inspector/graph.ts'
+import type {
   CancellationPolicy,
   ResolvedRunUnique,
   RunKind,
+  RunnableRevision,
   WorkflowNodeKind,
   Timestamp,
 } from '../types/index.ts'
@@ -57,6 +64,23 @@ export type CreateRunInput = {
   readonly tags?: Readonly<Record<string, string>>
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: ResolvedRunUnique
+} & RunDefinitionInput
+
+/**
+ * What a run is created against. The store saves `definitions` it does not
+ * have yet and the run in one atomic step, and refuses the run when a saved
+ * graph or revision differs from the one given. Afterwards the run's
+ * `graphHash` must name a saved graph, and its `executionRevision` a saved
+ * revision of the run's kind and name with that same graph. Omitting
+ * `definitions` is valid when they are already saved.
+ */
+export type RunDefinitionInput = {
+  /** Requires `graphHash`. */
+  readonly executionRevision?: string
+  readonly graphHash?: string
+  /** Stored with the run and never compared: labels are not identity. */
+  readonly graphPresentation?: GraphPresentation
+  readonly definitions?: DefinitionBundle
 }
 
 export type CreateNodeInput = {
@@ -68,6 +92,8 @@ export type CreateNodeInput = {
 export type ListRunsFilter = {
   readonly kind?: RunKind
   readonly name?: string
+  /** `null` selects unversioned runs only; omitted, the revision is not filtered. */
+  readonly executionRevision?: string | null
   readonly status?: RuntimeRunStatus | readonly RuntimeRunStatus[]
   readonly activeBefore?: Timestamp
   readonly createdBefore?: Timestamp
@@ -209,7 +235,7 @@ export type EnsureChildRunParams = {
   readonly idempotencyKey?: readonly unknown[]
   /** Stored on the child edge when the run is created; absent means propagate. */
   readonly cancellation?: CancellationPolicy
-}
+} & RunDefinitionInput
 
 export type EnsureChildRunResult = {
   readonly child: StoredNodeChild
@@ -286,7 +312,18 @@ export type CancelNonTerminalRunNodesParams = {
 }
 
 export type WorkflowStore = {
+  /**
+   * Idempotency keys and unique keys are global across revisions. A replay by
+   * idempotency key additionally requires the same `executionRevision`, and a
+   * `join` on a unique key requires the same kind, name and revision whenever
+   * either side is versioned; two unversioned runs behave as they always did.
+   */
   createRun(input: CreateRunInput): Promise<StoredRun>
+  /** Shared across runs and never pruned with them. */
+  loadGraph(graphHash: string): Promise<StoredGraph | undefined>
+  loadRevision(ref: RunnableRevision): Promise<RevisionManifest | undefined>
+  /** The labels saved with one run; undefined when it has none. */
+  loadGraphPresentation(runId: string): Promise<GraphPresentation | undefined>
   /** Atomically reopens failed work and enqueues continuation for the same root. */
   reopenFailedRun(params: {
     readonly runId: string

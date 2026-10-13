@@ -48,8 +48,8 @@ export function defineClaimFencingTests(
   const claim = (runtime: FencedRuntime, workerId: string, leaseMs: number) =>
     runtime.attemptExecutor.claim({
       workerId,
-      workflowNames: [],
-      taskNames: ['fencing.claim'],
+      workflows: [],
+      tasks: [{ name: 'fencing.claim' }],
       leaseMs,
     })
 

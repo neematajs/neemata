@@ -1,3 +1,4 @@
+import type { GraphPresentation } from '../../inspector/graph.ts'
 import type { RunSnapshot, StoredRun } from '../../runtime/state.ts'
 import type {
   CreateRunInput,
@@ -11,6 +12,10 @@ import type {
 import type { WorkflowPostgresConnection } from './connection.ts'
 import type { JsonRecord } from './sql.ts'
 import {
+  prepareRunDefinition,
+  refusedJoinHolder,
+} from '../../runtime/definition.ts'
+import {
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
 } from '../../runtime/errors.ts'
@@ -18,6 +23,12 @@ import {
   DEFAULT_PRUNE_BATCH_SIZE,
   normalizePruneBatchSize,
 } from '../../runtime/store.ts'
+import {
+  assertDefinitions,
+  loadGraph,
+  loadRevision,
+  saveDefinitions,
+} from './definitions.ts'
 import {
   id,
   isUuid,
@@ -55,6 +66,9 @@ type PostgresWorkflowRunStoreContext = {
 type PostgresWorkflowRunStore = Pick<
   WorkflowStore,
   | 'createRun'
+  | 'loadGraph'
+  | 'loadRevision'
+  | 'loadGraphPresentation'
   | 'listRuns'
   | 'listRunSummaries'
   | 'pruneTerminalRuns'
@@ -79,10 +93,10 @@ export type CreateStoredRunOptions = {
 // A self-rooted child would sit outside the family that pruning and family
 // listings select by root. A run's root never changes, so reading it ahead of
 // the insert is safe; a missing parent still fails the insert's foreign key.
-const inheritParentRoot = async (
+async function inheritParentRoot(
   connection: WorkflowPostgresConnection,
   input: CreateRunInput,
-): Promise<CreateRunInput> => {
+): Promise<CreateRunInput> {
   if (
     input.rootRunId !== undefined ||
     input.parentRunId === undefined ||
@@ -98,39 +112,57 @@ const inheritParentRoot = async (
   return parent ? { ...input, rootRunId: parent.root_run_id } : input
 }
 
-export const createStoredRunWithState = async (
+/**
+ * `connection` must be a transaction: the definitions the run needs and the
+ * run itself are separate statements that have to commit together.
+ */
+export async function createStoredRunWithState(
   connection: WorkflowPostgresConnection,
   rawInput: CreateRunInput,
   options: CreateStoredRunOptions = {},
-): Promise<{ readonly run: StoredRun; readonly created: boolean }> => {
+): Promise<{ readonly run: StoredRun; readonly created: boolean }> {
   const recoverUniqueViolation = options.recoverUniqueViolation ?? true
+  const definition = prepareRunDefinition(rawInput)
   const input = await inheritParentRoot(connection, rawInput)
-  const loadIdempotentRun = async () => {
+  const kind = input.kind ?? 'workflow'
+  const name = runnableName(input)
+  const { executionRevision, graphHash, graphPresentation } = definition
+
+  // Everything that can refuse the run is read before the first write, so a
+  // conflict or a replay leaves nothing behind, in a caller's transaction too.
+  const missing = await assertDefinitions(
+    connection,
+    { kind, name },
+    definition,
+  )
+
+  async function loadIdempotentRun() {
     if (!input.idempotencyKey) return undefined
     const existing = await one(
       connection,
       `SELECT *, ${payloadColumnsSql()} FROM workflow_runs WHERE idempotency_key = $1::jsonb`,
       [json(input.idempotencyKey)],
     )
-    if (existing) {
-      const run = mapRun(existing)
-      if (
-        run.kind === (input.kind ?? 'workflow') &&
-        run.name === runnableName(input) &&
-        run.workflowName === input.workflowName &&
-        run.taskName === input.taskName &&
-        run.parentRunId === input.parentRunId &&
-        run.parentNodeName === input.parentNodeName &&
-        run.rootRunId === (input.rootRunId ?? run.id) &&
-        sameValue(run.input, input.input)
-      ) {
-        return run
-      }
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+    if (!existing) return undefined
+
+    const run = mapRun(existing)
+    if (
+      run.kind === kind &&
+      run.name === name &&
+      run.workflowName === input.workflowName &&
+      run.taskName === input.taskName &&
+      run.parentRunId === input.parentRunId &&
+      run.parentNodeName === input.parentNodeName &&
+      run.rootRunId === (input.rootRunId ?? run.id) &&
+      run.executionRevision === executionRevision &&
+      sameValue(run.input, input.input)
+    ) {
+      return run
     }
-    return undefined
+    throw new WorkflowIdempotencyConflictError(input.workflowName, run.id)
   }
-  const loadUniqueRun = async () => {
+
+  async function loadUniqueRun() {
     if (!input.unique) return undefined
     const statusFilter =
       input.unique.scope === 'active'
@@ -148,16 +180,21 @@ export const createStoredRunWithState = async (
     )
     return existing ? mapRun(existing) : undefined
   }
-  const resolveUniqueConflict = (
-    run: StoredRun,
-  ): { readonly run: StoredRun; readonly created: false } => {
-    const unique = input.unique!
-    if (unique.behavior === 'join') return { run, created: false }
+
+  function resolveUniqueConflict(run: StoredRun) {
+    const { key, scope, behavior } = input.unique!
+    const joining = behavior === 'join'
+    const holder = joining
+      ? refusedJoinHolder(run, { kind, name, executionRevision })
+      : undefined
+    if (joining && holder === undefined) return { run, created: false }
+
     throw new WorkflowRunConflictError({
       runId: run.id,
       status: run.status,
-      key: unique.key,
-      scope: unique.scope,
+      key,
+      scope,
+      ...(holder === undefined ? {} : { holder }),
     })
   }
 
@@ -165,6 +202,8 @@ export const createStoredRunWithState = async (
   if (existing) return { run: existing, created: false }
   const conflicting = await loadUniqueRun()
   if (conflicting) return resolveUniqueConflict(conflicting)
+
+  await saveDefinitions(connection, missing)
 
   // ON CONFLICT DO NOTHING turns a lost race into zero rows instead of an
   // error, so the recovery reads below stay legal inside any transaction —
@@ -181,11 +220,13 @@ export const createStoredRunWithState = async (
           id, kind, name, workflow_name, task_name, status, input,
           parent_run_id, parent_node_name, root_run_id, tags,
           idempotency_key, unique_key, unique_scope, unique_behavior,
+          execution_revision, graph_hash, graph_presentation,
           version, active_since, created_at, updated_at
         )
         VALUES (
           $1, $2, $3, $4, $5, 'queued', $6::jsonb,
           $7, $8, $9, $10::jsonb, $11::jsonb, $12::jsonb, $13, $14,
+          $17, $18, $19::jsonb,
           1, $15, $15::timestamptz + ($16::int * interval '1 microsecond'), $15
         )
         ON CONFLICT DO NOTHING
@@ -197,8 +238,8 @@ export const createStoredRunWithState = async (
       `,
       [
         runId,
-        input.kind ?? 'workflow',
-        runnableName(input),
+        kind,
+        name,
         input.workflowName,
         input.taskName ?? null,
         json(input.input),
@@ -212,6 +253,9 @@ export const createStoredRunWithState = async (
         input.unique?.behavior ?? null,
         timestampParam(date),
         creationOffsetMicros(date),
+        executionRevision ?? null,
+        graphHash ?? null,
+        graphPresentation === undefined ? null : json(graphPresentation),
       ],
     )
     if (row) return { run: mapRun(row), created: true }
@@ -228,7 +272,7 @@ export const createStoredRunWithState = async (
     // transaction, after it rolls back
     if (!recoverUniqueViolation) break
   }
-  throw new WorkflowRunInsertConflict(runnableName(input))
+  throw new WorkflowRunInsertConflict(name)
 }
 
 /**
@@ -243,11 +287,15 @@ export class WorkflowRunInsertConflict extends Error {
   }
 }
 
-export const createStoredRun = async (
+/** Like `createStoredRunWithState`, `connection` must be a transaction. */
+export async function createStoredRun(
   connection: WorkflowPostgresConnection,
   input: CreateRunInput,
   options: CreateStoredRunOptions = {},
-) => (await createStoredRunWithState(connection, input, options)).run
+) {
+  const { run } = await createStoredRunWithState(connection, input, options)
+  return run
+}
 
 export async function pruneTerminalRunsInTransaction(
   connection: WorkflowPostgresConnection,
@@ -449,6 +497,8 @@ const runSummaryColumnsSql = (alias: string) => `
   ${alias}.unique_key,
   ${alias}.unique_scope,
   ${alias}.unique_behavior,
+  ${alias}.execution_revision,
+  ${alias}.graph_hash,
   ${alias}.version,
   ${alias}.active_since,
   ${alias}.created_at,
@@ -458,7 +508,7 @@ const runSummaryColumnsSql = (alias: string) => `
 `
 
 const runSummaryJsonSql = (alias: string) => `
-  to_jsonb(${alias}) - 'input' - 'output' ||
+  to_jsonb(${alias}) - 'input' - 'output' - 'graph_presentation' ||
   (
     SELECT jsonb_build_object(
       'nodes_total',
@@ -490,6 +540,12 @@ const buildListRunsQueryParts = (
 
   if (filter.kind !== undefined) where.push(`r.kind = ${push(filter.kind)}`)
   if (filter.name !== undefined) where.push(`r.name = ${push(filter.name)}`)
+  // `null` selects the unversioned lane, which `=` would never match.
+  if (filter.executionRevision !== undefined) {
+    where.push(
+      `r.execution_revision IS NOT DISTINCT FROM ${push(filter.executionRevision)}::text`,
+    )
+  }
   if (filter.activeBefore !== undefined) {
     where.push(`r.active_since < ${push(timestampParam(filter.activeBefore))}`)
   }
@@ -550,7 +606,25 @@ export const createPostgresWorkflowRunStore = (
   return {
     async createRun(input) {
       await ready
-      return createStoredRun(db, input)
+      return db.transaction((tx) => createStoredRun(tx, input))
+    },
+    async loadGraph(graphHash) {
+      await ready
+      return loadGraph(db, graphHash)
+    },
+    async loadRevision(ref) {
+      await ready
+      return loadRevision(db, ref)
+    },
+    async loadGraphPresentation(runId) {
+      await ready
+      if (!isUuid(runId)) return undefined
+      const row = await one<{ graph_presentation: GraphPresentation | null }>(
+        db,
+        'SELECT graph_presentation FROM workflow_runs WHERE id = $1',
+        [runId],
+      )
+      return row?.graph_presentation ?? undefined
     },
     async listRuns(filter: ListRunsFilter = {}) {
       await ready
@@ -716,6 +790,7 @@ export const createPostgresWorkflowRunStore = (
               kind,
               run_id,
               workflow_name,
+              revision,
               payload,
               run_at,
               priority,
@@ -728,6 +803,7 @@ export const createPostgresWorkflowRunStore = (
               kind,
               run_id,
               workflow_name,
+              revision,
               payload,
               now(),
               priority,

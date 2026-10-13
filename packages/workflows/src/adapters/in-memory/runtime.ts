@@ -26,6 +26,7 @@ import type {
 import type { WorkflowWakeEvents } from '../../runtime/wake-events.ts'
 import type { WorkflowRuntimeAtomicCompletion } from '../../runtime/worker.ts'
 import type { InspectQueueItem, QueueItem } from './commands.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
 import { dispatchTaskRunAttempt } from '../../runtime/coordinator/attempt.ts'
 import { inspectQueueItem } from './commands.ts'
 import { createAttemptExecutor } from './executor.ts'
@@ -84,11 +85,7 @@ export function createInMemoryWorkflowRuntime(
       const started = createRunWithState(state, run)
       if (!started.created) return started.run
 
-      const command = {
-        kind: 'continueRun',
-        runId: started.run.id,
-        workflowName: started.run.workflowName,
-      } as const
+      const command = continueRunCommand(started.run)
       if (startAt) {
         await runCoordinationExecutor.enqueueDelayed(command, startAt)
       } else {
@@ -105,6 +102,7 @@ export function createInMemoryWorkflowRuntime(
         runCoordinationExecutor,
         attemptExecutor,
         taskName,
+        revision: started.run.executionRevision,
         taskRunId: started.run.id,
         taskInput,
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),

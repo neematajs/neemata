@@ -15,7 +15,18 @@ import type {
   RunSummary,
   WorkflowStore,
 } from '../../runtime/store.ts'
+import type { RunnableRef } from '../../types/index.ts'
 import type { State } from './state.ts'
+import {
+  graphConflict,
+  missingGraph,
+  prepareRunDefinition,
+  refKey,
+  refusedJoinHolder,
+  revisionConflict,
+  runRevisionConflict,
+  type PreparedRunDefinition,
+} from '../../runtime/definition.ts'
 import {
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
@@ -69,6 +80,8 @@ function runMatchesFilter(run: StoredRun, filter: ListRunsFilter) {
   return (
     (filter.kind === undefined || run.kind === filter.kind) &&
     (filter.name === undefined || run.name === filter.name) &&
+    (filter.executionRevision === undefined ||
+      run.executionRevision === (filter.executionRevision ?? undefined)) &&
     (statuses === undefined || statuses.includes(run.status)) &&
     (filter.activeBefore === undefined ||
       run.activeSince < filter.activeBefore) &&
@@ -100,8 +113,60 @@ function runMatchesCreateInput(run: StoredRun, input: CreateRunInput) {
     run.parentRunId === input.parentRunId &&
     run.parentNodeName === input.parentNodeName &&
     run.rootRunId === (input.rootRunId ?? run.id) &&
+    run.executionRevision === input.executionRevision &&
     sameValue(run.input, input.input)
   )
+}
+
+/**
+ * Throws when the run's definitions cannot be saved as given. Read-only, so
+ * `saveDefinitions` runs only once nothing else can refuse the run.
+ */
+export function assertDefinitions(
+  state: State,
+  runnable: Pick<RunnableRef, 'kind' | 'name'>,
+  definition: PreparedRunDefinition,
+) {
+  const { graphs, revisions } = state
+  const { bundle, graphHash, executionRevision: revision } = definition
+
+  for (const graph of bundle.graphs) {
+    const saved = graphs.get(graph.graphHash)
+    if (saved && saved.json !== graph.json) throw graphConflict(graph.graphHash)
+  }
+  for (const manifest of bundle.revisions) {
+    const saved = revisions.get(manifest.key)
+    if (saved && saved.json !== manifest.json) throw revisionConflict(manifest)
+  }
+  if (graphHash === undefined) return
+
+  const provided = bundle.graphs.some((graph) => graph.graphHash === graphHash)
+  if (!provided && !graphs.has(graphHash)) throw missingGraph(graphHash)
+  if (revision === undefined) return
+
+  const ref = { ...runnable, revision }
+  const key = refKey(ref)
+  const manifest =
+    bundle.revisions.find((manifest) => manifest.key === key) ??
+    revisions.get(key)
+  const conflict = runRevisionConflict(ref, graphHash, manifest)
+  if (conflict) throw conflict
+}
+
+export function saveDefinitions(
+  state: State,
+  { bundle }: PreparedRunDefinition,
+) {
+  const { graphs, revisions } = state
+
+  // Prepared records are fresh projections, so a caller mutating its own
+  // bundle afterwards cannot reach what is saved here.
+  for (const graph of bundle.graphs) {
+    if (!graphs.has(graph.graphHash)) graphs.set(graph.graphHash, graph)
+  }
+  for (const manifest of bundle.revisions) {
+    if (!revisions.has(manifest.key)) revisions.set(manifest.key, manifest)
+  }
 }
 
 function runSummary(state: State, run: StoredRun): RunSummary {
@@ -155,6 +220,7 @@ export function createRunWithState(
     id,
     now,
     runs,
+    presentations,
     runIdempotencyKeys,
     activeUniqueRunKeys,
     allUniqueRunKeys,
@@ -172,6 +238,12 @@ export function createRunWithState(
       ? rawInput
       : { ...rawInput, rootRunId: parentRootRunId }
 
+  // Everything that can refuse the run is checked before the first write:
+  // there is no rollback, and nothing below this block awaits.
+  const runnable = { kind: input.kind ?? 'workflow', name: runnableName(input) }
+  const definition = prepareRunDefinition(input)
+  assertDefinitions(state, runnable, definition)
+
   if (input.idempotencyKey) {
     const existingRunId = runIdempotencyKeys.get(valueKey(input.idempotencyKey))
     if (existingRunId) {
@@ -180,7 +252,10 @@ export function createRunWithState(
         return { run: existing, created: false }
       }
 
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+      throw new WorkflowIdempotencyConflictError(
+        input.workflowName,
+        existing?.id,
+      )
     }
   }
 
@@ -191,7 +266,14 @@ export function createRunWithState(
     const conflicting =
       conflictingRunId === undefined ? undefined : runs.get(conflictingRunId)
     if (conflicting) {
-      if (input.unique.behavior === 'join') {
+      const joining = input.unique.behavior === 'join'
+      const holder = joining
+        ? refusedJoinHolder(conflicting, {
+            ...runnable,
+            executionRevision: input.executionRevision,
+          })
+        : undefined
+      if (joining && holder === undefined) {
         return { run: conflicting, created: false }
       }
       throw new WorkflowRunConflictError({
@@ -199,10 +281,13 @@ export function createRunWithState(
         status: conflicting.status,
         key: input.unique.key,
         scope: input.unique.scope,
+        ...(holder === undefined ? {} : { holder }),
       })
     }
   }
 
+  saveDefinitions(state, definition)
+  const { executionRevision, graphHash, graphPresentation } = definition
   const date = now()
   const runId = id('run')
   const run: StoredRun = {
@@ -225,12 +310,17 @@ export function createRunWithState(
       ? {}
       : { idempotencyKey: input.idempotencyKey }),
     ...(input.unique === undefined ? {} : { unique: input.unique }),
+    ...(executionRevision === undefined ? {} : { executionRevision }),
+    ...(graphHash === undefined ? {} : { graphHash }),
     version: 1,
     activeSince: date,
     createdAt: date,
     updatedAt: date,
   }
   runs.set(run.id, run)
+  if (graphPresentation !== undefined) {
+    presentations.set(run.id, structuredClone(graphPresentation))
+  }
   if (input.idempotencyKey) {
     runIdempotencyKeys.set(valueKey(input.idempotencyKey), run.id)
   }
@@ -246,6 +336,9 @@ export function createRunWithState(
 type RunStore = Pick<
   WorkflowStore,
   | 'createRun'
+  | 'loadGraph'
+  | 'loadRevision'
+  | 'loadGraphPresentation'
   | 'listRuns'
   | 'listRunSummaries'
   | 'acquireRunLease'
@@ -259,10 +352,31 @@ type RunStore = Pick<
 
 export function createRunStore(state: State): RunStore {
   const { id, now, runs, nodes, attempts, children, runLeases } = state
+  const { graphs, revisions, presentations } = state
 
   const store: RunStore = {
     async createRun(input: CreateRunInput) {
       return createRunWithState(state, input).run
+    },
+
+    // Saved definitions are immutable, so reads hand out copies: a caller
+    // editing what it received must not reach the stored record.
+    async loadGraph(graphHash) {
+      const graph = graphs.get(graphHash)
+      return graph && { graphHash, structure: structuredClone(graph.structure) }
+    },
+
+    async loadRevision(ref) {
+      const manifest = revisions.get(refKey(ref))
+      if (!manifest) return undefined
+      const { kind, name, revision, graphHash } = manifest
+      const bindings = structuredClone(manifest.bindings)
+      return { kind, name, revision, graphHash, bindings }
+    },
+
+    async loadGraphPresentation(runId) {
+      const presentation = presentations.get(runId)
+      return presentation && structuredClone(presentation)
     },
 
     async listRuns(filter: ListRunsFilter = {}) {

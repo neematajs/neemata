@@ -190,10 +190,12 @@ function raceIdempotentRunInsert(
       params: readonly unknown[] = [],
     ): Promise<WorkflowPostgresQueryResult<T>> {
       // a concurrent starter wins the race first; the intercepted insert then
-      // genuinely conflicts (ON CONFLICT DO NOTHING → zero rows)
+      // genuinely conflicts (ON CONFLICT DO NOTHING → zero rows). The winner
+      // goes through the same transaction: run creation holds one open, and
+      // this single session could not serve a second writer beside it.
       if (!raced && /INSERT\s+INTO\s+workflow_runs/i.test(sql)) {
         raced = true
-        await connection.query(sql, params)
+        await target.query(sql, params)
       }
       return target.query<T>(sql, params)
     },
@@ -565,7 +567,7 @@ test('creates drizzle schema with canonical runtime names', () => {
   expectTypeOf(schema.tables).toHaveProperty('nodes')
   expectTypeOf(schema.tables).toHaveProperty('schemaVersion')
   expectTypeOf(schema.tables).toHaveProperty('schedules')
-  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(4)
+  expect(WORKFLOW_POSTGRES_SCHEMA_VERSION).toBe(5)
 
   expect(getTableName(WorkflowRunTable)).toBe('workflow_runs')
   expect(getTableConfig(WorkflowRunTable).schema).toBeUndefined()
@@ -1074,7 +1076,7 @@ test('postgres continue enqueue coalesces via partial-index upsert', async () =>
   await expect(
     runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['postgres-coalesced-workflow'],
+      workflows: [{ name: 'postgres-coalesced-workflow' }],
       leaseMs: 30_000,
     }),
   ).resolves.toMatchObject({ command: immediate })
@@ -1104,7 +1106,7 @@ test('postgres continue enqueue allows leased and fresh continue commands to coe
   await runtime.runCoordinationExecutor.enqueue(first)
   const leased = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-1',
-    workflowNames: ['postgres-leased-continue-workflow'],
+    workflows: [{ name: 'postgres-leased-continue-workflow' }],
     leaseMs: 30_000,
   })
   await runtime.runCoordinationExecutor.enqueue(second)
@@ -1132,7 +1134,7 @@ test('postgres continue enqueue allows leased and fresh continue commands to coe
 
   const fresh = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-2',
-    workflowNames: ['postgres-leased-continue-workflow'],
+    workflows: [{ name: 'postgres-leased-continue-workflow' }],
     leaseMs: 30_000,
   })
   expect(leased?.command).toStrictEqual(first)
@@ -1179,7 +1181,7 @@ test.each([
     await runtime.runCoordinationExecutor.enqueue(first)
     const leased = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['postgres-release-continue-workflow'],
+      workflows: [{ name: 'postgres-release-continue-workflow' }],
       leaseMs: 30_000,
     })
     await runtime.runCoordinationExecutor.enqueueDelayed(second, delayedUntil)
@@ -1245,7 +1247,7 @@ test('postgres continue release keeps the pending error when delivery counts tie
   await runtime.runCoordinationExecutor.enqueue(first)
   const leased = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-1',
-    workflowNames: ['postgres-release-error-tie-workflow'],
+    workflows: [{ name: 'postgres-release-error-tie-workflow' }],
     leaseMs: 30_000,
   })
   await connection.query(
@@ -1303,7 +1305,7 @@ test('postgres continue release bypasses a legacy unleased dead continue', async
   await runtime.runCoordinationExecutor.enqueue(command)
   const leased = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-1',
-    workflowNames: ['postgres-release-legacy-dead-workflow'],
+    workflows: [{ name: 'postgres-release-legacy-dead-workflow' }],
     leaseMs: 30_000,
   })
   const deadId = randomUUID()
@@ -1341,7 +1343,7 @@ test('postgres continue release bypasses a legacy unleased dead continue', async
   await expect(
     runtime.runCoordinationExecutor.claim({
       workerId: 'worker-2',
-      workflowNames: ['postgres-release-legacy-dead-workflow'],
+      workflows: [{ name: 'postgres-release-legacy-dead-workflow' }],
       leaseMs: 30_000,
     }),
   ).resolves.toMatchObject({ command })
@@ -1374,7 +1376,7 @@ test('postgres terminal continue release preserves the dead record and fresh wak
   await runtime.runCoordinationExecutor.enqueue(first)
   const leased = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-1',
-    workflowNames: ['postgres-dead-release-continue-workflow'],
+    workflows: [{ name: 'postgres-dead-release-continue-workflow' }],
     leaseMs: 30_000,
   })
   await runtime.runCoordinationExecutor.enqueue(second)
@@ -1417,7 +1419,7 @@ test('postgres terminal continue release preserves the dead record and fresh wak
   await expect(runtime.store.listDeadCommands()).resolves.toHaveLength(1)
   const pending = await runtime.runCoordinationExecutor.claim({
     workerId: 'worker-2',
-    workflowNames: ['postgres-dead-release-continue-workflow'],
+    workflows: [{ name: 'postgres-dead-release-continue-workflow' }],
     leaseMs: 30_000,
   })
   expect(pending?.command).toStrictEqual(second)
@@ -1525,9 +1527,9 @@ test('postgres error releases record delivery metadata and cap exponential backo
   }
   await runtime.attemptExecutor.dispatchActivity(command)
   const claimed = await runtime.attemptExecutor.claim({
-    taskNames: [],
+    tasks: [],
     workerId: 'activity-worker-1',
-    workflowNames: ['postgres-error-release-workflow'],
+    workflows: [{ name: 'postgres-error-release-workflow' }],
     activityNames: ['content'],
     leaseMs: 30_000,
   })
@@ -1600,9 +1602,9 @@ test('returns no activity claim for an empty activity filter', async () => {
 
   await expect(
     runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker',
-      workflowNames: ['workflow-without-activities'],
+      workflows: [{ name: 'workflow-without-activities' }],
       activityNames: [],
       leaseMs: 1000,
     }),
@@ -1631,9 +1633,9 @@ test('extends activity command leases with heartbeat', async () => {
 
   await runtime.attemptExecutor.dispatchActivity(command)
   const claimed = await runtime.attemptExecutor.claim({
-    taskNames: [],
+    tasks: [],
     workerId: 'activity-worker-1',
-    workflowNames: [command.workflowName],
+    workflows: [{ name: command.workflowName }],
     activityNames: [command.activityName],
     leaseMs: 1000,
   })
@@ -1664,9 +1666,9 @@ test('extends activity command leases with heartbeat', async () => {
 
   await expect(
     runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-2',
-      workflowNames: [command.workflowName],
+      workflows: [{ name: command.workflowName }],
       activityNames: [command.activityName],
       leaseMs: 1000,
     }),
@@ -1699,9 +1701,9 @@ test('uses postgres-side timestamps for command claim, heartbeat, and release', 
   await runtime.attemptExecutor.dispatchActivity(command)
   const claimClock = await databaseClockBracket(connection, () =>
     runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'activity-worker-1',
-      workflowNames: [command.workflowName],
+      workflows: [{ name: command.workflowName }],
       activityNames: [command.activityName],
       leaseMs: 1000,
     }),
@@ -2626,7 +2628,17 @@ test('rejects a v2 workflow postgres schema missing v3 command columns and index
     `,
   )
 
+  // The generation is reported ahead of the objects it lacks: the list alone
+  // would not say that the database is two upgrades behind.
+  await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
+    `Unsupported workflow Postgres schema version [2], expected [${WORKFLOW_POSTGRES_SCHEMA_VERSION}]`,
+  )
+
   // dropping dead_at also cascades away the partial claim/dead indexes
+  await connection.query(
+    'UPDATE workflow_schema_version SET version = $1 WHERE id = 1',
+    [WORKFLOW_POSTGRES_SCHEMA_VERSION],
+  )
   await expect(verifyPostgresWorkflowSchema(connection)).rejects.toThrow(
     'Missing workflow Postgres schema objects: workflow_runs_parent_idx, workflow_runs_root_idx, workflow_commands_claim_idx, workflow_commands_dead_idx, workflow_commands_continue_dedup_idx',
   )

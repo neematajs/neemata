@@ -86,11 +86,36 @@ export async function installPostgresWorkflowSchemaForTesting(
     $$;
   `)
   await db.query(`
+    CREATE TABLE IF NOT EXISTS workflow_graphs (
+      graph_hash text PRIMARY KEY,
+      structure text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `)
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS workflow_revisions (
+      kind workflow_run_kind NOT NULL,
+      name text NOT NULL,
+      revision text NOT NULL,
+      graph_hash text NOT NULL,
+      bindings text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT workflow_revisions_pkey PRIMARY KEY (kind, name, revision),
+      CONSTRAINT workflow_revisions_graph_key
+        UNIQUE (kind, name, revision, graph_hash),
+      CONSTRAINT workflow_revisions_graph_fk
+        FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash)
+    )
+  `)
+  await db.query(`
     CREATE TABLE IF NOT EXISTS workflow_schedules (
       id uuid PRIMARY KEY,
       name text NOT NULL,
       runnable_kind workflow_run_kind NOT NULL,
       runnable_name text NOT NULL,
+      execution_revision text,
+      graph_hash text,
+      graph_presentation jsonb,
       input jsonb NOT NULL,
       tags jsonb NOT NULL DEFAULT '{}'::jsonb,
       cron text,
@@ -103,6 +128,14 @@ export async function installPostgresWorkflowSchemaForTesting(
       CONSTRAINT workflow_schedules_name_key UNIQUE (name),
       CONSTRAINT workflow_schedules_cadence_chk CHECK ((cron IS NULL) <> (every_ms IS NULL))
     )
+  `)
+  // Generation 5 columns, for test databases installed before them. Nullable
+  // without defaults: existing rows stay unversioned.
+  await db.query(`
+    ALTER TABLE workflow_schedules
+    ADD COLUMN IF NOT EXISTS execution_revision text,
+    ADD COLUMN IF NOT EXISTS graph_hash text,
+    ADD COLUMN IF NOT EXISTS graph_presentation jsonb
   `)
   await db.query(`
     CREATE INDEX IF NOT EXISTS workflow_schedules_due_idx
@@ -127,6 +160,9 @@ export async function installPostgresWorkflowSchemaForTesting(
       unique_key jsonb,
       unique_scope text,
       unique_behavior text,
+      execution_revision text,
+      graph_hash text,
+      graph_presentation jsonb,
       version integer NOT NULL,
       active_since timestamptz NOT NULL DEFAULT now(),
       created_at timestamptz NOT NULL,
@@ -138,7 +174,10 @@ export async function installPostgresWorkflowSchemaForTesting(
     ADD COLUMN IF NOT EXISTS active_since timestamptz,
     ADD COLUMN IF NOT EXISTS unique_key jsonb,
     ADD COLUMN IF NOT EXISTS unique_scope text,
-    ADD COLUMN IF NOT EXISTS unique_behavior text
+    ADD COLUMN IF NOT EXISTS unique_behavior text,
+    ADD COLUMN IF NOT EXISTS execution_revision text,
+    ADD COLUMN IF NOT EXISTS graph_hash text,
+    ADD COLUMN IF NOT EXISTS graph_presentation jsonb
   `)
   await db.query(
     'UPDATE workflow_runs SET active_since = created_at WHERE active_since IS NULL',
@@ -270,6 +309,7 @@ export async function installPostgresWorkflowSchemaForTesting(
       kind workflow_command_kind NOT NULL,
       run_id uuid NOT NULL,
       workflow_name text,
+      revision text,
       task_name text,
       activity_name text,
       node_name text,
@@ -298,7 +338,8 @@ export async function installPostgresWorkflowSchemaForTesting(
   await db.query(`
     ALTER TABLE workflow_commands
     ADD COLUMN IF NOT EXISTS dead_at timestamptz,
-    ADD COLUMN IF NOT EXISTS reaped_at timestamptz
+    ADD COLUMN IF NOT EXISTS reaped_at timestamptz,
+    ADD COLUMN IF NOT EXISTS revision text
   `)
   // drop-and-create: pre-existing test databases may hold the older
   // non-partial shape under the same name; the advisory lock serializes
@@ -397,6 +438,66 @@ export async function installPostgresWorkflowSchemaForTesting(
         FOREIGN KEY (parent_run_id, parent_node_name)
         REFERENCES workflow_nodes(run_id, name)
         ON DELETE CASCADE;
+      END IF;
+
+      -- Runs and schedules only reference shared definitions: nothing
+      -- cascades in either direction, so deleting a run never deletes one.
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_revision_graph_chk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
+        ALTER TABLE workflow_runs
+        ADD CONSTRAINT workflow_runs_revision_graph_chk
+        CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL);
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_graph_fk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
+        ALTER TABLE workflow_runs
+        ADD CONSTRAINT workflow_runs_graph_fk
+        FOREIGN KEY (graph_hash)
+        REFERENCES workflow_graphs(graph_hash);
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_runs_revision_fk' AND conrelid = 'workflow_runs'::regclass
+      ) THEN
+        ALTER TABLE workflow_runs
+        ADD CONSTRAINT workflow_runs_revision_fk
+        FOREIGN KEY (kind, name, execution_revision, graph_hash)
+        REFERENCES workflow_revisions(kind, name, revision, graph_hash);
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_schedules_revision_graph_chk' AND conrelid = 'workflow_schedules'::regclass
+      ) THEN
+        ALTER TABLE workflow_schedules
+        ADD CONSTRAINT workflow_schedules_revision_graph_chk
+        CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL);
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_schedules_graph_fk' AND conrelid = 'workflow_schedules'::regclass
+      ) THEN
+        ALTER TABLE workflow_schedules
+        ADD CONSTRAINT workflow_schedules_graph_fk
+        FOREIGN KEY (graph_hash)
+        REFERENCES workflow_graphs(graph_hash);
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'workflow_schedules_revision_fk' AND conrelid = 'workflow_schedules'::regclass
+      ) THEN
+        ALTER TABLE workflow_schedules
+        ADD CONSTRAINT workflow_schedules_revision_fk
+        FOREIGN KEY (runnable_kind, runnable_name, execution_revision, graph_hash)
+        REFERENCES workflow_revisions(kind, name, revision, graph_hash);
       END IF;
 
       IF NOT EXISTS (

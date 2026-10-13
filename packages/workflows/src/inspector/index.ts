@@ -7,126 +7,84 @@ import type {
 import type {
   AnyTaskDefinition,
   AnyWorkflowDefinition,
-  BranchCaseDefinition,
-  BranchCaseKind,
-  WorkflowNodeKind,
 } from '../types/index.ts'
+import type {
+  DefinitionStructure,
+  GraphPresentation,
+  RevisionManifest,
+  StoredGraph,
+  WorkflowGraph,
+} from './graph.ts'
 import { parseChildKey, type ParsedChildKey } from '../runtime/child-key.ts'
+import { labels, serializeWorkflowGraph } from './graph.ts'
+
+export {
+  canonicalJson,
+  captureGraphPresentation,
+  parseStructure,
+  projectStructure,
+  renderWorkflowGraph,
+  serializeWorkflowGraph,
+  STRUCTURE_FORMAT_VERSION,
+  structureSlots,
+} from './graph.ts'
+export type {
+  DefinitionBundle,
+  DefinitionStructure,
+  GraphCaseLabels,
+  GraphLabels,
+  GraphNodeLabels,
+  GraphPresentation,
+  RevisionBinding,
+  RevisionManifest,
+  StoredGraph,
+  StructuralCase,
+  StructuralNode,
+  StructuralSlot,
+  StructuralTarget,
+  TaskStructure,
+  WorkflowGraph,
+  WorkflowGraphCase,
+  WorkflowGraphNode,
+  WorkflowGraphTarget,
+  WorkflowStructure,
+} from './graph.ts'
 
 /**
- * Canonical JSON shape of a workflow definition's topology. Stable by
- * design: it doubles as the per-run definition-snapshot format, so UIs can
- * render historical runs against the graph they actually executed.
+ * How a run's definition can be shown. `saved` is the graph the run was created
+ * with, in declared order and including alternatives it never took. `observed`
+ * means no trustworthy graph exists for the run: `detail` holds everything
+ * known, and neither order, unused alternatives nor labels may be filled in
+ * from a definition deployed today.
  */
-export type WorkflowGraph = {
-  readonly name: string
-  readonly title?: string
-  readonly description?: string
-  readonly nodes: readonly WorkflowGraphNode[]
-}
-
-export type WorkflowGraphNode = {
-  readonly name: string
-  readonly kind: WorkflowNodeKind
-  readonly title?: string
-  readonly description?: string
-  /** Referenced task/workflow for task, workflow, mapTask and mapWorkflow nodes. */
-  readonly target?: WorkflowGraphTarget
-  /** Branch and parallel members, in definition order. */
-  readonly cases?: readonly WorkflowGraphCase[]
-  /** Fan-out completion mode for mapTask and mapWorkflow nodes. */
-}
-
-export type WorkflowGraphTarget = {
-  readonly kind: 'task' | 'workflow'
-  readonly name: string
-  readonly title?: string
-  readonly description?: string
-}
-
-export type WorkflowGraphCase = {
-  readonly key: string
-  readonly kind: BranchCaseKind
-  readonly title?: string
-  readonly description?: string
-  /** Absent for inline activity cases — they have no named target. */
-  readonly target?: WorkflowGraphTarget
-}
-
-function metadata(input: {
-  readonly title?: string
-  readonly description?: string
-}) {
-  return {
-    ...(input.title === undefined ? {} : { title: input.title }),
-    ...(input.description === undefined
-      ? {}
-      : { description: input.description }),
-  }
-}
-
-function serializeTarget(
-  kind: WorkflowGraphTarget['kind'],
-  target: AnyTaskDefinition | AnyWorkflowDefinition,
-): WorkflowGraphTarget {
-  return {
-    kind,
-    name: target.name,
-    ...metadata(target),
-  }
-}
-
-export function serializeWorkflowGraph(
-  definition: AnyWorkflowDefinition,
-): WorkflowGraph {
-  const base = { name: definition.name, ...metadata(definition) }
-  const nodes = definition.nodes.map((node): WorkflowGraphNode => {
-    const base = { name: node.name, kind: node.kind, ...metadata(node) }
-
-    switch (node.kind) {
-      case 'activity':
-        return base
-      case 'task':
-      case 'mapTask': {
-        const target = serializeTarget('task', node.task)
-        return { ...base, target }
-      }
-      case 'workflow':
-      case 'mapWorkflow': {
-        const target = serializeTarget('workflow', node.workflow)
-        return { ...base, target }
-      }
-      case 'branch':
-      case 'parallel': {
-        const cases: WorkflowGraphCase[] = []
-
-        for (const key in node.cases) {
-          const branchCase = node.cases[key]
-          const graphCase = {
-            key,
-            kind: branchCase.kind,
-            ...metadata(branchCase),
-          }
-          if (branchCase.kind === 'activity') {
-            cases.push(graphCase)
-            continue
-          }
-
-          // BranchCaseDefinition's conditional payload doesn't narrow on
-          // `kind` at the union default, so the cast lives here once.
-          const reference = branchCase as BranchCaseDefinition<
-            'task' | 'workflow'
-          >
-          const target = serializeTarget(reference.kind, reference.target)
-          cases.push({ ...graphCase, target })
-        }
-
-        return { ...base, cases }
-      }
+export type RunDefinitionInspection =
+  | {
+      readonly source: 'saved'
+      readonly graphHash: string
+      readonly structure: DefinitionStructure
+      /** Absent when the definition declared no labels. */
+      readonly presentation?: GraphPresentation
+      /** Absent for unversioned runs, which have no pinned bindings. */
+      readonly revision?: RevisionManifest
     }
-  })
+  | {
+      readonly source: 'observed'
+      /**
+       * `legacy`: the run predates saved graphs. `missing-graph`: its graph
+       * record is gone. `invalid-graph`: the record does not match its hash.
+       */
+      readonly reason: 'legacy' | 'missing-graph' | 'invalid-graph'
+    }
 
-  return { ...base, nodes }
+export type RunInspection = {
+  readonly detail: RunDetail
+  readonly definition: RunDefinitionInspection
+}
+
+/** A saved revision with its graph, for previewing targets a run never reached. */
+export type SavedDefinition = {
+  readonly revision: RevisionManifest
+  readonly graph: StoredGraph
 }
 
 export type WorkflowCatalog = {
@@ -152,7 +110,7 @@ export function serializeWorkflowCatalog(input: {
   const workflows = Array.from(input.workflows ?? [], serializeWorkflowGraph)
   const tasks = Array.from(input.tasks ?? [], (task) => ({
     name: task.name,
-    ...metadata(task),
+    ...labels(task),
   }))
 
   return { workflows, tasks }

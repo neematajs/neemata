@@ -952,7 +952,7 @@ describe('in-memory workflow store', () => {
     )
     const claimedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       leaseMs: 30_000,
     })
     expect(claimedRun?.command).toStrictEqual(continueCommand)
@@ -964,7 +964,7 @@ describe('in-memory workflow store', () => {
 
     const releasedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       leaseMs: 30_000,
     })
     expect(releasedRun?.command.runId).toBe('run-3')
@@ -975,7 +975,7 @@ describe('in-memory workflow store', () => {
     vi.setSystemTime(Date.now() + 49)
     const requeuedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       leaseMs: 30_000,
     })
     expect(requeuedRun).toBeNull()
@@ -984,7 +984,7 @@ describe('in-memory workflow store', () => {
 
     const delayedRequeuedRun = await runtime.runCoordinationExecutor.claim({
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       leaseMs: 30_000,
     })
     expect(delayedRequeuedRun?.command.runId).toBe('run-1')
@@ -995,17 +995,17 @@ describe('in-memory workflow store', () => {
     expect(runtime.inspect().taskCommands).toHaveLength(1)
 
     const claimedActivity = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       activityNames: ['writeContent'],
       leaseMs: 30_000,
     })
     const claimedTask = await runtime.attemptExecutor.claim({
-      workflowNames: [],
+      workflows: [],
       activityNames: [],
       workerId: 'worker-1',
-      taskNames: ['writeContent'],
+      tasks: [{ name: 'writeContent' }],
       leaseMs: 30_000,
     })
 
@@ -1023,9 +1023,9 @@ describe('in-memory workflow store', () => {
 
     vi.setSystemTime(Date.now() + 49)
     const releasedActivity = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       activityNames: ['writeContent'],
       leaseMs: 30_000,
     })
@@ -1034,9 +1034,9 @@ describe('in-memory workflow store', () => {
     vi.setSystemTime(Date.now() + 1)
 
     const delayedReleasedActivity = await runtime.attemptExecutor.claim({
-      taskNames: [],
+      tasks: [],
       workerId: 'worker-1',
-      workflowNames: ['case-generation'],
+      workflows: [{ name: 'case-generation' }],
       activityNames: ['writeContent'],
       leaseMs: 30_000,
     })

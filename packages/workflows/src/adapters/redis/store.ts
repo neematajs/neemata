@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto'
 
 import type {
+  GraphPresentation,
+  RevisionManifest,
+  StoredGraph,
+} from '../../inspector/graph.ts'
+import type {
   ClaimedAttempt,
   ContinueRunCommand,
   TaskAttemptCommand,
 } from '../../runtime/commands.ts'
+import type { PreparedRunDefinition } from '../../runtime/definition.ts'
 import type {
   RunSnapshot,
   StoredAttempt,
@@ -35,10 +41,21 @@ import type {
   WorkflowStore,
   WriteFence,
 } from '../../runtime/store.ts'
-import type { Timestamp } from '../../types/index.ts'
+import type { RunnableRevision, Timestamp } from '../../types/index.ts'
 import type { WorkflowRedisClient } from './client.ts'
 import type { FenceCall } from './fence.ts'
 import type { Keys } from './keys.ts'
+import { parseStructure } from '../../inspector/graph.ts'
+import { continueRunCommand } from '../../runtime/commands.ts'
+import {
+  graphConflict,
+  missingGraph,
+  prepareRunDefinition,
+  refKey,
+  refusedJoinHolder,
+  revisionConflict,
+  runRevisionConflict,
+} from '../../runtime/definition.ts'
 import {
   WorkflowIdempotencyConflictError,
   WorkflowRunConflictError,
@@ -58,7 +75,9 @@ import {
   decode,
   encode,
   childKey as encodeChildKey,
+  manifestField,
   nodeKey,
+  presentationField,
   runSignature,
   sameValue,
   type Family,
@@ -116,6 +135,7 @@ export class StoreRuntime {
     readonly created: boolean
     readonly startAt: Timestamp | undefined
   }> {
+    const definition = prepareRunDefinition(input)
     const normalized = await this.#normalizeRun(input)
     const run = this.#buildRun(normalized)
     const rootRunId = run.rootRunId
@@ -142,6 +162,8 @@ export class StoreRuntime {
           this.#keys.activeRuns(),
           this.#keys.runSequence(),
           this.#keys.runWake(rootRunId),
+          this.#keys.graphs(),
+          this.#keys.revisions(),
         ],
         [
           encode(run),
@@ -153,9 +175,12 @@ export class StoreRuntime {
           uniqueBehavior,
           this.#keys.prefix,
           encodedStartAt,
+          ...definitionArguments(run, definition),
         ],
       ),
     )
+    const refusal = definitionRefusal(result, run, definition)
+    if (refusal) throw refusal
     if (result[0] === 'missing-family') {
       throw new Error(`Missing workflow run [${rootRunId}]`)
     }
@@ -172,20 +197,21 @@ export class StoreRuntime {
       if (runMatchesCreateInput(stored, normalized)) {
         return { run: stored, created: false, startAt: storedStartAt }
       }
-      throw new WorkflowIdempotencyConflictError(input.workflowName)
+      throw new WorkflowIdempotencyConflictError(input.workflowName, stored.id)
     }
-    if (result[0] === 'joined') {
+    if (!run.unique || (result[0] !== 'joined' && result[0] !== 'conflict')) {
+      throw new Error(`Unexpected Redis create-run result [${result[0]}]`)
+    }
+    // The holder's identity never changes, so deciding on the run the script
+    // returned is as good as deciding inside it.
+    const joining = result[0] === 'joined'
+    const holder = joining ? refusedJoinHolder(stored, run) : undefined
+    if (joining && !holder) {
       return { run: stored, created: false, startAt: storedStartAt }
     }
-    if (result[0] === 'conflict' && run.unique) {
-      throw new WorkflowRunConflictError({
-        runId: stored.id,
-        status: stored.status,
-        key: run.unique.key,
-        scope: run.unique.scope,
-      })
-    }
-    throw new Error(`Unexpected Redis create-run result [${result[0]}]`)
+    const { key, scope } = run.unique
+    const { id: runId, status } = stored
+    throw new WorkflowRunConflictError({ runId, status, key, scope, holder })
   }
 
   async #reopenFailedRun(params: { runId: string; expectedVersion: number }) {
@@ -230,11 +256,10 @@ export class StoreRuntime {
     const root = runs[params.runId]!
     const date = Date.now()
     let attempt: StoredAttempt | undefined
-    let command: ContinueRunCommand | TaskAttemptCommand = {
-      kind: 'continueRun',
-      runId: root.id,
-      workflowName: root.workflowName,
-    }
+    // Reopening never changes what a run is pinned to: its commands return to
+    // the lane of the revision it was created with.
+    let command: ContinueRunCommand | TaskAttemptCommand =
+      continueRunCommand(root)
     let wakeKind: 'continue' | 'task' = 'continue'
     if (root.kind === 'task') {
       const child = childrenByKey[encodeChildKey(root.id, '$task', '$self')]!
@@ -259,7 +284,7 @@ export class StoreRuntime {
         idempotencyKey: previous.idempotencyKey,
         dispatchedAt: date,
       }
-      command = {
+      const task: Mutable<TaskAttemptCommand> = {
         kind: 'taskAttempt',
         runId: root.id,
         workflowName: root.workflowName,
@@ -271,6 +296,10 @@ export class StoreRuntime {
         input: attempt.input,
         idempotencyKey: attempt.idempotencyKey,
       }
+      if (root.executionRevision !== undefined) {
+        task.revision = root.executionRevision
+      }
+      command = task
       wakeKind = 'task'
     }
     const continueQueue = this.#keys.queue('continue')
@@ -375,7 +404,41 @@ export class StoreRuntime {
       run.idempotencyKey = input.idempotencyKey
     }
     if (input.unique !== undefined) run.unique = input.unique
+    if (input.executionRevision !== undefined) {
+      run.executionRevision = input.executionRevision
+    }
+    if (input.graphHash !== undefined) run.graphHash = input.graphHash
     return run
+  }
+
+  async #loadGraph(graphHash: string): Promise<StoredGraph | undefined> {
+    const json = await this.#client.hget(this.#keys.graphs(), graphHash)
+    if (!json) return undefined
+    return { graphHash, structure: parseStructure(JSON.parse(json)) }
+  }
+
+  async #loadRevision(
+    ref: RunnableRevision,
+  ): Promise<RevisionManifest | undefined> {
+    const { kind, name, revision } = ref
+    const field = manifestField(refKey(ref))
+    const json = await this.#client.hget(this.#keys.revisions(), field)
+    if (!json) return undefined
+    const { graphHash, bindings }: ManifestBody = JSON.parse(json)
+    return { kind, name, revision, graphHash, bindings }
+  }
+
+  async #loadGraphPresentation(
+    runId: string,
+  ): Promise<GraphPresentation | undefined> {
+    const rootRunId = await this.#rootRunId(runId)
+    if (!rootRunId) return undefined
+    const json = await this.#client.hget(
+      this.#keys.family(rootRunId),
+      presentationField(runId),
+    )
+    if (!json) return undefined
+    return JSON.parse(json)
   }
 
   #createStore(): WorkflowStore {
@@ -385,6 +448,9 @@ export class StoreRuntime {
         const result = await this.createRun(input)
         return result.run
       },
+      loadGraph: (graphHash) => this.#loadGraph(graphHash),
+      loadRevision: (ref) => this.#loadRevision(ref),
+      loadGraphPresentation: (runId) => this.#loadGraphPresentation(runId),
       listRuns: (filter = {}) => this.#listRuns(filter),
       listRunSummaries: async (filter = {}) => {
         const result = await this.#listRuns(filter)
@@ -621,16 +687,18 @@ export class StoreRuntime {
   }
 
   async #loadFamily(rootRunId: string) {
+    // Only two meta fields are read: the hash also holds an owner per external
+    // key and the presentation of every run, which no snapshot needs.
     const [meta, runs, nodes, children, attempts, indexes] = await Promise.all([
-      this.#client.hgetall(this.#keys.family(rootRunId)),
+      this.#client.hmget(this.#keys.family(rootRunId), 'rootRunId', 'runIds'),
       this.#client.hgetall(this.#keys.familyRuns(rootRunId)),
       this.#client.hgetall(this.#keys.familyNodes(rootRunId)),
       this.#client.hgetall(this.#keys.familyChildren(rootRunId)),
       this.#client.hgetall(this.#keys.familyAttempts(rootRunId)),
       this.#client.hgetall(this.#keys.familyIndexes(rootRunId)),
     ])
-    if (!meta.rootRunId) return undefined
-    const runIds = decode<string[]>(meta.runIds ?? '[]')
+    if (!meta[0]) return undefined
+    const runIds = decode<string[]>(meta[1] ?? '[]')
     const nodeFields: string[] = []
     const childFields: string[] = []
     const attemptFields: string[] = []
@@ -900,6 +968,7 @@ export class StoreRuntime {
   }
 
   async #ensureChildRun(params: Fenced<EnsureChildRunParams>) {
+    const definition = prepareRunDefinition(params)
     const rootRunId = await this.#requireRootRunId(params.runId, params.fence)
     const fence = await this.#resolveFence(
       params.fence,
@@ -920,6 +989,12 @@ export class StoreRuntime {
     if (params.idempotencyKey !== undefined) {
       input.idempotencyKey = params.idempotencyKey
     }
+    if (definition.executionRevision !== undefined) {
+      input.executionRevision = definition.executionRevision
+    }
+    if (definition.graphHash !== undefined) {
+      input.graphHash = definition.graphHash
+    }
     const childRun = this.#buildRun(input)
     let idempotencyKey = ''
     if (params.idempotencyKey) {
@@ -938,6 +1013,8 @@ export class StoreRuntime {
           this.#keys.activeRuns(),
           this.#keys.runSequence(),
           this.#keys.runWake(rootRunId),
+          this.#keys.graphs(),
+          this.#keys.revisions(),
         ],
         [
           encodeChildKey(params.runId, params.nodeName, params.childKey),
@@ -949,9 +1026,15 @@ export class StoreRuntime {
           String(Date.now()),
           this.#keys.prefix,
           params.cancellation ?? '',
+          ...definitionArguments(childRun, definition),
         ],
       ),
     )
+    const refusal = definitionRefusal(result, childRun, definition)
+    if (refusal) throw refusal
+    if (result[0] === 'idempotency-conflict') {
+      throw new WorkflowIdempotencyConflictError(params.childName, result[1])
+    }
     const reference = childRef(params.runId, params.nodeName, params.childKey)
     if (result[0] === 'missing-child') {
       throw new Error(`Missing node child [${reference}]`)
@@ -1490,15 +1573,77 @@ export class StoreRuntime {
 const runnableName = (input: CreateRunInput) =>
   input.name ?? input.taskName ?? input.workflowName
 
-const runMatchesCreateInput = (run: StoredRun, input: CreateRunInput) =>
-  run.kind === (input.kind ?? 'workflow') &&
-  run.name === runnableName(input) &&
-  run.workflowName === input.workflowName &&
-  run.taskName === input.taskName &&
-  run.parentRunId === input.parentRunId &&
-  run.parentNodeName === input.parentNodeName &&
-  run.rootRunId === (input.rootRunId ?? run.id) &&
-  sameValue(run.input, input.input)
+/** A replay must name the run's revision; its graph hash is not compared. */
+function runMatchesCreateInput(run: StoredRun, input: CreateRunInput) {
+  return (
+    run.kind === (input.kind ?? 'workflow') &&
+    run.name === runnableName(input) &&
+    run.workflowName === input.workflowName &&
+    run.taskName === input.taskName &&
+    run.parentRunId === input.parentRunId &&
+    run.parentNodeName === input.parentNodeName &&
+    run.rootRunId === (input.rootRunId ?? run.id) &&
+    run.executionRevision === input.executionRevision &&
+    sameValue(run.input, input.input)
+  )
+}
+
+type ManifestBody = Pick<RevisionManifest, 'graphHash' | 'bindings'>
+
+type Runnable = Pick<StoredRun, 'kind' | 'name'>
+
+function revisionRef(
+  { kind, name }: Runnable,
+  { executionRevision: revision }: PreparedRunDefinition,
+): RunnableRevision | undefined {
+  if (revision === undefined) return undefined
+  return { kind, name, revision }
+}
+
+/** The flat argument list the definition helpers of the create scripts read. */
+function definitionArguments(
+  run: Runnable,
+  definition: PreparedRunDefinition,
+): string[] {
+  const { bundle, graphHash, graphPresentation } = definition
+  const ref = revisionRef(run, definition)
+  const presentation =
+    graphPresentation === undefined ? '' : JSON.stringify(graphPresentation)
+
+  const args = [graphHash ?? '', ref ? refKey(ref) : '', presentation]
+  args.push(String(bundle.graphs.length))
+  for (const graph of bundle.graphs) args.push(graph.graphHash, graph.json)
+  args.push(String(bundle.revisions.length))
+  for (const revision of bundle.revisions) {
+    args.push(revision.key, revision.graphHash, revision.json)
+  }
+  return args
+}
+
+/** The error behind a create script's refusal of the run's definitions. */
+function definitionRefusal(
+  [code, detail]: readonly string[],
+  run: Runnable,
+  definition: PreparedRunDefinition,
+): Error | undefined {
+  const { bundle, graphHash } = definition
+  if (code === 'graph-conflict') return graphConflict(detail!)
+  if (code === 'revision-conflict') {
+    return revisionConflict(
+      bundle.revisions.find((revision) => revision.key === detail)!,
+    )
+  }
+  if (code === 'missing-graph') return missingGraph(graphHash!)
+
+  const ref = revisionRef(run, definition)
+  if (code === 'missing-revision') {
+    return runRevisionConflict(ref!, graphHash!, undefined)
+  }
+  if (code === 'revision-graph') {
+    return runRevisionConflict(ref!, graphHash!, { graphHash: detail! })
+  }
+  return undefined
+}
 
 const compareRunsOldest = (left: StoredRun, right: StoredRun) =>
   left.createdAt - right.createdAt || left.id.localeCompare(right.id)
@@ -1576,7 +1721,7 @@ const jsonContains = (target: unknown, expected: unknown): boolean => {
   return Object.is(target, expected)
 }
 
-const runMatchesFilter = (run: StoredRun, filter: ListRunsFilter) => {
+function runMatchesFilter(run: StoredRun, filter: ListRunsFilter) {
   if (
     filter.activeBefore !== undefined &&
     run.activeSince >= filter.activeBefore
@@ -1584,6 +1729,13 @@ const runMatchesFilter = (run: StoredRun, filter: ListRunsFilter) => {
     return false
   if (filter.kind !== undefined && run.kind !== filter.kind) return false
   if (filter.name !== undefined && run.name !== filter.name) return false
+  // `null` selects the unversioned lane, which a stored run marks by absence.
+  if (
+    filter.executionRevision !== undefined &&
+    run.executionRevision !== (filter.executionRevision ?? undefined)
+  ) {
+    return false
+  }
   if (Array.isArray(filter.status)) {
     if (!filter.status.includes(run.status)) return false
   } else if (filter.status !== undefined && run.status !== filter.status) {

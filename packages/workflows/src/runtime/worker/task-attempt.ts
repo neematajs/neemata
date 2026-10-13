@@ -6,10 +6,11 @@ import type { WorkflowStore } from '../store.ts'
 import type { WorkflowWakeEvents } from '../wake-events.ts'
 import { decodeStoredValue, encodeStoredValue } from '../codec.ts'
 import { cancelRunAndWakeParent } from '../coordinator/sinks.ts'
+import { findDefinitionConflict } from '../definition.ts'
 import { parseDurationMs } from '../duration.ts'
 import { StaleWriteFenceError } from '../errors.ts'
 import { WorkflowCleanupTimeoutError, type HandlerRunner } from '../handler.ts'
-import { createWorkflowRuntimeRegistry } from '../registry.ts'
+import { createWorkflowRuntimeRegistry, routeLabel } from '../registry.ts'
 import { isTerminalRunStatus } from '../status.ts'
 import { wakeParentRun } from '../wake.ts'
 import {
@@ -94,17 +95,21 @@ export async function runTaskAttempt(
             command.retry ??
             createWorkflowRuntimeRegistry({ tasks: input.tasks }).getTask(
               command.taskName,
+              command.revision,
             )?.task.retry,
         },
       ),
     )
   }
 
-  if (snapshot?.run.workflowName !== command.workflowName) {
+  if (
+    snapshot?.run.workflowName !== command.workflowName ||
+    snapshot.run.executionRevision !== command.revision
+  ) {
     await input.attemptExecutor.release(input.claimed, {
       reason: 'unroutable',
       error: new Error(
-        `Run [${command.runId}] workflow does not match command workflow [${command.workflowName}]`,
+        `Run [${command.runId}] does not match command route [${routeLabel({ name: command.workflowName, revision: command.revision })}]`,
       ),
     })
     return { status: 'released' }
@@ -113,13 +118,26 @@ export async function runTaskAttempt(
   const registry = createWorkflowRuntimeRegistry({
     tasks: input.tasks,
   })
-  const task = registry.getTask(command.taskName)
+  const task = registry.getTask(command.taskName, command.revision)
   if (!task) {
     await input.attemptExecutor.release(input.claimed, {
       reason: 'unroutable',
       error: new Error(
-        `No registered task implementation [${command.taskName}]`,
+        `No registered task implementation [${routeLabel({ name: command.taskName, revision: command.revision })}]`,
       ),
+    })
+    return { status: 'released' }
+  }
+
+  // The run row, not the command, decides what the attempt is pinned to.
+  const conflict =
+    snapshot.run.kind === 'task'
+      ? await findDefinitionConflict(input.store, snapshot.run, task.task)
+      : undefined
+  if (conflict) {
+    await input.attemptExecutor.release(input.claimed, {
+      reason: 'unroutable',
+      error: conflict,
     })
     return { status: 'released' }
   }
