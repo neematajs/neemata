@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: task and workflow contracts, implementations, execution pools, PostgreSQL and Redis/Valkey runtimes, the runtime client, Neem workflow workers, and typed publish/subscribe channels, with or without Effect.'
+description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: Effect task and workflow declarations, execution pools, revisions, the Client and Worker modules, in-memory, PostgreSQL and Redis/Valkey stores, Neem workflow workers, and typed publish/subscribe channels.'
 ---
 
 # Use Neemata
@@ -10,23 +10,22 @@ Neemata provides shared utilities (`common`), Effect application hosting
 workflows, and Vite/Nuxt integration (`vite`, `nuxt`). Applications own their
 RPC/HTTP APIs and dependency wiring.
 
-- Workflows without Effect import from `@nmtjs/workflows`; Effect applications
-  import the contract and implementation builders from `@nmtjs/workflows/effect`.
+- Workflows are Effect-only: declarations, `Client`, `Worker` and `InMemory`
+  come from `@nmtjs/workflows`; stores from `@nmtjs/workflows/postgres` and
+  `@nmtjs/workflows/redis`. They require `effect@^4.0.4`.
 - Pubsub is Effect-only: it imports from `@nmtjs/pubsub` and
   `@nmtjs/pubsub/RedisBroker`.
-- Neem workers import from `@nmtjs/workflows/neem` or
-  `@nmtjs/workflows/effect/neem`.
-- Effect adapters require the optional `effect` peer
-  `^4.0.0`. Core workflow APIs are Effect-free; pubsub requires Effect.
+- Neem hosts workflows with `@nmtjs/workflows/neem` (runtime declaration and
+  planner) and `@nmtjs/workflows/neem/worker` (the worker).
 - Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
   running Neem itself is covered by the `use-neem` skill.
 
 ## References
 
-- [Workflows](references/workflows.md) - contracts, implementations, pools,
-  Effect handlers, runtime clients, retry/watch, Redis/Valkey, inspector and
-  Neem integration.
-- [PostgreSQL](references/postgres.md) - accepted clients, transaction scopes,
-  timestamp parsers, schema version 4, Drizzle migrations and LISTEN ownership.
+- [Workflows](references/workflows.md) - tasks, workflow steps, references,
+  handlers, pools, the client, workers, schedules, revisions, Redis/Valkey,
+  inspector, Neem integration and upgrading from the Promise engine.
+- [PostgreSQL](references/postgres.md) - the Effect SQL store, hints,
+  transactions, schema generation 6, Drizzle and the migration from 5.
 - [PubSub](references/pubsub.md) - typed Effect channels, delivery semantics,
   errors and retrying, in-memory and Redis/Valkey brokers.

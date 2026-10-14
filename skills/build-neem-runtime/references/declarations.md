@@ -44,7 +44,7 @@ export default defineRuntime({
 declaration file, including defaults supplied by a package helper. Absolute
 paths and bare package exports are accepted. URL objects must use `file:`;
 use `new URL('./host.ts', import.meta.url)` for a package-relative URL, or a
-published export such as `@nmtjs/workflows/neem/host`.
+published export such as `@nmtjs/effect/neem/planner`.
 
 Keep entry specifiers in declarations instead of importing marked entries as
 values. Declarations are evaluated during build/dev discovery; module-level

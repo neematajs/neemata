@@ -1,654 +1,247 @@
-import * as Schema from 'effect/Schema'
-import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
-import type {
-  RunSnapshot,
-  StoredAttempt,
-  StoredNode,
-  StoredNodeChild,
-} from '../src/runtime/state.ts'
-import type {
-  AttemptSummary,
-  NodeChildSummary,
-  NodeSnapshot,
-  NodeSummary,
-  RunDetail,
-  RunFamilyEntry,
-  RunSummary,
-} from '../src/runtime/store.ts'
-import { defineTask, defineWorkflow } from '../src/effect/index.ts'
+import { describe, expect, it } from '@effect/vitest'
+import * as Effect from 'effect/Effect'
+
+import type { Program } from '../src/index.ts'
+import * as Main from '../src/index.ts'
+import { Client, settle, start } from '../src/index.ts'
 import {
+  caseKey,
+  isTerminal,
+  itemKey,
+  memberKey,
   nodeUnits,
+  parseChildKey,
+  SELF,
   serializeWorkflowCatalog,
-  serializeWorkflowGraph,
-} from '../src/inspector/index.ts'
+  TASK,
+} from '../src/inspector.ts'
+import { Billing } from './fixtures/billing.ts'
+import { PROMISE_ENGINE } from './promise-engine.ts'
+import {
+  claimAttempts,
+  completed,
+  failed,
+  pass,
+  setup,
+  unused,
+  work,
+} from './support.ts'
 
-const scoreTask = defineTask({
-  name: 'score',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ score: Schema.Number }),
-})
-
-const childWorkflow = defineWorkflow({
-  name: 'child',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ text: Schema.String }),
-}).build()
-
-const workflow = defineWorkflow({
-  name: 'everything',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ text: Schema.String }),
-})
-  .activity('extract', {
-    input: Schema.Struct({ text: Schema.String }),
-    output: Schema.Struct({ text: Schema.String }),
-  })
-  .task('scoring', scoreTask)
-  .workflow('enrich', childWorkflow)
-  .branch('route', {
-    output: Schema.Struct({ text: Schema.String }),
-    cases: (helpers) => ({
-      inline: helpers.activity({
-        input: Schema.Struct({ text: Schema.String }),
-        output: Schema.Struct({ text: Schema.String }),
-      }),
-      delegated: helpers.workflow(childWorkflow),
-    }),
-  })
-  .parallel('fanout', (helpers) => ({
-    scored: helpers.task(scoreTask),
-    enriched: helpers.workflow(childWorkflow),
-  }))
-  .mapTask('scoreAll', scoreTask, {
-    item: Schema.Struct({ text: Schema.String }),
-  })
-  .mapWorkflow('enrichAll', childWorkflow, {
-    item: Schema.Struct({ text: Schema.String }),
-  })
-  .build()
-
-const metadataTask = defineTask({
-  name: 'metadata-score',
-  title: 'Metadata score task',
-  description: 'Scores text for metadata graph',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ text: Schema.String }),
-})
-
-const metadataChildWorkflow = defineWorkflow({
-  name: 'metadata-child',
-  title: 'Metadata child workflow',
-  description: 'Enriches text for metadata graph',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ text: Schema.String }),
-}).build()
-
-const metadataWorkflow = defineWorkflow({
-  name: 'metadata-everything',
-  title: 'Metadata workflow',
-  description: 'Workflow graph with presentation metadata',
-  input: Schema.Struct({ text: Schema.String }),
-  output: Schema.Struct({ text: Schema.String }),
-})
-  .activity('extract', {
-    title: 'Extract text',
-    description: 'Extracts text from input',
-    input: Schema.Struct({ text: Schema.String }),
-    output: Schema.Struct({ text: Schema.String }),
-  })
-  .task('scoring', metadataTask, {
-    title: 'Score text',
-    description: 'Scores extracted text',
-  })
-  .workflow('enrich', metadataChildWorkflow, {
-    title: 'Enrich text',
-    description: 'Delegates enrichment',
-  })
-  .branch('route', {
-    title: 'Route text',
-    description: 'Chooses inline or delegated work',
-    output: Schema.Struct({ text: Schema.String }),
-    cases: (helpers) => ({
-      inline: helpers.activity({
-        title: 'Inline route',
-        description: 'Runs inline route',
-        input: Schema.Struct({ text: Schema.String }),
-        output: Schema.Struct({ text: Schema.String }),
-      }),
-      scored: helpers.task(metadataTask, {
-        title: 'Task route',
-        description: 'Routes through task',
-      }),
-      delegated: helpers.workflow(metadataChildWorkflow, {
-        title: 'Workflow route',
-        description: 'Routes through workflow',
-      }),
-    }),
-  })
-  .parallel(
-    'fanout',
-    (helpers) => ({
-      scored: helpers.task(metadataTask, {
-        title: 'Parallel task route',
-        description: 'Runs task in parallel',
-      }),
-      enriched: helpers.workflow(metadataChildWorkflow, {
-        title: 'Parallel workflow route',
-        description: 'Runs workflow in parallel',
-      }),
-    }),
-    {
-      title: 'Fan out',
-      description: 'Runs members in parallel',
-    },
+/** What a module loads when it runs: its imports that are not types alone. */
+function loaded(file: string, seen = new Set<string>()): readonly string[] {
+  if (seen.has(file)) return []
+  seen.add(file)
+  const source = readFileSync(file, 'utf8')
+  const specifiers = Array.from(
+    source.matchAll(
+      /^(?:import|export)\s+(?!type\b)[^'"]*?from\s+'([^']+)'|^import\s+'([^']+)'/gms,
+    ),
+    ([, from, bare]) => (from ?? bare)!,
   )
-  .mapTask('scoreAll', metadataTask, {
-    title: 'Score all',
-    description: 'Scores every item',
-    item: Schema.Struct({ text: Schema.String }),
-  })
-  .mapWorkflow('enrichAll', metadataChildWorkflow, {
-    title: 'Enrich all',
-    description: 'Enriches every item',
-    item: Schema.Struct({ text: Schema.String }),
-  })
-  .build()
+  return specifiers.flatMap((specifier) =>
+    specifier.startsWith('.')
+      ? loaded(resolve(dirname(file), specifier), seen)
+      : [specifier],
+  )
+}
 
-describe('serializeWorkflowGraph', () => {
-  it('serializes every node kind to the stable JSON shape', () => {
-    expect(serializeWorkflowGraph(workflow)).toEqual({
-      name: 'everything',
-      nodes: [
-        { name: 'extract', kind: 'activity' },
-        {
-          name: 'scoring',
-          kind: 'task',
-          target: { kind: 'task', name: 'score' },
-        },
-        {
-          name: 'enrich',
-          kind: 'workflow',
-          target: { kind: 'workflow', name: 'child' },
-        },
-        {
-          name: 'route',
-          kind: 'branch',
-          cases: [
-            { key: 'inline', kind: 'activity' },
-            {
-              key: 'delegated',
-              kind: 'workflow',
-              target: { kind: 'workflow', name: 'child' },
-            },
-          ],
-        },
-        {
-          name: 'fanout',
-          kind: 'parallel',
-          cases: [
-            {
-              key: 'scored',
-              kind: 'task',
-              target: { kind: 'task', name: 'score' },
-            },
-            {
-              key: 'enriched',
-              kind: 'workflow',
-              target: { kind: 'workflow', name: 'child' },
-            },
-          ],
-        },
-        {
-          name: 'scoreAll',
-          kind: 'mapTask',
-          target: { kind: 'task', name: 'score' },
-        },
-        {
-          name: 'enrichAll',
-          kind: 'mapWorkflow',
-          target: { kind: 'workflow', name: 'child' },
-        },
-      ],
-    })
+describe('the inspector entry', () => {
+  it('loads no Node API and no package, so a browser can load it', () => {
+    const entry = resolve(import.meta.dirname, '../src/inspector.ts')
+    expect(loaded(entry)).toStrictEqual([])
+    // The same walk does find what the main entry hashes graphs with.
+    expect(loaded(resolve(dirname(entry), 'graph/index.ts'))).toContain(
+      'node:crypto',
+    )
   })
 
-  it('serializes presentation metadata on graphs, nodes, cases, and targets', () => {
-    const graph = serializeWorkflowGraph(metadataWorkflow)
-
-    expect(graph).toEqual({
-      name: 'metadata-everything',
-      title: 'Metadata workflow',
-      description: 'Workflow graph with presentation metadata',
-      nodes: [
-        {
-          name: 'extract',
-          kind: 'activity',
-          title: 'Extract text',
-          description: 'Extracts text from input',
-        },
-        {
-          name: 'scoring',
-          kind: 'task',
-          title: 'Score text',
-          description: 'Scores extracted text',
-          target: {
-            kind: 'task',
-            name: 'metadata-score',
-            title: 'Metadata score task',
-            description: 'Scores text for metadata graph',
-          },
-        },
-        {
-          name: 'enrich',
-          kind: 'workflow',
-          title: 'Enrich text',
-          description: 'Delegates enrichment',
-          target: {
-            kind: 'workflow',
-            name: 'metadata-child',
-            title: 'Metadata child workflow',
-            description: 'Enriches text for metadata graph',
-          },
-        },
-        {
-          name: 'route',
-          kind: 'branch',
-          title: 'Route text',
-          description: 'Chooses inline or delegated work',
-          cases: [
-            {
-              key: 'inline',
-              kind: 'activity',
-              title: 'Inline route',
-              description: 'Runs inline route',
-            },
-            {
-              key: 'scored',
-              kind: 'task',
-              title: 'Task route',
-              description: 'Routes through task',
-              target: {
-                kind: 'task',
-                name: 'metadata-score',
-                title: 'Metadata score task',
-                description: 'Scores text for metadata graph',
-              },
-            },
-            {
-              key: 'delegated',
-              kind: 'workflow',
-              title: 'Workflow route',
-              description: 'Routes through workflow',
-              target: {
-                kind: 'workflow',
-                name: 'metadata-child',
-                title: 'Metadata child workflow',
-                description: 'Enriches text for metadata graph',
-              },
-            },
-          ],
-        },
-        {
-          name: 'fanout',
-          kind: 'parallel',
-          title: 'Fan out',
-          description: 'Runs members in parallel',
-          cases: [
-            {
-              key: 'scored',
-              kind: 'task',
-              title: 'Parallel task route',
-              description: 'Runs task in parallel',
-              target: {
-                kind: 'task',
-                name: 'metadata-score',
-                title: 'Metadata score task',
-                description: 'Scores text for metadata graph',
-              },
-            },
-            {
-              key: 'enriched',
-              kind: 'workflow',
-              title: 'Parallel workflow route',
-              description: 'Runs workflow in parallel',
-              target: {
-                kind: 'workflow',
-                name: 'metadata-child',
-                title: 'Metadata child workflow',
-                description: 'Enriches text for metadata graph',
-              },
-            },
-          ],
-        },
-        {
-          name: 'scoreAll',
-          kind: 'mapTask',
-          title: 'Score all',
-          description: 'Scores every item',
-          target: {
-            kind: 'task',
-            name: 'metadata-score',
-            title: 'Metadata score task',
-            description: 'Scores text for metadata graph',
-          },
-        },
-        {
-          name: 'enrichAll',
-          kind: 'mapWorkflow',
-          title: 'Enrich all',
-          description: 'Enriches every item',
-          target: {
-            kind: 'workflow',
-            name: 'metadata-child',
-            title: 'Metadata child workflow',
-            description: 'Enriches text for metadata graph',
-          },
-        },
-      ],
-    })
-    expect(JSON.parse(JSON.stringify(graph))).toEqual(graph)
-  })
-
-  it('survives JSON transport unchanged', () => {
-    const graph = serializeWorkflowGraph(workflow)
-    expect(JSON.parse(JSON.stringify(graph))).toEqual(graph)
-  })
-
-  it('omits presentation metadata keys when definitions do not provide them', () => {
-    const graph = serializeWorkflowGraph(workflow)
-
-    expect('title' in graph).toBe(false)
-    expect(graph.nodes.every((node) => !('title' in node))).toBe(true)
-    expect(
-      graph.nodes.every(
-        (node) => node.target === undefined || !('title' in node.target),
-      ),
-    ).toBe(true)
-    expect(
-      graph.nodes.every(
-        (node) =>
-          node.cases === undefined ||
-          node.cases.every(
-            (branchCase) =>
-              !('title' in branchCase) &&
-              (branchCase.target === undefined ||
-                !('title' in branchCase.target)),
-          ),
-      ),
-    ).toBe(true)
-  })
-})
-
-describe('serializeWorkflowCatalog', () => {
-  it('lists definitions with their graphs', () => {
-    const catalog = serializeWorkflowCatalog({
-      workflows: [workflow, childWorkflow],
-      tasks: [scoreTask],
-    })
-
-    expect(catalog.workflows.map((graph) => graph.name)).toEqual([
-      'everything',
-      'child',
-    ])
-    expect(catalog.workflows[0]).toEqual(serializeWorkflowGraph(workflow))
-    expect(catalog.tasks).toEqual([{ name: 'score' }])
-  })
-
-  it('lists task presentation metadata when present', () => {
+  it('gives the catalog the Promise engine gave for the same declarations', () => {
     expect(
       serializeWorkflowCatalog({
-        tasks: [metadataTask],
-      }).tasks,
-    ).toEqual([
-      {
-        name: 'metadata-score',
-        title: 'Metadata score task',
-        description: 'Scores text for metadata graph',
-      },
-    ])
+        workflows: Billing.workflows,
+        tasks: Billing.tasks,
+      }),
+    ).toStrictEqual(PROMISE_ENGINE.billing.catalog)
   })
 
-  it('defaults missing inputs to empty lists', () => {
-    expect(serializeWorkflowCatalog({})).toEqual({ workflows: [], tasks: [] })
-  })
-})
+  it.effect(
+    'lists the children of a node, each with its attempts and its run',
+    () => {
+      const member = { kind: 'activity', execute: unused } as const
+      const programs: readonly Program[] = [
+        {
+          kind: 'workflow',
+          name: 'flow',
+          steps: [
+            {
+              kind: 'parallel',
+              name: 'both',
+              members: {
+                b: { ...member, input: () => 'b', retry: { attempts: 2 } },
+                a: { ...member, input: () => 'a' },
+              },
+            },
+            {
+              kind: 'map',
+              name: 'each',
+              items: () => Array.from({ length: 11 }, (_, index) => index),
+              input: (_outputs, _input, item) => item,
+              target: { kind: 'task', task: { name: 'job' } },
+            },
+          ],
+          result: () => null,
+        },
+        { kind: 'task', name: 'job', execute: unused },
+      ]
+      const { served, provide } = setup(programs)
 
-describe('stored snapshots', () => {
-  const createdAt = Date.parse('2026-07-08T10:00:00.000Z')
-  const updatedAt = Date.parse('2026-07-08T10:00:01.000Z')
+      return provide(
+        Effect.gen(function* () {
+          const { run } = yield* start({ name: 'flow', input: null })
+          yield* pass(served)
+          const claims = yield* claimAttempts(served)
+          const of = (key: string) =>
+            claims.find(({ command }) => command.childKey === memberKey(key))!
+          expect(yield* settle(served, of('b'), failed('once'))).toBe(
+            'retrying',
+          )
+          yield* settle(served, of('a'), completed('a'))
+          yield* work(served, completed('b'))
+          yield* pass(served)
 
-  const snapshot: RunSnapshot = {
-    run: {
-      id: 'run-1',
-      kind: 'workflow',
-      name: 'everything',
-      workflowName: 'everything',
-      status: 'running',
-      input: { text: 'hi' },
-      activeSince: createdAt,
-      rootRunId: 'run-1',
-      tags: { env: 'test' },
-      version: 3,
-      createdAt,
-      updatedAt,
+          const detail = (yield* Client.getDetail(run.id))!
+          // Handed over in no order of its own: the order is the list's.
+          const unordered = {
+            ...detail,
+            children: [...detail.children].reverse(),
+            attempts: [...detail.attempts].reverse(),
+          }
+
+          expect(nodeUnits(unordered, 'both')).toMatchObject([
+            {
+              key: 'member:a',
+              parsed: { kind: 'member', memberKey: 'a' },
+              child: { status: 'completed' },
+              attempts: [{ attemptNumber: 1, status: 'completed' }],
+            },
+            {
+              key: 'member:b',
+              parsed: { kind: 'member', memberKey: 'b' },
+              child: { status: 'completed' },
+              attempts: [
+                { attemptNumber: 1, status: 'failed' },
+                { attemptNumber: 2, status: 'completed' },
+              ],
+            },
+          ])
+
+          // By the place of the item, which the text of a key does not give.
+          const items = nodeUnits(unordered, 'each')
+          expect(items.map(({ key }) => key)).toStrictEqual(
+            Array.from({ length: 11 }, (_, index) => itemKey(index)),
+          )
+          for (const { child, childRun, attempts } of items) {
+            expect(childRun).toMatchObject({
+              id: child.childRunId,
+              kind: 'task',
+              name: 'job',
+            })
+            // The attempts of a task run are its own run's.
+            expect(attempts).toStrictEqual([])
+          }
+          expect(nodeUnits(detail, 'absent')).toStrictEqual([])
+        }),
+      )
     },
-    nodes: [
-      {
-        runId: 'run-1',
-        name: 'extract',
-        kind: 'activity',
-        status: 'completed',
-        output: { text: 'hi' },
-        version: 2,
-        createdAt,
-        updatedAt,
-      },
-    ],
-    children: [
-      {
-        runId: 'run-1',
-        nodeName: 'extract',
-        childKey: '$self',
-        kind: 'activity',
-        status: 'completed',
-        ordinal: 0,
-        output: { text: 'hi' },
-        attemptCount: 1,
-        version: 2,
-        createdAt,
-        updatedAt,
-      },
-    ],
-    attempts: [
-      {
-        id: 'attempt-1',
-        runId: 'run-1',
-        nodeName: 'extract',
-        childKey: '$self',
-        status: 'completed',
-        attemptNumber: 1,
-        retryAttemptNumber: 1,
-        input: { text: 'hi' },
-        output: { text: 'hi' },
-        dispatchedAt: createdAt,
-        completedAt: updatedAt,
-      },
-    ],
-  }
+  )
+})
 
-  it('survives JSON transport unchanged, timestamps included', () => {
-    expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot)
-    expect(snapshot.run.createdAt).toBe(1783504800000)
+describe('the children of a node', () => {
+  it.effect('are in the order the Promise engine listed keys in', () => {
+    const member = { kind: 'activity', execute: unused, input: () => null }
+    const { served, provide } = setup([
+      {
+        kind: 'workflow',
+        name: 'flow',
+        steps: [
+          {
+            kind: 'parallel',
+            name: 'both',
+            members: { z: member, ä: member, A: member, a: member },
+          },
+        ],
+        result: () => null,
+      } as Program,
+    ])
+
+    return provide(
+      Effect.gen(function* () {
+        const { run } = yield* start({ name: 'flow', input: null })
+        yield* pass(served)
+        const detail = (yield* Client.getDetail(run.id))!
+
+        // As text of a language is sorted, not by code unit: that would
+        // be A, a, z, ä.
+        expect(nodeUnits(detail, 'both').map(({ key }) => key)).toStrictEqual(
+          ['a', 'A', 'ä', 'z'].map(memberKey),
+        )
+      }),
+    )
   })
 })
 
-describe('read model inspector helpers', () => {
-  const createdAt = Date.parse('2026-07-08T10:00:00.000Z')
-  const updatedAt = Date.parse('2026-07-08T10:00:01.000Z')
+describe('what a dashboard reads a run by', () => {
+  it.effect(
+    'names the one node of a task run, and the statuses that end one',
+    () => {
+      const { served, provide } = setup([
+        { kind: 'task', name: 'job', execute: unused },
+      ])
 
-  const runSummary = (id: string): RunSummary => ({
-    id,
-    kind: 'workflow',
-    name: id,
-    workflowName: id,
-    status: 'running',
-    activeSince: createdAt,
-    rootRunId: 'run-1',
-    tags: {},
-    version: 1,
-    createdAt,
-    updatedAt,
-    nodesTotal: 0,
-    nodesCompleted: 0,
-  })
-  const nodeSummary = (
-    name: string,
-    kind: NodeSummary['kind'],
-  ): NodeSummary => ({
-    runId: 'run-1',
-    name,
-    kind,
-    status: 'running',
-    version: 1,
-    createdAt,
-    updatedAt,
-  })
-  const childSummary = (
-    nodeName: string,
-    childKey: string,
-    ordinal: number,
-    childRunId?: string,
-  ): NodeChildSummary => ({
-    runId: 'run-1',
-    nodeName,
-    childKey,
-    kind: childRunId ? 'workflow' : 'activity',
-    status: 'running',
-    ordinal,
-    ...(childRunId === undefined ? {} : { childRunId }),
-    attemptCount: 1,
-    version: 1,
-    createdAt,
-    updatedAt,
-  })
-  const attemptSummary = (
-    childKey: string,
-    attemptNumber: number,
-  ): AttemptSummary => ({
-    id: `attempt-${childKey}-${attemptNumber}`,
-    runId: 'run-1',
-    nodeName: 'fanout',
-    childKey,
-    status: 'completed',
-    attemptNumber,
-    retryAttemptNumber: attemptNumber,
-    dispatchedAt: createdAt,
-    completedAt: updatedAt,
-  })
+      return provide(
+        Effect.gen(function* () {
+          const { run } = yield* start({ kind: 'task', name: 'job', input: 1 })
+          const queued = (yield* Client.getDetail(run.id))!
+          expect(queued.nodes.map(({ name }) => name)).toStrictEqual([TASK])
+          expect(nodeUnits(queued, TASK)).toMatchObject([{ key: SELF }])
+          expect(isTerminal(queued.run.status)).toBe(false)
 
-  const detail: RunDetail = {
-    run: runSummary('run-1'),
-    nodes: [
-      nodeSummary('route', 'branch'),
-      nodeSummary('fanout', 'parallel'),
-      nodeSummary('items', 'mapTask'),
-    ],
-    children: [
-      childSummary('route', 'case:delegated', 0, 'child-1'),
-      childSummary('fanout', 'member:b', 0),
-      childSummary('fanout', 'member:a', 0),
-      childSummary('items', 'item:1', 1),
-      childSummary('items', 'item:0', 0),
-    ],
-    attempts: [
-      attemptSummary('member:a', 2),
-      attemptSummary('member:a', 1),
-      attemptSummary('member:b', 1),
-    ],
-    childRuns: [runSummary('child-1')],
-  }
+          yield* work(served, completed('done'))
+          expect(
+            isTerminal((yield* Client.getDetail(run.id))!.run.status),
+          ).toBe(true)
+          // The main entry gives the same two.
+          expect([Main.TASK, Main.isTerminal]).toStrictEqual([TASK, isTerminal])
+        }),
+      )
+    },
+  )
+})
 
-  it('builds node units for branch, parallel, and map child keys', () => {
-    const route = nodeUnits(detail, 'route')
-    const fanout = nodeUnits(detail, 'fanout')
-    const items = nodeUnits(detail, 'items')
-
-    expect(route).toMatchObject([
-      {
-        key: 'case:delegated',
-        parsed: { kind: 'case', caseKey: 'delegated' },
-        childRun: { id: 'child-1' },
-      },
-    ])
-    expect(fanout.map((unit) => unit.key)).toStrictEqual([
-      'member:a',
-      'member:b',
-    ])
-    expect(fanout[0]?.parsed).toStrictEqual({
-      kind: 'member',
-      memberKey: 'a',
+describe('child keys', () => {
+  it('are read back as they were written', () => {
+    expect(parseChildKey(SELF)).toStrictEqual({ kind: 'self' })
+    // A key a user chose may hold anything, a prefix of ours included.
+    expect(parseChildKey(caseKey('item:3'))).toStrictEqual({
+      kind: 'case',
+      caseKey: 'item:3',
     })
-    expect(
-      fanout[0]?.attempts.map((attempt) => attempt.attemptNumber),
-    ).toStrictEqual([1, 2])
-    expect(items.map((unit) => unit.parsed)).toStrictEqual([
-      { kind: 'item', itemIndex: 0 },
-      { kind: 'item', itemIndex: 1 },
-    ])
+    expect(parseChildKey(memberKey(''))).toStrictEqual({
+      kind: 'member',
+      memberKey: '',
+    })
+    expect(parseChildKey(itemKey(12))).toStrictEqual({
+      kind: 'item',
+      itemIndex: 12,
+    })
   })
 
-  it('keeps read models JSON-safe as they are', () => {
-    const node: StoredNode = {
-      runId: 'run-1',
-      name: 'fanout',
-      kind: 'parallel',
-      status: 'completed',
-      input: { text: 'input' },
-      output: { text: 'output' },
-      version: 2,
-      createdAt,
-      updatedAt,
+  it('are not read from what the engine never wrote', () => {
+    for (const key of ['self', 'item:', 'item:-1', 'item:01', 'item:1e2']) {
+      expect(parseChildKey(key)).toBeUndefined()
     }
-    const child: StoredNodeChild = {
-      runId: 'run-1',
-      nodeName: 'fanout',
-      childKey: 'member:a',
-      kind: 'activity',
-      status: 'completed',
-      ordinal: 0,
-      input: { text: 'child-input' },
-      output: { text: 'child-output' },
-      attemptCount: 1,
-      version: 2,
-      createdAt,
-      updatedAt,
-    }
-    const attempt: StoredAttempt = {
-      id: 'attempt-1',
-      runId: 'run-1',
-      nodeName: 'fanout',
-      childKey: 'member:a',
-      status: 'completed',
-      attemptNumber: 1,
-      retryAttemptNumber: 1,
-      input: { text: 'attempt-input' },
-      output: { text: 'attempt-output' },
-      dispatchedAt: createdAt,
-      completedAt: updatedAt,
-    }
-    const snapshot: NodeSnapshot = {
-      node,
-      children: [child],
-      attempts: [attempt],
-    }
-    const familyEntry: RunFamilyEntry = {
-      run: detail.childRuns[0]!,
-      origin: { nodeName: 'route', childKey: 'case:delegated' },
-    }
-    const unit = nodeUnits(detail, 'route')[0]!
-
-    for (const value of [detail, snapshot, familyEntry, unit])
-      expect(JSON.parse(JSON.stringify(value))).toEqual(value)
   })
 })

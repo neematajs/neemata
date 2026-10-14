@@ -15,11 +15,13 @@ minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  # The workspace is pinned to Effect 4.0.4, published 2026-10-13, which the
-  # native workflow engine targets. Only that version is admitted early: any
+  # The workspace is pinned to Effect 4.0.4, published 2026-10-13, which
+  # @nmtjs/workflows targets. Only that version is admitted early: any
   # later Effect release still waits out the policy. These entries are
   # redundant from 2026-10-17 and can be removed.
   - effect@4.0.4
   - '@effect/platform-node@4.0.4'
   - '@effect/platform-node-shared@4.0.4'
   - '@effect/sql-pg@4.0.4'
+  - '@effect/sql-pglite@4.0.4'
+  - '@effect/vitest@4.0.4'

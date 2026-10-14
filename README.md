@@ -3,72 +3,69 @@
 Neem hosting and durable workflows. Applications own their RPC, HTTP and clients;
 Neemata supervises their processes and coordinates their durable work.
 
-| Package              | Purpose                                                                                                           |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `@nmtjs/neem`        | Effect-based runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))  |
-| `@nmtjs/workflows`   | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))                |
-| `@nmtjs/pubsub`      | Typed ephemeral publish/subscribe for Effect, with Redis and Valkey brokers ([README](packages/pubsub/README.md)) |
-| `@nmtjs/effect`      | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))                      |
-| `@nmtjs/metrics`     | Metrics plugin for a Neem project                                                                                 |
-| `@nmtjs/prom-client` | Prometheus client with worker-thread aggregation ([README](packages/prom-client/README.md))                       |
-| `@nmtjs/proxy`       | Rust reverse proxy and native Node.js bindings ([README](packages/proxy/README.md))                               |
-| `@nmtjs/vite`        | Neem runtime for a Vite application                                                                               |
-| `@nmtjs/nuxt`        | Neem runtime for a Nuxt application                                                                               |
-| `@nmtjs/common`      | Utilities shared by the packages above                                                                            |
+| Package              | Purpose                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `@nmtjs/neem`        | Effect-based runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))                |
+| `@nmtjs/workflows`   | Durable Effect workflows: tasks, workflow graphs, workers, PostgreSQL and Redis stores ([README](packages/workflows/README.md)) |
+| `@nmtjs/pubsub`      | Typed ephemeral publish/subscribe for Effect, with Redis and Valkey brokers ([README](packages/pubsub/README.md))               |
+| `@nmtjs/effect`      | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))                                    |
+| `@nmtjs/metrics`     | Metrics plugin for a Neem project                                                                                               |
+| `@nmtjs/prom-client` | Prometheus client with worker-thread aggregation ([README](packages/prom-client/README.md))                                     |
+| `@nmtjs/proxy`       | Rust reverse proxy and native Node.js bindings ([README](packages/proxy/README.md))                                             |
+| `@nmtjs/vite`        | Neem runtime for a Vite application                                                                                             |
+| `@nmtjs/nuxt`        | Neem runtime for a Nuxt application                                                                                             |
+| `@nmtjs/common`      | Utilities shared by the packages above                                                                                          |
 
-The workflows core has no Effect dependency: definitions take Standard Schemas and
-handlers return values or Promises. `@nmtjs/workflows/effect`, `@nmtjs/effect` and
-`@nmtjs/pubsub` require **Effect 4** (`effect@^4.0.4`).
+`@nmtjs/workflows`, `@nmtjs/effect` and `@nmtjs/pubsub` require **Effect 4**
+(`effect@^4.0.4`).
 
 ## Workflows with typed steps
 
-Task contracts and workflow graphs are separate from their implementations. Named
-steps expose typed outputs to subsequent input mappings, and every task and workflow
-names the execution pool it runs on:
+Tasks and workflows are declared once, with `effect/Schema` schemas and Effect
+handlers. A workflow's body is a generator: each `w.*` step returns a reference
+to its output that later steps read, and every task and workflow names the
+execution pool it runs on:
 
 ```ts
 // workflow.ts
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '@nmtjs/workflows'
-import * as z from 'zod'
+import { task, workflow } from '@nmtjs/workflows'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
 
-const normalize = defineTask({
+export const Normalize = task({
   name: 'normalize',
-  input: z.string(),
-  output: z.string(),
-})
-
-export const normalizeTask = implementTask(normalize, {
   pool: 'default',
-  handler: (text) => text.trim().toLowerCase(),
+  input: Schema.String,
+  output: Schema.String,
+  handler: (text) => Effect.succeed(text.trim().toLowerCase()),
 })
 
-export const wordCount = defineWorkflow({
-  name: 'word-count',
-  input: z.string(),
-  output: z.number(),
-})
-  .task('normalized', normalize)
-  .activity('counted', { input: z.string(), output: z.number() })
-  .build()
-
-export const wordCountWorkflow = implementWorkflow(wordCount, {
-  pool: 'default',
-})
-  .normalized(normalize, { input: (_outputs, input) => input })
-  .counted((text) => (text ? text.split(/\s+/).length : 0), {
-    input: (outputs) => outputs.normalized,
-  })
-  .finish((outputs) => outputs.counted)
+export const WordCount = workflow(
+  {
+    name: 'word-count',
+    pool: 'default',
+    input: Schema.String,
+    output: Schema.Number,
+  },
+  function* (w) {
+    const normalized = yield* w.task('normalized', Normalize, {
+      input: w.input,
+    })
+    return yield* w.activity('counted', {
+      input: Schema.String,
+      output: Schema.Number,
+      from: normalized,
+      handler: (text) => Effect.succeed(text ? text.split(/\s+/).length : 0),
+    })
+  },
+)
 ```
 
-Graphs also support branches, parallel steps, nested workflows, and bounded fan-out
-with `mapTask` / `mapWorkflow`. The PostgreSQL runtime persists progress and supports
-retrying failed work while retaining successful nodes.
+`Client.start(WordCount, 'Hello world')` starts a run; `Worker.coordinator` and
+`Worker.execution` serve `WordCount.workflows` and `WordCount.tasks`. Graphs also
+support branches, parallel steps, child workflows and bounded fan-out with
+`mapTask` / `mapWorkflow`. Runs live in an in-memory, PostgreSQL or Redis store,
+and failed runs can be retried while keeping the steps that succeeded.
 
 ## Neem CLI
 

@@ -44,33 +44,5 @@
     "typescript/prefer-literal-enum-member": "error",
     "unicorn/prefer-node-protocol": "error",
     "unicorn/prefer-number-properties": "error"
-  },
-  "overrides": [
-    {
-      "files": ["packages/workflows/src/**"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": ["effect", "effect/**", "@effect/**"],
-                "message": "The workflows core is Effect-free; Effect support belongs in src/effect."
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "files": [
-        "packages/workflows/src/effect/**",
-        "packages/workflows/src/native-effect/**",
-        "packages/workflows/src/experimental/**"
-      ],
-      "rules": {
-        "no-restricted-imports": "off"
-      }
-    }
-  ]
+  }
 }

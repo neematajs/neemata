@@ -90,7 +90,7 @@ async function runSuite(name, collectReport) {
   const rawReport = await readJson(rawOutput)
   await rm(rawOutput, { force: true })
   const cases = normalizeVitestReport(rawReport, integration)
-  const suiteFiles = await findFiles(
+  const benchFiles = await findFiles(
     resolve(root, 'packages'),
     (_path, relativePath) =>
       integration
@@ -98,7 +98,28 @@ async function runSuite(name, collectReport) {
         : relativePath.endsWith('.bench.ts') &&
           !relativePath.endsWith('.integration.bench.ts'),
   )
-  suiteFiles.push(...commonSuiteFiles, resolve(root, config))
+  // Helpers beside the suite's benches (workloads, measurement, fixtures)
+  // decide what is measured as much as the benches do. Benches of the other
+  // suite in the same directory are left to that suite's fingerprint.
+  const helperFiles = []
+  for (const directory of new Set(benchFiles.map((file) => dirname(file)))) {
+    helperFiles.push(
+      ...(await findFiles(
+        directory,
+        (_path, relativePath) =>
+          /\.[cm]?[jt]s$/.test(relativePath) &&
+          !relativePath.endsWith('.bench.ts'),
+      )),
+    )
+  }
+  const suiteFiles = [
+    ...new Set([
+      ...benchFiles,
+      ...helperFiles,
+      ...commonSuiteFiles,
+      resolve(root, config),
+    ]),
+  ]
   return { cases, suiteFiles }
 }
 

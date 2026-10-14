@@ -2,15 +2,12 @@
 .benchmark/
 .coverage/
 benchmark-results/
-packages/workflows/bench/.generated-types/
-packages/workflows/tests/.tmp-recovery-*/
 .neemata/
 .neem/
 test.*
 _dev/
 packages/neem/tests/e2e/.tmp/
 packages/effect/tests/.tmp-effect-*/
-packages/workflows/tests/.tmp/
 packages/_neem_old
 *.sock
 

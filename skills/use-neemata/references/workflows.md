@@ -1,505 +1,420 @@
 # Workflows
 
-Use `@nmtjs/workflows` for durable orchestration with at-least-once command
-delivery. Handlers must make external side effects idempotent. PostgreSQL suits
-scheduled work, SQL inspection and long retention; Redis/Valkey suits work with
-bounded history. Use the in-memory runtime for tests.
+Use `@nmtjs/workflows` for durable orchestration on Effect 4: every run is
+stored, every step runs as an attempt with retries and timeouts, and a run
+continues from what is stored after a crash or deploy. Handlers run at least
+once; make external side effects idempotent with `attempt.idempotencyKey`.
+PostgreSQL suits transactional starts, SQL inspection and long retention;
+Redis/Valkey suits high throughput with history pruned by retention. Use the
+in-memory store for tests.
 
-## Imports and schemas
+The package README is the full guide; its examples run in
+`packages/workflows/tests/readme.spec.ts`.
+
+## Imports
 
 Use package subpaths, not an umbrella `nmtjs` import:
 
-- `@nmtjs/workflows`: `defineTask`, `defineWorkflow`, `defineSchedule`,
-  `implementTask`, `implementWorkflow`, `toStoredJsonSchema` and contract types.
-- `@nmtjs/workflows/runtime`: `createWorkflowRuntimeClient`,
-  `createInMemoryWorkflowRuntime`, worker loops, handler runner and adapter types.
-- `@nmtjs/workflows/effect`: Effect contract/implementation builders, handler
-  runtime and worker wrappers; optional peer `effect` is
-  `^4.0.0`.
-- `@nmtjs/workflows/postgres`, `/postgres/drizzle`, `/postgres/testing`:
-  see [PostgreSQL](postgres.md) for clients, migrations and ownership.
-- `@nmtjs/workflows/redis`: `createRedisWorkflowRuntime`,
-  `WorkflowRedisClient`, `CreateRedisWorkflowRuntimeParams`,
-  `RedisWorkflowRuntime`.
-- `@nmtjs/workflows/inspector`: graph/catalog serialization and `nodeUnits`.
-- `@nmtjs/workflows/neem`: runtime factory, planner and Promise worker;
-  `@nmtjs/workflows/effect/neem`: Effect worker.
+- `@nmtjs/workflows`: `task`, `workflow`, `schedule`, `decodeRun`, the
+  `Client`, `Worker` and `InMemory` modules, the `Store` service, tagged
+  errors, record types and `InputOf` / `OutputOf` / `Services`.
+- `@nmtjs/workflows/postgres`: `layer`, `install`, `verify`, `migrateFrom4`;
+  `/postgres/pg` and `/postgres/pglite`: their `notifications` layers;
+  `/postgres/drizzle`: `createSchema`. See [PostgreSQL](postgres.md).
+- `@nmtjs/workflows/redis`: `layer({ prefix?, maxDeliveries? })`.
+- `@nmtjs/workflows/inspector`: browser-safe graph/catalog serialization,
+  `nodeUnits`, `parseChildKey`, `isTerminal` and record types.
+- `@nmtjs/workflows/neem`: `createWorkflowsRuntime`, `defineWorkflowsPlanner`;
+  `@nmtjs/workflows/neem/worker`: `defineWorkflowsWorker`.
 
-Core schemas implement Standard Schema. Handlers, input mappers, `finish` and
-`client.start` use the schema's decoded output type; storage uses JSON.
+Peers: `effect@^4.0.4`; `@effect/sql-pg` or `@effect/sql-pglite` for
+PostgreSQL; `drizzle-orm` for `/postgres/drizzle`; `@nmtjs/effect` for
+`/neem/worker`. Redis needs a driver that provides Effect's `Redis` service,
+such as `NodeRedis.layer` from `@effect/platform-node`.
 
-- A single schema validates in both directions. The compile-time check rejects
-  it when its output type is not assignable to its input type.
-- For a different stored representation, pass a `{ decode, encode }` pair:
-  `decode` validates stored data into the application value; `encode` validates
-  the application value into its stored form. For example, a `Date` needs a
-  string/date pair; declaring `z.date()` alone does not make it JSON.
-- Validation must be synchronous. Encoded values must be JSON, including finite
-  numbers; `undefined` is absence, distinct from a present JSON `null`.
-- `toStoredJsonSchema(schema, options?)` reads the stored/input JSON Schema,
-  defaulting to `draft-2020-12`; returns `undefined` without Standard JSON
-  Schema support.
-- Shared codecs and validation live in `@nmtjs/common`; custom schema adapters
-  can use the root's `createContract`.
+## Schemas and handlers
 
-## Contracts and implementations
+Schemas are `effect/Schema`, decoding synchronously without services.
+Handlers, clients and computed values see the schema's `Type`; the store holds
+its encoded form, which must be JSON (`Schema.NumberFromString` is a number in
+code, text in the store). The engine fails the attempt, or refuses the start,
+when an encoded value is not JSON.
 
-Definitions contain schemas and topology, not handlers or placement. Finish
-workflow builders with `.build()`. Implementations bind each node in declaration
-order, then `.finish(...)`; pass the exact referenced definition object.
+A task or activity handler is `(input, attempt) => Effect<Output, unknown, R>`:
 
-```ts
-import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
-} from '@nmtjs/workflows'
-import * as z from 'zod'
+- `R` is the services it yields; the execution worker that runs it must
+  provide them, and `Worker.execution`'s type requires it. Each attempt gets
+  its own `Scope`, so `Effect.acquireRelease` works directly.
+- A failure or defect fails the attempt, which is retried under its policy.
+- Interruption tells a handler to stop: cancellation, attempt timeout,
+  shutdown or a lost claim. There is no signal argument; use
+  `Effect.tryPromise` with its `AbortSignal` for Promise APIs. A handler
+  cannot tell why it was interrupted.
+- `attempt` carries `runId`, `nodeName`, `childKey`, `attemptNumber` (from 1,
+  across retries) and `idempotencyKey`: one opaque string for every attempt
+  of this work, manual retries included.
 
-export const decorate = defineTask({
-  name: 'content.decorate',
-  input: z.string(),
-  output: z.string(),
-  retry: { attempts: 3, backoff: 'exponential', delay: '1s' },
-  timeout: '30s',
-})
-
-export const prepare = defineWorkflow({
-  name: 'content.prepare',
-  input: z.object({ text: z.string() }),
-  output: z.object({ text: z.string() }),
-})
-  .activity('clean', { input: z.string(), output: z.string() })
-  .task('decorate', decorate)
-  .build()
-
-export const decorateImpl = implementTask(decorate, {
-  pool: 'content',
-  handler: (input, _lifecycle, env: { prefix: string }) => env.prefix + input,
-})
-
-export const prepareImpl = implementWorkflow(prepare, { pool: 'content' })
-  .clean((input) => input.trim(), {
-    // The workflow object is not assignable to this step's string input.
-    input: (_outputs, input) => input.text,
-  })
-  .decorate(decorate, { input: ({ clean }) => clean })
-  .finish(({ decorate }) => ({ text: decorate }))
-```
-
-Builder rules:
-
-- Node names must match `/^[a-zA-Z_$][a-zA-Z0-9_$]*$/`, be unique in the
-  workflow, and cannot be `input`, `__proto__`, `constructor` or `prototype`.
-  Branch case and parallel member keys also reject the last three reserved
-  names; the node-name regex does not apply to case keys.
-- `.activity(name, { input, output, retry?, timeout? })` is a private step.
-  `.task(name, definition, { retry?, timeout? })` references a task;
-  overrides take precedence over that task's retry/timeout defaults.
-- `.workflow(name, definition, { cancellation? })` starts a child workflow.
-  `'propagate'` is the default; `'detach'` leaves the child running when the
-  parent is cancelled, fails or times out. The policy is stored on the child
-  edge, so cancellation/reaping does not need the implementation registry.
-- `.branch(name, { output?, cases: (helpers) => ({ ... }) })` chooses one case.
-  Helpers are `activity`, `task`, `workflow`. Without `output`, results are a
-  union of case outputs; with it, every case's entire output type must fit.
-- `.parallel(name, (helpers) => ({ ... }), metadata?)` runs all members and
-  returns a record keyed by member name.
-- `.mapTask(name, task, { item, concurrency?, retry?, timeout? })` and
-  `.mapWorkflow(name, workflow, { item, concurrency?, cancellation? })` fan
-  out to child runs. Supplied concurrency must be a positive integer. Successful
-  output is `{ items: { item, index, runId, output }[] }` in input order.
-- A `mapTask` `retry` replaces the task's default policy for every item, and
-  each item has its own budget: N failing items can make up to N × `attempts`
-  handler calls. Keep it low for metered per-item calls. The 0.17 betas
-  ignored this override.
-- Parallel and map nodes wait for all children. Failure does not cancel siblings
-  or stop pending map admission; the node fails after settlement. No map `mode`.
-- Tasks/workflows, nodes and case helpers accept `title` / `description`;
-  these affect inspector presentation, not identity or execution.
-
-Implementation rules apply to both core and Effect chains:
-
-- Node input mappers take `(outputs, workflowInput)`. Without one, a node
-  receives the workflow input, not the preceding output. A mapper is required
-  if the workflow input type is not assignable to the step input type, for
-  activity/task/workflow nodes and branch/parallel cases. `any` remains
-  permissive.
-- Branch implementations take `{ select, cases }`; `select(outputs, input)`
-  returns a case key. Parallel implementations take a case object or factory.
-  Case factories use `activity(handler, { input })`,
-  `task(definition, { input })` or `workflow(definition, { input })`.
-  Bare handlers/definitions are allowed only when workflow input fits.
-- Map implementations require `{ items, input, idempotency? }`.
-  `items(outputs, workflowInput)` returns the item array; per-item input and
-  idempotency mappers take `(outputs, item, workflowInput, index)`.
-  Ordinary node/case idempotency mappers take `(outputs, workflowInput)`.
-- Core task/activity handlers take `(input, lifecycle, env)`; core `finish`
-  takes `(outputs, workflowInput, lifecycle, env)`. Both return a value or
-  Promise. `finish` runs on a coordinator; keep it quick.
-- `env` is one application-owned value satisfying every registered handler
-  (`Env<T>` intersects requirements). The engine neither constructs nor
-  disposes it. A handler ignoring env contributes no requirement.
-- `lifecycle.signal` cooperatively aborts with `WorkflowAttemptAbortError`;
-  its `.type` is `timeout`, `leaseLost`, `cancelled` or `shutdown`.
-  Late results after an abort are discarded. Attempt timeouts record
-  `timedOut` and follow the retry policy; `WorkflowAttemptTimeoutError` is
-  also exported from the root.
-- Cleanup overruns produce `WorkflowCleanupTimeoutError` from `/runtime`.
-  Neem recycles the thread; standalone hosts must handle fatal cleanup.
-  Aborting cannot stop arbitrary Promise code that ignores its signal.
-
-Only task and workflow implementations require a named `pool`. Activities run
-on their workflow's pool; coordinators advance workflows. Promote an activity
-to a task when it needs a different pool, reuse, standalone starts or its own
-child-run identity. Retry/timeout options are also available on activities.
-
-## Effect handlers
-
-Import the builders from `@nmtjs/workflows/effect`. They accept synchronous,
-service-free `effect/Schema` codecs, including transforms such as
-`Schema.DateFromString`. `codec(schema)` derives the JSON encoding pair;
-`schemaOf(definition.input)` returns the original schema, or `undefined` for
-a schema not created through that adapter. Both helpers are re-exported from
-`@nmtjs/common/effect`.
-
-Effect task/activity handlers take `(input, lifecycle)`; Effect `finish`
-takes only `(outputs, workflowInput)`. Each returns an Effect; acquire services
-through Effect rather than a third argument.
+## Tasks
 
 ```ts
-import {
-  defineTask as defineEffectTask,
-  implementTask as implementEffectTask,
-} from '@nmtjs/workflows/effect'
+import { task } from '@nmtjs/workflows'
 import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
-export const echo = defineEffectTask({
-  name: 'content.echo',
+export const Decorate = task({
+  name: 'content.decorate',
+  pool: 'content',
   input: Schema.String,
   output: Schema.String,
-})
-export const echoImpl = implementEffectTask(echo, {
-  pool: 'content',
-  handler: (input) => Effect.succeed(input),
+  retry: { attempts: 3, backoff: 'exponential', delay: '1s' },
+  timeout: '30s',
+  handler: (text) => Effect.succeed(`Prepared: ${text}`),
 })
 ```
 
-- `createHandlerRuntime(context)` produces `HandlerRuntime<R>`, whose
-  `run(handler, signal)` runs an Effect in its own scope and returns a Promise
-  only after finalizers finish. The core stores this runtime as handler env.
-- Interrupt-only failure caused by the signal rethrows `signal.reason`;
-  a single ordinary failure/defect keeps its identity. Mixed causes become
-  `WorkflowHandlerError`, retaining the Effect `Cause` in `.cause`.
-- Effect worker wrappers take `context` instead of `env` and return Promises.
-  `Requirements<T>` determines needed services. A core handler can join only
-  if the supplied handler runtime satisfies its whole env:
-  `[HandlerRuntime<R>] extends [E]`. An env demanding extra properties is
-  rejected even if it also extends `HandlerRuntime<R>`.
-- Effect Neem workers take one object with `workflows`, optional `tasks` /
-  `schedules`, `runtime` and `layer`; see Neem integration below.
+Options: `name`, `pool` (required, no default pool), `input`, `output`,
+`handler`, `retry`, `timeout` (one attempt; units `ms`, `s`, `m`, `h`, `d`),
+`revision`, `tags: (input) => Record<string, string>`,
+`idempotency: (input) => unknown[]`, `unique` (a key function or
+`{ key, scope?, behavior? }`), `title`, `description`. `retry.attempts`
+counts every attempt, the first included; without `retry` the work runs once.
 
-## Runtime client
+## Workflows
+
+`workflow(options, body)` takes the task options except `handler` and `retry`;
+its `timeout` limits the whole run (`RunTimeout`), counted from creation or
+the last manual retry and enforced by a coordinator sweep. The body is a
+generator run once, at declaration: each `w.*` call describes a step, and
+`yield*` places it and returns a `Ref` to its output. The body returns the
+result, computed from references.
 
 ```ts
-import {
-  createInMemoryWorkflowRuntime,
-  createWorkflowRuntimeClient,
-} from '@nmtjs/workflows/runtime'
+import { workflow } from '@nmtjs/workflows'
 
-const memoryRuntime = createInMemoryWorkflowRuntime()
-const client = createWorkflowRuntimeClient({
-  ...memoryRuntime,
-  definitions: [prepare, decorate],
-})
-const run = await client.start(
-  prepare,
-  { text: ' hello ' },
+export const Prepare = workflow(
   {
-    tags: { documentId: 'd1' },
-    idempotencyKey: ['prepare', 'd1'],
-    startAt: Date.now(),
+    name: 'content.prepare',
+    pool: 'content',
+    input: Schema.Struct({ text: Schema.String }),
+    output: Schema.Struct({ text: Schema.String }),
+  },
+  function* (w) {
+    const clean = yield* w.activity('clean', {
+      input: Schema.String,
+      output: Schema.String,
+      from: Effect.map(w.input, ({ text }) => text),
+      handler: (text) => Effect.succeed(text.trim()),
+    })
+    const decorated = yield* w.task('decorate', Decorate, { input: clean })
+    return Effect.map(decorated, (text) => ({ text }))
   },
 )
-const snapshot = await client.get(run.id)
 ```
 
-All runtime times are `Timestamp = number`, Unix milliseconds: stored record
-fields, `startAt` / `runAt`, filters, scheduling and maintenance clocks.
-Application payload Dates are a separate codec concern.
+Steps (`w` in the body, `p` in `cases` / `members`):
 
-The client does not execute handlers. All operations except `restart` work
-without a registry. `start` reads schemas/tags/idempotency/unique from its
-definition argument. Optional `workflows` / `tasks` implementation registries
-cross-check definition identity and seed restart lookup; `definitions` adds
-name lookup without importing implementation code. Distinct definition objects
-with the same kind/name are rejected by that index.
+| Call                                  | Options                                                                    | Reference holds                               |
+| ------------------------------------- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| `w.activity(name, opts)`              | `input`, `output` (schemas), `from`, `handler`, `retry?`, `timeout?`       | the output                                    |
+| `w.task(name, Task, opts)`            | `input`, `retry?`, `timeout?`                                              | the task's output                             |
+| `w.workflow(name, Workflow, opts)`    | `input`, `cancellation?`                                                   | the child's output                            |
+| `w.branch(name, opts)`                | `select`, `cases: (p) => ({ key: case })`                                  | the union of case outputs                     |
+| `w.parallel(name, opts)`              | `members: (p) => ({ key: member })`                                        | `{ [key]: member output }`                    |
+| `w.mapTask(name, Task, opts)`         | `item` (schema), `items`, `input: (item, index) => Effect`, `concurrency?` | `{ items: { item, index, runId, output }[] }` |
+| `w.mapWorkflow(name, Workflow, opts)` | the same, with `cancellation?` instead of `retry` / `timeout`              | the same                                      |
 
-Start options: `tags`, `idempotencyKey`, `unique`, `startAt`, and the
-PostgreSQL transaction `connection`. Explicit options override definition
-builders. Identity rules:
+`p.activity(opts)`, `p.task(Task, opts)` and `p.workflow(Workflow, opts)` are
+the unnamed forms. Every step and case also takes `title` / `description`
+(presentation only). `w.input` is the workflow input's `Ref`.
 
-- `idempotencyKey` is an array; replay joins a matching stored run and rejects
-  conflicting run data. It is distinct from uniqueness.
-- `unique: { key, scope?, behavior? }` constrains root starts. Defaults:
-  `scope: 'active'`, `behavior: 'reject'`. Active keys free on terminal
-  settlement; `cancelling` still holds them. `'all'` includes retained terminal
-  runs. `'join'` returns the conflicting run without comparing input.
-- Definition `unique` may be a key function or
-  `{ key: (input) => [...], scope?, behavior? }`.
-- `WorkflowRunConflictError` from `/runtime` carries `runId`, `status`,
-  `key` and `scope`.
+- On a task or workflow step, `input` is the value the target receives; an
+  activity names its value `from` because `input` / `output` are its schemas.
+  Always pass it: `{ input: w.input }` when the step takes the workflow input.
+- Activities run on the execution workers of the workflow's pool. Promote an
+  activity to a task when it needs another pool, reuse or its own run.
+- `retry` / `timeout` on a task step or `mapTask` replace the task's policy
+  whole, per item for a map: N failing items can make N × `attempts` calls.
+- Branch: `select` runs once per run and the choice is stored; a case is one
+  activity, task or child workflow.
+- Parallel and maps wait for every member/item; a failure does not stop
+  siblings, and the step fails after all settle. A map's `items` is computed
+  once and stored through `item`; `concurrency` must be a positive integer.
+  An empty map completes with `{ items: [] }`.
+- `cancellation: 'propagate'` (default) cancels the child with its parent;
+  `'detach'` lets it run on.
+- A multi-step case or member is a child workflow. Branches, parallels and
+  maps do not nest; a failed step fails the run; no loops or `if` on run
+  values (use `w.branch`); no signals, events or timers inside a run.
 
-Reads return stored JSON, except `start` / `restart`, which decode input and
-completed output with the definition:
+References are `Effect<A, never, Run>`. `input`, `from`, `items`, `select`
+and the result take Effects over references: `Effect.map(w.input, f)`,
+`Effect.all({ ... })`, `Effect.gen`, `Effect.succeed(constant)`. They run in
+the coordinator and must be pure and synchronous: the only allowed
+requirement is `Run`, the error type is `never`, waiting fails the step, and
+they may run more than once. A value reads only the input and earlier steps.
+Never branch on a `Ref` in the body: it is always truthy.
 
-| Method                   | Result                                                          |
-| ------------------------ | --------------------------------------------------------------- |
-| `get(id)`                | `RunSnapshot` with run, nodes, children, attempts; or undefined |
-| `list(filter?)`          | `{ runs, nextCursor? }`, run rows with payloads                 |
-| `listSummaries(filter?)` | Same pagination, payload-free runs with node counts             |
-| `getDetail(id)`          | Payload-free run/nodes/children/attempts/child-run summaries    |
-| `getNode(id, nodeName)`  | Node, children and attempts with payloads                       |
-| `getFamily(id)`          | Root family summaries with node/child-key origin edges          |
+Build-time errors throw from `task` / `workflow`: invalid or duplicate node
+names (`input`, `__proto__`, `constructor`, `prototype` are reserved), a
+missing `yield*`, references of another workflow, a map `concurrency` that is
+not a positive integer, a versioned workflow using unversioned targets.
 
-`getDetail` / `getNode` return undefined when missing; `getFamily` returns
-an empty array. Filters: `kind`, `name`, `status` (one or array),
-`activeBefore`, `createdBefore`, `parentRunId` (`null` means roots only),
-`rootRunId`, `tags`, `input`, `limit`, `cursor`.
+`Prepare.workflows` is the workflow with every child workflow it can start;
+`Prepare.tasks` every task they can start. Workers take those lists.
 
-### Cancellation, retry, restart and retention
+## Client
 
-- `cancel(id)` returns the stored run or undefined. Workflow cancellation
-  requests coordination; child workflow settlement takes the child's own lease.
-  A leased child may remain cancelling until its continuation runs. Task runs
-  have no coordinator and are settled directly. Detached children remain
-  cancellable by their own id.
-- `retry(id, { expectedVersion? })` reopens a failed root in place without a
-  definition registry. It preserves id/input/tags/idempotency and successful
-  nodes/children, creates attempts only for failed work, and reuses stored
-  attempt input/idempotency. Absolute attempt history stays; manual retry
-  replenishes each reopened child's automatic budget and resets its backoff.
-  It resets `activeSince` (run timeout epoch), rejects stale versions/live
-  leases, and reacquires uniqueness with rejection even for a `join` policy.
-  Refresh the same run and open a new watch after retry.
-- `restart(id, startOptions?)` accepts terminal roots and resubmits their stored
-  input through the current definition. It copies tags and stored uniqueness;
-  options override them. It does not copy the stored idempotency key, but the
-  definition's idempotency builder still applies: provide a fresh key when a
-  genuinely new run is required. Missing name lookup produces an error naming
-  the required `definitions` / implementation registry.
-- `deleteRun(id)` returns `{ deleted }` and deletes a terminal root's whole
-  tree only when descendants are terminal. Detaching does not exempt a live
-  descendant from deletion/retention checks.
-- `pruneRuns({ olderThan, statuses?, batchSize? })` loops batches until fewer
-  than the requested roots are deleted; returns `{ deleted }`. Default batch
-  size is 100, statuses are completed/cancelled/failed. Families must be fully
-  terminal. Dead commands are age-collected only after being reaped; an
-  unreaped command may still be needed to settle its run.
-- `listDeadCommands({ runId? }?)` and `requeueDeadCommand(id)` expose
-  exhausted command deliveries. Delivery limits are separate from handler
-  retry attempts. Retention and manual requeue are application concerns.
-
-### Watch
-
-`watch(id, { wake?, debounceMs?, signal?, pollIntervalMs? })` returns
-`AsyncIterable<WatchEvent>`. It emits the current
-`{ kind: 'run', status, error? }`, then observed status changes; it ends after
-the terminal status or when the run disappears. Missing runs produce no events.
-Polling defaults to 1,000 ms. Break/iterator return/abort clean up the watcher.
-
-With `wake: true`, unchanged-status notifications also emit
-`{ kind: 'change' }`. These notifications are family-wide, payload-free hints:
-refetch detail/node/family as needed. Positive `debounceMs` coalesces them with
-leading and trailing yields; zero/omitted disables coalescing. Status discovery,
-especially terminal status, is not delayed by debounce.
-
-Intermediate transitions may be missed; polling guarantees terminal discovery
-while the run remains stored and the watcher runs. Coarse change events have no
-polling backstop. There is no event-history API, `family` option or
-`afterEventId` cursor.
-
-## Adapters and standalone workers
-
-All built-in adapters expose `atomicCompletion`. PostgreSQL executes completion
-inside a transaction; Redis and in-memory only fence attempt settlement by the
-queue claim, then rely on replay of subsequent writes. Handler side effects are
-never transactional on any adapter; keep them idempotent.
-
-`createInMemoryWorkflowRuntime({ maxDeliveries? })` supplies an isolated
-store/queue, schedules, wake events and `inspect()` for tests; it is not durable.
-The PostgreSQL contract is in [PostgreSQL](postgres.md).
-
-Standalone hosts use `runWorkflowWorker` / `runExecutionWorker` to drain
-currently claimable work, or `serveWorkflowWorker` / `serveExecutionWorker`
-with an abort `signal` for continuous service. Pass the adapter, implementations,
-`workerId`, env (or Effect context), and loop settings. Execution workers accept
-`pool`; omission serves all registered pools. Low-level idle polling uses
-`idleDelayMs`, not the Neem planner's `pollIntervalMs`.
-
-A supervisor can share `createHandlerRunner({ cleanupTimeoutMs?, onFatal? })`
-as `handlers` and await `drain()` before disposing env. Standalone workers do
-not perform Neem's complete registry validation.
-
-### Redis / Valkey
-
-`WorkflowRedisClient` is structurally satisfied by both `ioredis` and
-`iovalkey`. The application owns the command client and configures finite
-`maxRetriesPerRequest` and `commandTimeout` values.
+`Client.*` are Effects requiring `Store`; none retries, and any may fail with
+`StorageError`.
 
 ```ts
-import { Redis } from 'ioredis'
-import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
+import { Client, decodeRun, InMemory } from '@nmtjs/workflows'
+import * as Stream from 'effect/Stream'
 
-const redis = new Redis('redis://localhost:6379', {
-  maxRetriesPerRequest: 1,
-  commandTimeout: 2_000,
-})
-const redisRuntime = createRedisWorkflowRuntime({
-  client: redis,
-  keyPrefix: 'content-workflows:',
-  terminalRetentionMs: 15 * 60 * 1_000,
-  maxDeliveries: 20,
+// Nothing completes until workers serve the store; see Workers.
+const program = Effect.gen(function* () {
+  const run = yield* Client.start(
+    Prepare,
+    { text: ' hello ' },
+    { tags: { documentId: 'd1' }, idempotencyKey: ['prepare', 'd1'] },
+  )
+  yield* Stream.runDrain(Client.watch(run.id))
+  const records = yield* Client.get(run.id)
+  return decodeRun(Prepare, records!.run).output
+}).pipe(Effect.provide(InMemory.layer()))
+```
+
+Start options replace what the declaration's builders give: `tags`,
+`idempotencyKey`, `unique: { key, scope?, behavior? }`, and `startAt` (Unix
+ms; the run exists at once and is worked from then). `start` answers with the
+decoded run, written in one commit with its command and saved definition.
+
+- Idempotency key: the same kind, name, revision and input answer with the
+  holder; anything else fails with `IdempotencyConflict` (`runId`). Held for
+  as long as the run exists.
+- Unique key: `scope: 'active'` (default) holds it until the run ends,
+  `'all'` while the run exists; `behavior: 'reject'` (default) fails with
+  `RunConflict` (`runId`, `status`), `'join'` answers with the holder.
+- `DefinitionConflict` when the declaration differs from what is saved for
+  its revision. A non-encodable input or throwing builder is a defect.
+- Errors are tagged; handle them with `Effect.catchTag('RunConflict', ...)`.
+
+Other calls:
+
+- `cancel(runId)`: the run or `undefined`. A task run is cancelled at once; a
+  workflow run becomes `cancelling` until its next coordination pass cancels
+  what is in flight (detached children excepted). Handlers are interrupted.
+- `retry(runId, { expectedVersion? })`: reopens a failed root in place,
+  rerunning only what failed with a fresh retry budget; keeps id, input, tags
+  and keys. Fails with `RunNotFound`, `RunNotRoot`, `RunNotFailed`,
+  `StaleRunVersion`, `RunConflict` or `RunBusy` (family still in flight).
+- `restart(runId, { definitions, ...startOptions })`: a new root from the
+  stored input, resolved to the declaration with the same kind, name and
+  revision. The declaration's `idempotency` builder still applies: pass a
+  fresh `idempotencyKey` for a genuinely new run. Adds `RunNotTerminal` and
+  `UnknownDefinition`.
+- Reads: `get` (`{ run, nodes, children, attempts }` with payloads),
+  `getDetail` (payload-free, with `childRuns`), `getNode`, `getFamily`,
+  `list` / `listSummaries` (`{ runs, nextCursor? }`, newest first),
+  `inspect` (`{ detail, definition }`), `getDefinition({ kind, name,
+revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
+  `status`, `parentRunId` (`null` = roots), `rootRunId`, `tags`, `input`
+  (JSON containment), `createdBefore`, `activeBefore`, `limit` (100),
+  `cursor`. Records are stored JSON with Unix-ms times; `decodeRun(decl, run)`
+  types one.
+- `watch(runId, { pollIntervalMs?, wake?, debounceMs? })`: a `Stream` of
+  `{ kind: 'run', status, error? }` ending with the final status; `wake`
+  adds coarse, best-effort `{ kind: 'change' }` hints. A retried run needs a
+  new watch.
+- `listDeadCommands({ runId?, limit?, cursor? })` and
+  `requeueDeadCommand(id)` (answers `boolean`). A command is dead after the
+  store's `maxDeliveries` (20); the coordinator's reaper then fails its work.
+- `deleteRun(runId)` (`{ deleted }`; `RunBusy` while in flight) and
+  `pruneRuns({ olderThan, statuses?, batchSize? })` (`{ deleted }`) delete
+  ended root families. Saved definitions are never deleted.
+- `schedules.list()`, `schedules.trigger(name)`,
+  `schedules.setEnabled(name, on)`; the last two fail with `UnknownSchedule`.
+
+Run statuses: `queued`, `running`, `waiting`, `cancelling`, then
+`completed`, `failed` or `cancelled`.
+
+## Workers
+
+Both workers run until interrupted and require `Store`:
+
+```ts
+import { Worker } from '@nmtjs/workflows'
+
+const served = { workflows: Prepare.workflows, tasks: Prepare.tasks }
+// Throws unless every target and schedule runnable is served, once, and
+// every pool a declaration names is listed.
+Worker.verify({ ...served, pools: ['content'] })
+
+const workers = Effect.all(
+  [
+    Worker.coordinator({
+      workflows: served.workflows,
+      concurrency: 4,
+      retention: { olderThan: '30d', statuses: ['completed'] },
+    }),
+    Worker.execution({ ...served, pool: 'content', concurrency: 8 }),
+  ],
+  { concurrency: 'unbounded', discard: true },
+)
+```
+
+- `Worker.coordinator` advances workflow runs (inputs, selectors, results,
+  settlement) and owns maintenance: `reaping` (30 s), `runTimeouts` (60 s),
+  `schedules` + `scheduling` (1 s), `retention: { olderThan, statuses? }`.
+  Each sweep takes `everyMs` / `batchSize`; `false` turns reaping or run
+  timeouts off. A deployment needs at least one coordinator.
+- `Worker.execution` runs task and activity handlers, of one `pool` or of all
+  given; its type requires exactly those handlers' services. Provide them to
+  the worker Effect. `cleanupTimeoutMs` (5,000) bounds an interrupted
+  handler; an overrun fails the worker with `CleanupTimeout` so the process
+  is replaced.
+- Both take `concurrency` (1, per worker, not deployment-wide), `leaseMs`
+  (30,000; renewed every third) and `pollMs` (250). Store hints wake idle
+  workers early; polling is the guarantee.
+- Workers take partial lists, so a missing declaration is silent: queued
+  commands wait. Run `Worker.verify` with everything a deployment serves.
+- Storage failures of one command or sweep are logged and retried; a worker
+  fails with `StorageError` only before it holds anything.
+
+## Schedules
+
+```ts
+const Nightly = schedule({
+  name: 'content.nightly',
+  runnable: Prepare,
+  input: { text: 'nightly' },
+  cron: '0 2 * * *',
+  timeZone: 'Europe/Berlin',
 })
 ```
 
-These are deployment-tuned examples, not mandatory latency targets. The complete
-factory options are `client`, `keyPrefix` (default `'nmtjs:workflows:'`),
-`terminalRetentionMs` (default 900,000), and `maxDeliveries` (default 20).
-The last two must be positive safe integers.
+Exactly one of `cron` or `every` (`'15m'`); optional `timeZone` (stored;
+defaults to the process zone), `tags`, `enabled`, `immediately`. Give the
+deployment's complete list to `Worker.coordinator({ schedules })`: it
+reconciles the stored schedules to that list, **removing any other**, then
+fires due slots once across coordinators. Missed slots are skipped. Omitting
+`schedules` leaves stored schedules alone. Every store supports schedules.
 
-- Reconnection may continue for future commands, but each request must settle
-  within finite limits; do not use `maxRetriesPerRequest: null`.
-- Timeout/connection errors are ambiguous: Redis may have committed already.
-  Retry the high-level operation with the same idempotency identity, not raw
-  commands outside the runtime.
-- Scripts recover from `NOSCRIPT` / `SCRIPT FLUSH` by reloading and retrying.
-  Pub/Sub only wakes workers/watchers; durable hashes/sorted sets and polling
-  provide execution recovery.
-- Active families have no TTL. Retention starts once the entire root family,
-  including detached children, is terminal. Redis server time controls leases
-  and retention; payloads remain opaque JSON.
-- Routed polling and periodic retention maintenance reclaim expired-family
-  commands and indexes, including abandoned routes. Configure standalone
-  worker `retention` or call `pruneRuns` periodically.
-- Delayed starts and retry backoff work; recurring schedules do not.
-- Use isolated prefixes, `noeviction`, and deployment persistence/replication
-  suitable for the workload. Service-restart durability depends on AOF/RDB,
-  not the workflow API. Redis Cluster is unsupported; use standalone or
-  Sentinel-managed Redis/Valkey.
-- `redisRuntime.dispose()` closes only its duplicated Pub/Sub client, falling
-  back to `disconnect()` if `quit()` fails. Close the command client yourself.
+## Revisions
 
-## Schedules and inspector
+Without `revision`, a run is identified by name and runs whatever code is
+deployed when a command is claimed. A `revision` (an opaque non-empty string)
+pins a run, and everything it starts, to that code: work is routed by kind,
+name and revision, and unversioned code never runs versioned runs or the
+reverse. A versioned workflow may use only versioned targets.
 
-`defineSchedule({ name, runnable, input, cron?, every?, tags?, enabled?,
-immediately? })` comes from the root, including for Effect-defined targets.
-Exactly one valid `cron` or positive `every` is required; enabled defaults to
-true. PostgreSQL and in-memory runtimes expose `scheduler`: reconcile definitions,
-then fire due slots through a coordinator or standalone worker scheduling.
-Client management is `schedules.list()`, `schedules.trigger(name)`,
-`schedules.setEnabled(name, enabled)`; all reject without adapter support.
-Manual triggers have independent identities; recurring slots deduplicate.
+- Starting a run saves its graph (`graphHash`, SHA-256 of step names, kinds
+  and order) and, for versioned runs, a manifest of target revisions.
+  Changing the graph or a target revision under a saved revision fails with
+  `DefinitionConflict`; handler, schema and policy changes are not detected.
+- A revision no worker serves leaves its commands queued untouched and its
+  runs untimed until it is served again. Runs never move revision.
+- Deploy a new revision by serving both, waiting until
+  `Client.list({ name, revision: old, status: [active statuses] })` is empty,
+  then removing the old code. Idempotency replays and `join` match only the
+  same revision.
 
-Inspector exports `serializeWorkflowGraph(definition)`,
-`serializeWorkflowCatalog({ workflows?, tasks? })`, and
-`nodeUnits(detail, nodeName)`. They expose topology/presentation metadata and
-group children/attempts/child runs for UIs. Runs/read models are already JSON
-with numeric times: no DTO conversion. Stored runs reference names, not
-definition snapshots or versions; join to the current catalog deliberately.
+## Stores and inspector
+
+A store is a `Layer` providing `Store`; clients and workers of a deployment
+share one. `InMemory.layer({ maxDeliveries? })` is per build and not durable.
+PostgreSQL: see [PostgreSQL](postgres.md).
+
+```ts
+import { NodeRedis } from '@effect/platform-node'
+import * as Redis from '@nmtjs/workflows/redis'
+
+const store = Redis.layer({ prefix: 'content:', maxDeliveries: 20 }).pipe(
+  Layer.provide(NodeRedis.layer({ url })),
+)
+```
+
+Redis/Valkey: the default prefix is `nmtjs:workflows:`; isolate deployments
+by prefix. Run `maxmemory-policy noeviction`; durability is the server's
+persistence and replication. No key expires: prune with coordinator
+`retention` or `Client.pruneRuns`. Every key shares one hash tag, so a
+cluster keeps the store in one slot. A failure during a script leaves its
+outcome unknown: retry the high-level operation with the same identity.
+
+`@nmtjs/workflows/inspector` imports no Node API. Serve
+`serializeWorkflowGraph(declaration)` / `serializeWorkflowCatalog({
+workflows, tasks })` for the deployed definitions and `Client.inspect(runId)`
+for a run's saved graph; in the browser, `renderWorkflowGraph(structure,
+presentation)` and `nodeUnits(detail, nodeName)` join a step's children,
+attempts and child runs. Child keys are `$self`, `case:<key>`,
+`member:<key>` and `item:<index>`. When `definition.source` is `'observed'`,
+no trustworthy graph exists for the run; do not fill one in from current code.
 
 ## Neem integration
 
-Use separate runtime, planner and worker modules, default-exporting the results
-shown below. The planner runs on the main thread without application imports;
-registry factories and setup run in each worker thread.
+Use three modules: a runtime declaration, a planner (main thread, no
+application imports) and a worker loaded in every thread.
 
 ```ts
-import {
-  createWorkflowsRuntime,
-  defineWorkflowsPlanner,
-  defineWorkflowsWorker,
-} from '@nmtjs/workflows/neem'
-import { Pool } from 'pg'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-  verifyPostgresWorkflowSchema,
-} from '@nmtjs/workflows/postgres'
+// workflows.runtime.ts
+import { createWorkflowsRuntime } from '@nmtjs/workflows/neem'
 
-// neem.runtime.ts
-const workflowsRuntime = createWorkflowsRuntime()({
+export default createWorkflowsRuntime({
   name: 'workflows',
-  planner: './neem.planner.ts',
-  worker: { entry: './neem.worker.ts' },
-})
-
-// neem.planner.ts
-const planner = defineWorkflowsPlanner(() => ({
-  coordinator: { threads: 1, concurrency: 2 },
-  pools: { content: { threads: 2, concurrency: 4 } },
-}))
-
-// neem.worker.ts
-const worker = defineWorkflowsWorker({
-  workflows: () => [prepareImpl],
-  tasks: () => [decorateImpl],
-  setup: async () => {
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-    try {
-      const connection = createPostgresWorkflowConnection(pool)
-      await verifyPostgresWorkflowSchema(connection)
-      return {
-        runtime: createPostgresWorkflowRuntime({ connection }),
-        env: { prefix: 'Prepared: ' },
-        dispose: () => pool.end(),
-      }
-    } catch (error) {
-      // Setup owns acquisitions until it returns resources to the worker.
-      await pool.end()
-      throw error
-    }
-  },
+  planner: './workflows.planner.ts',
+  worker: { entry: './workflows.worker.ts' },
 })
 ```
 
-- Core worker options are `workflows: () => implementations`, optional
-  `tasks` / `schedules` factories, and `setup(ctx)`. Factories/setup may be
-  asynchronous. Setup returns `{ runtime, env?, dispose? }`; env is required
-  when handlers need it and must satisfy the entire registry.
-- `ctx.data` has `role: 'coordinator' | 'execution'`, optional `pool`,
-  `settings` and declared `pools`. Size resources per thread.
-- Both coordinator and named pools accept `threads`, `concurrency`,
-  `leaseMs`, `pollIntervalMs`, `cleanupTimeoutMs`. Defaults respectively:
-  1, 1, 30,000, 250, 5,000. Threads must be positive integers; declare at
-  least one nonempty pool name. Concurrency is per worker loop/thread and
-  multiplies with threads and application instances, not a cluster limit.
-- Startup rejects undeclared implementation pools, missing referenced
-  task/workflow implementations, two distinct implementations for one name,
-  conflicting definition objects and missing/mismatched schedule targets.
-  Repeated references to the same implementation object are deduplicated.
-  References and implementations share the same definition object.
-- Coordinators reconcile schedules and own maintenance; execution threads
-  serve their named pool. Redis coordinators reject nonempty schedules.
-- Shutdown stops claims, aborts handlers with `shutdown`, joins loops, drains
-  handlers, disposes the runtime, then calls resource `dispose` even if adapter
-  disposal failed. Shutdown releases commands for redelivery.
-- Cleanup deadlines cover handler drain and resource disposal. A timeout
-  reports fatal failure for thread recycling; it does not authorize disposing
-  env still in use. Neem's 30,000 ms worker readiness timeout bounds `setup`.
+```ts
+// workflows.planner.ts
+import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
 
-Effect workers use `defineWorkflowsWorker` from
-`@nmtjs/workflows/effect/neem` with the same registry factories and planner.
-`runtime` is an `Effect<WorkflowRuntimeAdapter, unknown, R | Scope>`;
-`layer` is `(ctx) => Layer`, called with the Neem worker context once per
-runtime start (after registry validation, again on each dev reload); build logging services from `ctx.logger` rather than a second logger.
-`Effect.log*` is not bridged to it.
-The Layer must supply all handler and runtime requirements except `Scope`, which
-the worker provides. Layer is optional only when no services are needed.
-The worker disposes the runtime before closing the Layer after handlers drain.
-Its cleanup timer is armed when main exits, before scope finalizers, including
-startup failures after acquisition.
-Neem's outer stop deadline is 5,000 ms; a larger `cleanupTimeoutMs` does not
-extend it.
+export default defineWorkflowsPlanner(() => ({
+  coordinator: { threads: 1, concurrency: 4 },
+  pools: { content: { threads: 2, concurrency: 8 } },
+}))
+```
+
+```ts
+// workflows.worker.ts
+import { defineWorkflowsWorker } from '@nmtjs/workflows/neem/worker'
+import * as Postgres from '@nmtjs/workflows/postgres'
+
+export default defineWorkflowsWorker({
+  workflows: Prepare.workflows,
+  tasks: Prepare.tasks,
+  schedules: [Nightly],
+  store: () => Postgres.layer().pipe(Layer.provide(database)),
+  layer: (ctx) => Layer.succeed(Formatter, formatter(ctx.logger)),
+})
+```
+
+- The plan's `coordinator` and each pool take `threads` (1) plus the worker
+  options above (`concurrency`, `leaseMs`, `pollMs`; `cleanupTimeoutMs` for
+  pools; maintenance options for the coordinator). At least one pool is
+  required, and every pool a declaration names must be planned. Schedules
+  belong to the worker, not the plan.
+- `store(ctx)` and `layer(ctx)` are called each time a thread starts,
+  including dev reloads. Threads share runs only through a durable store;
+  `InMemory.layer()` would give each thread its own.
+- `layer` must provide every handler service of the whole definition (the
+  type requires it; optional when there are none). It may use the store and
+  is built only in execution threads.
+- A thread starts only if `Worker.verify` accepts what is served, scheduled
+  and planned. `Effect.log*` goes to `ctx.logger`.
+- Stopping interrupts handlers, gives their commands back, then releases the
+  handler services and the store, within Neem's stop deadline. A
+  `CleanupTimeout` fails the thread without releasing services still in use.
+
+## Upgrading from the Promise engine
+
+`@nmtjs/workflows` up to `0.18.0-alpha.4` was a Promise engine
+(`defineTask` / `implementTask`, `createWorkflowRuntimeClient`,
+`/effect`, `/runtime`, Standard Schema, `lifecycle.signal`). Its code does not
+carry over: follow the README's "Upgrading from the Promise engine" tables.
+Runs in flight are never converted: drain and stop the old engine first.
+PostgreSQL then migrates schema generation 4, which `0.18.0-alpha.4`
+installs, to 6 (`Postgres.migrateFrom4` or `MIGRATION_FROM_4_SQL`, which
+refuse while runs or commands are in flight; old runs stay unversioned);
+Redis starts empty.

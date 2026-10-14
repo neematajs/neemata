@@ -1,1235 +1,1573 @@
 # @nmtjs/workflows
 
-Typed workflow and task primitives for Neemata.
+Durable workflows for Effect applications. You declare tasks and workflows
+once, with their schemas and handlers; the engine stores every run, runs each
+step as an attempt with retries and timeouts, and continues a run from what
+is stored after a crash, a deploy or a restart.
 
-## Imports
+- A **task** is a handler with an input and an output schema. It runs as a
+  run of its own.
+- A **workflow** is a fixed sequence of steps, known before any run: tasks,
+  child workflows, inline activities, branches, parallels and maps.
+- A **client** starts, cancels, retries and reads runs.
+- **Workers** do the work: a coordinator advances workflow runs, execution
+  workers run handlers.
+- A **store** holds everything: in memory, PostgreSQL or Redis.
 
-The core is Effect-free: definitions take Standard Schemas, handlers return values
-or Promises, and the worker passes them one `env` value.
+It needs `effect` 4. Handlers are Effects, schemas are `effect/Schema`, and
+every operation is an Effect that requires the `Store` service.
+
+Contents: [Quick start](#quick-start) · [Authoring](#authoring) ·
+[Client](#client) · [Workers](#workers) · [Revisions](#revisions) ·
+[Showing runs in a frontend](#showing-runs-in-a-frontend) ·
+[Stores](#stores) · [Hosting in Neem](#hosting-in-neem) ·
+[Guarantees and limits](#guarantees-and-limits) ·
+[Upgrading from the Promise engine](#upgrading-from-the-promise-engine)
+
+The examples of this guide are run by
+[`tests/readme.spec.ts`](./tests/readme.spec.ts). How the engine is built is
+in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
+## Quick start
+
+A task, a workflow of two steps, both workers and one run, on the in-memory
+store:
 
 ```ts
 import {
-  defineTask,
-  defineWorkflow,
-  implementTask,
-  implementWorkflow,
+  Client,
+  decodeRun,
+  InMemory,
+  task,
+  Worker,
+  workflow,
 } from '@nmtjs/workflows'
-```
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
+import * as Stream from 'effect/Stream'
 
-`@nmtjs/workflows/effect` exports the same four functions for Effect
-applications: definitions take `effect/Schema` schemas, and handlers return
-Effects whose services come from the worker. It needs the optional `effect` peer
-(`^4.0.4`), as does the Effect worker in `@nmtjs/workflows/effect/neem`; only
-stable Effect modules are imported. Definitions
-and implementations from either entry point are interchangeable everywhere else.
-
-Runtime adapters live behind explicit subpaths:
-
-```ts
-import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-  verifyPostgresWorkflowSchema,
-} from '@nmtjs/workflows/postgres'
-import { createSchema } from '@nmtjs/workflows/postgres/drizzle'
-import { createEffectSqlWorkflowClient } from '@nmtjs/workflows/postgres/effect'
-import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
-```
-
-## Schemas, handlers and env
-
-Definitions take [Standard Schemas](https://standardschema.dev), so any library
-that implements the spec works: Zod, Valibot, ArkType, or Effect through the
-adapter below. Handlers, clients and results see a schema's output type; stores
-see JSON. Schemas must validate synchronously.
-
-A single schema serves values that are stored as they are: it validates them on
-the way in and again when they are read back. Standard Schema validates in one
-direction only, so a transformed value declares both directions, and a single
-transforming schema is rejected at compile time.
-
-```ts
-import * as z from 'zod'
-
-const date = {
-  decode: z.iso.datetime().transform((stored) => new Date(stored)),
-  encode: z.date().transform((value) => value.toISOString()),
-}
-
-const normalizeDate = defineTask({
-  name: 'normalize-date',
-  input: z.object({ at: z.string() }),
-  output: date,
+const Greet = task({
+  name: 'greet',
+  pool: 'default',
+  input: Schema.String,
+  output: Schema.String,
+  handler: (name) => Effect.succeed(`Hello, ${name}`),
 })
 
-const implementation = implementTask(normalizeDate, {
-  pool: 'dates',
-  handler: async ({ at }, lifecycle, env: { clock: Clock }) =>
-    env.clock.round(new Date(at)),
-})
+const Welcome = workflow(
+  {
+    name: 'welcome',
+    pool: 'default',
+    input: Schema.Struct({ name: Schema.String }),
+    output: Schema.Struct({ greeting: Schema.String, length: Schema.Number }),
+  },
+  function* (w) {
+    // A step that starts a run of the task.
+    const greeting = yield* w.task('greet', Greet, {
+      input: Effect.map(w.input, ({ name }) => name),
+    })
+    // A step declared in place, run on the workflow's pool.
+    const length = yield* w.activity('measure', {
+      input: Schema.String,
+      output: Schema.Number,
+      from: greeting,
+      handler: (text) => Effect.succeed(text.length),
+    })
+    return Effect.all({ greeting, length })
+  },
+)
 
-await runExecutionWorker({
-  ...runtime,
-  env: { clock },
-  workflows: [],
-  tasks: [implementation],
-  workerId: 'worker-1',
-})
+const quickstart = Effect.gen(function* () {
+  // Workers run until they are interrupted: here, when the scope closes.
+  yield* Effect.forkScoped(Worker.coordinator({ workflows: Welcome.workflows }))
+  yield* Effect.forkScoped(
+    Worker.execution({ workflows: Welcome.workflows, tasks: Welcome.tasks }),
+  )
+
+  const run = yield* Client.start(Welcome, { name: 'Ada' })
+  // The stream ends with the status the run ends in.
+  yield* Stream.runDrain(Client.watch(run.id))
+
+  const records = yield* Client.get(run.id)
+  return decodeRun(Welcome, records!.run).output
+}).pipe(Effect.scoped, Effect.provide(InMemory.layer()))
+
+// Effect.runPromise(quickstart) resolves to
+// { greeting: 'Hello, Ada', length: 10 }
 ```
 
-Whatever a schema produces must be JSON when it is stored; the engine checks.
-`toStoredJsonSchema(definition.input)` returns the JSON Schema of the stored form
-when the library implements Standard JSON Schema, for code generation and tooling.
+`Welcome.workflows` is the workflow and every child workflow it can start;
+`Welcome.tasks` is every task they can start. Those two lists are what
+workers take.
 
-Dependencies are that one `env` value. The engine neither builds nor disposes
-it: its owner creates it before starting the worker and disposes it afterwards.
-The worker input requires an `env` that satisfies every registered handler at
-once; handlers that ignore it require none. Workflow `finish` receives
-`(outputs, workflowInput, lifecycle, env)`. `createContract` builds definition
-functions for a library whose schemas are not Standard Schemas themselves.
+## Authoring
 
-## Pools: tasks, workflows and activities
+### Tasks
 
-Only tasks and workflows carry placement. Each names the execution pool whose
-workers run it, and nothing is placed implicitly:
+`task(options)` declares a task: its name, the pool whose workers run it, its
+schemas, its policies and its handler.
 
 ```ts
-implementTask(renderPdf, { pool: 'pdf', handler })
-
-implementWorkflow(checkout, { pool: 'checkout' }) // its activities run here
-  .price(loadPrice) // activity: inherits the pool
-  .receipt(renderPdf, { input: ({ price }) => price }) // task node: pdf pool
-  .finish(({ receipt }) => receipt)
-```
-
-An activity is a private step of its workflow and has no placement options. A
-step that needs its own pool, because it is heavy, risky to clean up, or has to
-be isolated from the rest, should be a task: a task can be a node or a map item,
-has its own retry and timeout policy, and is its own run in the inspector.
-Promoting a step to a task is how it gets isolated, and that decision is then
-visible in the contract. The workflow itself is advanced by coordinator threads,
-so `finish` must be quick.
-
-A pool is only a name here; its size and timing are a deployment decision made
-by the planner. Workers claim the tasks, and the activities of the workflows,
-implemented for their pool. Routing is decided by workers, not stamped on queued
-work, so moving an implementation to another pool takes effect for already
-queued work on the next deploy. A standalone worker takes
-`runExecutionWorker({ pool: 'pdf', ... })`; without `pool` it serves everything.
-
-Standalone workers accept partial lists, since a coordinator needs no task
-handlers. A standalone host calls `verifyWorkflowsRegistry` from
-`@nmtjs/workflows/runtime` once at startup, with everything the deployment
-serves, to fail fast on the gaps the Neem worker rejects (see below):
-
-```ts
-verifyWorkflowsRegistry({
-  workflows: [checkoutImpl],
-  tasks: [renderPdfImpl],
-  schedules: [nightly],
-  pools: ['checkout', 'pdf'], // optional: rejects implementations naming another
+const Order = Schema.Struct({
+  id: Schema.String,
+  tenant: Schema.String,
+  // Text where it is stored, a number wherever code sees it.
+  cents: Schema.NumberFromString,
 })
-```
+const Receipt = Schema.Struct({ id: Schema.String, reference: Schema.String })
 
-Pool `concurrency` is capacity per process, not a limit: three instances of a
-pool with two slots run six handlers. Cluster-wide limits are not implemented.
+/** The payment gateway; the worker supplies it. */
+class Gateway extends Context.Service<
+  Gateway,
+  {
+    readonly charge: (
+      key: string,
+      cents: number,
+    ) => Effect.Effect<string, Error>
+  }
+>()('readme/Gateway') {}
 
-## Revisions: pinning runs to the code that started them
-
-By default a run is identified by name only: whatever implementation of
-`billing.invoice` is deployed when a command is claimed executes it, so a
-deployment changes the code under runs that are already in flight. Declaring a
-`revision` on a definition pins its runs instead:
-
-```ts
-const charge = defineTask({
-  name: 'billing.charge',
-  revision: '2026-10-13',
-  input: Invoice,
-  output: Receipt,
-})
-
-const invoice = defineWorkflow({
-  name: 'billing.invoice',
-  revision: '2026-10-13',
+const Charge = task({
+  name: 'charge',
+  pool: 'payments',
   input: Order,
   output: Receipt,
+  retry: { attempts: 3, backoff: 'exponential', delay: '1s' },
+  timeout: '30s',
+  tags: (order) => ({ tenant: order.tenant }),
+  idempotency: (order) => ['charge', order.id],
+  unique: {
+    key: (order) => ['tenant', order.tenant],
+    scope: 'active',
+    behavior: 'reject',
+  },
+  handler: (order, attempt) =>
+    Effect.gen(function* () {
+      const gateway = yield* Gateway
+      // The same key for every attempt of this work, so the gateway charges
+      // once however often the handler runs.
+      const reference = yield* gateway.charge(
+        attempt.idempotencyKey,
+        order.cents,
+      )
+      return { id: order.id, reference }
+    }),
 })
-  .activity('price', { input: Order, output: Invoice })
-  .task('charge', charge)
-  .build()
-
-// Pinned to billing.invoice@2026-10-13, and so is every child it starts.
-const run = await client.start(invoice, order)
-run.executionRevision // '2026-10-13'
-run.graphHash // 64 hex characters
 ```
 
-A revision is an opaque, non-empty string compared only for equality. It is
-never parsed, sorted or treated as "latest". An implementation inherits the
-revision of the definition it implements, and a worker may register any number
-of revisions of one name side by side:
+| Option                 | Means                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| `name`                 | what runs and the queue call it                                                       |
+| `pool`                 | the execution pool whose workers run the handler; required, there is no default       |
+| `input`, `output`      | `effect/Schema` schemas; they alone decide the handler's types                        |
+| `handler`              | `(input, attempt) => Effect`, see [Handlers](#handlers)                               |
+| `retry`                | `{ attempts, backoff?, delay? }`, see [Policies](#policies); one attempt when omitted |
+| `timeout`              | limits one attempt, as `'30s'`, `'5m'` (units `ms`, `s`, `m`, `h`, `d`)               |
+| `revision`             | pins runs to this exact code, see [Revisions](#revisions)                             |
+| `tags`                 | `(input) => Record<string, string>`: tags of every run started from the declaration   |
+| `idempotency`          | `(input) => unknown[]`: the idempotency key of every such run                         |
+| `unique`               | `(input) => unknown[]`, or `{ key, scope?, behavior? }`: its unique key               |
+| `title`, `description` | labels, saved with each run for display                                               |
+
+`workflow(options, body)` takes the same options but `handler` and `retry`.
+Its `timeout` limits the whole run, not an attempt. `tags`, `idempotency` and
+`unique` apply when a run is started by a client or a schedule; see
+[Starting a run](#starting-a-run).
+
+### Workflows
+
+A workflow's body is a generator. Every `w.*` call describes one step, and
+`yield*` places it as the next step and returns a reference to its output.
+The body returns the workflow's result.
 
 ```ts
-defineWorkflowsWorker({
-  workflows: () => [invoiceV1Implementation, invoiceV2Implementation],
-  tasks: () => [chargeV1Implementation, chargeV2Implementation],
-  setup,
+import { task, workflow } from '@nmtjs/workflows'
+import * as Context from 'effect/Context'
+import * as Effect from 'effect/Effect'
+import * as Schema from 'effect/Schema'
+
+/** The payment provider; the worker supplies it. */
+export class Payments extends Context.Service<
+  Payments,
+  {
+    readonly charge: (invoice: string, cents: number) => Effect.Effect<string>
+  }
+>()('billing/Payments') {}
+
+const Order = Schema.Struct({
+  id: Schema.String,
+  mode: Schema.Literals(['manual', 'automatic']),
+  cents: Schema.NumberFromString,
 })
-```
+const Invoice = Schema.Struct({ id: Schema.String, cents: Schema.Number })
+const Approval = Schema.Struct({ id: Schema.String, approver: Schema.String })
+const Receipt = Schema.Struct({ id: Schema.String, paidBy: Schema.String })
+const Summary = Schema.Struct({
+  order: Schema.String,
+  invoice: Schema.String,
+  paidBy: Schema.String,
+})
 
-A definition without a `revision` belongs to the **unversioned lane** and
-behaves exactly as before. `undefined` is that lane, never a wildcard: an
-unversioned implementation does not run versioned runs and a versioned one does
-not run unversioned runs.
-
-### Three identities, kept apart
-
-| Field               | Identifies                                                                   | Changes when                 |
-| ------------------- | ---------------------------------------------------------------------------- | ---------------------------- |
-| `executionRevision` | the code a run executes: `(kind, name, revision)`                            | you declare a new `revision` |
-| `graphHash`         | the run's topology: names, kinds and order of nodes and cases                | the graph changes shape      |
-| `version`           | one stored record, for optimistic concurrency (`retry({ expectedVersion })`) | every write to that record   |
-
-`graphHash` is the SHA-256 of a canonical, label-free JSON projection of the
-definition. Titles, descriptions, retry and timeout policies, schemas, handlers
-and revisions are not part of it. It says two definitions have the same shape; it
-does not say they behave the same. Two revisions with the same graph have the
-same hash and are still different code.
-
-### What a revision binds
-
-Starting a versioned run saves an immutable **manifest** for its revision: the
-graph hash plus the exact revision of every task and child workflow it
-references, including branch alternatives and parallel members a run may never
-take. Consequences:
-
-- A versioned workflow may only reference versioned tasks and workflows.
-  `defineWorkflow` throws otherwise, because an unversioned target would resolve
-  to whatever is deployed. An unversioned workflow may reference anything.
-- A child's revision is part of its parent's manifest, not of the parent's
-  graph hash. Moving a workflow to a new revision of a task therefore needs a
-  new revision of the workflow, even though its graph hash stays the same.
-- Changing the graph or a child binding under a revision that is already saved
-  is rejected: `start()` throws `WorkflowDefinitionConflictError` and creates
-  nothing. A worker that registers such a definition never executes a run with
-  it either: the command is released as unroutable, dead-letters, and the
-  reaper fails the run with the same error.
-- **Compatible hotfixes are your responsibility.** Handler bodies, schemas,
-  retry and timeout policies and labels may change under an unchanged revision,
-  and none of that is detected. Do it only when runs already in flight can
-  continue on the new code: stored inputs and node outputs must still decode,
-  and a handler must still accept what an earlier attempt checkpointed. When in
-  doubt, declare a new revision.
-
-### Deploying a new revision
-
-1. Deploy workers that serve both `invoice@v1` and `invoice@v2` (and both
-   revisions of what they reference). Application code that imports the v2
-   contract starts v2 runs; runs in flight stay on v1, as do the children they
-   create later.
-2. Wait until no v1 run is active (the query below returns nothing).
-3. Remove the v1 code.
-
-```ts
-const { runs } = await client.list({
+export const CreateInvoice = task({
   name: 'billing.invoice',
-  executionRevision: 'v1',
-  status: ['queued', 'running', 'waiting', 'cancelling'],
+  pool: 'billing',
+  input: Order,
+  output: Invoice,
+  handler: (order) =>
+    Effect.succeed({ id: `inv-${order.id}`, cents: order.cents }),
 })
+
+export const ChargeCard = task({
+  name: 'billing.charge',
+  pool: 'payments',
+  input: Invoice,
+  output: Receipt,
+  retry: { attempts: 3 },
+  timeout: '30s',
+  handler: (invoice) =>
+    Effect.gen(function* () {
+      const payments = yield* Payments
+      const paidBy = yield* payments.charge(invoice.id, invoice.cents)
+      return { id: invoice.id, paidBy }
+    }),
+})
+
+export const RequestApproval = task({
+  name: 'billing.approval',
+  pool: 'billing',
+  input: Invoice,
+  output: Approval,
+  handler: (invoice) => Effect.succeed({ id: invoice.id, approver: 'finance' }),
+})
+
+export const RecordPayment = task({
+  name: 'billing.record',
+  pool: 'billing',
+  input: Approval,
+  output: Receipt,
+  handler: (approval) =>
+    Effect.succeed({ id: approval.id, paidBy: approval.approver }),
+})
+
+/** The manual case takes two steps, so it is a workflow of its own. */
+export const ManualBilling = workflow(
+  { name: 'billing.manual', pool: 'billing', input: Invoice, output: Receipt },
+  function* (w) {
+    const approval = yield* w.task('approval', RequestApproval, {
+      input: w.input,
+    })
+    return yield* w.task('record', RecordPayment, { input: approval })
+  },
+)
+
+export const Billing = workflow(
+  {
+    name: 'billing',
+    pool: 'billing',
+    input: Order,
+    output: Summary,
+    timeout: '1h',
+  },
+  function* (w) {
+    const invoice = yield* w.task('invoice', CreateInvoice, { input: w.input })
+
+    const receipt = yield* w.branch('payment', {
+      select: Effect.map(w.input, (order) => order.mode),
+      cases: (p) => ({
+        manual: p.workflow(ManualBilling, { input: invoice }),
+        automatic: p.task(ChargeCard, {
+          input: invoice,
+          retry: { attempts: 5 },
+        }),
+      }),
+    })
+
+    return Effect.gen(function* () {
+      const order = yield* w.input
+      return {
+        order: order.id,
+        invoice: (yield* invoice).id,
+        paidBy: (yield* receipt).paidBy,
+      }
+    })
+  },
+)
 ```
 
-Work is routed by `(name, revision)`, and a worker never claims a command it has
-no code for. If a revision stops being served while runs still need it, their
-commands stay queued: nothing is claimed, no delivery is counted, nothing is
-dead-lettered. Deploying that revision again resumes them where they stopped,
-including a delivery whose worker crashed. This also means:
+This is [`tests/fixtures/billing.ts`](./tests/fixtures/billing.ts);
+[`tests/fixtures/fulfillment.ts`](./tests/fixtures/fulfillment.ts) does the
+same for activities, parallels and maps; its `Fulfillment` workflow is shown
+under [Steps](#steps).
 
-- A run of an unserved revision waits indefinitely and **is not timed out**. The
-  `timeout` backstop is a policy of the definition, so a coordinator sweeps only
-  runs of revisions it serves; applying another revision's timeout would be a
-  guess.
-- Cancelling a workflow run of an unserved revision records `cancelling` and
-  settles when a coordinator serving that revision returns. Settling needs no
-  code of the run, only a coordinator that claims its route. Task runs, and
-  children cancelled through a parent that is served, settle immediately.
-- `retry()` reopens a run on the revision it has. Nothing checks that some
-  worker serves it.
-- Revisions of one name may be implemented for different pools: each is its own
-  route.
+#### Steps
 
-To move a run off a revision you no longer want to serve, restart it on the
-current one (below). There is no automatic migration of runs between revisions.
+`w` is the builder the body receives; `p` is the one passed to `cases` and
+`members`.
 
-### start, restart, retry
+| Call                                     | Options                                                                                             | Its reference holds                           |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `w.activity(name, options)`              | `input`, `output` (schemas), `from`, `handler`, `retry?`, `timeout?`                                | the `output` schema's type                    |
+| `w.task(name, Task, options)`            | `input`, `retry?`, `timeout?`                                                                       | the task's output                             |
+| `w.workflow(name, Workflow, options)`    | `input`, `cancellation?`                                                                            | the child workflow's output                   |
+| `w.branch(name, options)`                | `select`, `cases: (p) => ({ key: case })`                                                           | the union of the cases' outputs               |
+| `w.parallel(name, options)`              | `members: (p) => ({ key: member })`                                                                 | `{ [key]: that member's output }`             |
+| `w.mapTask(name, Task, options)`         | `item` (schema), `items`, `input: (item, index) => taskInput`, `concurrency?`, `retry?`, `timeout?` | `{ items: { item, index, runId, output }[] }` |
+| `w.mapWorkflow(name, Workflow, options)` | `item` (schema), `items`, `input: (item, index) => workflowInput`, `concurrency?`, `cancellation?`  | the same, with the child workflow's output    |
+| `p.activity(options)`                    | as `w.activity`, without a name                                                                     |                                               |
+| `p.task(Task, options)`                  | as `w.task`, without a name                                                                         |                                               |
+| `p.workflow(Workflow, options)`          | as `w.workflow`, without a name                                                                     |                                               |
 
-`start(definition, input)` runs the definition it is given and pins
-`definition.revision`. There is no "current" lookup in `start`: which revision
-new runs get is decided by which contract your application imports.
+Every step and case also takes `title` and `description`. `w.input` is the
+reference to the workflow's input.
 
-`restart(runId, { revision })` creates a new run from a terminal one:
+On a task or child workflow step, `input` is the **value** the target
+receives. An activity declares its schemas as `input` and `output`, so the
+value it receives is named `from`.
 
-- `'original'` (default) uses the definition the run was created from: the same
-  revision, or the unversioned definition for an unversioned run. It throws when
-  the client does not know that definition.
-- `'latest'` uses the client's `current` definition of the same kind and name,
-  after decoding the run's stored input with that definition's input schema. An
-  input the new schema rejects fails before anything is created. This is a
-  validation, not a migration: nothing transforms the stored input.
+- **Activity.** A step declared where it is used: schemas, handler and
+  policies in one object. It has no pool of its own and runs on the execution
+  workers of its workflow's `pool`. A step that needs its own pool, or is
+  shared between workflows, is a task.
+- **Task and workflow steps** start a run of the target and take its output.
+  `retry` and `timeout` on a task step replace the task's own for that step.
+- **Branch.** Every case is declared; `select` picks the one that runs, once
+  per run, and the choice is stored. A case is one activity, task or child
+  workflow.
+- **Parallel.** Every member is started when the run reaches the step. The
+  step completes when all have. A member that fails does not stop the others:
+  the step fails once every member has settled. Members cannot read one
+  another.
+- **Maps.** `items` is computed once, when the run reaches the step, and
+  stored through the `item` schema. `input` is called once per item, when the
+  engine starts it. `concurrency` bounds how many items run at once; all of
+  them without it. The output lists the items in their order, whatever order
+  they finished in. An empty list completes the step with `{ items: [] }`. A
+  failed item does not stop the others: the step fails once every item has
+  settled. `retry` and `timeout` on `mapTask` apply to every item on its own.
 
 ```ts
-const client = createWorkflowRuntimeClient({
-  ...runtime,
-  // What restart can resolve; several revisions of one name are fine.
-  definitions: [invoiceV1, invoiceV2],
-  // What `latest` means. Explicit, at most one per kind and name.
-  current: [invoiceV2],
-})
+export const Fulfillment = workflow(
+  {
+    name: 'fulfillment',
+    pool: 'fulfillment',
+    input: Order,
+    output: Summary,
+  },
+  function* (w) {
+    // Both members run; neither can read the other.
+    const checks = yield* w.parallel('checks', {
+      members: (p) => ({
+        units: p.activity({
+          input: Lines,
+          output: Schema.Number,
+          from: Effect.map(w.input, (order) => order.lines),
+          handler: (lines) =>
+            Effect.succeed(lines.reduce((sum, line) => sum + line.quantity, 0)),
+        }),
+        risk: p.task(Screen, {
+          input: Effect.map(w.input, (order) => order.id),
+        }),
+      }),
+    })
 
-await client.restart(run.id) // invoice@v1 again
-await client.restart(run.id, { revision: 'latest' }) // invoice@v2
+    // One Reserve run per line, two at a time.
+    const reserved = yield* w.mapTask('reserve', Reserve, {
+      item: Line,
+      items: Effect.map(w.input, (order) => order.lines),
+      input: (line) => Effect.succeed(line),
+      concurrency: 2,
+    })
+
+    // One Ship child workflow per reserved line.
+    const shipped = yield* w.mapWorkflow('ship', Ship, {
+      item: Reserved,
+      items: Effect.map(reserved, ({ items }) =>
+        items.map(({ output }) => output),
+      ),
+      input: ({ sku, bin }) =>
+        Effect.map(w.input, (order) => ({ order: order.id, sku, bin })),
+    })
+
+    const note = yield* w.branch('wrap', {
+      select: Effect.map(w.input, (order) => (order.gift ? 'gift' : 'plain')),
+      cases: (p) => ({
+        gift: p.activity({
+          input: Schema.String,
+          output: Schema.String,
+          from: Effect.map(w.input, (order) => order.id),
+          handler: (order) => Effect.succeed(`gift receipt for ${order}`),
+        }),
+        plain: p.activity({
+          input: Schema.Number,
+          output: Schema.String,
+          from: Effect.map(checks, ({ units }) => units),
+          handler: (units) => Effect.succeed(`${units} units`),
+        }),
+      }),
+    })
+
+    return Effect.gen(function* () {
+      const order = yield* w.input
+      const { units, risk } = yield* checks
+      const { items } = yield* shipped
+      return {
+        order: order.id,
+        units,
+        risk,
+        tracking: items.map(({ output }) => output.tracking),
+        note: yield* note,
+      }
+    })
+  },
+)
 ```
 
-`retry(runId)` never changes what a run is pinned to: the run keeps its id,
-revision and graph hash.
+A case or member with several steps is a workflow: declare it with
+`workflow(...)` and use `p.workflow(Child, { input })`. It runs as a child run
+with its own input and its own references, so pass what it needs through
+`input`. Branches, parallels and maps do not nest in one another for the same
+reason.
 
-### Idempotency and unique keys across revisions
+A failed step fails the run. The steps after it do not run.
 
-Both key spaces stay global, so a deployment cannot create a second live
-operation for the same business key.
+#### Build time and run time
 
-- **Idempotency key.** A replay returns the existing run only for the same
-  revision. The same key started with another revision throws
-  `WorkflowIdempotencyConflictError`, which carries the existing `runId`. A
-  caller that retries a start across a deployment should keep using the
-  contract it first started with. Graph hashes are not compared.
-- **Unique key, `reject`.** Unchanged: any run holding the key rejects the start.
-- **Unique key, `join`.** Joins only a run of the same kind, name and revision.
-  Otherwise it throws `WorkflowRunConflictError` with the existing `runId` and a
-  `holder` naming what holds the key, instead of returning a run typed by a
-  contract it was not created with.
+| When                         | What runs                                                                   |
+| ---------------------------- | --------------------------------------------------------------------------- |
+| `task(...)` is called        | nothing of yours                                                            |
+| `workflow(...)` is called    | the generator body, once, start to end; the `cases` and `members` callbacks |
+| a coordinator advances a run | `select`, `from`, `items`, inputs and the result, when reached              |
+| an execution worker runs     | task and activity handlers, with the worker's services                      |
 
-Two unversioned runs keep the previous behavior in every case, including a
-`join` across different workflows.
+The graph is therefore known before anything runs: both cases of a branch,
+every member of a parallel and the one template of a map exist when
+`workflow(...)` returns, whatever a run later selects.
+
+The body is ordinary JavaScript and runs at module load. Nothing sandboxes
+it: a statement that performs I/O performs it during the build. Keep the body
+to step declarations.
+
+#### References are Effects
+
+`yield*` returns a `Ref<Output>`, and `w.input` is a `Ref<Input>`:
+
+```ts
+type Ref<A> = Effect.Effect<A, never, Run>
+```
+
+A reference is an Effect that needs a **run** to have a value. Building one
+runs nothing, and there is nothing to read from it while the workflow is
+built, because no run exists yet. `Run` is a service the engine provides when
+it computes a value for a run, with the outputs that run has produced.
+
+A value computed from references is ordinary Effect code:
+
+```ts
+Effect.map(w.input, (order) => order.mode)
+
+Effect.all({ order: w.input, invoice })
+
+Effect.gen(function* () {
+  const order = yield* w.input
+  return { order: order.id, invoice: (yield* invoice).id }
+})
+
+Effect.succeed('constant')
+```
+
+A step's `input`, an activity's `from`, a map's `items`, a branch's `select`
+and the workflow's result each take such an Effect. A map's `input` is a
+function of the item and its index that returns one.
+
+These Effects run **in the coordinator**, between two steps of a run, and
+must be pure and synchronous. The types hold part of that rule:
+
+- The only requirement allowed is `Run`. A handler's services exist on
+  execution workers, so `yield* Payments` in a selector is a type error.
+- The failure type is `never`. A value that can fail must handle it, or the
+  failure is a defect.
+- They are run synchronously. One that waits (`Effect.sleep`,
+  `Effect.promise`) passes the types and fails with
+  `[...] is computed in the coordinator and cannot wait: asynchronous work belongs in a task or an activity`.
+- They may run more than once for one step, so they must have no effect of
+  their own.
+
+A value that throws fails the step it was computed for, or the run when it is
+the result. In a parallel or a map only that member or item fails.
+
+A value reads only what exists when its step starts: the workflow input and
+the outputs of earlier steps.
+
+Do not branch on a reference in the body:
+
+```ts
+const invoice = yield* w.task('invoice', CreateInvoice, { input: w.input })
+if (invoice) { ... } // always true: a Ref is an object
+```
+
+TypeScript cannot reject this, and it would describe a different graph per
+build, not a decision per run. A decision that depends on a run's values is a
+`w.branch`.
+
+### Handlers
+
+A task or activity handler is `(input, attempt) => Effect<Output, unknown, R>`.
+It receives the decoded input and returns the decoded output.
+
+- **Services.** `R` is whatever the handler yields. The worker that runs it
+  must provide them, and the types of `Worker.execution` require it. Each
+  handler is also given a `Scope` that lasts for its attempt, so
+  `Effect.acquireRelease` works as it stands.
+- **Failure.** A failure and a defect both fail the attempt, which is then
+  retried under its policy. The error is stored on the attempt, and on the
+  run when it was the last.
+- **Stopping.** Interruption is how a handler is told to stop: its run was
+  cancelled, its attempt timed out, its worker is shutting down, or its claim
+  was lost. There is no signal argument; use Effect's interruption, and
+  `Effect.tryPromise` with its `AbortSignal` for Promise APIs.
+
+`attempt` says which work the handler runs:
+
+| Field            | Holds                                                                       |
+| ---------------- | --------------------------------------------------------------------------- |
+| `runId`          | the run the attempt belongs to; for a task, the task's own run              |
+| `nodeName`       | the step                                                                    |
+| `childKey`       | which child of the step: its only one, a branch's case, a parallel's member |
+| `attemptNumber`  | counts every attempt of the work, from 1                                    |
+| `idempotencyKey` | one opaque string for every attempt of this work, a manual retry's included |
+
+Pass `idempotencyKey` to whatever must not happen twice. A handler can run
+again after it succeeded, when its outcome could not be recorded, so this key
+is what keeps a side effect from repeating.
+
+### Schemas and codecs
+
+Schemas are `effect/Schema`. They must decode synchronously and require no
+services.
+
+Handlers, clients and computed values see a schema's `Type`; the store holds
+its encoded form, which must be JSON. `Schema.NumberFromString` above is a
+number in code and text in the store. The engine checks that what is encoded
+is JSON and fails the attempt, or refuses the start, when it is not.
+
+A stored value is decoded by the schema of the declaration that wrote it:
+`Client.start` answers with a decoded run, and `decodeRun(declaration, run)`
+decodes a stored run for the declaration it was started from, and throws for
+any other. `declaration.input` and `declaration.output` hold
+`{ schema, encode, decode }` when you need a value on the other side.
+`InputOf<D>`, `OutputOf<D>` and `Services<D>` give a declaration's types.
+
+### Policies
+
+| Policy         | Where                                | Means                                                                                                                 |
+| -------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `retry`        | task, activity, task step, `mapTask` | `attempts` in total, the first included; `delay` between them; `backoff: 'exponential'` doubles it after each failure |
+| `timeout`      | task, activity, task step, `mapTask` | limits one attempt; a timed-out attempt is retried like a failed one                                                  |
+| `timeout`      | workflow                             | limits the whole run; a run past it fails with `RunTimeout` and what it had in flight is cancelled                    |
+| `cancellation` | workflow step, `mapWorkflow`         | `'propagate'` (default) cancels the child with its parent; `'detach'` lets it go on                                   |
+| `concurrency`  | `mapTask`, `mapWorkflow`             | at most this many items in flight; a positive integer                                                                 |
+
+Without `retry` the work runs once. Without `delay` the next attempt is due
+at once. A `retry` on a step replaces the task's policy whole.
+
+A workflow's `timeout` counts from when the run was created, or from its last
+manual retry. Coordinators enforce it in a sweep (every 60 seconds by
+default), so a run ends up to one sweep late.
+
+### What is rejected, and when
+
+While `task(...)` or `workflow(...)` builds, as a thrown `Error`:
+
+| Mistake                                                       | Error                                                                               |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| a `revision` that is not a non-empty string                   | `Invalid task revision [...]: expected a non-empty string`                          |
+| a missing schema                                              | `Missing schema for ...`                                                            |
+| a step name that is no identifier                             | `Invalid workflow node name: ...`                                                   |
+| a step named `input`, `__proto__`, `constructor`, `prototype` | `Workflow node name cannot be "..."`                                                |
+| a step name used twice                                        | `Duplicate workflow node name: ...`                                                 |
+| a case or member key `__proto__`, `constructor`, `prototype`  | `Workflow branch case key cannot be "..."`                                          |
+| a plan created and never yielded (a missing `yield*`)         | `Workflow [...] never yielded its plans: ...`                                       |
+| `yield plan` without `*`                                      | `Plan [...] must be yielded with yield*`                                            |
+| a plan yielded twice                                          | `Plan [...] was already yielded`                                                    |
+| anything else yielded, such as a reference                    | `Workflow [...] can only yield plans created by its builder`                        |
+| another workflow's plan yielded                               | `Plan [...] belongs to another workflow ...`                                        |
+| another workflow's reference handed to a step or returned     | `Reference [...] belongs to another workflow ...`                                   |
+| a step plan used as a case or member                          | `Branch case [...] must be built with the cases builder`                            |
+| a missing `input`, `from`, `items`, `select` or result        | `[...] needs a reference or an Effect computed from references`                     |
+| an activity without a handler                                 | `Missing activity handler [...]`                                                    |
+| a map without its per-item `input` function                   | `[...] needs an input callback for its items`                                       |
+| a map `concurrency` that is not a positive integer            | `Map node concurrency must be a positive integer`                                   |
+| a versioned workflow using an unversioned task or workflow    | `... every task and child workflow of a versioned workflow must declare a revision` |
+
+A reference handed to a step as it is, is checked during the build. An
+Effect computed from references is not run during the build, so what it reads
+is checked when it runs: reading a reference of another workflow, or of a
+later step, throws there and fails the step.
+
+At run time, as a failed step or run: a computed value that throws or waits,
+a `select` that names no case (`Unknown branch case [...]`), and a value its
+schema does not fit (`Invalid task input [...]`, `Invalid node output [...]`
+and the like, with the schema's issues as the cause).
+
+## Client
+
+`Client.*` are Effects that require `Store`. None of them retries: a storage
+failure is the caller's to see, so every operation below may also fail with
+`StorageError`.
+
+### Starting a run
+
+```ts
+// An Effect that requires Store and answers with the run, decoded.
+const started = Client.start(Charge, { id: 'o-1', tenant: 'acme', cents: 1200 })
+```
+
+`start(declaration, input, options?)` creates a run of a task or a workflow
+and answers with it, decoded. It is one commit: the run, the command that
+starts it and its saved definition are written together or not at all. The
+run is `queued` until a worker takes it.
+
+| Option           | Means                                                                    |
+| ---------------- | ------------------------------------------------------------------------ |
+| `tags`           | replaces what the declaration's `tags` builds                            |
+| `idempotencyKey` | replaces what the declaration's `idempotency` builds                     |
+| `unique`         | `{ key, scope?, behavior? }`; replaces what the declaration's builds     |
+| `startAt`        | Unix milliseconds: the run exists at once, and is not worked before this |
+
+**Idempotency key.** It names one request. The same task or workflow, the
+same revision and the same input under a key that a run holds is answered
+with that run. Anything else under the key fails with `IdempotencyConflict`,
+which carries the `runId` that owns it. The key is held for as long as the
+run exists.
+
+**Unique key.** It limits how many runs may hold a business key.
+
+- `scope: 'active'` (default): the key is held while the run has not ended.
+  `scope: 'all'`: it is held for as long as the run exists.
+- `behavior: 'reject'` (default): a start that finds the key held fails with
+  `RunConflict`, carrying the holder's `runId` and `status`.
+  `behavior: 'join'`: it is answered with the holder instead.
+
+```ts
+/** Starts the charge of an order, or names the run its tenant is busy with. */
+const admit = (order: typeof Order.Type) =>
+  Client.start(Charge, order).pipe(
+    Effect.map((run) => ({ started: run.id })),
+    Effect.catchTag('RunConflict', ({ runId }) =>
+      Effect.succeed({ busyWith: runId }),
+    ),
+  )
+```
+
+`start` fails with `IdempotencyConflict`, `RunConflict`, or
+`DefinitionConflict` when the declaration differs from what is saved for its
+revision (see [Revisions](#revisions)). An input that does not encode, and a
+builder that throws, are defects: nothing is written.
+
+**Transactions.** On PostgreSQL, a client call made inside the caller's
+`sql.withTransaction` is part of that transaction: the run commits or rolls
+back with the caller's own writes, and workers hear of it when it commits. A
+start that is refused there (`IdempotencyConflict`, `RunConflict`,
+`DefinitionConflict`) leaves the transaction usable: catch the error and it
+goes on to commit its other writes.
+
+```ts
+/** An insert of the application's and a run, committed or rolled back as one. */
+const placeOrder = (order: typeof Order.Type) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO orders (id) VALUES (${order.id})`
+        return yield* Client.start(Charge, order)
+      }),
+    )
+  })
+```
+
+### Cancelling
+
+`Client.cancel(runId)` asks a run to stop and answers with the run, or
+`undefined` when none has the id. A task run is `cancelled` by the request
+itself. A workflow run becomes `cancelling`; its next coordination pass
+cancels what it has in flight, child runs included unless their step says
+`cancellation: 'detach'`, and ends it as `cancelled`. Handlers of the run are
+interrupted. Cancelling a run that has ended changes nothing.
+
+### Retry and restart
+
+Two ways to run failed work again:
+
+|         | `Client.retry(runId, options?)`          | `Client.restart(runId, options)`                       |
+| ------- | ---------------------------------------- | ------------------------------------------------------ |
+| Run     | the same run, reopened in place          | a new root run                                         |
+| Accepts | a `failed` root run                      | a root run that has ended, in any status               |
+| Runs    | only what failed; completed work is kept | everything, from the stored input                      |
+| Keeps   | id, input, tags, keys, attempt history   | the stored tags and unique constraint, unless replaced |
+| Needs   | nothing but the store                    | `definitions`: what the run may be a run of            |
+
+```ts
+/**
+ * The same run again: only what failed runs, with a fresh retry budget.
+ * `version` is the one the caller saw, so a stale request is refused.
+ */
+const reopen = (runId: string, version: number) =>
+  Client.retry(runId, { expectedVersion: version })
+
+/**
+ * A new run from the stored input. The declaration's idempotency builder
+ * would name the first run again, so the key is replaced.
+ */
+const chargeAgain = (runId: string) =>
+  Client.restart(runId, {
+    definitions: [Charge],
+    idempotencyKey: ['charge', runId, 'again'],
+  })
+```
+
+A retry gives each piece of failed work the input its last attempt had and a
+fresh retry budget; `attemptNumber` goes on counting. Failed and cancelled
+runs under the root are reopened as their parents reach them, and the run's
+`timeout` counts from the retry. `expectedVersion` refuses a retry decided on
+an older view of the run; a management UI passes the version it displayed.
+
+`retry` fails with `RunNotFound`, `RunNotRoot`, `RunNotFailed`,
+`StaleRunVersion`, `RunConflict` when the run's `active` unique key was taken
+by another run since, and `RunBusy` while anything of the run's family is
+still in flight: a run that has not ended, or a command a worker still holds.
+Nothing waits: ask again once it has settled.
+
+`restart` resolves the run to the declaration in `definitions` with its kind,
+name and revision, never another revision, and starts it as `start` does, with
+the same options. The rules of `start` hold: a declaration whose `idempotency`
+builder names the original run answers with that run unless `idempotencyKey`
+replaces it, and a constraint of scope `all` conflicts with the run being
+restarted. It fails with what `start` fails with, and with `RunNotFound`,
+`RunNotRoot`, `RunNotTerminal` and `UnknownDefinition`.
+
+To run finished work on another revision, start that revision yourself with
+an input you map: only your code knows how one contract's input becomes
+another's.
+
+### Reading runs
+
+| Call                              | Answers with                                                                                              |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `Client.get(runId)`               | `{ run, nodes, children, attempts }` as stored, payloads included; `undefined` for no such run            |
+| `Client.getDetail(runId)`         | the same without payloads, and `childRuns`: the runs it started                                           |
+| `Client.getNode(runId, nodeName)` | one step with its children and their attempts, as stored                                                  |
+| `Client.getFamily(runId)`         | every run under the root of the given one, the root included, oldest first                                |
+| `Client.list(filter?)`            | `{ runs, nextCursor? }`: runs as stored, newest first                                                     |
+| `Client.listSummaries(filter?)`   | the same without payloads, with `nodesTotal` and `nodesCompleted`                                         |
+| `Client.inspect(runId)`           | `{ detail, definition }`: the run with the graph it was created with                                      |
+| `Client.getDefinition(ref)`       | a saved revision and its graph, by `{ kind, name, revision }`; fails with `DefinitionConflict` if corrupt |
+
+Records hold stored values. `decodeRun(declaration, run)` turns a stored run
+into a typed one.
+
+A run id is the exact text the engine gave. The same id in another spelling,
+as a uuid in capitals, names no run in any call, on any store.
+
+A list filter takes `kind`, `name`, `revision` (`null` for unversioned runs),
+`status` (one or several), `parentRunId` (`null` for root runs), `rootRunId`,
+`tags` (every tag given), `input` (JSON containment), `createdBefore`,
+`activeBefore`, `limit` (100 when omitted) and `cursor` (the `nextCursor` of
+an earlier page of the same filter).
+
+A run is `queued`, `running`, `waiting` (on child runs), `cancelling`, and
+ends as `completed`, `failed` or `cancelled`. Times are Unix milliseconds, so
+records are plain JSON.
+
+### Watching a run
+
+`Client.watch(runId, options?)` is a `Stream` of `{ kind: 'run', status,
+error? }`: the status the run has, then each new status it is found in, and
+last the one it ends in. A status that came and went between two reads is
+not reported. It is empty for a run that does not exist.
+
+| Option           | Default | Means                                                                              |
+| ---------------- | ------- | ---------------------------------------------------------------------------------- |
+| `pollIntervalMs` | `1000`  | how often the run is read when no hint comes; what guarantees a change is seen     |
+| `wake`           | `false` | also emits `{ kind: 'change' }` on every hint that something of the family changed |
+| `debounceMs`     | `0`     | at most one `change` in this long; a status change is never held back              |
+
+`change` events are coarse and best-effort: they do not say what changed, and
+one may be missing. A run reopened by a retry is watched anew: the stream
+ended when it failed.
+
+### Dead commands
+
+A command a worker keeps failing on is set aside as dead after the store's
+`maxDeliveries` (20), and the coordinator's reaper then fails the work it
+stood for. `Client.listDeadCommands({ runId?, limit?, cursor? })` lists them
+as `{ commands, nextCursor? }`, each with its `command`, `deliveries` and
+last `error`. `Client.requeueDeadCommand(id)` queues one again, to be
+delivered as if for the first time, and answers `false` when no dead command
+has the id: of two callers that ask for one command, one queues it.
+
+### Deleting and pruning
+
+`Client.deleteRun(runId)` deletes a root run that has ended, with every run
+under it and all they own, and answers `{ deleted }`: `false` when no run has
+the id. It fails with `RunNotRoot`, and with `RunBusy` while a run of the
+family has not ended or a worker holds a command of one.
+
+`Client.pruneRuns({ olderThan, statuses?, batchSize? })` deletes the families
+of the root runs that ended in one of `statuses` (all three when omitted) and
+were not written since `olderThan`, a timestamp, and answers `{ deleted }`.
+Families with anything in flight stay. A coordinator does the same on a
+timer when given `retention`.
+
+Saved definitions are shared by runs and are never deleted.
 
 ### Schedules
 
-A schedule records the revision and graph of its `runnable` when it is
-reconciled, and every fire pins its run to them. Reconciling with a new revision
-affects future slots only. If a scheduler creates a slot's run and crashes
-before recording the slot, the next fire adopts that run, even after a
-deployment changed the schedule's revision, input or target: a slot is never
-fired twice and never stuck.
-
-### Unversioned runs and upgrading
-
-Runs, commands and schedules written before revisions existed have no revision
-and no saved graph. They are not backfilled and stay in the unversioned lane,
-with the guarantee they always had: their name resolves to the unversioned code
-deployed now. New unversioned runs save their own graph for inspection and are
-otherwise unchanged.
-
-Giving an existing name its first `revision` does not move its in-flight runs:
-keep the unversioned implementation registered until they drain, or restart them
-with `{ revision: 'latest' }`. Rolling back to a build without revisions is only
-safe while no versioned run exists; see the adapter sections for the upgrade
-order.
-
-Saved graphs and manifests are shared by all runs and are kept when runs are
-deleted, pruned or expire. They are small and bounded by how many revisions you
-have ever deployed, not by how many runs you start. Nothing collects them yet.
-
-## Inspecting historical runs
-
-`client.inspect(runId)` returns the run's detail together with the graph it was
-created with, read from the store alone. It needs no definition or
-implementation, so a management surface can render a run whose code is long
-gone:
+`schedule(options)` declares that runs of a task or workflow start by
+themselves:
 
 ```ts
-const inspection = await client.inspect(runId)
-if (!inspection) return notFound()
+const NightlyBilling = schedule({
+  name: 'billing.nightly',
+  runnable: Billing,
+  input: { id: 'nightly', mode: 'automatic', cents: 0 },
+  cron: '0 2 * * *',
+  timeZone: 'Europe/Berlin',
+})
+```
 
-const { detail, definition } = inspection
-if (definition.source === 'saved') {
-  definition.structure // nodes and cases in declared order, with alternatives
-  definition.presentation // the titles and descriptions the run was created with
-  definition.revision?.bindings // which revision each target slot runs
-} else {
-  definition.reason // 'legacy' | 'missing-graph' | 'invalid-graph'
+| Option        | Means                                                                                         |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `runnable`    | the task or workflow each slot starts a run of                                                |
+| `input`       | its input, typed by the runnable                                                              |
+| `cron`        | when it fires, as a cron expression; or                                                       |
+| `every`       | at a fixed interval of whole milliseconds, as `'15m'` or `'1.5s'`; exactly one of the two     |
+| `timeZone`    | the IANA zone `cron` is read in; the declaring process's zone when omitted, stored either way |
+| `tags`        | replaces the tags the runnable builds; every run is also tagged `schedule: <name>`            |
+| `enabled`     | `true` when omitted                                                                           |
+| `immediately` | makes the first slot the moment the schedule is first reconciled                              |
+
+Schedules are given to the coordinator (`schedules`). It makes the stored
+schedules those it was given as it starts, **removing any other**, then fires
+those that are due. A slot is fired once however many coordinators find it
+due. Slots missed while nothing ran, or while a schedule was off, are skipped
+and not made up for.
+
+| Call                                    | Does                                                                       |
+| --------------------------------------- | -------------------------------------------------------------------------- |
+| `Client.schedules.list()`               | every stored schedule, by name, with `nextRunAt` and `lastSlotAt`          |
+| `Client.schedules.trigger(name)`        | starts a run now, beside the slots, whether or not the schedule is enabled |
+| `Client.schedules.setEnabled(name, on)` | turns it on or off until the next reconcile says otherwise                 |
+
+`trigger` and `setEnabled` fail with `UnknownSchedule`.
+
+## Workers
+
+Two kinds of worker serve a deployment, and both run until interrupted:
+
+- `Worker.coordinator(options)` advances the runs of the workflows it is
+  given: it computes inputs, selectors and results, starts steps and settles
+  runs. It runs no handler. It also runs the engine's maintenance.
+- `Worker.execution(options)` runs the handlers of tasks and of activities.
+
+```ts
+const served = {
+  workflows: [Billing, ManualBilling],
+  tasks: [CreateInvoice, ChargeCard, RequestApproval, RecordPayment],
+}
+
+const NightlyBilling = schedule({
+  name: 'billing.nightly',
+  runnable: Billing,
+  input: { id: 'nightly', mode: 'automatic', cents: 0 },
+  cron: '0 2 * * *',
+  timeZone: 'Europe/Berlin',
+})
+
+// Throws unless everything a served workflow can start is served too, once,
+// and every pool a declaration names is one of these.
+Worker.verify({ ...served, pools: ['billing', 'payments'] })
+
+const workers = Effect.all(
+  [
+    Worker.coordinator({
+      workflows: served.workflows,
+      concurrency: 4,
+      schedules: [NightlyBilling],
+      retention: { olderThan: '30d', statuses: ['completed'] },
+    }),
+    Worker.execution({ ...served, pool: 'billing', concurrency: 8 }),
+    // ChargeCard runs here, so this worker requires Payments.
+    Worker.execution({
+      ...served,
+      pool: 'payments',
+      concurrency: 2,
+      cleanupTimeoutMs: 1_000,
+    }),
+  ],
+  { concurrency: 'unbounded', discard: true },
+).pipe(
+  Effect.provideService(Payments, {
+    charge: (invoice, cents) => Effect.succeed(`card:${invoice}:${cents}`),
+  }),
+)
+```
+
+`workers` is an `Effect<void, CleanupTimeout | DefinitionConflict |
+StorageError, Store>`: provide a store layer and run it. Each worker can as
+well be a process of its own.
+
+### Pools
+
+A pool is a name. A task runs on the pool it declares, and a workflow's
+activities run on the workflow's pool. An execution worker given `pool` runs
+the handlers of that pool only; without one it runs all it was given. Its
+type requires the services of exactly the handlers it runs: above, only the
+`payments` worker requires `Payments`.
+
+Workers take partial lists on purpose, so a gap is silent: commands nobody
+has code for wait in the queue.
+`Worker.verify({ workflows, tasks, schedules?, pools? })` is the check to run
+once at startup, with everything the deployment serves. It throws when a task
+or child workflow a served workflow can start, or what a schedule starts, is
+not served, when a declaration is listed twice or exists as two objects of
+one name and revision, and, given `pools`, when a declaration names another
+pool.
+
+A worker can also be given `registry` instead of declarations, for programs
+written against the engine directly; see `ARCHITECTURE.md`.
+
+### Options
+
+Both workers:
+
+| Option        | Default | Means                                                                 |
+| ------------- | ------- | --------------------------------------------------------------------- |
+| `concurrency` | `1`     | commands worked on at once by this worker                             |
+| `leaseMs`     | `30000` | how long a claim is held without renewal: what a crashed worker costs |
+| `pollMs`      | `250`   | how often an idle worker looks for work no hint announced             |
+
+`Worker.execution` also takes `pool`, and `cleanupTimeoutMs` (`5000`): how
+long an interrupted handler may take to end, finalizers included.
+
+`Worker.coordinator` also takes the maintenance options:
+
+| Option        | Default                 | Does                                                                                   |
+| ------------- | ----------------------- | -------------------------------------------------------------------------------------- |
+| `reaping`     | every 30 s; `false` off | fails the work dead commands stood for, so no run waits for a command nobody is given  |
+| `runTimeouts` | every 60 s; `false` off | fails runs of its workflows that are past their `timeout`                              |
+| `schedules`   | none                    | the deployment's schedules, all of them; omitted, stored schedules are left alone      |
+| `scheduling`  | every 1 s               | how due schedules are fired, when `schedules` is given                                 |
+| `retention`   | none                    | `{ olderThan, statuses? }`: prunes ended root runs older than the duration, every 60 s |
+
+Each of `reaping`, `runTimeouts`, `scheduling` and `retention` takes
+`everyMs` and `batchSize` (100). Options a worker cannot run with throw when
+the worker is made, before it touches the store.
+
+### Concurrency, leases and heartbeats
+
+`concurrency` is capacity per worker, not a limit across the deployment:
+three workers of a pool with two slots run six handlers.
+
+A worker takes a command by claiming it for `leaseMs`. While a handler runs,
+its worker renews the claim every third of the lease. A worker that crashes
+stops renewing, and its commands are delivered again when their leases end.
+The renewal is also how a worker learns that the run was cancelled or has
+ended: it then interrupts the handler. With a store that gives hints, that
+happens at once instead of at the next renewal.
+
+A handler whose worker lost its claim is interrupted and its outcome
+discarded: another delivery owns the work.
+
+Idle workers wake on hints from the store and poll every `pollMs` besides.
+Hints are an optimisation; polling is what finds work.
+
+### Attempt timeouts and the cleanup deadline
+
+When an attempt's `timeout` passes, the worker interrupts the handler and
+records the attempt as `timedOut`, with an `AttemptTimeout` error. It is
+retried like a failure.
+
+An interrupted handler has `cleanupTimeoutMs` to end, counted from the moment
+it is interrupted. One that does not yield to interruption cannot be stopped
+from outside, so the worker fails with `CleanupTimeout`: the process is to be
+replaced. Nothing is settled for
+that attempt, and its command is delivered again when its lease ends.
+
+### Shutdown
+
+Interrupting a worker stops it. An execution worker stops claiming,
+interrupts its handlers, gives their commands back for another worker without
+counting the delivery against them, and is done when the handlers have ended.
+A coordinator finishes the passes under way: a pass writes all or nothing and
+is never interrupted.
+
+### Storage failures
+
+A storage failure of one command or one maintenance sweep is logged
+(`Effect.logError`), the command is given back, and the worker goes on. A
+worker fails with `StorageError` only when the store fails it before it
+holds anything: a claim, or a coordinator reconciling its schedules as it
+starts. An execution worker finishes the handlers it has first.
+
+A coordinator fails with `DefinitionConflict` when a declared schedule's
+runnable is not what is saved for its revision.
+
+## Revisions
+
+Without a `revision`, a run is identified by name: whatever code of
+`billing` is deployed when a command is claimed runs it, so a deploy changes
+the code under runs in flight. A `revision` pins runs instead:
+
+```ts
+const ChargeCard = task({
+  name: 'billing.charge',
+  revision: '2026-10-13',
+  ...rest,
+})
+
+const Billing = workflow(
+  { name: 'billing', revision: '2026-10-13', pool: 'billing', input, output },
+  function* (w) {
+    return yield* w.task('charge', ChargeCard, { input: w.input })
+  },
+)
+
+// Every run of it is pinned: `revision` is '2026-10-13' on the run, beside
+// `graphHash`, 64 hex characters.
+const started = Client.start(Billing, order)
+```
+
+A revision is an opaque, non-empty string compared for equality only. It is
+never parsed, sorted or treated as "latest". A declaration without one is in
+the **unversioned lane**, which is a lane of its own and never a wildcard:
+unversioned code does not run versioned runs, nor the other way round.
+
+### Pinning and routing
+
+Work is routed by kind, name and revision, and a worker claims only what it
+has code for. Workers may serve any number of revisions of one name side by
+side; each needs its own declaration, and its own targets.
+
+A versioned workflow may only use versioned tasks and child workflows
+(`workflow(...)` throws otherwise), so a pinned run pins everything it
+starts. An unversioned workflow may use anything.
+
+When a revision stops being served while runs still need it, their commands
+stay queued, untouched: nothing is claimed and nothing counts against them.
+Serving that revision again resumes them. Such a run is also **not timed
+out**: a coordinator sweeps only runs of the workflows it holds. Cancelling a
+workflow run of an unserved revision records `cancelling` and settles when a
+coordinator serving it returns; a task run is cancelled at once.
+
+A run never moves to another revision.
+
+### Saved graphs
+
+Starting a run saves its **graph** under its hash: the names, kinds and order
+of its steps and cases. `graphHash` is the SHA-256 of that structure. Labels,
+policies, schemas, handlers and revisions are not part of it.
+
+Starting a versioned run also saves an immutable **manifest** for its
+revision: the graph hash and the exact revision of every task and child
+workflow it can start, cases a run may never take included.
+
+| Field       | Identifies                                          | Changes when                 |
+| ----------- | --------------------------------------------------- | ---------------------------- |
+| `revision`  | the code a run executes                             | you declare a new `revision` |
+| `graphHash` | the run's topology                                  | the graph changes shape      |
+| `version`   | one stored record, for `retry({ expectedVersion })` | every write to that record   |
+
+A saved graph is a picture for inspection. It cannot run or read a run: the
+codecs that read stored values are the schemas of the declaration, which
+exist only in code.
+
+### Drift
+
+Changing the graph, or the revision of a target, under a revision that is
+already saved is refused:
+
+- `Client.start` fails with `DefinitionConflict` and creates nothing.
+- A worker that serves such code never runs a run with it. The command is
+  given back with the conflict as its error, set aside as dead after
+  `maxDeliveries`, and the reaper then fails the run with that error.
+
+What is **not** detected: handler bodies, schemas, policies and labels
+changed under an unchanged revision. Do that only when runs in flight can go
+on with the new code: stored inputs and outputs must still decode. When in
+doubt, declare a new revision.
+
+Unversioned runs are not checked: their name alone selects the code.
+
+### Deploying a new revision
+
+1. Deploy workers that serve both revisions, of the workflow and of what it
+   starts. Code that imports the new declaration starts new runs on it; runs
+   in flight stay on the old one, as do the children they start later.
+2. Wait until no run of the old revision is active:
+
+   ```ts
+   const stillActive = Client.list({
+     name: 'billing',
+     revision: 'v1',
+     status: ['queued', 'running', 'waiting', 'cancelling'],
+   })
+   ```
+
+3. Remove the old code.
+
+Which revision new runs get is decided by which declaration your code passes
+to `start`. Giving a name its first `revision` does not move its unversioned
+runs: keep the unversioned declaration served until they have ended.
+
+A schedule is pinned to the revision and graph of its `runnable` when it is
+reconciled, and every fire pins its run to them. Reconciling with a new
+revision affects the slots still to come.
+
+### Keys across revisions
+
+Both key spaces are global, so a deploy cannot create a second live
+operation for one business key.
+
+- **Idempotency key.** A replay is answered with the run only for the same
+  kind, name and revision. The same key with another revision fails with
+  `IdempotencyConflict`. A caller that retries a start across a deploy should
+  keep the declaration it first started with.
+- **Unique key, `reject`.** Any run holding the key refuses the start.
+- **Unique key, `join`.** Joins only a run of the same kind, name and
+  revision. Otherwise it fails with `RunConflict`, whose `holder` names what
+  holds the key. Two unversioned runs join whatever they are.
+
+## Showing runs in a frontend
+
+`@nmtjs/workflows/inspector` imports no Node API, so a browser bundle
+can use it. The server, which already imports the
+declarations, sends graphs and runs as JSON; the browser never imports a
+module that declares a workflow.
+
+```ts
+import type { RunInspection } from '@nmtjs/workflows/inspector'
+import {
+  nodeUnits,
+  renderWorkflowGraph,
+  serializeWorkflowCatalog,
+  serializeWorkflowGraph,
+} from '@nmtjs/workflows/inspector'
+
+// Server: the graph deployed now, and everything the workers serve.
+const graph = serializeWorkflowGraph(Billing)
+const catalog = serializeWorkflowCatalog({
+  workflows: Billing.workflows,
+  tasks: Billing.tasks,
+})
+
+// Server: one run with the graph it was created with, from the store alone.
+const inspectRun = (runId: string) => Client.inspect(runId)
+
+// Browser: an inspection arrives as JSON; the helpers need nothing else.
+const draw = ({ detail, definition }: RunInspection) => ({
+  graph:
+    definition.source === 'saved' && definition.structure.kind === 'workflow'
+      ? renderWorkflowGraph(definition.structure, definition.presentation)
+      : undefined,
+  // The children of one step, each with its attempts and its child run.
+  payment: nodeUnits(detail, 'payment'),
+})
+```
+
+`serializeWorkflowGraph(Billing)` is:
+
+```json
+{
+  "name": "billing",
+  "nodes": [
+    {
+      "name": "invoice",
+      "kind": "task",
+      "target": { "kind": "task", "name": "billing.invoice" }
+    },
+    {
+      "name": "payment",
+      "kind": "branch",
+      "cases": [
+        {
+          "key": "manual",
+          "kind": "workflow",
+          "target": { "kind": "workflow", "name": "billing.manual" }
+        },
+        {
+          "key": "automatic",
+          "kind": "task",
+          "target": { "kind": "task", "name": "billing.charge" }
+        }
+      ]
+    }
+  ]
 }
 ```
 
-- `saved` is authoritative: declared order, every branch case and parallel
-  member, whether or not the run took it.
-- `observed` means no trustworthy graph exists for the run: it predates saved
-  graphs, its graph record is missing, or the record does not match its hash.
-  `detail` still lists every node, child, attempt and child run. It carries no
-  definition order, no unused alternatives and no labels, and none are filled in
-  from the definition deployed today. Sort by timestamps or names for display
-  if you must, and do not present the result as the workflow's graph.
-- Labels are saved per run. Relabelling a definition changes neither its hash
-  nor what older runs display.
+There are two graphs to draw from, and they answer different questions:
 
-`client.getDefinition(ref)` loads a saved revision and its graph by
-`{ kind, name, revision }`, for previewing a binding's target before, or without,
-a run of it: a child that has not started, or a branch case that was not taken.
-Such a preview has the target's structure but not its labels, which are saved
-only with runs. A child run that exists has its own `inspect()`.
+- **The definition deployed now**: `serializeWorkflowGraph(declaration)` and
+  `serializeWorkflowCatalog(...)`.
+- **A run as it was created**: `Client.inspect(runId)`, from the store alone,
+  so a run whose code is long gone can still be shown. When
+  `definition.source` is `'saved'`, `structure` has the steps in declared
+  order with every alternative, `presentation` the labels the run was created
+  with, and `revision.bindings` the revision each target runs.
+  `renderWorkflowGraph(structure, presentation)` gives the same shape as
+  `serializeWorkflowGraph`. When it is `'observed'`, no trustworthy graph
+  exists for the run (`reason`: `'legacy'`, `'missing-graph'` or
+  `'invalid-graph'`): `detail` still lists everything that ran, and nothing
+  may be filled in from the definition deployed today.
 
-`get`, `getDetail`, `getNode`, `getFamily`, `list` and `listSummaries` are
-unchanged apart from the two new run fields, and
-`list({ executionRevision })` filters by revision (`null` selects unversioned
-runs).
+`Client.getDefinition({ kind, name, revision })` loads a saved revision and
+its graph, to show a target no run has reached: a child that has not started,
+a case that was not taken. It has the structure and not the labels.
 
-Graph types and helpers come from `@nmtjs/workflows/inspector`, which imports no
-Node API and is safe to bundle for a browser. Send `inspect()` results to a
-frontend as JSON and render them there with `renderWorkflowGraph(structure,
-presentation)`, which returns the same shape `serializeWorkflowGraph` produces
-for a deployed definition. Hashing (`hashStructure`) lives in the runtime entry
-point and stays on the server.
+How one run maps onto the graph:
 
-## Neem integration
+| In the graph                            | In one run (`RunDetail`)                                        |
+| --------------------------------------- | --------------------------------------------------------------- |
+| a `branch` with all of its `cases`      | the node's `selectedCase`, and one child `case:<key>`           |
+| a `parallel` with all of its `cases`    | one child per member, `member:<key>`, each with its status      |
+| one `mapTask` / `mapWorkflow` node      | one child per item, `item:<index>`, each with its own child run |
+| an `activity`, or a `task` / `workflow` | one child, `$self`, with its attempts or its child run          |
+| a `target` naming a child workflow      | `childRuns`; that workflow's own graph is fetched by its name   |
 
-The planner owns the thread layout. It runs on the main thread and imports no
-application code:
+`nodeUnits(detail, nodeName)` does that join for one step: each child with
+its attempts and its child run, map items in their order.
+`parseChildKey(key)` reads a child key back. The one node of a task run is
+named `TASK`, and `isTerminal(status)` says whether a status ends a run.
+
+The graph leaves out schemas, policies and the steps of child workflows: a
+child workflow is one `target`, and its steps are its own graph.
+
+The inspector entry also exports the record types (`RunDetail`,
+`RunInspection`, `RunSummary`, `StoredNode`, ...) for typing what the
+browser receives. Hashing (`hashStructure`, `describeDefinition`) needs
+`node:crypto` and is in the main entry.
+
+## Stores
+
+A store is a `Layer` that provides `Store`. The client and the workers of one
+deployment must be given the same store.
+
+### In memory
 
 ```ts
-// app.planner.ts
+import { InMemory } from '@nmtjs/workflows'
+
+const store = InMemory.layer({ maxDeliveries: 20 })
+```
+
+Everything lives in the process and is lost with it. For tests and local
+development. Each `InMemory.layer()` built is a store of its own.
+`InMemory.makeInMemoryStore()` gives the store with an `inspect` handle on
+its contents, for tests.
+
+### PostgreSQL
+
+On Effect SQL: any `SqlClient` for PostgreSQL serves, `@effect/sql-pg` and
+`@effect/sql-pglite` included.
+
+```ts
+import { PgClient } from '@effect/sql-pg'
+import * as Postgres from '@nmtjs/workflows/postgres'
+import * as PostgresPg from '@nmtjs/workflows/postgres/pg'
+
+const store = Postgres.layer({ maxDeliveries: 20 }).pipe(
+  // Optional: without it workers find their work by polling alone.
+  Layer.provide(PostgresPg.notifications),
+  Layer.provide(PgClient.layer({ url })),
+)
+```
+
+The same on PGlite, PostgreSQL in the process:
+
+```ts
+// PGlite: PostgreSQL in the process, for tests and local development.
+const database = Layer.orDie(PgliteClient.layer())
+const store = Postgres.layer().pipe(
+  // Optional: without it workers find their work by polling alone.
+  Layer.provide(PostgresPglite.notifications),
+  // `install` is for tests; production migrations are the application's.
+  Layer.provide(Layer.effectDiscard(Effect.orDie(Postgres.install))),
+  Layer.provideMerge(database),
+)
+```
+
+The schema is the application's to migrate.
+`@nmtjs/workflows/postgres/drizzle` exports it as Drizzle objects
+(`createSchema()`), `Postgres.install` creates it on an empty database for
+tests, and `Postgres.verify` dies at startup unless the installed schema is
+the one the adapter needs. Engine calls take part in the caller's
+transaction, as [shown above](#starting-a-run).
+
+Options (`maxDeliveries`, `channel`, `answerTimeoutMs`), how commits are
+guarded, the tables and the migration:
+[`src/postgres/README.md`](./src/postgres/README.md).
+
+### Redis
+
+On Effect's `Redis` service (`effect/persistence/Redis`); Valkey serves too.
+
+```ts
+import { NodeRedis } from '@effect/platform-node'
+import * as Redis from '@nmtjs/workflows/redis'
+
+const store = Redis.layer({ prefix: 'billing:', maxDeliveries: 20 }).pipe(
+  Layer.provide(NodeRedis.layer({ url })),
+)
+```
+
+It passes the same store contract as the others, schedules and retention
+included. Durability is the server's: run it with `maxmemory-policy
+noeviction`, and know what your persistence settings may lose on a crash or
+a failover. No key expires; history stays until it is pruned. Limits, the
+key layout and cluster use: [`src/redis/README.md`](./src/redis/README.md).
+
+## Hosting in Neem
+
+`@nmtjs/workflows/neem` runs the workers as Neem worker threads:
+coordinator threads, and execution threads for each pool.
+
+```ts
+// workflows.runtime.ts
+import { createWorkflowsRuntime } from '@nmtjs/workflows/neem'
+
+export default createWorkflowsRuntime({
+  name: 'workflows',
+  planner: './workflows.planner.ts',
+  worker: { entry: './workflows.worker.ts' },
+})
+```
+
+```ts
+// workflows.planner.ts: the thread layout; it loads no application code.
 import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
 
 export default defineWorkflowsPlanner(() => ({
   coordinator: { threads: 1, concurrency: 4 },
   pools: {
-    checkout: { concurrency: 8 },
-    pdf: { threads: 2, concurrency: 1, cleanupTimeoutMs: 1_000 },
+    billing: { concurrency: 8 },
+    payments: { threads: 2, cleanupTimeoutMs: 1_000 },
   },
 }))
 ```
 
-Each pool and the coordinator take `threads`, `concurrency`, `leaseMs`,
-`pollIntervalMs` and `cleanupTimeoutMs`. Coordinator threads advance runs and own
-schedules and maintenance; pool threads run handlers. Every pool an
-implementation names must be declared here; there is no default pool. Every
-thread receives its settings and the declared pool names from the planner.
-
-The worker definition is the application side, and `setup` runs once per thread:
-
 ```ts
-// app.worker.ts
-import { defineWorkflowsWorker } from '@nmtjs/workflows/neem'
+// workflows.worker.ts: what every thread serves.
+import { defineWorkflowsWorker } from '@nmtjs/workflows/neem/worker'
 
 export default defineWorkflowsWorker({
-  workflows: () => [checkoutImpl],
-  tasks: () => [renderPdfImpl],
-  schedules: () => [nightly],
-  setup: async (ctx) => {
-    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL })
-    return {
-      runtime: createPostgresWorkflowRuntime({
-        connection: createPostgresWorkflowConnection(pool),
-      }),
-      env: { db: pool, log: ctx.logger }, // checked against every handler's env
-      dispose: () => pool.end(),
-    }
-  },
+  workflows: [Billing, ManualBilling],
+  tasks: [CreateInvoice, ChargeCard, RequestApproval, RecordPayment],
+  schedules: [NightlyBilling],
+  store: () => Postgres.layer().pipe(Layer.provide(database)),
+  layer: (ctx) => Layer.succeed(Payments, payments(ctx.logger)),
 })
 ```
 
-Startup fails when an implementation names a pool the planner did not declare,
-when a workflow references a child workflow or task with no registered
-implementation, or when one name is carried by more than one definition object.
-Children and tasks resolve by name, so a same-named copy would be encoded with
-one schema and decoded with another; it is also the only way workflows could
-start each other in a cycle, since definitions cannot reference each other.
-Share one definition module between a reference and its implementation. An
-implementation listed more than once is deduplicated. `ctx.data` names the thread's role and pool, for a `setup` that
-needs different resources per pool.
-
-On stop the worker stops claiming, aborts attempts, joins the loops, waits for
-every handler to settle, and only then disposes the adapter and calls `dispose`.
-A handler that outlives the pool's `cleanupTimeoutMs` fails `finished`, so Neem
-recycles the thread, and the env is not disposed while that handler still runs. A
-stop during `setup` waits for it and disposes what it acquired. Effect
-applications use the worker in `@nmtjs/workflows/effect/neem`; see below.
-
-## Effect schemas
-
-With `@nmtjs/workflows/effect`, contracts use `effect/Schema`:
-
-```ts
-import { defineTask, implementTask } from '@nmtjs/workflows/effect'
-import * as Effect from 'effect/Effect'
-import * as Schema from 'effect/Schema'
-
-const normalizeDate = defineTask({
-  name: 'normalize-date',
-  input: Schema.DateFromString,
-  output: Schema.DateFromString,
-})
-
-const implementation = implementTask(normalizeDate, {
-  pool: 'dates',
-  handler: (date) => Effect.succeed(date),
-})
-```
-
-Effect schemas are not Standard Schemas themselves. The adapter stores each one as
-a `{ decode, encode }` pair: its `Schema.toCodecJson` form and the same codec flipped,
-both through Effect's Standard Schema and Standard JSON Schema converters.
-`schemaOf(definition.input)` returns the declared Effect schema, for composing
-schemas from existing definitions.
-
-Every typed programmatic API takes and returns decoded **Type**: `client.start`
-input and its returned run input/output, task/activity handlers, workflow finish,
-input mappers, map items and per-item inputs, code-defined schedule inputs, and
-metadata callbacks. The engine encodes once with the definition's schema (for an
-Effect schema, its `Schema.toCodecJson` form) when writing storage/commands/child payloads, and decodes when reading them.
-Restart decodes the stored input and calls `start(Type)`. Retry/restart eligibility
-is unchanged. Untyped `get`, `list`, `listSummaries`, history and inspector reads
-expose stored JSON without definitions. Raw JSON callers decode explicitly with their authored input schema, for example
-`Schema.decodeUnknownSync(MyInput)`; there is no `startEncoded` API.
-
-| Schema                    | Type      | Stored JSON |
-| ------------------------- | --------- | ----------- |
-| `Schema.DateFromString`   | `Date`    | ISO string  |
-| `Schema.Date`             | `Date`    | ISO string  |
-| `Schema.NumberFromString` | number    | string      |
-| `Schema.Undefined`        | undefined | null        |
-
-The undefined-to-null encoding also applies inside structs. For example,
-`Schema.optional(Schema.String)` stores an explicitly supplied `a: undefined` as
-`"a": null`; an absent `a` key remains absent. Decoding restores the supplied
-undefined value, while SQL/history readers see null.
-
-Effect schemas must be synchronous, require no Effect services, and support JSON
-encoding. Custom types need a JSON codec supported by Effect's `toCodecJson` derivation.
-JSON derivation support is checked when actual values are encoded, not at definition
-or worker registration. For example, `Schema.instanceOf(URL)` alone accepts a URL
-at the authored boundary but cannot persist it. Test custom codecs with representative
-values before deployment; node-level encoding failures can otherwise occur mid-run.
-`Schema.Unknown` accepts only JSON-compatible values at persistence boundaries;
-use `Schema.Undefined` for an explicit void value. A workflow without an output
-schema may return JSON or finish without a value; rich outputs require a schema.
-Encoding and decoding failures use the existing workflow failure/retry paths.
-
-Plain JSON contracts retain their payload representation. Transformed contracts
-can differ from the old decoded-value-then-`JSON.stringify` representation: for
-example, `NumberFromString` persists a string rather than a number. Stored-data
-compatibility must therefore be assessed before deployment. At cutover, pause new
-starts and schedule firing, drain old runs and their children, and stop old workers
-before enabling new writers. Re-entry decode failures are terminal. Retained history
-needs a separate compatibility check before resubmission; draining does not convert
-it. This slice adds no format marker, history restriction, or retry/restart ban.
-
-## Effect execution and services
-
-This section describes `@nmtjs/workflows/effect` and the Neem integration. Use
-`Effect.gen`, `Effect.tryPromise`, or other Effect constructors in task/activity
-handlers and workflow `finish`. Dependency dictionaries, core Containers, plugins,
-and the old execution environment are removed. Resolve services by yielding a
-`Context.Service` inside an Effect. Callback signatures no longer have a `ctx`
-argument. Synchronous input/select/items/idempotency callbacks use their explicit
-arguments or immutable closure values; keep them deterministic and brief.
-`finish` runs during coordination and should assemble the result; put long-running
-or retryable work in a task/activity.
-
-| Callback                                                    | Arguments                               |
-| ----------------------------------------------------------- | --------------------------------------- |
-| Task/activity handler                                       | `(input, lifecycle)`                    |
-| `finish`, node `input`, `select`, `items`, node idempotency | `(outputs, workflowInput)`              |
-| Map `input` and map idempotency                             | `(outputs, item, workflowInput, index)` |
-
-Arguments and returned values use decoded schema types. Handlers and `finish`
-return Effects; synchronous callbacks return values directly.
-
-```ts
-// app.planner.ts
-import { defineWorkflowsPlanner } from '@nmtjs/workflows/neem'
-
-export default defineWorkflowsPlanner(() => ({
-  pools: { greetings: { concurrency: 4 } },
-}))
-
-// app.worker.ts
-import * as Context from 'effect/Context'
-import * as Layer from 'effect/Layer'
-import { defineWorkflowsWorker } from '@nmtjs/workflows/effect/neem'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-} from '@nmtjs/workflows/postgres'
-
-class Prefix extends Context.Service<Prefix, string>()('Prefix') {}
-
-const greet = defineTask({
-  name: 'greet',
-  input: Schema.String,
-  output: Schema.String,
-})
-const greeting = implementTask(greet, {
-  pool: 'greetings',
-  handler: (name) =>
-    Effect.gen(function* () {
-      const prefix = yield* Prefix
-      return `${prefix}, ${name}`
-    }),
-})
-
-export default defineWorkflowsWorker({
-  workflows: () => [],
-  tasks: () => [greeting],
-  layer: () => Layer.succeed(Prefix, 'Hello'),
-  runtime: Effect.acquireRelease(
-    Effect.sync(
-      () => new pg.Pool({ connectionString: process.env.DATABASE_URL }),
-    ),
-    (pool) => Effect.promise(() => pool.end()),
-  ).pipe(
-    Effect.map((pool) =>
-      createPostgresWorkflowRuntime({
-        connection: createPostgresWorkflowConnection(pool),
-      }),
-    ),
-  ),
-})
-```
-
-`runtime` is an Effect that acquires the adapter once per thread, in the
-worker's Scope, so `Effect.acquireRelease` ties connections to the thread's
-lifetime; it may also use services from the Layer. Coordinator and pool threads
-must share one durable store, Postgres or Redis: the in-memory adapter would
-give every thread its own.
-`defineWorkflowsWorker` checks that the Layer provides services
-required by the adapter, task/activity handlers (including branch/parallel cases),
-and finish. The Layer must not require external services. The worker supplies
-Scope for adapter acquisition, and each handler gets its own Scope.
-
-`layer` receives the Neem worker context, as `setup` does in the Promise worker.
-It is called once per runtime start, after registry validation, so each
-development reload builds a fresh Layer in the same thread. Build logging services from `ctx.logger`, the worker logger Neem
-flushes on stop, rather than creating a second logger in the worker. `Effect.log*`
-is not bridged to it; configure Effect's logger in the Layer if you need that.
-
-For attempts, typed failures and defects both use the existing retry policy.
-An `Effect.promise` rejection is a defect and still counts as a failed attempt.
-An interruption without an engine abort reason also counts as a failure.
-Engine cancellation, timeout, shutdown and lease loss keep their existing
-classification. The second handler argument is always supplied, even if your
-handler only declares `input`. On abort, `lifecycle.signal.reason` is a
-`WorkflowAttemptAbortError` with the engine's reason. Keep this signal when you need
-to distinguish cancellation, timeout, shutdown, or lease loss; the signal provided
-by `Effect.promise` reflects fiber interruption without that engine classification.
-Prefer native Effect interruption and connect cancellable Promise APIs to a signal.
-
-Effect handlers receive a `HandlerRuntime` as their env: it runs a handler with
-`runPromiseExitWith` using the worker Context and its AbortSignal. The standalone
-Effect worker functions build it from `context`; a supervisor that drains handlers
-itself passes `env: createHandlerRuntime(context)` and a shared
-`handlers: createHandlerRunner(...)` to the core worker functions. Single failures keep the existing StoredError representation;
-mixed Causes retain their rendered failure and finalizer information. There are
-no persisted typed-error codecs yet. Workflow finish failures retain the existing
-terminal-run behavior, rather than gaining an activity retry policy.
-
-On shutdown, the worker stops claims, aborts user Effects, and joins engine work
-and handler finalizers before disposing the adapter and Layer. Handler and
-worker-scope cleanup are bounded by the pool's `cleanupTimeoutMs` (default
-5,000 ms). An overrun fails the runtime's `finished` promise so Neem recycles the
-thread; it does not release shared services while a handler still uses them.
-Recycling also interrupts healthy sibling attempts on that thread; they are
-redelivered through the existing expired-lease path. Keep finalizers short and
-isolate handlers with risky cleanup in separate execution pools. Result commits
-still use the engine's attempt/run fencing even when a handler has already succeeded.
-
-On a requested stop, Neem enforces a separate hard 5,000 ms deadline for the whole
-worker. Setting `cleanupTimeoutMs` above 5,000 cannot extend that deadline, and
-`finished` failures after a stop request do not trigger recovery. Budget handler,
-adapter, and Layer cleanup together to finish within the host deadline; otherwise
-Neem terminates the thread, including on deploy. A stop during startup reaches
-`runtime.stop()` once the worker factory has resolved, without waiting for readiness.
-Factory completion and finalizers share the host deadline. Configurable host
-deadlines remain separate lifecycle work.
-
-Interruption cannot stop Promise work that ignores cancellation. Such work can
-continue after its fiber exits, so integrate its AbortSignal or arrange explicit
-cleanup. An uninterruptible effect/finalizer remains owned by its fiber and can
-require thread termination. Hosts using the lower-level worker loops directly
-must handle cleanup-overrun failures by terminating their execution environment;
-`defineWorkflowsWorker` supplies that supervision through Neem.
-
-## Redis / Valkey Runtime
-
-Use the Redis runtime as a separate hot-path runtime when dispatch latency and
-queue throughput matter more than long-term retention or SQL inspection. It
-implements the same workflow client and worker APIs as the Postgres and
-in-memory runtimes:
-
-```ts
-import { Redis } from 'ioredis'
-import { createRedisWorkflowRuntime } from '@nmtjs/workflows/redis'
-import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
-
-const redis = new Redis(redisUrl, {
-  maxRetriesPerRequest: 1,
-  commandTimeout: 2_000,
-})
-const runtime = createRedisWorkflowRuntime({
-  client: redis,
-  keyPrefix: 'chat-workflows:',
-  terminalRetentionMs: 15 * 60 * 1000,
-})
-const workflows = createWorkflowRuntimeClient(runtime)
-```
-
-The runtime also accepts an `iovalkey` client. Queue transitions use SHA-loaded
-Lua scripts for atomic deduplication, claiming, lease fencing, acknowledgement,
-retry/dead-letter movement, and stalled-claim recovery. Pub/Sub is only a wake
-hint; sorted sets and hashes remain the durable execution state, so a missed
-notification falls back to polling.
-
-Workflow families are partitioned into small per-family hashes for runs, nodes,
-children, attempts, leases, and indexes. Each state transition validates and
-updates only the affected hash fields in one atomic Lua operation; the runtime
-does not hold distributed locks or perform client-side compare-and-swap retry
-loops.
-
-Runtime timestamps are Unix milliseconds in Redis, as in every record the
-runtime returns. Application payloads are stored as
-opaque JSON so Lua transitions preserve empty arrays, numeric precision, and
-payload fields that happen to have timestamp names. Lease deadlines and
-retention use Redis server time to avoid disagreement between worker clocks.
-
-Active run families never receive a TTL. Retention starts only when every run
-in the root family is terminal, then the complete family and its lookup keys
-expire together. This prevents a live child from losing its parent state while
-keeping historical runs from filling Redis memory.
-Lookup keys reused by a newer run retain that run's ownership. Routed polling
-removes expired-family commands when they become due on a worker's routes.
-Retention maintenance also sweeps abandoned routes and commands with future
-schedules or leases; run `store.pruneTerminalRuns()` periodically, or pass
-`retention` to standalone worker loops, to reclaim those commands and their
-indexes; Neem workers do not prune on their own. The terminal-run index expires
-after its latest retained entry.
-
-Delayed starts and retry backoff are supported. Recurring/cron schedules are
-intentionally not part of the Redis runtime; use a Postgres runtime for durable
-scheduled and background work. A single application can register separate
-named Redis and Postgres runtimes and choose between them per workload: each
-Neem workflows worker's `setup` (or `runtime` service) returns the adapter its
-planner's pools run on.
-
-Ready and claimed commands have route indexes, so polling and lease recovery
-inspect only the workflows and tasks of the worker's pool. Claims compare the
-oldest due command across the selected routes. Per-run indexes scope manual
-retry, cancellation, and family deletion to the affected runs. Lua maintains
-these indexes atomically with queue transitions. Manual retry still performs
-work proportional to the affected family and its own retained commands;
-retention maintenance scans shared queues in bounded batches. Recovery and
-command deletion batch work across routes and runs; heartbeats renew the lease
-and read run status in one atomic call. Dead-command reads honor limits and
-page through retained records.
-
-Run listing uses a chronological index to fetch bounded candidate pages before
-applying filters. Summary reads count only the selected runs' nodes in bounded
-batches, without downloading their families. The chronological index survives
-while active runs exist and expires with the latest retained terminal run when
-all families are terminal.
-
-The caller owns the command client and must close it. `runtime.dispose()` closes
-only the duplicated Pub/Sub connection. Redis Cluster is not supported in this
-version because atomic operations span the runtime namespace; use a standalone
-or Sentinel-managed Redis/Valkey deployment with an isolated `keyPrefix`.
-Keep command retries and timeouts finite. Reconnecting and completing one
-command are separate concerns: the client may continue reconnecting for future
-work, while `maxRetriesPerRequest` and `commandTimeout` bound the promise for an
-individual workflow operation. Never use `maxRetriesPerRequest: null` here; it
-allows a command to remain queued across an unlimited reconnect cycle. A
-timeout is ambiguous because Redis may have committed before its response was
-lost, so retry the same high-level workflow operation with the same idempotency
-identity. Transitions are idempotent or fenced; do not retry raw Redis commands
-outside the runtime. The values above are starting points and may be increased
-to cover normal deployment latency and failover, but they must remain finite.
-
-Queue durability survives worker and client failures, but recovery after a
-Redis/Valkey service restart depends on the deployment's own persistence and
-replication configuration. Enable an appropriate AOF or RDB policy for the
-workload; the runtime cannot reconstruct data that the service did not persist.
-Use a `noeviction` max-memory policy so memory exhaustion fails an operation
-explicitly instead of silently evicting one part of a workflow family. Terminal
-retention bounds historical state, but capacity must still cover the maximum
-concurrent active state and ready/claimed queue backlog.
-
-### Revisions on Redis
-
-No data migration is needed: families, signatures and queue items written by
-earlier versions are read as unversioned and keep working.
-
-Versioned commands are indexed under their own route namespace
-(`route:rev:<kind>:<name>:<revision>`, every part length-prefixed), and
-unversioned commands keep the keys they always had. Saved graphs and revision
-manifests live in two namespace-wide hashes, `definitions:graphs` and
-`definitions:revisions`. They are outside every family, never get a TTL and
-survive `deleteRun`, pruning and terminal retention; a run's labels live with
-its family and expire with it. Capacity planning should count one small entry
-per graph and per revision ever deployed.
-
-**Upgrade with all old processes stopped before the first versioned run is
-started.** A rolling upgrade is safe only while every definition is still
-unversioned. An older build does not know revisions and treats every run as
-unversioned, so once a versioned run exists these of its operations are unsafe:
-
-- its reaper, timeout sweep, cancellation, `retry()` and `requeueDeadCommand`
-  enqueue commands without a revision, onto unversioned routes;
-- a start that reuses a versioned run's idempotency or unique key returns that
-  run without comparing revisions.
-
-That it only claims unversioned routes does not make it safe: the commands above
-land on exactly those routes, where an older worker would run them with
-unversioned code. The current build repairs what it finds (it moves a command
-indexed on a route it does not belong to, restores the revision when it wakes
-the same run, and refuses to execute a command whose revision differs from its
-run's), but it cannot stop an older process from acting first. The same order
-applies to a rollback: drain or restart versioned runs before starting a build
-without revisions.
-
-## Timestamps
-
-Every time the runtime reads or returns is a `Timestamp`: Unix milliseconds, as
-`Date.now()` returns them. That covers record fields such as `createdAt`,
-`activeSince` and `dispatchedAt`, options such as `startAt`, and list filters such as
-`createdBefore`. Runs, snapshots and read models are therefore plain JSON and cross
-a transport as they are. PostgreSQL still stores `timestamptz` columns; the adapter
-converts at its boundary. `Date`s in your own inputs and outputs are a schema
-concern and unaffected.
-
-## Runtime Connection
-
-Runtime code consumes a small `WorkflowPostgresConnection` interface. For
-`pg`-style clients and pools, wrap the app-owned client:
-
-```ts
-import { Pool } from 'pg'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-  verifyPostgresWorkflowSchema,
-} from '@nmtjs/workflows/postgres'
-
-const connection = createPostgresWorkflowConnection(
-  new Pool({ connectionString }),
-)
-
-await verifyPostgresWorkflowSchema(connection)
-
-const runtime = createPostgresWorkflowRuntime({ connection })
-```
-
-Other clients can pass a custom object that satisfies `WorkflowPostgresConnection`.
-
-When a pooled transaction fails, the adapter rolls it back before releasing the
-session. If rollback also fails, it calls `release(true)` to discard the session
-and rethrows the original transaction error. Custom pool wrappers must honor that
-destroy argument; plain clients and clients with their own transaction API keep
-ownership of their sessions.
-
-A transaction's connection, such as the `connection` passed to
-`atomicStart.startWorkflowRun`, is usable only while its handler runs: await all work
-on it inside the handler. Once the handler settles, the connection rejects further
-queries instead of letting them run outside the transaction, and the transaction
-ends only after work already queued on it has finished.
-
-The client and its type parsers stay yours. The adapter reads `timestamptz` columns
-through whatever parser the client has, so that parser must return a `Date` (the
-`pg` and PGlite default), the column's text, or Unix milliseconds. Any other value,
-such as a `Temporal` object, fails the read with a `TypeError` instead of reaching a
-record. Timestamps are written as `Date` parameters, which drivers serialize the same
-way regardless of parsers.
-
-PostgreSQL retention applies `batchSize` separately to terminal root families and
-old, reaped dead commands. `batchSize` must be a non-negative safe integer and
-defaults to 100 when omitted. Zero disables root pruning, while dead-command
-cleanup continues with the default limit of 100 commands per call. Negative,
-fractional, non-finite, or unsafe integer values throw `RangeError` before cleanup
-starts; workers reject invalid retention settings at startup. `batchSize` is a
-query limit, not a stored database field.
-The dead-command sweep skips locked rows and preserves unreaped commands so the
-reaper can still settle their runs. The result's `deleted` field counts root
-families; `hasMore` indicates that either cleanup filled its batch and another pass
-may make progress. Each store call and worker retention interval performs one
-bounded pass. `client.pruneRuns()` repeats those passes in separate transactions
-until neither cleanup fills its batch, including with `statuses: []` or a zero
-batch size. Locked rows remain for a later retention pass.
-
-## Effect SQL Transactions
-
-An application on Effect SQL (`@effect/sql-pg`, or Drizzle's
-`drizzle-orm/effect-postgres` on top of it) can start a run inside its own
-transaction. `createEffectSqlWorkflowClient` wraps the Postgres client, and its
-`start`, `restart` and `cancel` read the open transaction of the `SqlClient` in
-context:
-
-```ts
-import * as Effect from 'effect/Effect'
-import * as SqlClient from 'effect/sql/SqlClient'
-import { createEffectSqlWorkflowClient } from '@nmtjs/workflows/postgres/effect'
-
-const workflows = createEffectSqlWorkflowClient(client, {
-  answerTimeoutMs: 5_000,
-})
-
-const admitTurn = Effect.gen(function* () {
-  const sql = yield* SqlClient.SqlClient
-  return yield* sql.withTransaction(
-    Effect.gen(function* () {
-      yield* sql`INSERT INTO messages ${sql.insert(message)}`
-      return yield* workflows.start(chatTurn, { messageId: message.id })
-    }),
-  )
-})
-```
-
-- Inside a transaction, run creation and dispatch use the caller's session and
-  run under a savepoint. They commit or roll back with the caller's writes, and the
-  workflow pool lends no session. The returned run is provisional until the caller
-  commits, and wake notifications are delivered only on commit. `cancel` works the
-  same way: the cancellation and the wakes it dispatches commit with the caller.
-- A unique or idempotency-key conflict fails with `WorkflowRunConflictError` or
-  `WorkflowIdempotencyConflictError`, a definition that differs from what is
-  saved under its revision fails with `WorkflowDefinitionConflictError`, and SQL
-  failures fail with `SqlError`. The savepoint is rolled back, so the caller's
-  transaction stays usable. Other failures, such as input that does not match
-  its schema, are defects.
-- `restart` takes the same `revision: 'original' | 'latest'` option as the
-  Promise client.
-- The savepoint is Effect SQL's own nested `withTransaction`, so concurrent starts
-  in one transaction take turns with each other and with the caller's other nested
-  transactions. As with any nested `withTransaction`, a start still waiting for its
-  turn is interrupted only once it gets the turn.
-- Interrupting a start cancels its statement in flight on the server, and the
-  interruption completes once the start has unwound and its savepoint is rolled
-  back. The caller's transaction stays usable.
-- `answerTimeoutMs` bounds each statement of the start. A statement that misses it
-  is cancelled and fails with a `StatementTimeoutError` reason. The `SAVEPOINT`,
-  `ROLLBACK TO` and `RELEASE` statements Effect SQL sends around it are not
-  covered.
-- Outside a transaction, the methods behave like the Promise client and use the
-  workflow pool.
-
-This entry point imports `effect/sql`, which Effect still marks unstable. The
-adapter's SQL runs through the caller's `SqlClient` with its row transforms
-off. `@effect/sql-pg` decodes `timestamptz` to `Date` and `jsonb` to values, both of
-which the adapter reads.
-
-## Wake Events (LISTEN/NOTIFY)
-
-Command dispatch and cancellation are poll-based by default: dispatch latency
-is bounded by the worker poll interval, cancellation latency by the attempt
-heartbeat cadence (`leaseMs / 3`). The Postgres runtime can layer
-`LISTEN/NOTIFY` wake-up hints on top so idle workers wake immediately when a
-command is enqueued and running attempts observe cancellation right away:
-
-```ts
-import { Client, Pool } from 'pg'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-  createPostgresWorkflowWakeEvents,
-} from '@nmtjs/workflows/postgres'
-
-const wakeEvents = createPostgresWorkflowWakeEvents({
-  // dedicated LISTEN connection, one per worker process
-  connect: async () => {
-    const client = new Client({ connectionString })
-    await client.connect()
-    return client
-  },
-})
-
-const runtime = createPostgresWorkflowRuntime({ connection, wakeEvents })
-```
-
-Notifications are fire-and-forget hints: a missed one (disconnect, restart)
-degrades to the existing polling behavior, never to lost work. With wake
-events enabled, generous poll intervals and lease durations keep idle database
-traffic low without sacrificing dispatch or stop latency. The tradeoff: every
-immediate command enqueue and cancellation adds a `NOTIFY` to its transaction,
-and Postgres serializes commits of notifying transactions — under very high
-dispatch throughput this can reduce commit parallelism. Delayed commands skip
-the hint entirely. The listener
-reconnects automatically after connection loss; `wakeEvents.dispose()` runs as
-part of `runtime.dispose()`.
-
-## Postgres Schema
-
-Applications own production migrations. The package exports Drizzle schema
-objects so apps can include them in their own migration flow:
-
-```ts
-const workflows = createSchema()
-
-export const WorkflowRunTable = workflows.tables.runs
-export const WorkflowNodeTable = workflows.tables.nodes
-export const WorkflowRunKind = workflows.enums.runKind
-```
-
-`createSchema()` emits the canonical physical table and enum names required by
-the runtime. Custom database object names are not supported yet.
-
-Your migration must also seed the schema version row used by startup
-verification:
-
-```sql
-INSERT INTO workflow_schema_version (id, version)
-VALUES (1, 5)
-ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version;
-```
-
-Use `verifyPostgresWorkflowSchema(connection)` at startup to fail fast when the
-installed schema does not match the runtime. The helper
-`installPostgresWorkflowSchemaForTesting(connection)` is available from
-`@nmtjs/workflows/postgres/testing` for tests and local development only, not
-production migrations.
-
-## Retrying failed work
-
-`client.retry(runId, { expectedVersion })` reopens a failed root run in place.
-The ID, input, tags, idempotency key, successful nodes and child runs are retained.
-Only failed work executes again, using the previous attempt's stored input and
-idempotency key. Attempt history and absolute attempt numbers are preserved;
-manual retry replenishes the automatic retry budget and resets exponential
-backoff for each reopened child. `expectedVersion` is optional, but management
-UIs should supply the version they displayed to reject stale retry requests.
-
-`client.restart(runId, options)` creates a new root run from the stored input.
-It accepts failed, completed and cancelled roots, plus the same start options
-as `start()`. This is the old `retry()` behavior. Definitions are required by
-`restart()` to resolve the run's kind, name and revision; in-place `retry()` is
-registry-free and never changes a run's revision. `restart` takes
-`revision: 'original' | 'latest'`, described under
-[Revisions](#start-restart-retry). Existing uniqueness and idempotency rules
-still apply to a restart. In-place retry always rejects an occupied uniqueness
-key, even when the constraint normally joins.
-
-All `parallel`, `mapTask` and `mapWorkflow` nodes wait for every child to settle.
-Failures do not cancel siblings or stop admission of pending map items. A node
-succeeds only when every child succeeds; otherwise it fails after settling.
-Explicit cancellation still cancels unfinished work. The map `mode` option and
-mode-specific output types were removed. Successful map output is always
-`{ items: { item, index, runId, output }[] }`, in original item order. Expected
-business rejections belong in typed task outputs; thrown errors remain runtime
-failures. Consumers of `start-only` now wait for child completion, and consumers
-of `wait-settled` must stop reading per-item runtime status from successful output.
-
-A task's `retry` is its default policy. A `retry` declared on a node replaces it
-whole, including delay and backoff. On a `mapTask` node that policy applies to
-each item on its own: every mapped child gets its own automatic budget, so N
-failing items can make up to N × `attempts` handler calls. Keep `attempts` low
-on maps whose items call metered services. The 0.17 betas ignored map-node
-`retry` overrides.
-
-After retry, refresh the same run and open a new `watch()` iterator: the previous
-iterator ended when the run failed. A retry is rejected while a coordinator or
-attempt still holds a live lease; allow it to settle before retrying. This avoids
-restarting work while its previous handler is still completing. Handlers must
-still make external side effects idempotent, as with ordinary crash recovery.
-
-## Schema version 2 migration
-
-Apply this application-owned PostgreSQL migration before deploying this version,
-with workflow workers stopped. It preserves the timeout age of existing runs.
-New retries reset `active_since`; ordinary progress does not extend the timeout.
-
-```sql
-BEGIN;
-ALTER TABLE workflow_runs ADD COLUMN active_since timestamptz;
-UPDATE workflow_runs SET active_since = created_at;
-ALTER TABLE workflow_runs
-  ALTER COLUMN active_since SET NOT NULL,
-  ALTER COLUMN active_since SET DEFAULT now();
-UPDATE workflow_schema_version SET version = 2 WHERE id = 1;
-COMMIT;
-```
-
-Attempt errors remain in immutable attempt history. Run/node callback errors are
-current-state fields and are cleared by retry; durable callback-error history and
-workflow-definition version pinning are outside this change.
-
-## Schema version 3 migration
-
-Apply after the version 2 migration, with workflow workers stopped. Existing
-attempts retain their prior retry accounting; the next manual retry starts a
-fresh budget while absolute attempt numbers and history remain unchanged.
-
-```sql
-BEGIN;
-ALTER TABLE workflow_attempts ADD COLUMN retry_attempt_number integer;
-UPDATE workflow_attempts SET retry_attempt_number = attempt_number;
-ALTER TABLE workflow_attempts ALTER COLUMN retry_attempt_number SET NOT NULL;
-UPDATE workflow_schema_version SET version = 3 WHERE id = 1;
-COMMIT;
-```
-
-## Schema version 4 migration
-
-Apply after the version 3 migration, with workflow workers stopped. The column
-records a child workflow's `cancellation: 'detach'` policy, so cancelling a parent
-leaves that child running; existing children keep propagating. The index serves the
-existence check every attempt dispatch makes.
-
-```sql
-BEGIN;
-ALTER TABLE workflow_node_children ADD COLUMN cancellation text;
-CREATE INDEX workflow_commands_attempt_idx
-  ON workflow_commands (attempt_id)
-  WHERE attempt_id IS NOT NULL;
-UPDATE workflow_schema_version SET version = 4 WHERE id = 1;
-COMMIT;
-```
-
-## Schema version 5 migration
-
-Apply after the version 4 migration, with every process of the previous version
-stopped: workers, schedulers and clients. It adds the tables and columns behind
-[revisions](#revisions-pinning-runs-to-the-code-that-started-them) and saved
-graphs. Every new column is nullable without a default, so no table is rewritten
-and no row is touched: existing runs, commands and schedules keep `NULL` and
-stay unversioned. Nothing is backfilled.
-
-```sql
-BEGIN;
-
-SET LOCAL lock_timeout = '5s';
-
-DO $$
-DECLARE
-  installed integer;
-BEGIN
-  SELECT version INTO installed FROM workflow_schema_version WHERE id = 1;
-  IF installed IS DISTINCT FROM 4 THEN
-    RAISE EXCEPTION
-      'workflow schema generation is %, this upgrade applies to generation 4 only',
-      COALESCE(installed::text, 'missing');
-  END IF;
-END
-$$;
-
--- Shared by every run and schedule that names them and never deleted with one.
--- structure and bindings hold canonical JSON as text: saved definitions are
--- compared byte for byte, which jsonb's own key order would not allow.
-CREATE TABLE workflow_graphs (
-  graph_hash text PRIMARY KEY,
-  structure text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TABLE workflow_revisions (
-  kind workflow_run_kind NOT NULL,
-  name text NOT NULL,
-  revision text NOT NULL,
-  graph_hash text NOT NULL,
-  bindings text NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT workflow_revisions_pkey PRIMARY KEY (kind, name, revision),
-  CONSTRAINT workflow_revisions_graph_key
-    UNIQUE (kind, name, revision, graph_hash),
-  CONSTRAINT workflow_revisions_graph_fk
-    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash)
-);
-
-ALTER TABLE workflow_runs
-  ADD COLUMN execution_revision text,
-  ADD COLUMN graph_hash text,
-  ADD COLUMN graph_presentation jsonb;
-
--- No ON DELETE action in either direction: deleting or pruning a run never
--- deletes a graph or a revision, and a referenced one cannot be deleted.
--- The revision reference is MATCH SIMPLE, so unversioned runs are not checked.
-ALTER TABLE workflow_runs
-  ADD CONSTRAINT workflow_runs_revision_graph_chk
-    CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL) NOT VALID,
-  ADD CONSTRAINT workflow_runs_graph_fk
-    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash) NOT VALID,
-  ADD CONSTRAINT workflow_runs_revision_fk
-    FOREIGN KEY (kind, name, execution_revision, graph_hash)
-    REFERENCES workflow_revisions (kind, name, revision, graph_hash) NOT VALID;
-
--- The run's revision, copied for routing. NULL is the unversioned lane.
-ALTER TABLE workflow_commands
-  ADD COLUMN revision text;
-
-ALTER TABLE workflow_schedules
-  ADD COLUMN execution_revision text,
-  ADD COLUMN graph_hash text,
-  ADD COLUMN graph_presentation jsonb;
-
-ALTER TABLE workflow_schedules
-  ADD CONSTRAINT workflow_schedules_revision_graph_chk
-    CHECK (execution_revision IS NULL OR graph_hash IS NOT NULL) NOT VALID,
-  ADD CONSTRAINT workflow_schedules_graph_fk
-    FOREIGN KEY (graph_hash) REFERENCES workflow_graphs (graph_hash) NOT VALID,
-  ADD CONSTRAINT workflow_schedules_revision_fk
-    FOREIGN KEY (runnable_kind, runnable_name, execution_revision, graph_hash)
-    REFERENCES workflow_revisions (kind, name, revision, graph_hash) NOT VALID;
-
-UPDATE workflow_schema_version SET version = 5 WHERE id = 1;
-
-COMMIT;
-
--- Validation scans each table without blocking reads or writes.
-ALTER TABLE workflow_runs
-  VALIDATE CONSTRAINT workflow_runs_revision_graph_chk;
-ALTER TABLE workflow_runs
-  VALIDATE CONSTRAINT workflow_runs_graph_fk;
-ALTER TABLE workflow_runs
-  VALIDATE CONSTRAINT workflow_runs_revision_fk;
-ALTER TABLE workflow_schedules
-  VALIDATE CONSTRAINT workflow_schedules_revision_graph_chk;
-ALTER TABLE workflow_schedules
-  VALIDATE CONSTRAINT workflow_schedules_graph_fk;
-ALTER TABLE workflow_schedules
-  VALIDATE CONSTRAINT workflow_schedules_revision_fk;
-```
-
-The first transaction only changes the catalog. It takes brief `ACCESS
-EXCLUSIVE` locks on `workflow_runs`, `workflow_commands` and
-`workflow_schedules`, bounded by `lock_timeout`; on a timeout nothing has
-changed and it can be run again. The workflow tables are referenced
-unqualified, so set `search_path` first when they live in another schema.
-
-`workflow_graphs` and `workflow_revisions` are shared by all runs and
-schedules. Nothing cascades into them: deleting or pruning runs never removes a
-graph or a revision, and a run cannot name a graph other than its revision's.
-`createSchema()` exports both as `tables.graphs` and `tables.revisions`.
-
-Schemas generated from an earlier `createSchema()` have
-`workflow_commands_claim_idx` ordered `priority DESC NULLS LAST`, which the
-claim query cannot scan in order; `createSchema()` now declares the
-`NULLS FIRST` order the installer always used. The upgrade above leaves the
-index alone and `verifyPostgresWorkflowSchema` does not check its order. Your
-next generated migration will rebuild it; on a large `workflow_commands` table,
-do that with `CREATE INDEX CONCURRENTLY` under a new name, then drop the old
-index and rename.
-
-`verifyPostgresWorkflowSchema` accepts only its own generation, so a process
-that verifies at startup cannot run against the wrong schema in either
-direction. A process of the previous version that skips verification would keep
-running on the upgraded schema and must not: it claims work by name alone, so
-it would execute versioned runs with whatever code it has, and the commands it
-writes carry no revision. Stop it before any definition declares a `revision`,
-and for the same reason drain or restart versioned runs before rolling back.
-
-## Experimental: native Effect engine
-
-`@nmtjs/workflows/native-effect` is a separate, experimental engine in which
-Effect's own durable workflow runtime owns execution. It adds signals and
-in-workflow timers and trades away several features documented above. It runs
-beside this engine, shares no tables with it and migrates nothing. See
-[src/native-effect/README.md](./src/native-effect/README.md).
-
-## Experimental: single-source authoring
-
-`@nmtjs/workflows/experimental` declares a task or a workflow once and builds
-the contract and the implementation documented above from that one declaration.
-It is an authoring layer only: this engine runs what it builds, unchanged. See
-[src/experimental/README.md](./src/experimental/README.md).
+The plan's `coordinator` and each pool take `threads` and the options of the
+worker they run. Every pool a declaration names must be in the plan. A thread
+starts only if `Worker.verify` accepts what is served and scheduled, and the type of
+`layer` requires it to provide every handler's services. Threads share runs
+only through a durable store. Details, logging and stopping:
+[`src/neem/README.md`](./src/neem/README.md).
+
+## Guarantees and limits
+
+**What the engine guarantees**
+
+- A run that was started is worked until it ends, across crashes and
+  deploys, as long as some worker serves its code.
+- Every write is one all-or-nothing commit: a run with the command that
+  starts it, an attempt's outcome with what it leads to.
+- An outcome counts once. Only the delivery that holds a command's claim can
+  settle its attempt; a late one changes nothing.
+- A schedule's slot is fired once.
+
+**What you must provide**
+
+- **Handlers run at least once.** A handler can run again after it failed,
+  after its worker crashed, and after it succeeded but its outcome was not
+  recorded. Make side effects idempotent with `attempt.idempotencyKey`.
+- **Computed values are pure.** Inputs, selectors and results may be computed
+  more than once.
+- **Stored values stay readable.** A run's values are read by the code
+  deployed when they are read. Change schemas under a revision, or in the
+  unversioned lane, only compatibly.
+
+**What a retry re-runs**
+
+- An automatic retry re-runs one handler, on the same input.
+- A manual `Client.retry` re-runs the steps, members and items that did not
+  complete, on the input their last attempt had, and computes again what
+  never got as far as starting. Completed steps keep their outputs; a map's
+  `items` are not computed again.
+
+**What is not supported**
+
+- Steps decided at run time: loops whose count depends on a run, `if` on a
+  run's values, recovering from a failed step in the workflow. Use `branch`
+  and maps; a failed step fails the run.
+- Branches, parallels or maps nested in one another, a map over activities,
+  a member reading another member, cancelling siblings when one fails.
+- Waiting inside a workflow for a signal, an event or a timer. A run can be
+  delayed as a whole with `startAt`.
+- Limits across a deployment: `concurrency` is per worker, a map's per step.
+- Moving a run to another revision.
+- Schemas other than `effect/Schema`, and handlers that are not Effects.
+- Declaring a task or workflow without its handlers, for a client-only
+  bundle: a module that starts runs imports the declaration whole.
+- Collecting saved definitions: they are small, bounded by how many graphs
+  and revisions were ever deployed, and stay.
+
+## Upgrading from the Promise engine
+
+Up to `0.18.0-alpha.4`, `@nmtjs/workflows` was a Promise-based engine with
+optional Effect entry points. This engine replaces it under the same name.
+The model is the same: static graphs, durable runs, attempts, pools. The
+API and the storage are not, and revisions are new: every run the old
+engine made is unversioned. The tables below compare with the published
+`0.18.0-alpha.4`.
+
+### Entry points
+
+| Before                                             | Now                                                                              |
+| -------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `@nmtjs/workflows`, `@nmtjs/workflows/effect`      | `@nmtjs/workflows`                                                               |
+| `@nmtjs/workflows/runtime`                         | `@nmtjs/workflows` (`Client`, `Worker`, `InMemory`)                              |
+| `@nmtjs/workflows/inspector`                       | `@nmtjs/workflows/inspector`                                                     |
+| `@nmtjs/workflows/postgres`, `/postgres/effect`    | `@nmtjs/workflows/postgres`, with `/postgres/pg` or `/postgres/pglite` for hints |
+| `@nmtjs/workflows/postgres/testing`                | `Postgres.install` from `@nmtjs/workflows/postgres`                              |
+| `@nmtjs/workflows/postgres/drizzle`                | `@nmtjs/workflows/postgres/drizzle`                                              |
+| `@nmtjs/workflows/redis`                           | `@nmtjs/workflows/redis`                                                         |
+| `@nmtjs/workflows/neem`, `/effect/neem`            | `@nmtjs/workflows/neem` (planner), `/neem/worker` (worker)                       |
+| `@nmtjs/workflows/neem/host`, `/neem/worker-entry` | none: the planner and `/neem/worker` are the entries Neem loads                  |
+
+### Authoring
+
+| Before                                                                                                   | Now                                                                       |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `defineTask(...)` + `implementTask(def, { pool, handler })`                                              | `task({ ..., pool, handler })`                                            |
+| `defineWorkflow(...).activity(...).task(...).build()` + `implementWorkflow(def, { pool })...finish(...)` | `workflow({ ..., pool }, function* (w) { ... })`                          |
+| `.finish((outputs, input) => ...)`                                                                       | the value the body returns: an Effect computed from references            |
+| mappers `(outputs, workflowInput) => value`                                                              | Effects over references: `Effect.map(w.input, ...)`                       |
+| a step's `input` omitted, meaning the workflow input                                                     | always written: `{ input: w.input }`                                      |
+| `parallel(name, callback)`                                                                               | `w.parallel(name, { members: (p) => ({ ... }) })`                         |
+| Standard Schema (Zod, Valibot, ...) or `{ decode, encode }` pairs                                        | `effect/Schema` only; a transformation is one schema                      |
+| handler `(input, lifecycle, env)`, `lifecycle.signal`                                                    | handler `(input, attempt)`; interruption stops it; services replace `env` |
+| per-step and per-item `idempotency` callbacks                                                            | `attempt.idempotencyKey`, made by the engine                              |
+| `defineSchedule(...)`                                                                                    | `schedule(...)`, with the new `timeZone`                                  |
+
+### Client
+
+`createWorkflowRuntimeClient(runtime)` and its Promise methods become the
+`Client` module, whose functions are Effects requiring `Store`.
+
+| Before                                                | Now                                                             |
+| ----------------------------------------------------- | --------------------------------------------------------------- |
+| `client.start(definition, input, options)`            | `Client.start(declaration, input, options)`                     |
+| `options.connection`, `createEffectSqlWorkflowClient` | call `Client.*` inside `sql.withTransaction`                    |
+| `client.restart(runId)`, `definitions` on the client  | `Client.restart(runId, { definitions })`                        |
+| `client.watch(runId)`: `AsyncIterable`, `signal`      | `Client.watch(runId)`: `Stream`; interrupt it to stop           |
+| `client.listDeadCommands()`: an array                 | `Client.listDeadCommands()`: `{ commands, nextCursor? }`, paged |
+| `client.requeueDeadCommand(id)`: `void`               | answers `boolean`: whether a dead command had the id            |
+| `isTerminalRunStatus(status)`                         | `isTerminal(status)`                                            |
+| `run.workflowName`, `run.taskName`                    | `run.kind` and `run.name`                                       |
+| `StoredNodeChild`                                     | `StoredChild`                                                   |
+
+`cancel`, `retry`, `deleteRun`, `get`, `getDetail`, `getNode`, `getFamily`,
+`list`, `listSummaries`, `pruneRuns` and `schedules.*` keep their names and
+meanings: `pruneRuns` takes the same parameters and, as before, goes on
+batch by batch until nothing is left that may go, answering `{ deleted }`.
+
+### Errors
+
+Errors are tagged and in the Effect failure channel; match them with
+`Effect.catchTag`.
+
+| Before                                            | Now                              |
+| ------------------------------------------------- | -------------------------------- |
+| `WorkflowRunConflictError`                        | `RunConflict`                    |
+| `WorkflowIdempotencyConflictError`                | `IdempotencyConflict`            |
+| `WorkflowCleanupTimeoutError`                     | `CleanupTimeout`                 |
+| `Error('Run [...] not found')`                    | `RunNotFound`                    |
+| `Error('Run [...] is not a root run')`            | `RunNotRoot`                     |
+| `Error('Run [...] is not failed')`                | `RunNotFailed`                   |
+| `Error('Run [...] is not terminal')`              | `RunNotTerminal`                 |
+| `Error('Stale retry version ...')`                | `StaleRunVersion`                |
+| `Error('Run family [...] still has active work')` | `RunBusy`, with `busyRunId`      |
+| a restart without a matching definition           | `UnknownDefinition`              |
+| an unknown schedule                               | `UnknownSchedule`                |
+| a failure of the database or Redis client         | `StorageError`, with the `cause` |
+
+### Workers and hosting
+
+| Before                                                                                                                                             | Now                                                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `serveWorkflowWorker({ ...runtime, workflows, workerId })`                                                                                         | `Worker.coordinator({ workflows })`                                                                                           |
+| `serveExecutionWorker({ ...runtime, workflows, tasks, pool })`                                                                                     | `Worker.execution({ workflows, tasks, pool })`                                                                                |
+| `runWorkflowWorker`, `runExecutionWorker` (drain once)                                                                                             | none: workers run until interrupted                                                                                           |
+| `env`, `context`, `createHandlerRuntime`                                                                                                           | provide the handlers' services to the worker Effect                                                                           |
+| `pollIntervalMs`                                                                                                                                   | `pollMs`                                                                                                                      |
+| `workerId`                                                                                                                                         | none                                                                                                                          |
+| `createInMemoryWorkflowRuntime()`                                                                                                                  | `InMemory.layer()`                                                                                                            |
+| `createPostgresWorkflowRuntime({ connection })`                                                                                                    | `Postgres.layer()` over an Effect `SqlClient`                                                                                 |
+| `createPostgresWorkflowWakeEvents(...)`                                                                                                            | `Layer.provide(PostgresPg.notifications)`                                                                                     |
+| `verifyPostgresWorkflowSchema(connection)`                                                                                                         | `Postgres.verify`                                                                                                             |
+| `createRedisWorkflowRuntime({ client, keyPrefix })`                                                                                                | `Redis.layer({ prefix })` over Effect's `Redis` service                                                                       |
+| Neem `defineWorkflowsWorker({ workflows: () => [...], tasks: () => [...], runtime, layer })` from `/effect/neem`, or `{ ..., setup }` from `/neem` | `defineWorkflowsWorker({ workflows: [...], tasks: [...], store: (ctx) => Layer, layer: (ctx) => Layer })` from `/neem/worker` |
+| Neem plan: `pollIntervalMs`; `cleanupTimeoutMs` on the coordinator                                                                                 | `pollMs`; `cleanupTimeoutMs` on pools only                                                                                    |
+
+### Behaviour that differs
+
+- **Maintenance is the coordinator's.** Reaping, run timeouts, schedules and
+  retention run in `Worker.coordinator` only. A deployment needs at least one
+  coordinator for dead commands to be reaped.
+- **Results are computed, not run.** The old `finish` could be an Effect with
+  services; the result is now a pure value computed in the coordinator. Work
+  that waits or needs services belongs in a last activity.
+- **No abort reason.** A handler is interrupted and cannot ask why. If it
+  must tell a timeout from a cancellation, it cannot; clean up the same way
+  for both.
+- **Schedules have a time zone.** A cron schedule is read in its stored
+  `timeZone`. A schedule carried over from the old engine has none until a
+  coordinator reconciles it.
+- **Restart takes its definitions per call**, and a declaration's
+  `idempotency` builder applies to it: see [Retry and restart](#retry-and-restart).
+- **Redis keeps history.** The old Redis runtime expired ended runs
+  (`terminalRetentionMs`); nothing expires now. Configure `retention` on the
+  coordinator, or call `Client.pruneRuns`. Redis also has schedules now.
+- **`Effect.log*` under Neem** goes to the worker's logger.
+- **Not carried over:** `toStoredJsonSchema`, `createContract`, and Promise
+  handlers.
+
+### Upgrading the storage
+
+Runs in flight are **not** converted on either store: their records and
+commands are the old engine's, which the new one cannot continue. In every
+case:
+
+1. Stop starting runs on the old engine and let it finish, or cancel, what
+   it has.
+2. Stop every process of the old engine.
+3. Upgrade the storage as below, then start the new engine.
+
+**PostgreSQL: generation 4 to 6.** `0.18.0-alpha.4` installs schema
+generation 4; a database at an earlier generation applies that release's
+upgrades to 4 first. The migration keeps history, identity keys and
+schedules in place, all unversioned, and rebuilds the command queue. It
+**refuses to run** unless the generation is 4, every run has ended and no
+command is queued. `Postgres.migrateFrom4` runs it in the process;
+`Postgres.MIGRATION_FROM_4_SQL` is the same as a script, which refuses the
+few databases whose keys SQL cannot carry over exactly and names their runs.
+What it changes, column by column:
+[Migrating from generation 4](./src/postgres/README.md#migrating-from-generation-4).
+
+**Redis: starts empty.** Nothing is converted. History and identity keys are
+not carried over, so a start that repeats a key of an old run creates a new
+run. The two engines share no key, even under one prefix. What is left
+behind and when to delete it:
+[Moving from the Promise engine](./src/redis/README.md#moving-from-the-promise-engine).
