@@ -114,7 +114,9 @@ const storageFailure = (exit: Exit.Exit<unknown, unknown>) => {
   return cause as SqlError.SqlError
 }
 
-describe('the schema', () => {
+// Each test starts a database of its own and installs or migrates a whole
+// schema in it: seconds on a slow runner, past the default timeout.
+describe('the schema', { timeout: 30_000 }, () => {
   const tables = [...Object.keys(Postgres.COLUMNS), 'workflow_schema_version']
   const listed = tables.map((table) => `'${table}'`).join(', ')
 
