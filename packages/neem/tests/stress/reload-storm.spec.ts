@@ -87,15 +87,9 @@ function setLoggerMarker(content: string, marker: string): string {
 }
 
 function setPluginReadyMarker(content: string, marker: string): string {
-  if (content.includes("marker: 'plugin-stress-")) {
-    return content.replace(/marker: 'plugin-stress-\d+'/, `marker: '${marker}'`)
-  }
-  const search = "event: 'plugin-runtime-ready',\n        name: event.name,"
-  expect(content).toContain(search)
-  return content.replace(
-    search,
-    `event: 'plugin-runtime-ready',\n        marker: '${marker}',\n        name: event.name,`,
-  )
+  const search = /(event: 'plugin-runtime-ready',\s+)marker(?:: '[^']+')?,/
+  expect(content).toMatch(search)
+  return content.replace(search, `$1marker: '${marker}',`)
 }
 
 async function waitForRuntimeEventCount(

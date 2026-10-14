@@ -31,8 +31,11 @@ export default defineRuntimeWorker({
 
 function untilStopRequested(): Promise<void> {
   return new Promise((resolve) => {
-    const onMessage = (message: { type?: unknown } | undefined) => {
-      if (message?.type !== 'stop') return
+    const onMessage = (message: unknown) => {
+      // The Effect worker transport wraps the stop RPC in a request frame.
+      const stop =
+        Array.isArray(message) && message[0] === 0 && message[1]?.tag === 'stop'
+      if (!stop) return
       parentPort?.off('message', onMessage)
       resolve()
     }

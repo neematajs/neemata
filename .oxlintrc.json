@@ -1,7 +1,9 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["oxc", "typescript", "unicorn"],
-  "options": { "typeAware": true },
+  "options": {
+    "typeAware": true
+  },
   "rules": {
     "eslint/no-unused-vars": [
       "warn",
@@ -12,7 +14,12 @@
         "varsIgnorePattern": "^_"
       }
     ],
-    "no-duplicate-imports": ["error", { "allowSeparateTypeImports": true }],
+    "no-duplicate-imports": [
+      "error",
+      {
+        "allowSeparateTypeImports": true
+      }
+    ],
     "no-sequences": "error",
     "prefer-const": "error",
     "prefer-exponentiation-operator": "error",
@@ -20,9 +27,17 @@
     "typescript/consistent-type-exports": "off",
     "typescript/consistent-type-imports": [
       "error",
-      { "disallowTypeAnnotations": false, "fixStyle": "separate-type-imports" }
+      {
+        "disallowTypeAnnotations": false,
+        "fixStyle": "separate-type-imports"
+      }
     ],
-    "typescript/unbound-method": ["warn", { "ignoreStatic": true }],
+    "typescript/unbound-method": [
+      "warn",
+      {
+        "ignoreStatic": true
+      }
+    ],
     "typescript/prefer-as-const": "error",
     "typescript/prefer-enum-initializers": "error",
     "typescript/prefer-function-type": "error",
@@ -31,22 +46,6 @@
     "unicorn/prefer-number-properties": "error"
   },
   "overrides": [
-    {
-      "files": ["packages/neem/**"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              {
-                "group": ["effect", "effect/**", "@effect/**"],
-                "message": "Neem is runtime-agnostic; Effect integration belongs in @nmtjs/effect or applications."
-              }
-            ]
-          }
-        ]
-      }
-    },
     {
       "files": ["packages/workflows/src/**"],
       "rules": {
@@ -65,7 +64,9 @@
     },
     {
       "files": ["packages/workflows/src/effect/**"],
-      "rules": { "no-restricted-imports": "off" }
+      "rules": {
+        "no-restricted-imports": "off"
+      }
     }
   ]
 }

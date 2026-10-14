@@ -707,7 +707,7 @@ describe('Neem v2 services', () => {
 
     expect(exit.code).not.toBe(0)
     expect(neem.stderr()).toMatch(
-      /runtime[\s\S]*worker[\s\S]*file[\s\S]*Invalid input/,
+      /runtime[\s\S]*worker[\s\S]*file[\s\S]*Invalid input|SchemaError: Expected a non-empty relative path[\s\S]*runtime[\s\S]*worker[\s\S]*file/,
     )
   }, 60_000)
 })

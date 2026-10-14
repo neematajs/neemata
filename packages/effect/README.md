@@ -1,8 +1,8 @@
 # @nmtjs/effect
 
 Run a supervised Effect application in a Neem worker. The application supplies its
-services, main effect, and upstreams; the preset owns their lifetime. Neem itself
-has no Effect dependency.
+services, main effect, and upstreams; the preset owns their lifetime. Neem uses
+Effect internally, while this preset supplies the application-level integration.
 
 It targets **Effect 4** (`effect@^4.0.0`). The preset imports only stable
 Effect modules, so it follows Effect's semver guarantees. Applications choose and
@@ -73,7 +73,7 @@ its logger, mode, and planner data.
 
 Neem delivers stop during startup, including while an asynchronous worker factory
 is resolving. It calls `runtime.stop()` once after the runtime exists and suppresses
-late readiness. The hard five-second worker shutdown deadline still applies to
+late readiness. Neem's shared shutdown deadline applies to
 factory completion and finalizers together; unbounded startup or cleanup can require
 thread termination.
 

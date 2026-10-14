@@ -8,6 +8,35 @@ const configFile = '/workspace/app/neem.config.ts'
 const outDir = '/workspace/app/dist'
 
 describe('createBuildGraph', () => {
+  it('bundles host infrastructure while retaining the application entries', () => {
+    const graph = createBuildGraph({
+      configFile,
+      outDir,
+      config: resolvedConfig({
+        runtimes: {
+          api: runtimeDeclaration('api', {
+            planner: './planner.ts',
+            worker: { entry: './worker.ts' },
+          }),
+        },
+      }),
+    })
+    expect(String(graph.workerEntry.artifact.entry)).toMatch(
+      /internal\/worker\/entry\.(ts|js)$/,
+    )
+    expect(String(graph.hostRunnerEntry.artifact.entry)).toMatch(
+      /internal\/host\/runner-entry\.(ts|js)$/,
+    )
+    expect(String(graph.startEntry.artifact.entry)).toMatch(
+      /internal\/standalone\/entry\.(ts|js)$/,
+    )
+    expect(graph.runtimes[0].worker?.artifact.entry).toBe(
+      '/workspace/app/api/worker.ts',
+    )
+    expect(graph.runtimes[0].worker?.bundleDependencies).toBeUndefined()
+    expect(graph.startEntry.bundleDependencies).toBe(true)
+  })
+
   it('creates start, logger, plugin, worker, host, and planner targets', () => {
     const pluginRolldown = { name: 'plugin-rolldown' }
     const runtimeRolldown = { name: 'runtime-rolldown' }

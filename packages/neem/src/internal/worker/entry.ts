@@ -1,103 +1,79 @@
 import { parentPort, workerData as rawWorkerData } from 'node:worker_threads'
 
-import type { Logger } from 'pino'
+import * as NodeWorkerRunner from '@effect/platform-node/NodeWorkerRunner'
+import * as Deferred from 'effect/Deferred'
+import * as Effect from 'effect/Effect'
+import * as Layer from 'effect/Layer'
+import * as RpcServer from 'effect/rpc/RpcServer'
 
-import type {
-  NeemRuntime,
-  NeemRuntimeWorker,
-  NeemRuntimeWorkerContext,
-} from '../../shared/types.ts'
+import type { NeemRuntimeWorker } from '../../shared/types.ts'
 import type { WorkerUpdate } from '../build/updates.ts'
+import type { ThreadWorkerData, WorkerPatchResult } from '../protocol.ts'
 import type { PatchGlobal } from './patch-globals.ts'
-import type {
-  PatchClientResult,
-  RuntimeWorkerData,
-  WorkerCommands,
-  WorkerErrorOrigin,
-  WorkerEvent,
-  WorkerPatchResult,
-} from './protocol.ts'
+import type { PatchClientResult } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
-import {
-  childLogger,
-  flushLogger,
-  resolveManifestLogger,
-  runtimeLabel,
-} from '../logger.ts'
-import { serveRpc } from '../rpc.ts'
-import { parseRuntimeStartResult } from '../schemas/runtime.ts'
-import { importDefault, normalizeError, serializeError } from '../utils.ts'
+import { hostSettings } from '../config.ts'
+import { attempt, Deadline } from '../lifetime.ts'
+import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
+import { ThreadRpcs } from '../protocol.ts'
+import { importDefault, normalizeError } from '../utils.ts'
+import { WorkerExit } from '../worker-exit.ts'
 import { importPatch } from './patch-import.ts'
-import { WORKER_SERIAL_COMMANDS } from './protocol.ts'
-import { ReloadableRuntime } from './reloadable-runtime.ts'
+import { WorkerRuntime } from './runtime.ts'
 
-const workerData = rawWorkerData as RuntimeWorkerData
-
+const LABEL = 'Neem runtime'
+const data = rawWorkerData as ThreadWorkerData
 const patchGlobal = globalThis as PatchGlobal
-let currentWorker: NeemRuntimeWorker | undefined
+const exit = new WorkerExit(parentPort, () => data.port.close())
 let patches = 0
-let runtime: NeemRuntime | undefined
-let logger: Logger | undefined
-// stopping memoizes runtime cleanup, which a failed start also needs;
-// stopRequested records that the host asked for it, so exits are not failures.
-let stopping: Promise<void> | undefined
-let stopRequested: Promise<void> | undefined
 
-const server = serveRpc<WorkerCommands, WorkerEvent>(
-  parentPort,
-  'Neem runtime worker entry',
-  {
-    'patch-update': ({ update, url }) => applyUpdate(update, url),
-    stop: async ({ timeoutMs }, { exitAfterReply }) => {
-      // The host's wait for the exit began when it sent this request.
-      const deadline = Date.now() + timeoutMs
-      await stopOnRequest()
-      exitAfterReply(0, deadline - Date.now())
-    },
+const runtime = new WorkerRuntime({
+  mode: data.mode,
+  onFinished: (error) => {
+    exit.reportFatal(error, 'runtime', LABEL)
+    void exit.exit(1)
   },
-  {
-    serial: WORKER_SERIAL_COMMANDS,
-    onClose: () => workerData.port.close(),
-    beforeExit: (timeoutMs) =>
-      logger ? flushLogger(logger, timeoutMs) : undefined,
-  },
-)
+  // The host gets a summary; the full failure exists only here.
+  onStartError: (error, origin) =>
+    exit.logger?.error(new Error(`${LABEL} ${origin} error`, { cause: error })),
+  onCleanupError: (error) =>
+    exit.logger?.warn(
+      new Error('Neem runtime cleanup after start error failed', {
+        cause: error,
+      }),
+    ),
+})
 
-function reportError(value: unknown, origin: WorkerErrorOrigin): void {
-  // This thread is the only place the real value still exists, so it is
-  // logged here in full; the parent only receives a rendered summary.
-  if (value instanceof Error) {
-    logger?.error(new Error(`Neem runtime ${origin} error`, { cause: value }))
-  } else {
-    logger?.error({ err: value }, `Neem runtime ${origin} error`)
-  }
-  server.post({ type: 'error', data: { ...serializeError(value), origin } })
-}
-
-async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
-  logger = await resolveWorkerLogger(
-    data,
+const load = Effect.gen(function* () {
+  const logger = childLogger(
+    yield* attempt(() =>
+      resolveManifestLogger(data.logger, {
+        mode: data.mode,
+        outDir: data.outDir,
+      }),
+    ),
     runtimeLabel(data.runtimeName, data.name),
   )
+  exit.logger = logger
   logger.trace(
     { artifactId: data.artifact.id, file: data.artifact.file },
     'Neem runtime worker initializing',
   )
-  // The DevEngine prelude reads the client id during artifact evaluation.
+  // The DevEngine prelude reads these while the artifact evaluates.
   patchGlobal.__neem_patch_client_id__ = data.patchClientId
-  patchGlobal.__neem_patch_guard__ = refusePatch
+  patchGlobal.__neem_patch_guard__ = () => runtime.refusal()
   patchGlobal.__neem_accept_worker__ = acceptWorker
-  const worker = await importDefault<NeemRuntimeWorker<unknown, unknown>>(
-    data.artifact.file,
+  const worker = yield* attempt(() =>
+    importDefault<NeemRuntimeWorker>(data.artifact.file),
   )
   if (!isNeemRuntimeWorker(worker)) {
-    throw new Error(
-      `Runtime worker file [${data.artifact.file}] default export must be a marked runtime worker produced by defineRuntimeWorker`,
+    return yield* Effect.fail(
+      new Error(
+        `Runtime worker file [${data.artifact.file}] default export must be a marked runtime worker produced by defineRuntimeWorker`,
+      ),
     )
   }
-
-  currentWorker = worker
-  const context: NeemRuntimeWorkerContext = {
+  const context = {
     mode: data.mode,
     name: data.name,
     data: data.data,
@@ -105,45 +81,19 @@ async function createRuntime(data: RuntimeWorkerData): Promise<NeemRuntime> {
     definition: worker.definition,
     port: data.port,
   }
-  const created =
-    data.mode === 'development'
-      ? ReloadableRuntime.create(worker, context)
-      : worker.createRuntime(context)
-  logger.trace('Neem runtime worker initialized')
-  return created
-}
+  return { worker, context }
+})
 
-// Refusals that depend only on the running generation. The patch client asks
-// before it disposes anything, so a refused patch leaves that generation
-// serving and the runtime restarts around it.
-function refusePatch(): string | undefined {
-  if (currentWorker?.reload === 'thread') {
-    return "Worker requires reload: 'thread'"
-  }
-  if (!(runtime instanceof ReloadableRuntime)) {
-    return 'Worker generation reload is only available in development'
-  }
-  return runtime.refusal()?.message
-}
-
-// Runs once the patch client has disposed the running generation's modules
-// and re-executed the worker definition, so every failure here leaves no
-// generation serving; recovery restarts the runtime.
+// Called by the patch client once it disposed the running generation's
+// modules and re-ran the worker definition: every failure here leaves no
+// generation serving.
 async function acceptWorker(next: unknown): Promise<void> {
   if (!isNeemRuntimeWorker(next)) {
     throw new Error(
       'Updated worker default export is not a marked runtime worker',
     )
   }
-  if (next.reload === 'thread') {
-    throw new Error("Updated worker requires reload: 'thread'")
-  }
-  if (!(runtime instanceof ReloadableRuntime)) {
-    throw new Error('Worker generation reload is only available in development')
-  }
-  const reload = await runtime.apply(next)
-  if (reload.outcome !== 'applied') throw reload.error
-  currentWorker = next
+  await Effect.runPromise(runtime.replace(next))
 }
 
 async function applyUpdate(
@@ -166,9 +116,7 @@ async function applyUpdate(
           delivered: false,
           reason: 'Worker artifact was not built with Rolldown DevEngine',
         }
-    if (result.outcome === 'applied' && update.type === 'Patch') {
-      patches++
-    }
+    if (result.outcome === 'applied' && update.type === 'Patch') patches++
   } catch (error) {
     // The client classifies every failure after it starts touching modules;
     // one escaping it happened before that.
@@ -181,105 +129,43 @@ async function applyUpdate(
   return { ...result, patches }
 }
 
-async function resolveWorkerLogger(
-  data: RuntimeWorkerData,
-  label: string,
-): Promise<Logger> {
-  return childLogger(
-    await resolveManifestLogger(data.logger, {
-      mode: data.mode,
-      outDir: data.outDir,
-    }),
-    label,
-  )
-}
-
-function stopRuntime(): Promise<void> {
-  // The factory may still be resolving when stop arrives. Its eventual runtime
-  // must be stopped once, even if start has not completed (or has not run yet).
-  return (stopping ??= (async () => {
-    const current = runtime ?? (await initialization)
-    logger?.trace('Stopping Neem runtime worker')
-    await current.stop()
-    logger?.trace('Neem runtime worker stopped')
-  })())
-}
-
-// Resolves once the runtime stopped; a failed stop is reported and exits the
-// thread instead, so the stop reply never claims a clean stop.
-function stopOnRequest(): Promise<void> {
-  return (stopRequested ??= (async () => {
-    try {
-      await stopRuntime()
-    } catch (error) {
-      reportError(error, 'runtime')
-      await server.exit(1)
+const stop = (timeoutMs: number) =>
+  Effect.gen(function* () {
+    const deadline = yield* Deadline.make(timeoutMs)
+    exit.logger?.trace('Stopping Neem runtime worker')
+    const errors = yield* runtime.stop(deadline)
+    if (errors.length > 0) {
+      for (const error of errors) exit.reportFatal(error, 'runtime', LABEL)
+      return yield* Effect.promise(() => exit.exit(1, deadline.remaining()))
     }
-  })())
-}
+    exit.logger?.trace('Neem runtime worker stopped')
+    return yield* Effect.promise(() => exit.exit(0, deadline.remaining()))
+  })
 
-async function watchRuntimeFinished(current: NeemRuntime): Promise<void> {
-  if (!current.finished) return
+const handlers = ThreadRpcs.toLayer({
+  start: () => Deferred.await(runtime.ready),
+  patch: ({ update, url }) =>
+    runtime.patch(Effect.promise(() => applyUpdate(update, url))),
+  stop: ({ timeoutMs }) => stop(timeoutMs),
+})
 
-  try {
-    await current.finished
-    if (stopRequested) return
-    reportError(
-      new Error('Neem runtime finished before stop was requested'),
-      'runtime',
+exit.installCrashHandlers(LABEL)
+// Started before the server listens, so the artifact loads while the host
+// is still sending its first request.
+Effect.runFork(
+  Effect.gen(function* () {
+    yield* runtime.boot(load)
+    const settings = yield* hostSettings(process.env)
+    yield* Layer.launch(
+      RpcServer.layer(ThreadRpcs, {
+        disableTracing: !settings.tracing,
+        // A defect fails its own request, not every request of the client.
+        disableFatalDefects: true,
+      }).pipe(
+        Layer.provide(handlers),
+        Layer.provide(RpcServer.layerProtocolWorkerRunner),
+        Layer.provide(NodeWorkerRunner.layer),
+      ),
     )
-  } catch (error) {
-    if (stopRequested) return
-    reportError(error, 'runtime')
-  }
-  await server.exit(1)
-}
-
-process.on('uncaughtException', (error) => {
-  reportError(error, 'runtime')
-  void server.exit(1)
-})
-
-process.on('unhandledRejection', (error) => {
-  reportError(error, 'runtime')
-  void server.exit(1)
-})
-
-// Started before main so a stop that arrives during bootstrap can await it.
-const initialization = createRuntime(workerData)
-
-async function main(): Promise<void> {
-  try {
-    runtime = await initialization
-  } catch (error) {
-    if (stopRequested) return
-    reportError(error, 'bootstrap')
-    await server.exit(1)
-    return
-  }
-
-  if (stopRequested) return
-  try {
-    logger?.trace('Starting Neem runtime worker')
-    const result = await runtime.start()
-    if (stopRequested) return
-    const upstreams = parseRuntimeStartResult(result)
-    logger?.trace({ upstreams: upstreams.length }, 'Neem runtime worker ready')
-    server.post({ type: 'ready', data: { upstreams } })
-    void watchRuntimeFinished(runtime)
-  } catch (error) {
-    if (stopRequested) return
-    await stopRuntime().catch((cleanupError) => {
-      logger?.warn(
-        new Error('Neem runtime cleanup after start error failed', {
-          cause: normalizeError(cleanupError),
-        }),
-      )
-    })
-    if (stopRequested) return
-    reportError(error, 'start')
-    await server.exit(1)
-  }
-}
-
-void main()
+  }),
+)

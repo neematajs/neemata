@@ -1,5 +1,157 @@
 # Neem
 
+An application host built on Effect 4: build and watch applications, supervise
+worker threads, route traffic, and shut resources down within a shared deadline.
+The CLI and package name remain `neem` and `@nmtjs/neem`.
+
+## Run
+
+```sh
+neem dev --config neem.config.ts
+neem build --config neem.config.ts
+neem start --out-dir dist
+# Or run the built application directly:
+node dist/start.js
+```
+
+Existing configuration, planner, worker, Nuxt, and Vite imports stay the same.
+Application presets may return values or Promises; applications do not need to
+use Effect. `@nmtjs/effect` remains the preset for applications that use Effect
+services and scoped resources themselves.
+
+## Migration
+
+The Effect host replaces the previous implementation; `@nmtjs/neem-effect` is
+removed. Change imports from that package to `@nmtjs/neem`, including `/host`,
+and replace the `neem-effect` executable with `neem`. The Promise facade is now
+named `HostController`. Remove old build output and run `neem build` again:
+manifest schema version 4 is deliberately rejected, since its bundled worker
+transport is incompatible with this host. Fresh builds use version 5.
+
+Pino, the native proxy, runtime declarations, and Promise-based presets remain.
+Hooks may additionally return Effects, and plugin factories may acquire scoped
+Effect resources. Embedded hooks use `createHostHooks()` from `@nmtjs/neem/host`.
+
+## CLI
+
+The command tree uses Effect's `effect/cli`, with Node platform services and
+signal handling. Effect currently marks that CLI API unstable.
+
+```sh
+neem --help
+neem dev --help
+neem --version
+neem --completions bash # also zsh, fish, sh
+neem dev api,jobs --no-cache --env-files .env,.env.local
+```
+
+`--outDir` and `--cacheDir` remain aliases for `--out-dir` and `--cache-dir`.
+Flags are validated before running a command. On SIGINT/SIGTERM the CLI waits
+for cleanup; failed cleanup exits unsuccessfully. Diagnostics go to stderr.
+
+## Ownership and transport
+
+The host serializes mutations with `Semaphore`; shutdown interrupts the active
+operation and closes its resources. Each runtime owns a generation scope, which
+owns its planner/host runner and parallel worker scopes. A generation's failure
+`Deferred` cannot restart a newer generation. Application replacement is serialized
+inside each worker, and a cancelled queued patch cannot release another patch's permit.
+
+Effect `RpcClient` / `RpcServer`, schemas, `Transferable`, and
+`NodeWorkerRunner` provide requests, replies, cancellation, and MessagePort
+transfer. Host-side `Worker.makePlatform` owns readiness buffering and the
+receive loop's response-handler fibers. A single-worker `RpcClient.Protocol`
+bridge connects it to RPC; a Node adapter supplies events and deadline-aware
+native cleanup. It intentionally has no transparent respawn: Neem's runtime
+supervisor owns restart policy, backoff, and exhaustion. Fatal exit reports use
+a separate synchronous frame so they survive an immediate process exit.
+
+The receive scope is registered before native acquisition. Finalizers therefore
+send the stop request, close the RPC client, wait for native exit (or terminate
+at the deadline), and finally close the receive scope. That order lets a stop
+buffered before readiness reach the worker. Interrupting the receive loop first
+would discard that opportunity and force termination. The native worker belongs
+to the outer lifetime even though `makePlatform` manages its receive loop.
+
+Every shutdown step spends one absolute deadline. Worker scopes stop together;
+a stuck finalizer cannot prevent sibling cleanup. Workers still alive at the
+deadline are terminated and shutdown reports failure. Promise-based application
+factories remain supported, including ones that finish after shutdown begins.
+
+The compiler, watcher, DevEngine freshness rules, native proxy, and application
+contracts remain in Neem. There is one host implementation. Workflows and
+distributed cluster scheduling are outside this package's scope.
+
+## First-party services and custom policy
+
+Effect owns background fibers (`FiberSet` / `FiberHandle`), scopes, serialization,
+monotonic deadlines, and retry schedules. Callback fibers capture the caller's
+Effect services, including its clock and tracing context. Cancelling a queued
+host operation removes it before it can mutate the running server.
+
+Lifecycle hooks execute sequentially as Effects. Hooks may return an Effect, a
+Promise, or nothing; an interrupted hook cannot continue invoking later callbacks.
+Plugin acquisitions register disposal immediately, including partial startup.
+`definePluginHooks` from this package also accepts Effect factories using
+`acquireRelease`; their resources belong to a plugin scope closed within the
+host's shutdown budget.
+Plugins dispose in reverse acquisition order. Embedded hosts use the native
+`HostHooks` registry; Hookable registries are no longer accepted.
+`createHostHooks` and `PluginHooks` are exported from `@nmtjs/neem/host`.
+
+The proxy controller uses Effect serialization and scheduled retries. The native
+proxy still forwards traffic. Neem retains route selection, readiness policy,
+restart decisions, generation identity, and the single shared shutdown budget.
+A native call or Promise that cannot be cancelled may finish after the caller's
+budget; its cleanup remains owned and workers can still be forcibly terminated.
+
+Effect Schema validates manifests, runtime upstreams, and RPC envelopes. Normal
+RPC failures use Effect's error codec; opaque application values retain structured
+clone support (including Maps, BigInts, and typed arrays). Diagnostics therefore
+use Effect's schema errors instead of Zod's. The compiler writes manifest
+schema version 5. Builds from the previous host must be rebuilt before
+starting them with this version.
+
+Effect Config resolves runtime environment overrides and host settings. Invalid
+`NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS` values now fail startup instead of accepting
+partial numbers. `NEEM_EFFECT_TRACING=true` enables RPC tracing; host operations
+and recovery attempts also expose Effect spans to an installed tracer. No tracing
+exporter is installed automatically. **Pino remains the logger.**
+
+Plain dotenv files use Effect FileSystem and ConfigProvider, preserving file order
+and existing environment values. Files using variable expansion or dotenvx
+encryption retain the dotenvx adapter. The compiler, artifact watcher, and
+DevEngine retain their existing build and module-update engines.
+
+`Deadline.make(ms)` captures the active Effect clock. `Deadline.after(ms)` is the
+synchronous live-clock convenience. `Deadline.at` is monotonic time, not a Unix
+timestamp; pass relative budgets through the factories.
+
+## Embed in an Effect application
+
+```ts
+import * as Effect from 'effect/Effect'
+import { loadSnapshot, serve } from '@nmtjs/neem/host'
+
+const program = Effect.scoped(
+  Effect.gen(function* () {
+    const snapshot = yield* loadSnapshot({
+      mode: 'production',
+      outDir: './dist',
+      manifestFile: './dist/neem.manifest.json',
+    })
+    const host = yield* serve(snapshot)
+    console.log(host.getHealth())
+    yield* Effect.never
+  }),
+)
+```
+
+Run `program` with your application's Effect runtime and signal handling.
+Closing its scope stops the host; acquisition failure or interruption also
+cleans up resources already acquired. The `Host` methods return Effects.
+`HostController` is the Promise facade used by the development CLI.
+
 Conventional runtime and planner lookup recognizes `.ts`, `.mts`, `.js` and
 `.mjs` files.
 
@@ -105,3 +257,16 @@ values count as existing process variables and take precedence over `--env-files
 Bun also loads `.env.local` in development, but skips it with `NODE_ENV=test`.
 
 `NeemConfig.env` remains an inline environment map included in the manifest.
+
+## Verification
+
+```sh
+vp env exec -- pnpm --filter @nmtjs/neem run test:unit --reporter=agent
+vp env exec -- pnpm --filter @nmtjs/neem run test:e2e --reporter=agent
+vp env exec -- pnpm --filter @nmtjs/neem run test:stress --reporter=agent
+```
+
+Unit tests cover shared build contracts and Effect ownership, clocks, schemas,
+transport cancellation, and recovery. End-to-end tests exercise the canonical CLI,
+packaged applications, reloads, proxy readiness, and shutdown. Stress tests exercise
+repeated reloads and resource cleanup.

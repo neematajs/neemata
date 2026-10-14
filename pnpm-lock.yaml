@@ -252,21 +252,21 @@ importers:
       '@dotenvx/dotenvx':
         specifier: ^2.23.0
         version: 2.23.0
+      '@effect/platform-node':
+        specifier: ^4.0.0
+        version: 4.0.0(effect@4.0.0)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
-      citty:
-        specifier: ^0.2.2
-        version: 0.2.2
       consola:
         specifier: ^3.4.2
         version: 3.4.2
       defu:
         specifier: ^6.1.7
         version: 6.1.7
-      hookable:
-        specifier: ^6.1.1
-        version: 6.1.1
+      effect:
+        specifier: ^4.0.0
+        version: 4.0.0
       oxc-resolver:
         specifier: ^11.21.3
         version: 11.21.3
@@ -282,9 +282,6 @@ importers:
       rolldown:
         specifier: 'catalog:'
         version: 1.2.12
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
     devDependencies:
       '@nmtjs/metrics':
         specifier: workspace:*

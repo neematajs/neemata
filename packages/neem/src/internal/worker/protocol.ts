@@ -1,14 +1,7 @@
 import type { MessagePort } from 'node:worker_threads'
 
-import type { NeemWorkerErrorOrigin } from '../../shared/errors.ts'
-import type {
-  NeemMode,
-  NeemResolvedArtifact,
-  NeemRuntimeUpstream,
-} from '../../shared/types.ts'
-import type { WorkerUpdate } from '../build/updates.ts'
+import type { NeemMode, NeemResolvedArtifact } from '../../shared/types.ts'
 import type { ManifestLogger } from '../manifest/manifest.ts'
-import type { SerializedError } from '../utils.ts'
 
 export type RuntimeWorkerData = {
   patchClientId: string
@@ -21,25 +14,6 @@ export type RuntimeWorkerData = {
   logger?: ManifestLogger
   port: MessagePort
 }
-
-/**
- * Commands a runtime worker thread serves. `patch-update` requests run one at
- * a time in arrival order, since each patch builds on the previous one; `stop`
- * may overlap anything, and its reply precedes the thread's exit.
- */
-export type WorkerCommands = {
-  'patch-update': {
-    params: { update: WorkerUpdate; url?: string }
-    result: WorkerPatchResult
-  }
-  // `timeoutMs`: how long the host still waits for the thread to exit, so the
-  // thread can bound what it flushes before exiting.
-  stop: { params: { timeoutMs: number }; result: void }
-}
-
-export const WORKER_SERIAL_COMMANDS = [
-  'patch-update',
-] as const satisfies readonly (keyof WorkerCommands)[]
 
 /**
  * What a patch did to the running worker generation. `rejected` leaves the
@@ -58,9 +32,3 @@ export type PatchClientResult = PatchOutcome & {
 }
 
 export type WorkerPatchResult = PatchClientResult & { patches: number }
-
-export type WorkerErrorOrigin = NeemWorkerErrorOrigin
-
-export type WorkerEvent =
-  | { type: 'ready'; data: { upstreams?: readonly NeemRuntimeUpstream[] } }
-  | { type: 'error'; data: SerializedError & { origin: WorkerErrorOrigin } }

@@ -3,8 +3,8 @@ import type { Logger } from 'pino'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 
 import type { NeemLifecycleConfig } from '../../shared/types.ts'
-import type { RuntimePatchResult } from '../host/runtime.ts'
-import type { ThreadLifecycleEvent } from '../host/thread.ts'
+import type { ThreadLifecycleEvent } from '../context.ts'
+import type { RuntimePatchResult } from '../runtime.ts'
 import type { WorkerServiceStopProgressEvent } from '../services/client.ts'
 import type { ConfigSignalWatcher } from '../services/config-signal.ts'
 import type {
@@ -395,7 +395,7 @@ export class DevSession {
     // stop() only reaches a controller once it is published below.
     if (this.stopped) return
     this.lifecycle = snapshot.config.lifecycle
-    const controller: HostController = new HostController({
+    const controller = new HostController({
       snapshot,
       failOnWorkerError: true,
       recovery: { attempts: 1 },

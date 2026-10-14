@@ -1,27 +1,19 @@
-import * as z from 'zod/mini'
+import * as Schema from 'effect/Schema'
 
 import type { NeemRuntimeUpstream } from '../../shared/types.ts'
 
-export const runtimeUpstreamSchema = z.looseObject({
-  type: z.enum(['http', 'http2', 'ws']),
-  url: z.url(),
+export const runtimeUpstreamSchema = Schema.Struct({
+  type: Schema.Literals(['http', 'http2', 'ws']),
+  url: Schema.String.check(
+    Schema.makeFilter((url) => URL.canParse(url) || 'Expected a valid URL'),
+  ),
 })
-
-export const runtimeUpstreamsSchema = z.array(runtimeUpstreamSchema)
-
-export function parseRuntimeUpstreams(
+export const runtimeUpstreamsSchema = Schema.Array(runtimeUpstreamSchema)
+export const parseRuntimeUpstreams = (
   upstreams: unknown,
-): readonly NeemRuntimeUpstream[] {
-  return runtimeUpstreamsSchema.parse(
-    upstreams,
-  ) as readonly NeemRuntimeUpstream[]
-}
-
-const runtimeStartResultSchema = z.optional(runtimeUpstreamsSchema)
-
-export function parseRuntimeStartResult(
+): readonly NeemRuntimeUpstream[] =>
+  Schema.decodeUnknownSync(runtimeUpstreamsSchema)(upstreams)
+export const parseRuntimeStartResult = (
   result: unknown,
-): readonly NeemRuntimeUpstream[] {
-  const parsed = runtimeStartResultSchema.parse(result)
-  return (parsed ?? []) as readonly NeemRuntimeUpstream[]
-}
+): readonly NeemRuntimeUpstream[] =>
+  result === undefined ? [] : parseRuntimeUpstreams(result)

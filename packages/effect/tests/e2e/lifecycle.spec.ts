@@ -105,10 +105,18 @@ it('releases the old Effect scope when the worker artifact reloads', async () =>
     (await readFile(entry, 'utf8')).replace('effect-v1', 'effect-v2'),
   )
   await waitFor(
-    async () =>
-      (await app.events()).some(
+    async () => {
+      // Port 0 changes the upstream on replacement, causing a full recovery.
+      // An earlier v2 start can belong to the rejected, already-closed scope.
+      const latest = (await app.events()).findLast(
         (event) => event.event === 'started' && event.marker === 'effect-v2',
-      ),
+      )
+      if (!latest?.url) return false
+      return fetch(latest.url).then(
+        async (response) => (await response.text()) === 'effect-v2',
+        () => false,
+      )
+    },
     30_000,
     server.stderr,
   )
@@ -118,7 +126,7 @@ it('releases the old Effect scope when the worker artifact reloads', async () =>
       (event) => event.event === 'stopped' && event.marker === 'effect-v1',
     ),
   ).toBe(true)
-  const current = events.find(
+  const current = events.findLast(
     (event) => event.event === 'started' && event.marker === 'effect-v2',
   )!
   expect(await (await fetch(current.url!)).text()).toBe('effect-v2')

@@ -5,7 +5,7 @@ Neemata supervises their processes and coordinates their durable work.
 
 | Package              | Purpose                                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `@nmtjs/neem`        | Runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))               |
+| `@nmtjs/neem`        | Effect-based runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))  |
 | `@nmtjs/workflows`   | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))                |
 | `@nmtjs/pubsub`      | Typed ephemeral publish/subscribe for Effect, with Redis and Valkey brokers ([README](packages/pubsub/README.md)) |
 | `@nmtjs/effect`      | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))                      |

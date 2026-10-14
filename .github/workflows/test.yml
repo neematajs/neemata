@@ -80,6 +80,7 @@ jobs:
       - run: |
           pnpm run test --reporter=agent --reporter=github-actions
           pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
+          pnpm --filter @nmtjs/neem run test:stress --reporter=agent --reporter=github-actions
 
   # prom-client's engines still include Node 22, which the main test matrix doesn't cover.
   tests-prom-client-node22:

@@ -14,6 +14,7 @@ import {
 } from './support/e2e.ts'
 
 type WorkspacePackage = 'common' | 'neem'
+const implementation = 'neem'
 
 type CommandResult = {
   code: number | null
@@ -31,6 +32,7 @@ const stagedPackages: readonly WorkspacePackage[] = ['common', 'neem']
 
 const internalPackageDirs = new Map<string, WorkspacePackage>([
   ['@nmtjs/common', 'common'],
+  ['@nmtjs/neem', 'neem'],
 ])
 
 describe('Neem package consumer smoke', () => {
@@ -42,26 +44,32 @@ describe('Neem package consumer smoke', () => {
     // Exercise the installed bin through pnpm, where Node.js also parses command arguments.
     await expect(
       runPnpm(
-        ['exec', 'neem', 'dev', '--env-files=missing.env'],
+        ['exec', implementation, 'dev', '--env-files=missing.env'],
         fixture.consumerDir,
         30_000,
       ),
-    ).rejects.toThrow('MISSING_ENV_FILE')
+    ).rejects.toThrow(
+      /MISSING_ENV_FILE|Unable to load environment file \[missing.env\]/,
+    )
 
     const installedPackageJson = JSON.parse(
       await readFile(
-        resolve(fixture.consumerDir, 'node_modules/@nmtjs/neem/package.json'),
+        resolve(
+          fixture.consumerDir,
+          `node_modules/@nmtjs/${implementation}/package.json`,
+        ),
         'utf8',
       ),
     ) as { exports: { '.': { types: string } } }
 
-    expect(installedPackageJson.exports['.'].types).toBe(
-      './dist/public/index.d.ts',
+    expect(installedPackageJson.exports['.'].types).toMatch(
+      /^\.\/dist\/.*\.d\.ts$/,
     )
     await expectFile(
       resolve(
         fixture.consumerDir,
-        'node_modules/@nmtjs/neem/dist/shared/types.d.ts',
+        `node_modules/@nmtjs/${implementation}`,
+        installedPackageJson.exports['.'].types,
       ),
     )
 

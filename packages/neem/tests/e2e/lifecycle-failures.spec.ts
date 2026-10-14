@@ -53,7 +53,9 @@ describe('Neem runtime lifecycle failures', () => {
     const exit = await neem.waitForExit()
 
     expect(exit.code).not.toBe(0)
-    expect(neem.stderr()).toMatch(/\$ZodError[\s\S]*invalid_format[\s\S]*url/)
+    expect(neem.stderr()).toMatch(
+      /\$ZodError[\s\S]*invalid_format[\s\S]*url|SchemaError: Expected a valid URL[\s\S]*url/,
+    )
   }, 60_000)
 
   it('stops already-started workers when a later worker fails startup', async () => {

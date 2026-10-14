@@ -11,6 +11,7 @@ import type {
   Manifest,
   ManifestArtifact,
 } from '../../src/internal/manifest/manifest.ts'
+import { loadRuntimeSnapshot } from '../../src/internal/host/bootstrap.ts'
 import {
   createManifest as createCompiledManifest,
   MANIFEST_SCHEMA_VERSION,
@@ -23,6 +24,18 @@ import {
 import { createTempDir } from '../support/temp.ts'
 
 describe('Neem manifest', () => {
+  it('rejects pre-Effect build output before loading artifacts', async () => {
+    const outDir = await createTempDir('neem-old-manifest-')
+    const manifestFile = resolve(outDir, 'neem.manifest.json')
+    await writeFile(
+      manifestFile,
+      JSON.stringify({ ...createManifest(), schemaVersion: 4 }),
+    )
+    await expect(
+      loadRuntimeSnapshot({ mode: 'production', outDir, manifestFile }),
+    ).rejects.toThrow(/rebuild/i)
+  })
+
   it('rejects manifest paths outside the output directory', () => {
     const manifest = createManifest({
       runtime: {
@@ -44,7 +57,7 @@ describe('Neem manifest', () => {
     })
 
     expect(() => validateManifest(manifest)).toThrow(
-      /runtime[\s\S]*entry[\s\S]*Invalid input/,
+      /relative path[\s\S]*runtime[\s\S]*entry/,
     )
   })
 
@@ -87,7 +100,7 @@ describe('Neem manifest', () => {
     )
 
     await expect(readManifest(manifestFile)).rejects.toThrow(
-      /schema version \[1\], expected \[4\]; rebuild it with `neem build`/,
+      /schema version \[1\], expected \[5\]; rebuild it with `neem build`/,
     )
   })
 
@@ -267,7 +280,7 @@ describe('Neem manifest', () => {
       },
     })
     expect(() => validateManifest(wrongId)).toThrow(
-      /runtimes[\s\S]*api[\s\S]*worker[\s\S]*id/,
+      /id[\s\S]*worker[\s\S]*runtimes[\s\S]*api[\s\S]*worker/,
     )
   })
 

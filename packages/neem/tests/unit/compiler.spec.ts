@@ -58,6 +58,21 @@ async function editUntilReported(
 const DEV_ENGINE_TEST_TIMEOUT_MS = 20_000
 
 describe('Neem compiler', () => {
+  it('bundles host infrastructure even when application externals include its runtime', async () => {
+    const target = await createTarget()
+    target.bundleDependencies = true
+    target.artifact.rolldown = { external: () => true }
+    rolldownMock.build.mockResolvedValue(rolldownOutput('index.js', target))
+    await compileTarget(target)
+
+    const options = rolldownMock.build.mock.calls[0]?.[0] as BuildOptions
+    if (typeof options.external !== 'function')
+      throw new Error('Missing external matcher')
+    expect(options.external('effect/Effect', undefined, false)).toBe(false)
+    expect(options.external('@nmtjs/neem/host', undefined, false)).toBe(false)
+    expect(options.external('node:worker_threads', undefined, false)).toBe(true)
+  })
+
   it('compiles infra targets with one multi-entry rolldown build', async () => {
     const root = await createTempDir('neem-compiler-')
     const graph = createCompilerGraph(root)

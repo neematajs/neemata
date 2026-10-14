@@ -34,6 +34,8 @@ export type BuildTargetKind =
   | 'logger'
 
 export type BuildTarget = {
+  // Host infrastructure must carry its own runtime dependencies.
+  bundleDependencies?: boolean
   key: string
   kind: BuildTargetKind
   artifact: {
@@ -201,6 +203,7 @@ function createWorkerEntryTarget(
   rootRolldown?: RolldownOptions,
 ): BuildTarget {
   return {
+    bundleDependencies: true,
     key: 'runtime:worker-entry',
     kind: 'worker-entry',
     artifact: {
@@ -222,6 +225,7 @@ function createHostRunnerEntryTarget(
   rootRolldown?: RolldownOptions,
 ): BuildTarget {
   return {
+    bundleDependencies: true,
     key: 'runtime:host-runner-entry',
     kind: 'host-runner-entry',
     artifact: {
@@ -243,6 +247,7 @@ function createStartEntryTarget(
   rootRolldown?: RolldownOptions,
 ): BuildTarget {
   return {
+    bundleDependencies: true,
     key: 'runtime:start-entry',
     kind: 'start-entry',
     artifact: {
