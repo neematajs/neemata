@@ -3,7 +3,7 @@ import type {
   NeemRuntimePlan,
 } from '../../shared/types.ts'
 import type { RuntimeSnapshot } from '../manifest/snapshot.ts'
-import type { ThreadPlan } from './thread.ts'
+import type { ThreadPlan } from '../thread.ts'
 import { normalizeError } from '../utils.ts'
 
 export function resolveRuntimeArtifact(

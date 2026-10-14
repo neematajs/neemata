@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, onTestFinished } from 'vitest'
@@ -13,9 +13,8 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-type WorkspacePackage = 'common' | 'neem' | 'neem-effect'
-const implementation =
-  process.env.NEEM_E2E_PACKAGE === 'neem-effect' ? 'neem-effect' : 'neem'
+type WorkspacePackage = 'common' | 'neem'
+const implementation = 'neem'
 
 type CommandResult = {
   code: number | null
@@ -29,10 +28,7 @@ const neemPackageDir = resolve(e2eDir, '../..')
 const workspaceRoot = resolve(neemPackageDir, '../..')
 const consumerFixtureDir = resolve(e2eDir, 'fixtures/consumer')
 
-const stagedPackages: readonly WorkspacePackage[] =
-  implementation === 'neem'
-    ? ['common', 'neem']
-    : ['common', 'neem', 'neem-effect']
+const stagedPackages: readonly WorkspacePackage[] = ['common', 'neem']
 
 const internalPackageDirs = new Map<string, WorkspacePackage>([
   ['@nmtjs/common', 'common'],
@@ -119,23 +115,6 @@ async function createConsumerFixture(): Promise<{
   const consumerDir = resolve(rootDir, 'consumer')
   const packagesDir = resolve(rootDir, 'packages')
   await cp(consumerFixtureDir, consumerDir, { recursive: true })
-  if (implementation !== 'neem') {
-    for (const file of await readdir(consumerDir, {
-      recursive: true,
-      withFileTypes: true,
-    })) {
-      if (!file.isFile() || !/\.(ts|json)$/.test(file.name)) continue
-      const path = resolve(file.parentPath, file.name)
-      const content = (await readFile(path, 'utf8'))
-        .replaceAll('@nmtjs/neem', `@nmtjs/${implementation}`)
-        .replaceAll(
-          'file:../packages/neem"',
-          `file:../packages/${implementation}"`,
-        )
-        .replace('"neem build ', `"${implementation} build `)
-      await writeFile(path, content)
-    }
-  }
   await stagePublishedPackages(packagesDir)
 
   return { consumerDir, eventsFile: resolve(rootDir, 'events.jsonl') }
@@ -154,9 +133,9 @@ async function stagePublishedPackages(packagesDir: string): Promise<void> {
       await cp(resolve(sourceDir, 'dist'), resolve(packageDir, 'dist'), {
         recursive: true,
       })
-      if (packageName !== 'common') {
+      if (packageName === 'neem') {
         // Published beside dist through package.json `files`.
-        for (const dir of packageName === 'neem' ? ['bin', 'lib'] : ['bin']) {
+        for (const dir of ['bin', 'lib']) {
           await cp(resolve(sourceDir, dir), resolve(packageDir, dir), {
             recursive: true,
           })

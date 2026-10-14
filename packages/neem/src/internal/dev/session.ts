@@ -3,9 +3,8 @@ import type { Logger } from 'pino'
 import { createFuture, OperationQueue } from '@nmtjs/common'
 
 import type { NeemLifecycleConfig } from '../../shared/types.ts'
-import type { NeemHostFlavor, NeemHostController } from '../flavor.ts'
-import type { RuntimePatchResult } from '../host/runtime.ts'
-import type { ThreadLifecycleEvent } from '../host/thread.ts'
+import type { ThreadLifecycleEvent } from '../context.ts'
+import type { RuntimePatchResult } from '../runtime.ts'
 import type { WorkerServiceStopProgressEvent } from '../services/client.ts'
 import type { ConfigSignalWatcher } from '../services/config-signal.ts'
 import type {
@@ -14,7 +13,6 @@ import type {
   WatcherManifestIdentity,
 } from '../services/protocol.ts'
 import type { NeemTestProbe } from '../test-probe.ts'
-import { buildFlavor } from '../flavor.ts'
 import { loadRuntimeSnapshot } from '../host/bootstrap.ts'
 import { HostController } from '../host/controller.ts'
 import {
@@ -43,7 +41,6 @@ import { DevFreshness } from './freshness.ts'
 type WatcherClient = WorkerServiceClient<WatcherCommands, WatcherEvent>
 
 export type DevSessionOptions = {
-  flavor?: NeemHostFlavor
   configFile: string
   outDir: string
   runtimes?: readonly string[]
@@ -59,7 +56,7 @@ export class DevSession {
   private watcher: WatcherClient | undefined
   private configSignalWatcher: ConfigSignalWatcher | undefined
   private configSignalFiles: readonly string[] | undefined
-  private controller: NeemHostController | undefined
+  private controller: HostController | undefined
   // Only the first host start ends `neem dev` when it fails; a later one waits
   // for the next successful build instead.
   private hostStarted = false
@@ -176,7 +173,6 @@ export class DevSession {
     this.patchClients.clear()
     try {
       const result = await watcher.request('start', {
-        flavor: buildFlavor(this.options.flavor),
         configFile: this.options.configFile,
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
@@ -389,11 +385,8 @@ export class DevSession {
   }
 
   private async startController(manifestFile: string): Promise<void> {
-    const snapshot = await (
-      this.options.flavor?.loadSnapshot ?? loadRuntimeSnapshot
-    )({
+    const snapshot = await loadRuntimeSnapshot({
       mode: 'development',
-      flavor: this.options.flavor?.name,
       outDir: this.options.outDir,
       manifestFile,
       runtimes: this.options.runtimes,
@@ -402,10 +395,7 @@ export class DevSession {
     // stop() only reaches a controller once it is published below.
     if (this.stopped) return
     this.lifecycle = snapshot.config.lifecycle
-    const createController =
-      this.options.flavor?.createController ??
-      ((options) => new HostController(options))
-    const controller: NeemHostController = createController({
+    const controller = new HostController({
       snapshot,
       failOnWorkerError: true,
       recovery: { attempts: 1 },
@@ -439,7 +429,7 @@ export class DevSession {
   // Development never ends on a runtime failure: the runtime stays failed and
   // unready until its next successful build restarts it.
   private onRuntimeFailure(
-    controller: NeemHostController,
+    controller: HostController,
     error: Error,
     runtimeName: string,
   ): void {
@@ -486,11 +476,8 @@ export class DevSession {
     this.freshness.resume(runtimeName, 'reload')
     // The reload replaces a recovering runtime, which must not keep waiting.
     this.releaseRecovery(runtimeName)
-    const snapshot = await (
-      this.options.flavor?.loadSnapshot ?? loadRuntimeSnapshot
-    )({
+    const snapshot = await loadRuntimeSnapshot({
       mode: 'development',
-      flavor: this.options.flavor?.name,
       outDir: this.options.outDir,
       manifestFile: this.manifestFile,
       runtimes: this.options.runtimes,
@@ -516,7 +503,7 @@ export class DevSession {
   }
 
   private awaitRecoveryOutput(
-    controller: NeemHostController,
+    controller: HostController,
     runtimeName: string,
   ): Promise<void> {
     // Nothing would release a retired controller's recovery, and its stop must

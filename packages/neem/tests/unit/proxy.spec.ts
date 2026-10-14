@@ -1,7 +1,8 @@
 import { createFuture } from '@nmtjs/common'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import * as Effect from 'effect/Effect'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ResolvedServerConfig } from '../../src/internal/host/proxy.ts'
+import type { ResolvedServerConfig } from '../../src/internal/host/proxy-config.ts'
 import type { RuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import type {
   NeemProxyUpstream,
@@ -12,10 +13,11 @@ import {
   createNativeProxyOptions,
   formatProxyListenUrl,
   normalizeRuntimeUpstream,
-  ProxyController,
   resolveServerConfig,
   toProxyUpstream,
-} from '../../src/internal/host/proxy.ts'
+} from '../../src/internal/host/proxy-config.ts'
+import { Deadline } from '../../src/internal/lifetime.ts'
+import { ProxyController as EffectProxy } from '../../src/internal/proxy.ts'
 
 // Mirrors the native registry, which rejects repeated adds and removals.
 const native = vi.hoisted(() => ({
@@ -420,7 +422,7 @@ describe('ProxyController upstream reconciliation', () => {
     await controller.stop()
   })
 
-  it('republishes health to a restarted native proxy', async () => {
+  it('publishes health to a replacement native proxy', async () => {
     const controller = await startController([first])
     controller.publishHealth()
     await controller.stop()
@@ -434,87 +436,32 @@ describe('ProxyController upstream reconciliation', () => {
     await controller.stop()
   })
 
-  describe('with a failing add', () => {
-    const firstKey = 'api:http:127.0.0.1:4101'
-    let addAttempts = 0
-
-    beforeEach(() => {
-      addAttempts = 0
-      vi.useFakeTimers()
-    })
-    afterEach(() => {
-      vi.useRealTimers()
-    })
-
-    const failAdds = (times: number) => {
-      native.beforeMutation = async (operation, key) => {
-        if (operation !== 'add' || key !== firstKey) return
-        addAttempts++
-        if (addAttempts <= times) throw new Error('native add failed')
-      }
-    }
-
-    it('retries in the background until the upstream is applied', async () => {
-      const controller = await startController([second])
-      failAdds(1)
-
-      await expect(
-        controller.setUpstreams([
-          { runtimeName: 'api', upstreams: [first, second] },
-        ]),
-      ).rejects.toThrow('native add failed')
-      expect(controller.getHealth().ready).toBe(false)
-
-      await vi.advanceTimersByTimeAsync(100)
-
-      expect(addAttempts).toBe(2)
-      expect(native.registered).toContain(firstKey)
-      expect(controller.getHealth()).toMatchObject({
-        failedUpstreams: [],
-        ready: true,
-      })
-      expect(vi.getTimerCount()).toBe(0)
-      await controller.stop()
-    })
-
-    it('cancels the pending retry on stop', async () => {
-      const controller = await startController([second])
-      failAdds(Infinity)
-
-      await expect(
-        controller.setUpstreams([
-          { runtimeName: 'api', upstreams: [first, second] },
-        ]),
-      ).rejects.toThrow('native add failed')
-      expect(vi.getTimerCount()).toBe(1)
-
-      await controller.stop()
-      expect(vi.getTimerCount()).toBe(0)
-      await vi.advanceTimersByTimeAsync(10_000)
-      expect(addAttempts).toBe(1)
-    })
-
-    it('forgets the failure once the upstream is no longer desired', async () => {
-      const controller = await startController([second])
-      failAdds(Infinity)
-
-      await expect(
-        controller.setUpstreams([
-          { runtimeName: 'api', upstreams: [first, second] },
-        ]),
-      ).rejects.toThrow('native add failed')
-      expect(controller.getHealth().failedUpstreams).toHaveLength(1)
-
-      await controller.setUpstreams([
-        { runtimeName: 'api', upstreams: [second] },
-      ])
-
-      expect(controller.getHealth()).toMatchObject({
-        failedUpstreams: [],
-        ready: true,
-      })
-      expect(vi.getTimerCount()).toBe(0)
-      await controller.stop()
-    })
-  })
+  // Retry timing and cancellation are covered with Effect's TestClock in effect-host/proxy.spec.ts.
 })
+
+// The assertions exercise the Effect controller; this runner only evaluates its Effects.
+class ProxyController {
+  private controller: EffectProxy
+  constructor(
+    private snapshot: RuntimeSnapshot,
+    private options: ConstructorParameters<typeof EffectProxy>[1] = {},
+  ) {
+    this.controller = new EffectProxy(snapshot, options)
+  }
+  start(upstreams: Parameters<EffectProxy['start']>[0]) {
+    this.controller = new EffectProxy(this.snapshot, this.options)
+    return Effect.runPromise(this.controller.start(upstreams))
+  }
+  stop() {
+    return Effect.runPromise(this.controller.stop(Deadline.after(1000)))
+  }
+  setUpstreams(upstreams: Parameters<EffectProxy['setUpstreams']>[0]) {
+    return Effect.runPromise(this.controller.setUpstreams(upstreams))
+  }
+  getHealth() {
+    return this.controller.getHealth()
+  }
+  publishHealth() {
+    return this.controller.publishHealth()
+  }
+}

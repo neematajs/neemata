@@ -9,7 +9,7 @@ description: 'Use when configuring or running @nmtjs/neem projects: neem.config.
 discovers runtime declarations, builds artifacts, writes manifests, starts
 selected runtimes, reloads changed runtime graphs, wires env/logger/plugin
 hooks, exposes health, and routes proxy traffic to runtime upstreams.
-Neem itself has no Effect dependency. Host an Effect application with
+Neem uses Effect for host supervision and accepts Promise-based presets. Host an Effect application with
 `@nmtjs/effect`; the application owns its transports and services.
 
 Use this skill when consuming Neem in an application or service repo:

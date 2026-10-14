@@ -69,9 +69,7 @@ describe('Neem compiler', () => {
     if (typeof options.external !== 'function')
       throw new Error('Missing external matcher')
     expect(options.external('effect/Effect', undefined, false)).toBe(false)
-    expect(
-      options.external('@nmtjs/neem/internal/utils', undefined, false),
-    ).toBe(false)
+    expect(options.external('@nmtjs/neem/host', undefined, false)).toBe(false)
     expect(options.external('node:worker_threads', undefined, false)).toBe(true)
   })
 

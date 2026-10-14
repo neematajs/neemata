@@ -24,43 +24,16 @@ import {
 import { createTempDir } from '../support/temp.ts'
 
 describe('Neem manifest', () => {
-  it.each([
-    { built: 'neem-effect', selected: undefined },
-    { built: undefined, selected: 'neem-effect' },
-  ])(
-    'rejects a different host before loading its artifacts: $built',
-    async ({ built, selected }) => {
-      const outDir = await createTempDir('neem-flavor-')
-      const manifest = createManifest()
-      manifest.runtime.flavor = built
-      const manifestFile = resolve(outDir, 'neem.manifest.json')
-      await writeFile(manifestFile, JSON.stringify(manifest))
-
-      await expect(
-        loadRuntimeSnapshot({
-          mode: 'production',
-          outDir,
-          manifestFile,
-          flavor: selected,
-        }),
-      ).rejects.toThrow(`Build uses host [${built ?? 'neem'}]`)
-    },
-  )
-
-  it('records the selected host without leaking machine-specific entry paths', () => {
-    const compiled = createCompiledHostOnlyGraph()
-    compiled.graph.flavor = {
-      name: 'neem-effect',
-      entries: {
-        worker: '/installed/worker.js',
-        runner: '/installed/runner.js',
-        start: '/installed/start.js',
-      },
-    }
-    const manifest = createCompiledManifest(compiled)
-    validateManifest(manifest)
-    expect(manifest.runtime.flavor).toBe('neem-effect')
-    expect(JSON.stringify(manifest)).not.toContain('/installed/')
+  it('rejects pre-Effect build output before loading artifacts', async () => {
+    const outDir = await createTempDir('neem-old-manifest-')
+    const manifestFile = resolve(outDir, 'neem.manifest.json')
+    await writeFile(
+      manifestFile,
+      JSON.stringify({ ...createManifest(), schemaVersion: 4 }),
+    )
+    await expect(
+      loadRuntimeSnapshot({ mode: 'production', outDir, manifestFile }),
+    ).rejects.toThrow(/rebuild/i)
   })
 
   it('rejects manifest paths outside the output directory', () => {
@@ -84,7 +57,7 @@ describe('Neem manifest', () => {
     })
 
     expect(() => validateManifest(manifest)).toThrow(
-      /runtime[\s\S]*entry[\s\S]*Invalid input/,
+      /relative path[\s\S]*runtime[\s\S]*entry/,
     )
   })
 
@@ -127,7 +100,7 @@ describe('Neem manifest', () => {
     )
 
     await expect(readManifest(manifestFile)).rejects.toThrow(
-      /schema version \[1\], expected \[4\]; rebuild it with `neem build`/,
+      /schema version \[1\], expected \[5\]; rebuild it with `neem build`/,
     )
   })
 
@@ -307,7 +280,7 @@ describe('Neem manifest', () => {
       },
     })
     expect(() => validateManifest(wrongId)).toThrow(
-      /runtimes[\s\S]*api[\s\S]*worker[\s\S]*id/,
+      /id[\s\S]*worker[\s\S]*runtimes[\s\S]*api[\s\S]*worker/,
     )
   })
 

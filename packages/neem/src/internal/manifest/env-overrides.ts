@@ -1,3 +1,9 @@
+import * as Config from 'effect/Config'
+import * as ConfigProvider from 'effect/ConfigProvider'
+import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
+import * as Schema from 'effect/Schema'
+
 import type { NeemServerConfig } from '../../shared/types.ts'
 import type { ManifestConfig } from './manifest.ts'
 
@@ -112,18 +118,36 @@ function pickEnv(
   for (const key of keys) {
     // Empty values are common artifacts of compose/CI templating; treat as
     // unset so they don't shadow lower-priority vars or manifest values.
-    const value = env[key]
-    if (value) return { source: key, value }
+    const value = Effect.runSync(
+      Config.String(key).pipe(
+        Config.option,
+        Effect.provideService(
+          ConfigProvider.ConfigProvider,
+          ConfigProvider.fromEnvRecord(env),
+        ),
+      ),
+    )
+    if (Option.isSome(value)) return { source: key, value: value.value }
   }
   return undefined
 }
 
 function parsePort(value: string, source: string): number {
-  const port = Number(value)
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    throw new Error(
-      `Invalid ${source}="${value}": expected an integer port between 0 and 65535`,
-    )
-  }
-  return port
+  return Effect.runSync(
+    Config.schema(
+      Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 65535 })),
+      source,
+    ).pipe(
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnvRecord({ [source]: value }),
+      ),
+      Effect.mapError(
+        () =>
+          new Error(
+            `Invalid ${source}="${value}": expected an integer port between 0 and 65535`,
+          ),
+      ),
+    ),
+  )
 }

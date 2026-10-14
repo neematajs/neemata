@@ -1,5 +1,4 @@
 import type { WorkerUpdateBatch } from '../build/updates.ts'
-import type { NeemBuildFlavor } from '../flavor.ts'
 import type { NoParams } from '../rpc.ts'
 import type { SerializedError } from '../utils.ts'
 
@@ -11,7 +10,6 @@ import type { SerializedError } from '../utils.ts'
 export type WatcherCommands = {
   start: {
     params: {
-      flavor?: NeemBuildFlavor
       configFile: string
       outDir: string
       runtimes?: readonly string[]

@@ -1,10 +1,14 @@
-import { pino } from 'pino'
+import * as Effect from 'effect/Effect'
+import { pino, type Logger } from 'pino'
 import { describe, expect, it, vi } from 'vitest'
 
-import {
-  callHostHook,
-  createHostHooks,
-} from '../../src/internal/plugins/hooks.ts'
+import { createHostHooks, type HostHooks } from '../../src/internal/hooks.ts'
+const callHostHook = (
+  hooks: HostHooks,
+  logger: Logger,
+  name: 'dispose' | 'server:stop',
+  event: { mode: 'development' | 'production' },
+) => Effect.runPromise(hooks.call(logger, name, event))
 
 const logger = pino({ enabled: false })
 

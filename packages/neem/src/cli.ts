@@ -1,116 +1,109 @@
-import { defineCommand } from 'citty'
+import * as NodeServices from '@effect/platform-node/NodeServices'
+import { Argument, Command, Flag } from 'effect/cli'
+import * as Effect from 'effect/Effect'
 
-import type { NeemHostFlavor } from './internal/flavor.ts'
+import type {
+  BuildCommandOptions,
+  DevCommandOptions,
+  StartCommandOptions,
+} from './internal/commands/cli.ts'
+import { cliAction } from './internal/cli-action.ts'
 import {
   runBuildCommand,
   runDevCommand,
   runStartCommand,
 } from './internal/commands/cli.ts'
 
-function createBuildCommand(flavor?: NeemHostFlavor) {
-  return defineCommand({
-    meta: {
-      name: 'build',
-      description: 'Build Neem config and runtime artifacts.',
-    },
-    args: {
-      runtime: {
-        type: 'positional',
-        description: 'Comma-separated runtime names to build.',
-        required: false,
-      },
-      config: {
-        type: 'string',
-        description: 'Path to neem.config file.',
-        default: 'neem.config.ts',
-      },
-      outDir: {
-        type: 'string',
-        description:
-          'Output directory relative to cwd. Overrides config outDir, which resolves from the config file (default: dist).',
-      },
-    },
-    run: ({ args }) => runBuildCommand(args, flavor),
-  })
+export type CommandActions = {
+  build: (options: BuildCommandOptions, signal: AbortSignal) => Promise<void>
+  dev: (options: DevCommandOptions, signal: AbortSignal) => Promise<void>
+  start: (options: StartCommandOptions, signal: AbortSignal) => Promise<void>
 }
 
-function createStartCommand(flavor?: NeemHostFlavor) {
-  return defineCommand({
-    meta: { name: 'start', description: 'Start a built Neem runtime server.' },
-    args: {
-      config: {
-        type: 'string',
-        description:
-          'Path to neem.config file. Starts its outDir; evaluates the config.',
-      },
-      outDir: {
-        type: 'string',
-        description:
-          'Built output directory relative to cwd. Overrides --config (default: dist).',
-      },
-      runtime: {
-        type: 'positional',
-        description: 'Comma-separated runtime names to start.',
-        required: false,
-      },
-    },
-    run: ({ args }) => runStartCommand(args, flavor),
-  })
+const actions: CommandActions = {
+  build: (options) => runBuildCommand(options),
+  dev: (options, signal) => runDevCommand(options, signal),
+  start: (options, signal) => runStartCommand(options, signal),
 }
 
-function createDevCommand(flavor?: NeemHostFlavor) {
-  return defineCommand({
-    meta: {
-      name: 'dev',
-      description: 'Start a watched Neem development server.',
+const runtime = Argument.String('runtime').pipe(
+  Argument.withDescription('Comma-separated runtime names.'),
+  Argument.withDefault(undefined),
+)
+const config = Flag.String('config').pipe(
+  Flag.withDescription('Path to neem.config file.'),
+)
+const outDir = Flag.String('out-dir').pipe(
+  Flag.withAlias('outDir'),
+  Flag.withDescription(
+    'Output directory relative to cwd; overrides the config.',
+  ),
+  Flag.withDefault(undefined),
+)
+
+/** Command actions stay separate from CLI parsing and signal handling. */
+export function createMainCommand(handlers: CommandActions = actions) {
+  const build = Command.make(
+    'build',
+    {
+      runtime,
+      config: config.pipe(Flag.withDefault('neem.config.ts')),
+      outDir,
     },
-    args: {
-      config: {
-        type: 'string',
-        description: 'Path to neem.config file.',
-        default: 'neem.config.ts',
-      },
-      outDir: {
-        type: 'string',
-        description:
-          'Development output directory relative to cwd (default: .neem/<config name> next to the config).',
-      },
-      runtime: {
-        type: 'positional',
-        description: 'Comma-separated runtime names to start in dev.',
-        required: false,
-      },
-      cache: {
-        type: 'boolean',
-        description: 'Enable Node.js compile cache',
-        default: true,
-      },
-      cacheDir: {
-        type: 'string',
-        description: 'Directory for Node.js compile cache',
-      },
-      'env-files': {
-        type: 'string',
-        description:
-          'Comma-separated env files relative to cwd. Existing variables and earlier files take precedence.',
-      },
+    (options) => cliAction((signal) => handlers.build(options, signal)),
+  ).pipe(Command.withDescription('Build Neem config and runtime artifacts.'))
+  const start = Command.make(
+    'start',
+    {
+      runtime,
+      config: config.pipe(Flag.withDefault(undefined)),
+      outDir,
     },
-    run: ({ args }) => runDevCommand(args, flavor),
-  })
+    (options) => cliAction((signal) => handlers.start(options, signal)),
+  ).pipe(
+    Command.withDescription(
+      'Start a built Neem runtime server (default output: dist).',
+    ),
+  )
+  const dev = Command.make(
+    'dev',
+    {
+      runtime,
+      config: config.pipe(Flag.withDefault('neem.config.ts')),
+      outDir,
+      cache: Flag.Boolean('cache').pipe(
+        Flag.withDefault(true),
+        Flag.withDescription(
+          'Enable Node.js compile cache; --no-cache disables it.',
+        ),
+      ),
+      cacheDir: Flag.String('cache-dir').pipe(
+        Flag.withAlias('cacheDir'),
+        Flag.withDefault(undefined),
+        Flag.withDescription('Directory for Node.js compile cache.'),
+      ),
+      'env-files': Flag.String('env-files').pipe(
+        Flag.withDefault(undefined),
+        Flag.withDescription(
+          'Comma-separated env files; existing variables and earlier files win.',
+        ),
+      ),
+    },
+    (options) => cliAction((signal) => handlers.dev(options, signal)),
+  ).pipe(
+    Command.withDescription(
+      'Start a watched development server (default output: .neem/<config name>).',
+    ),
+  )
+  return Command.make('neem').pipe(
+    Command.withDescription('Neem host powered by Effect.'),
+    Command.withSubcommands([build, dev, start]),
+  )
 }
 
-export function createMainCommand(flavor?: NeemHostFlavor) {
-  return defineCommand({
-    meta: { name: flavor?.name ?? 'neem', description: 'Neem host CLI.' },
-    subCommands: {
-      build: createBuildCommand(flavor),
-      dev: createDevCommand(flavor),
-      start: createStartCommand(flavor),
-    },
-  })
-}
-
-export const buildCommand = createBuildCommand()
-export const startCommand = createStartCommand()
-export const devCommand = createDevCommand()
 export const mainCommand = createMainCommand()
+
+export const runCli = (args: readonly string[], version: string) =>
+  Command.runWith(mainCommand, { version })(args).pipe(
+    Effect.provide(NodeServices.layer),
+  )

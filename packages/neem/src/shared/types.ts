@@ -1,7 +1,8 @@
 import type { MessagePort } from 'node:worker_threads'
 
 import type { MaybePromise } from '@nmtjs/common'
-import type { Hookable } from 'hookable'
+import type * as Effect from 'effect/Effect'
+import type * as Scope from 'effect/Scope'
 import type {
   DestinationStream,
   Level,
@@ -10,6 +11,8 @@ import type {
   StreamEntry,
 } from 'pino'
 import type { OutputOptions, RolldownOptions } from 'rolldown'
+
+import type { HostHooks } from '../internal/hooks.ts'
 
 export type {
   Plugin as RolldownPlugin,
@@ -517,9 +520,13 @@ export type NeemHostHookMap = {
   'worker:fail': (event: NeemHostWorkerHookEvent) => MaybePromise<void>
 }
 
-export type NeemHostHooks = Hookable<NeemHostHookMap>
+export type NeemHostHooks = HostHooks
 
-export type NeemPluginHooks = Partial<NeemHostHookMap>
+export type NeemPluginHooks = {
+  [K in keyof NeemHostHookMap]?: (
+    ...args: Parameters<NeemHostHookMap[K]>
+  ) => MaybePromise<void> | Effect.Effect<void, Error>
+}
 
 export type NeemPluginHooksContext<Options = unknown> = {
   name: string
@@ -531,4 +538,6 @@ export type NeemPluginHooksContext<Options = unknown> = {
 
 export type NeemPluginHooksFactory<Options = unknown> = (
   ctx: NeemPluginHooksContext<Options>,
-) => MaybePromise<NeemPluginHooks>
+) =>
+  | MaybePromise<NeemPluginHooks>
+  | Effect.Effect<NeemPluginHooks, Error, Scope.Scope>

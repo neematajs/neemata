@@ -12,7 +12,6 @@ import type {
   NeemResolvedConfig,
   NeemResolvedRuntimeDeclaration,
 } from '../../shared/types.ts'
-import type { NeemBuildFlavor } from '../flavor.ts'
 import {
   mergeRolldownOptions,
   mergeUserRolldownOptions,
@@ -35,7 +34,7 @@ export type BuildTargetKind =
   | 'logger'
 
 export type BuildTarget = {
-  // Alternative host infrastructure must carry its own runtime dependencies.
+  // Host infrastructure must carry its own runtime dependencies.
   bundleDependencies?: boolean
   key: string
   kind: BuildTargetKind
@@ -80,7 +79,6 @@ export type BuildGroup =
     }
 
 export type BuildGraph = {
-  flavor?: NeemBuildFlavor
   configFile: string
   outDir: string
   config: NeemResolvedConfig
@@ -95,7 +93,6 @@ export type BuildGraph = {
 }
 
 export function createBuildGraph(options: {
-  flavor?: NeemBuildFlavor
   configFile: string
   outDir: string
   config: NeemResolvedConfig
@@ -108,21 +105,9 @@ export function createBuildGraph(options: {
   const rootRolldown = createRootBuildRolldownOptions(config.build)
   const plugins = createPluginNodes(configFile, outDir, config, rootRolldown)
   const pluginRolldown = mergePluginRolldownOptions(plugins)
-  const startEntry = createStartEntryTarget(
-    outDir,
-    rootRolldown,
-    options.flavor?.entries.start,
-  )
-  const workerEntry = createWorkerEntryTarget(
-    outDir,
-    rootRolldown,
-    options.flavor?.entries.worker,
-  )
-  const hostRunnerEntry = createHostRunnerEntryTarget(
-    outDir,
-    rootRolldown,
-    options.flavor?.entries.runner,
-  )
+  const startEntry = createStartEntryTarget(outDir, rootRolldown)
+  const workerEntry = createWorkerEntryTarget(outDir, rootRolldown)
+  const hostRunnerEntry = createHostRunnerEntryTarget(outDir, rootRolldown)
   const logger = createLoggerTarget(configFile, outDir, config, rootRolldown)
   const runtimes: RuntimeBuildNode[] = []
   for (const [name, runtime] of Object.entries(config.runtimes)) {
@@ -173,7 +158,6 @@ export function createBuildGraph(options: {
     plugins,
     targets,
     buildGroups,
-    ...(options.flavor ? { flavor: options.flavor } : {}),
   }
 }
 
@@ -217,16 +201,15 @@ function createPluginNodes(
 function createWorkerEntryTarget(
   outDir: string,
   rootRolldown?: RolldownOptions,
-  entry?: string,
 ): BuildTarget {
   return {
-    ...(entry ? { bundleDependencies: true } : {}),
+    bundleDependencies: true,
     key: 'runtime:worker-entry',
     kind: 'worker-entry',
     artifact: {
       id: 'worker-entry',
       kind: 'worker',
-      entry: entry ?? resolveInternalEntry('../worker/entry'),
+      entry: resolveInternalEntry('../worker/entry'),
       rolldown: mergeOptionalRolldownOptions(
         { output: { entryFileNames: 'worker-entry.js' } },
         rootRolldown,
@@ -240,16 +223,15 @@ function createWorkerEntryTarget(
 function createHostRunnerEntryTarget(
   outDir: string,
   rootRolldown?: RolldownOptions,
-  entry?: string,
 ): BuildTarget {
   return {
-    ...(entry ? { bundleDependencies: true } : {}),
+    bundleDependencies: true,
     key: 'runtime:host-runner-entry',
     kind: 'host-runner-entry',
     artifact: {
       id: 'host-runner-entry',
       kind: 'worker',
-      entry: entry ?? resolveInternalEntry('../host/runner-entry'),
+      entry: resolveInternalEntry('../host/runner-entry'),
       rolldown: mergeOptionalRolldownOptions(
         { output: { entryFileNames: 'runner-entry.js' } },
         rootRolldown,
@@ -263,16 +245,15 @@ function createHostRunnerEntryTarget(
 function createStartEntryTarget(
   outDir: string,
   rootRolldown?: RolldownOptions,
-  entry?: string,
 ): BuildTarget {
   return {
-    ...(entry ? { bundleDependencies: true } : {}),
+    bundleDependencies: true,
     key: 'runtime:start-entry',
     kind: 'start-entry',
     artifact: {
       id: 'start',
       kind: 'module',
-      entry: entry ?? resolveInternalEntry('../standalone/entry'),
+      entry: resolveInternalEntry('../standalone/entry'),
       rolldown: mergeOptionalRolldownOptions(
         {
           output: {

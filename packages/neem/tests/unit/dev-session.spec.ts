@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { WorkerUpdate } from '../../src/internal/build/updates.ts'
 import type { HostControllerOptions } from '../../src/internal/host/controller.ts'
-import type { RuntimePatchResult } from '../../src/internal/host/runtime.ts'
+import type { RuntimePatchResult } from '../../src/internal/runtime.ts'
 import type { WorkerServiceClientOptions } from '../../src/internal/services/client.ts'
 import type {
   WatcherEvent,

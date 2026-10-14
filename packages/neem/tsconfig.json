@@ -1,15 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "rootDir": ".",
+    "rootDir": "../..",
     "types": ["node"]
   },
-  "include": ["src/**/*", "lib/**/*", "tests/**/*", "vitest.config.ts"],
+  "include": ["src/**/*", "lib/**/*", "tests/**/*", "vitest*.ts"],
   "exclude": [
     "**/dist/**",
     "**/coverage/**",
     "**/node_modules/**",
     "**/target/**",
-    "tests/e2e/fixtures/consumer/**/*"
+    "tests/e2e/fixtures/consumer/**/*",
+    "tests/**/fixtures/**/*",
+    "tests/**/.tmp/**"
   ]
 }

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { RuntimeSnapshot } from '../../src/internal/manifest/snapshot.ts'
 import type { NeemResolvedArtifact } from '../../src/shared/types.ts'
-import { resolveThreadTopology } from '../../src/internal/host/runtime.ts'
+import { resolveThreadTopology } from '../../src/internal/host/topology.ts'
 import { createDefaultLogger } from '../../src/internal/logger.ts'
 import { createArtifactRegistry } from '../../src/internal/manifest/artifacts.ts'
 
@@ -121,7 +121,7 @@ function createSnapshot(
     mode: 'development',
     outDir: '/out',
     manifest: {
-      schemaVersion: 4,
+      schemaVersion: 5,
       runtime: {
         entry: 'runtime/start.js',
         start: artifact('start', 'start', '/out/runtime/start.js'),

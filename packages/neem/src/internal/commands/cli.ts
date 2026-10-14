@@ -1,12 +1,10 @@
 import * as module from 'node:module'
 import { resolve } from 'node:path'
 
-// dotenvx is CommonJS; since 2.30.0 Node no longer detects its named exports.
-import dotenvx from '@dotenvx/dotenvx'
+import * as Effect from 'effect/Effect'
 
-import type { NeemHostFlavor } from '../flavor.ts'
 import { DevSession } from '../dev/session.ts'
-import { buildFlavor } from '../flavor.ts'
+import { loadEnvFiles } from '../env-files.ts'
 import { loadRuntimeSnapshot, runHostUntilClosed } from '../host/bootstrap.ts'
 import { MANIFEST_FILE } from '../manifest/manifest.ts'
 import { createNeemTestProbe } from '../test-probe.ts'
@@ -32,12 +30,10 @@ export type DevCommandOptions = BuildCommandOptions & {
 
 export async function runBuildCommand(
   args: BuildCommandOptions,
-  flavor?: NeemHostFlavor,
 ): Promise<void> {
   const probe = createNeemTestProbe()
   probe?.emit('cli:build:start')
   await buildNeem({
-    flavor: buildFlavor(flavor),
     config: args.config,
     outDir: args.outDir,
     runtimes: parseRuntimes(args.runtime),
@@ -47,7 +43,6 @@ export async function runBuildCommand(
 
 export async function runStartCommand(
   args: StartCommandOptions,
-  flavor?: NeemHostFlavor,
   signal?: AbortSignal,
 ): Promise<void> {
   const outDir = await resolveStartOutDir({
@@ -60,14 +55,13 @@ export async function runStartCommand(
   probe?.emit('cli:start:start')
 
   try {
-    const snapshot = await (flavor?.loadSnapshot ?? loadRuntimeSnapshot)({
+    const snapshot = await loadRuntimeSnapshot({
       mode: 'production',
-      flavor: flavor?.name,
       outDir,
       manifestFile: resolve(outDir, MANIFEST_FILE),
       runtimes: parseRuntimes(args.runtime),
     })
-    await (flavor?.runHostUntilClosed ?? runHostUntilClosed)(snapshot, {
+    await runHostUntilClosed(snapshot, {
       signal: controller.signal,
       onReady: (health) =>
         probe?.emit('runtime:ready', { type: 'ready', health }),
@@ -86,7 +80,6 @@ export async function runStartCommand(
 
 export async function runDevCommand(
   args: DevCommandOptions,
-  flavor?: NeemHostFlavor,
   signal?: AbortSignal,
 ): Promise<void> {
   if (args['env-files'] !== undefined) {
@@ -95,8 +88,7 @@ export async function runDevCommand(
       throw new Error('--env-files requires non-empty file paths')
     }
     // Load before spawning services so config evaluation and runtime workers inherit the values.
-    if (flavor?.loadEnvFiles) await flavor.loadEnvFiles(paths)
-    else loadLegacyEnvFiles(paths)
+    await Effect.runPromise(loadEnvFiles(paths))
   }
   if (args.cache && 'enableCompileCache' in module) {
     const result = module.enableCompileCache({ directory: args.cacheDir })
@@ -112,7 +104,6 @@ export async function runDevCommand(
   const configFile = resolve(cwd, args.config)
   const controller = createCliAbortController(signal)
   const session = new DevSession({
-    flavor,
     configFile,
     outDir: resolveDevOutDir({ cwd, configFile, outDir: args.outDir }),
     runtimes: parseRuntimes(args.runtime),
@@ -160,8 +151,4 @@ function createCliAbortController(signal?: AbortSignal) {
       process.off('SIGTERM', abort)
     },
   }
-}
-
-export function loadLegacyEnvFiles(paths: readonly string[]): void {
-  dotenvx.config({ path: [...paths], quiet: true, strict: true })
 }

@@ -8,19 +8,10 @@ const configFile = '/workspace/app/neem.config.ts'
 const outDir = '/workspace/app/dist'
 
 describe('createBuildGraph', () => {
-  it('selects alternative infrastructure while retaining the application entries', () => {
-    const flavor = {
-      name: 'neem-effect',
-      entries: {
-        worker: '/host/worker.js',
-        runner: '/host/runner.js',
-        start: '/host/start.js',
-      },
-    }
+  it('bundles host infrastructure while retaining the application entries', () => {
     const graph = createBuildGraph({
       configFile,
       outDir,
-      flavor,
       config: resolvedConfig({
         runtimes: {
           api: runtimeDeclaration('api', {
@@ -30,9 +21,15 @@ describe('createBuildGraph', () => {
         },
       }),
     })
-    expect(graph.workerEntry.artifact.entry).toBe(flavor.entries.worker)
-    expect(graph.hostRunnerEntry.artifact.entry).toBe(flavor.entries.runner)
-    expect(graph.startEntry.artifact.entry).toBe(flavor.entries.start)
+    expect(String(graph.workerEntry.artifact.entry)).toMatch(
+      /internal\/worker\/entry\.(ts|js)$/,
+    )
+    expect(String(graph.hostRunnerEntry.artifact.entry)).toMatch(
+      /internal\/host\/runner-entry\.(ts|js)$/,
+    )
+    expect(String(graph.startEntry.artifact.entry)).toMatch(
+      /internal\/standalone\/entry\.(ts|js)$/,
+    )
     expect(graph.runtimes[0].worker?.artifact.entry).toBe(
       '/workspace/app/api/worker.ts',
     )
