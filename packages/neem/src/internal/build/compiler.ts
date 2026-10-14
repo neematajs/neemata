@@ -683,7 +683,9 @@ function createRolldownOptions(
       incrementalBuild: metadata.watch,
       ...userOptions.experimental,
     },
-    external: createExternalMatcher(userOptions.external),
+    external: createExternalMatcher(
+      target.bundleDependencies ? undefined : userOptions.external,
+    ),
     plugins: [
       createNativeAddonPlugin(),
       ...normalizePlugins(userOptions.plugins),
@@ -733,7 +735,9 @@ function createGroupedRolldownOptions(
     platform: 'node',
     ...userOptions,
     experimental: { chunkOptimization: false, ...userOptions.experimental },
-    external: createExternalMatcher(userOptions.external),
+    external: createExternalMatcher(
+      firstTarget.bundleDependencies ? undefined : userOptions.external,
+    ),
     plugins: [
       createNativeAddonPlugin(),
       ...normalizePlugins(userOptions.plugins),

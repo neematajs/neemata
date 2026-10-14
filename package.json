@@ -25,7 +25,9 @@
     "build:ts": "pnpm tsc -b tsconfig.build.json --pretty false",
     "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
     "test:proxy": "pnpm --filter @nmtjs/proxy run test",
-    "version:stack": "node scripts/release.js bump-stack"
+    "version:stack": "node scripts/release.js bump-stack",
+    "test:neem-effect": "pnpm --filter @nmtjs/neem-effect run test",
+    "bench:neem-effect": "node packages/neem-effect/scripts/compare-hosts.mjs"
   },
   "devDependencies": {
     "@tsconfig/node24": "^24.0.4",

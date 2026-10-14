@@ -30,6 +30,16 @@
       "types": "./src/cli.ts",
       "import": "./dist/cli.js",
       "module-sync": "./dist/cli.js"
+    },
+    "./internal/*": {
+      "types": "./src/internal/*.ts",
+      "import": "./dist/internal/*.js",
+      "module-sync": "./dist/internal/*.js"
+    },
+    "./internal/shared/*": {
+      "types": "./src/shared/*.ts",
+      "import": "./dist/shared/*.js",
+      "module-sync": "./dist/shared/*.js"
     }
   },
   "publishConfig": {
@@ -43,6 +53,16 @@
         "types": "./dist/cli.d.ts",
         "import": "./dist/cli.js",
         "module-sync": "./dist/cli.js"
+      },
+      "./internal/*": {
+        "types": "./dist/internal/*.d.ts",
+        "import": "./dist/internal/*.js",
+        "module-sync": "./dist/internal/*.js"
+      },
+      "./internal/shared/*": {
+        "types": "./dist/shared/*.d.ts",
+        "import": "./dist/shared/*.js",
+        "module-sync": "./dist/shared/*.js"
       }
     }
   },

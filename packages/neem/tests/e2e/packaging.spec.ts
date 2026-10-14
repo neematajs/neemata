@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it, onTestFinished } from 'vitest'
@@ -13,7 +13,9 @@ import {
   waitFor,
 } from './support/e2e.ts'
 
-type WorkspacePackage = 'common' | 'neem'
+type WorkspacePackage = 'common' | 'neem' | 'neem-effect'
+const implementation =
+  process.env.NEEM_E2E_PACKAGE === 'neem-effect' ? 'neem-effect' : 'neem'
 
 type CommandResult = {
   code: number | null
@@ -27,10 +29,14 @@ const neemPackageDir = resolve(e2eDir, '../..')
 const workspaceRoot = resolve(neemPackageDir, '../..')
 const consumerFixtureDir = resolve(e2eDir, 'fixtures/consumer')
 
-const stagedPackages: readonly WorkspacePackage[] = ['common', 'neem']
+const stagedPackages: readonly WorkspacePackage[] =
+  implementation === 'neem'
+    ? ['common', 'neem']
+    : ['common', 'neem', 'neem-effect']
 
 const internalPackageDirs = new Map<string, WorkspacePackage>([
   ['@nmtjs/common', 'common'],
+  ['@nmtjs/neem', 'neem'],
 ])
 
 describe('Neem package consumer smoke', () => {
@@ -42,26 +48,32 @@ describe('Neem package consumer smoke', () => {
     // Exercise the installed bin through pnpm, where Node.js also parses command arguments.
     await expect(
       runPnpm(
-        ['exec', 'neem', 'dev', '--env-files=missing.env'],
+        ['exec', implementation, 'dev', '--env-files=missing.env'],
         fixture.consumerDir,
         30_000,
       ),
-    ).rejects.toThrow('MISSING_ENV_FILE')
+    ).rejects.toThrow(
+      /MISSING_ENV_FILE|Unable to load environment file \[missing.env\]/,
+    )
 
     const installedPackageJson = JSON.parse(
       await readFile(
-        resolve(fixture.consumerDir, 'node_modules/@nmtjs/neem/package.json'),
+        resolve(
+          fixture.consumerDir,
+          `node_modules/@nmtjs/${implementation}/package.json`,
+        ),
         'utf8',
       ),
     ) as { exports: { '.': { types: string } } }
 
-    expect(installedPackageJson.exports['.'].types).toBe(
-      './dist/public/index.d.ts',
+    expect(installedPackageJson.exports['.'].types).toMatch(
+      /^\.\/dist\/.*\.d\.ts$/,
     )
     await expectFile(
       resolve(
         fixture.consumerDir,
-        'node_modules/@nmtjs/neem/dist/shared/types.d.ts',
+        `node_modules/@nmtjs/${implementation}`,
+        installedPackageJson.exports['.'].types,
       ),
     )
 
@@ -107,6 +119,23 @@ async function createConsumerFixture(): Promise<{
   const consumerDir = resolve(rootDir, 'consumer')
   const packagesDir = resolve(rootDir, 'packages')
   await cp(consumerFixtureDir, consumerDir, { recursive: true })
+  if (implementation !== 'neem') {
+    for (const file of await readdir(consumerDir, {
+      recursive: true,
+      withFileTypes: true,
+    })) {
+      if (!file.isFile() || !/\.(ts|json)$/.test(file.name)) continue
+      const path = resolve(file.parentPath, file.name)
+      const content = (await readFile(path, 'utf8'))
+        .replaceAll('@nmtjs/neem', `@nmtjs/${implementation}`)
+        .replaceAll(
+          'file:../packages/neem"',
+          `file:../packages/${implementation}"`,
+        )
+        .replace('"neem build ', `"${implementation} build `)
+      await writeFile(path, content)
+    }
+  }
   await stagePublishedPackages(packagesDir)
 
   return { consumerDir, eventsFile: resolve(rootDir, 'events.jsonl') }
@@ -125,9 +154,9 @@ async function stagePublishedPackages(packagesDir: string): Promise<void> {
       await cp(resolve(sourceDir, 'dist'), resolve(packageDir, 'dist'), {
         recursive: true,
       })
-      if (packageName === 'neem') {
+      if (packageName !== 'common') {
         // Published beside dist through package.json `files`.
-        for (const dir of ['bin', 'lib']) {
+        for (const dir of packageName === 'neem' ? ['bin', 'lib'] : ['bin']) {
           await cp(resolve(sourceDir, dir), resolve(packageDir, dir), {
             recursive: true,
           })

@@ -13,6 +13,9 @@
       "path": "./packages/neem/tsconfig.json"
     },
     {
+      "path": "./packages/neem-effect/tsconfig.json"
+    },
+    {
       "path": "./packages/nuxt/tsconfig.json"
     },
     {

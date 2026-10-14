@@ -9,6 +9,7 @@ import { OperationQueue } from '@nmtjs/common'
 import type { NeemConfig } from '../../shared/types.ts'
 import type { GraphWatcher, TargetChange } from '../build/compiler.ts'
 import type { BuildGraph, BuildTarget } from '../build/graph.ts'
+import type { NeemBuildFlavor } from '../flavor.ts'
 import type {
   WatcherEvent,
   WatcherManifestIdentity,
@@ -23,6 +24,7 @@ import { createManifest, writeManifest } from '../manifest/manifest.ts'
 import { importDefault, serializeError } from '../utils.ts'
 
 export type WatcherServiceOptions = {
+  flavor?: NeemBuildFlavor
   configFile: string
   outDir: string
   runtimes?: readonly string[]
@@ -122,6 +124,7 @@ export class WatcherService {
         configFile: this.options.configFile,
         outDir: this.options.outDir,
         runtimes: this.options.runtimes,
+        flavor: this.options.flavor,
       },
       'Neem watcher options',
     )
@@ -136,6 +139,7 @@ export class WatcherService {
       outDir: this.options.outDir,
       config: resolvedConfig,
       runtimes: this.options.runtimes,
+      flavor: this.options.flavor,
     })
     this.logger?.debug('Neem build graph ready')
     this.logger?.trace(

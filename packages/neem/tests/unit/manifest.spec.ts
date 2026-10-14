@@ -11,6 +11,7 @@ import type {
   Manifest,
   ManifestArtifact,
 } from '../../src/internal/manifest/manifest.ts'
+import { loadRuntimeSnapshot } from '../../src/internal/host/bootstrap.ts'
 import {
   createManifest as createCompiledManifest,
   MANIFEST_SCHEMA_VERSION,
@@ -23,6 +24,45 @@ import {
 import { createTempDir } from '../support/temp.ts'
 
 describe('Neem manifest', () => {
+  it.each([
+    { built: 'neem-effect', selected: undefined },
+    { built: undefined, selected: 'neem-effect' },
+  ])(
+    'rejects a different host before loading its artifacts: $built',
+    async ({ built, selected }) => {
+      const outDir = await createTempDir('neem-flavor-')
+      const manifest = createManifest()
+      manifest.runtime.flavor = built
+      const manifestFile = resolve(outDir, 'neem.manifest.json')
+      await writeFile(manifestFile, JSON.stringify(manifest))
+
+      await expect(
+        loadRuntimeSnapshot({
+          mode: 'production',
+          outDir,
+          manifestFile,
+          flavor: selected,
+        }),
+      ).rejects.toThrow(`Build uses host [${built ?? 'neem'}]`)
+    },
+  )
+
+  it('records the selected host without leaking machine-specific entry paths', () => {
+    const compiled = createCompiledHostOnlyGraph()
+    compiled.graph.flavor = {
+      name: 'neem-effect',
+      entries: {
+        worker: '/installed/worker.js',
+        runner: '/installed/runner.js',
+        start: '/installed/start.js',
+      },
+    }
+    const manifest = createCompiledManifest(compiled)
+    validateManifest(manifest)
+    expect(manifest.runtime.flavor).toBe('neem-effect')
+    expect(JSON.stringify(manifest)).not.toContain('/installed/')
+  })
+
   it('rejects manifest paths outside the output directory', () => {
     const manifest = createManifest({
       runtime: {

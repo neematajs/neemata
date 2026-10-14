@@ -64,6 +64,7 @@ export type Manifest = {
   // per-runtime start files import; `worker` and `runner` are the thread
   // entries every runtime's workers and host runner load.
   runtime: {
+    flavor?: string
     entry: string
     start: ManifestArtifact
     worker: ManifestArtifact
@@ -102,6 +103,7 @@ export function createManifest(compiled: CompiledGraph): Manifest {
   const manifest: Manifest = {
     schemaVersion: MANIFEST_SCHEMA_VERSION,
     runtime: {
+      ...(compiled.graph.flavor ? { flavor: compiled.graph.flavor.name } : {}),
       entry: 'start.js',
       start,
       worker,

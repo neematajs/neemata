@@ -32,7 +32,10 @@ export default defineRuntimeWorker({
 function untilStopRequested(): Promise<void> {
   return new Promise((resolve) => {
     const onMessage = (message: { type?: unknown } | undefined) => {
-      if (message?.type !== 'stop') return
+      // Both hosts exercise the same late-acquisition contract over different wires.
+      const effectStop =
+        Array.isArray(message) && message[0] === 0 && message[1]?.tag === 'stop'
+      if (message?.type !== 'stop' && !effectStop) return
       parentPort?.off('message', onMessage)
       resolve()
     }

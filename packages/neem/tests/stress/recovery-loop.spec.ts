@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises'
+import { rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -17,7 +17,11 @@ describe('Neem recovery stress', () => {
     const fixture = await createNeemFixture({ config: 'recovery-proxy' })
     const [proxyPort, firstPort, secondPort] = await getDistinctFreePorts(3)
     const markerFile = resolve(fixture.dir, 'recovery-stress-marker')
+    const releaseFile = resolve(fixture.dir, 'recovery-stress-release')
     await rm(markerFile, { force: true })
+    // The health e2e fixture gates recovery so it can inspect the unready
+    // window. Stress wants repeated recoveries, so release that gate up front.
+    await writeFile(releaseFile, '')
 
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -27,6 +31,7 @@ describe('Neem recovery stress', () => {
           NEEM_RECOVERY_PROXY_FIRST_PORT: String(firstPort),
           NEEM_RECOVERY_PROXY_SECOND_PORT: String(secondPort),
           NEEM_RECOVERY_PROXY_MARKER: markerFile,
+          NEEM_RECOVERY_PROXY_RELEASE: releaseFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -38,6 +43,11 @@ describe('Neem recovery stress', () => {
     for (let index = 0; index < 2; index++) {
       const crash = await fetchJson(`http://127.0.0.1:${proxyPort}/api/crash`)
       expect(crash?.status).toBe(200)
+      await waitForMatchingEventCount(
+        fixture.eventsFile,
+        (event) => event.event === 'recovery-proxy-start',
+        index + 2,
+      )
       await expectProxyAttempt(proxyPort, 2, neem)
     }
 
@@ -55,7 +65,7 @@ describe('Neem recovery stress', () => {
     )
   }, 120_000)
 
-  it('bounds slow host stop with harness kill-after diagnostics', async () => {
+  it('reports failed host stop before the harness needs to force-kill it', async () => {
     const fixture = await createNeemFixture({ config: 'host-stop-hang' })
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
@@ -71,7 +81,7 @@ describe('Neem recovery stress', () => {
     const startedAt = Date.now()
     const exit = await neem.stop({ killAfterMs: 2_000 })
 
-    expect(exit).toMatchObject({ code: 0, signal: null })
+    expect(exit).toMatchObject({ code: 1, signal: null })
     expect(Date.now() - startedAt).toBeLessThan(5_000)
     await waitForMatchingEventCount(
       fixture.eventsFile,

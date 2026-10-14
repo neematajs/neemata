@@ -3,18 +3,19 @@
 Neem hosting and durable workflows. Applications own their RPC, HTTP and clients;
 Neemata supervises their processes and coordinates their durable work.
 
-| Package              | Purpose                                                                                                |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `@nmtjs/neem`        | Runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))    |
-| `@nmtjs/workflows`   | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))     |
-| `@nmtjs/pubsub`      | Typed ephemeral publish/subscribe with Redis and Valkey adapters ([README](packages/pubsub/README.md)) |
-| `@nmtjs/effect`      | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))           |
-| `@nmtjs/metrics`     | Metrics plugin for a Neem project                                                                      |
-| `@nmtjs/prom-client` | Prometheus client with worker-thread aggregation ([README](packages/prom-client/README.md))            |
-| `@nmtjs/proxy`       | Rust reverse proxy and native Node.js bindings ([README](packages/proxy/README.md))                    |
-| `@nmtjs/vite`        | Neem runtime for a Vite application                                                                    |
-| `@nmtjs/nuxt`        | Neem runtime for a Nuxt application                                                                    |
-| `@nmtjs/common`      | Utilities shared by the packages above                                                                 |
+| Package              | Purpose                                                                                                          |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `@nmtjs/neem`        | Runtime host and CLI: planners, workers, proxy, health, plugins ([README](packages/neem/README.md))              |
+| `@nmtjs/neem-effect` | Alternative host using Effect 4 for runtime ownership and supervision ([README](packages/neem-effect/README.md)) |
+| `@nmtjs/workflows`   | Typed tasks and workflow graphs with a PostgreSQL runtime ([README](packages/workflows/README.md))               |
+| `@nmtjs/pubsub`      | Typed ephemeral publish/subscribe with Redis and Valkey adapters ([README](packages/pubsub/README.md))           |
+| `@nmtjs/effect`      | Neem worker preset for a supervised Effect application ([README](packages/effect/README.md))                     |
+| `@nmtjs/metrics`     | Metrics plugin for a Neem project                                                                                |
+| `@nmtjs/prom-client` | Prometheus client with worker-thread aggregation ([README](packages/prom-client/README.md))                      |
+| `@nmtjs/proxy`       | Rust reverse proxy and native Node.js bindings ([README](packages/proxy/README.md))                              |
+| `@nmtjs/vite`        | Neem runtime for a Vite application                                                                              |
+| `@nmtjs/nuxt`        | Neem runtime for a Nuxt application                                                                              |
+| `@nmtjs/common`      | Utilities shared by the packages above                                                                           |
 
 The workflows core has no Effect dependency: definitions take Standard Schemas and
 handlers return values or Promises. `@nmtjs/workflows/effect` and `@nmtjs/effect`

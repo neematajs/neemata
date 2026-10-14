@@ -44,7 +44,9 @@ type ForceKillDetails = { killAfterMs: number; pid: number | undefined }
 
 const defaultKillAfterMs = 2_000
 
-const neemBin = resolve(import.meta.dirname, '../../../bin/neem.js')
+const neemBin =
+  process.env.NEEM_E2E_BIN ??
+  resolve(import.meta.dirname, '../../../bin/neem.js')
 
 export function spawnNeem(
   args: readonly string[],

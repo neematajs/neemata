@@ -13,6 +13,9 @@
       "path": "./packages/neem/tsconfig.build.json"
     },
     {
+      "path": "./packages/neem-effect/tsconfig.build.json"
+    },
+    {
       "path": "./packages/nuxt/tsconfig.build.json"
     },
     {

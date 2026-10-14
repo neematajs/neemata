@@ -19,6 +19,7 @@ import {
 } from './lifecycle.ts'
 
 export type LoadRuntimeSnapshotOptions = {
+  flavor?: string
   mode: NeemMode
   outDir: string
   manifestFile: string
@@ -37,6 +38,13 @@ export async function loadRuntimeSnapshot(
     await readManifest(manifestFile),
     options.runtimes,
   )
+  const expectedFlavor = options.flavor ?? 'neem'
+  const actualFlavor = manifest.runtime.flavor ?? 'neem'
+  if (actualFlavor !== expectedFlavor) {
+    throw new Error(
+      `Build uses host [${actualFlavor}]; start it with [${actualFlavor}], not [${expectedFlavor}]`,
+    )
+  }
   await assertManifestFilesExist(outDir, manifest)
   const logger =
     options.logger ??

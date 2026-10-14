@@ -32,15 +32,18 @@ export function createRuntimeSnapshot(options: {
   manifest: Manifest
   manifestFile?: string
   logger?: Logger
+  resolvedConfig?: ManifestConfig
 }): RuntimeSnapshot {
   const logger = options.logger ?? createDefaultLogger(options.mode)
   // Snapshot creation is the single choke point shared by `neem start`,
   // standalone start.js, and reloads, so deploy-time env overrides applied
   // here reach every consumer of the effective host config.
-  const { config, applied } = applyHostConfigEnvOverrides(
-    options.manifest.config,
-    { ...process.env, ...options.env },
-  )
+  const { config, applied } = options.resolvedConfig
+    ? { config: options.resolvedConfig, applied: [] }
+    : applyHostConfigEnvOverrides(options.manifest.config, {
+        ...process.env,
+        ...options.env,
+      })
   for (const override of applied)
     logger.info(formatAppliedEnvOverride(override))
 

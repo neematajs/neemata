@@ -42,7 +42,9 @@ describe('Neem production manifest corruption diagnostics', () => {
     const result = await startExpectingFailure(fixture.outDir)
 
     expect(result.exit.code).not.toBe(0)
-    expect(result.output).toMatch(/config[\s\S]*Invalid input/i)
+    expect(result.output).toMatch(
+      /config[\s\S]*Invalid input|SchemaError: Missing key[\s\S]*config/i,
+    )
   }, 60_000)
 
   it('fails production start when the runtime worker entry file is missing', async () => {
@@ -74,7 +76,7 @@ describe('Neem production manifest corruption diagnostics', () => {
 
     expect(result.exit.code).not.toBe(0)
     expect(result.output).toMatch(
-      /plugins[\s\S]*0[\s\S]*name[\s\S]*Invalid input/i,
+      /plugins[\s\S]*0[\s\S]*name[\s\S]*Invalid input|SchemaError: Missing key[\s\S]*plugins[\s\S]*0[\s\S]*name/i,
     )
   }, 60_000)
 
@@ -120,10 +122,13 @@ describe('Neem production manifest corruption diagnostics', () => {
   }, 60_000)
 
   it.each([
-    ['host', /runtimes[\s\S]*api[\s\S]*host[\s\S]*file[\s\S]*Invalid input/i],
+    [
+      'host',
+      /runtimes[\s\S]*api[\s\S]*host[\s\S]*file[\s\S]*Invalid input|SchemaError: Missing key[\s\S]*runtimes[\s\S]*api[\s\S]*host[\s\S]*file/i,
+    ],
     [
       'planner',
-      /runtimes[\s\S]*api[\s\S]*planner[\s\S]*file[\s\S]*Invalid input/i,
+      /runtimes[\s\S]*api[\s\S]*planner[\s\S]*file[\s\S]*Invalid input|SchemaError: Missing key[\s\S]*runtimes[\s\S]*api[\s\S]*planner[\s\S]*file/i,
     ],
   ] as const)(
     'fails production start when the %s artifact file field is missing',

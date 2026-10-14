@@ -4,6 +4,7 @@ import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
 import type { NeemConfig } from '../../shared/types.ts'
+import type { NeemBuildFlavor } from '../flavor.ts'
 import type { Manifest } from '../manifest/manifest.ts'
 import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { compileGraph } from '../build/compiler.ts'
@@ -14,6 +15,7 @@ import { importDefault } from '../utils.ts'
 import { resolveBuildOutDir } from './out-dir.ts'
 
 export type NeemBuildOptions = {
+  flavor?: NeemBuildFlavor
   config?: string
   outDir?: string
   cwd?: string
@@ -57,6 +59,7 @@ export async function buildNeem(
     outDir,
     config: resolvedConfig,
     runtimes: options.runtimes,
+    flavor: options.flavor,
   })
 
   assertSafeNeemOutDir({ outDir, configDir: dirname(configFile) })

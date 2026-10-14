@@ -164,6 +164,7 @@ const manifestRuntimeSchema = z.strictObject({
 })
 
 const manifestRuntimeEntrySchema = z.strictObject({
+  flavor: z.optional(stringSchema),
   entry: manifestPathSchema,
   start: manifestArtifactSchema,
   worker: manifestArtifactSchema,

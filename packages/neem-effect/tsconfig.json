@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "bin/**/*", "tests/**/*", "vitest*.ts"],
+  "exclude": [
+    "**/dist/**",
+    "**/node_modules/**",
+    "tests/**/fixtures/**/*",
+    "tests/**/.tmp/**"
+  ]
+}
