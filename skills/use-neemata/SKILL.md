@@ -12,12 +12,12 @@ RPC/HTTP APIs and dependency wiring.
 
 - Workflows without Effect import from `@nmtjs/workflows`; Effect applications
   import the contract and implementation builders from `@nmtjs/workflows/effect`.
-- Pubsub imports from `@nmtjs/pubsub`, `@nmtjs/pubsub/redis` and
-  `@nmtjs/pubsub/effect`.
+- Pubsub is Effect-only: it imports from `@nmtjs/pubsub` and
+  `@nmtjs/pubsub/RedisBroker`.
 - Neem workers import from `@nmtjs/workflows/neem` or
   `@nmtjs/workflows/effect/neem`.
 - Effect adapters require the optional `effect` peer
-  `^4.0.0`. Core workflow and pubsub APIs are Effect-free.
+  `^4.0.0`. Core workflow APIs are Effect-free; pubsub requires Effect.
 - Hosting an Effect application in Neem uses `@nmtjs/effect`; configuring and
   running Neem itself is covered by the `use-neem` skill.
 
@@ -28,5 +28,5 @@ RPC/HTTP APIs and dependency wiring.
   Neem integration.
 - [PostgreSQL](references/postgres.md) - accepted clients, transaction scopes,
   timestamp parsers, schema version 4, Drizzle migrations and LISTEN ownership.
-- [PubSub](references/pubsub.md) - typed channels, delivery semantics,
-  Redis/Valkey adapter ownership and the Effect service.
+- [PubSub](references/pubsub.md) - typed Effect channels, delivery semantics,
+  errors and retrying, in-memory and Redis/Valkey brokers.
