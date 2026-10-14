@@ -526,7 +526,7 @@ describe('reads of one run', () => {
     return provide(
       Effect.gen(function* () {
         const ids = yield* family(served)
-        const records = yield* load(ids.root)
+        const records = (yield* Client.get(ids.root))!
 
         expect(yield* Client.getDetail(ids.root)).toStrictEqual({
           run: withoutPayloads(records.run),
@@ -534,8 +534,8 @@ describe('reads of one run', () => {
           children: records.children.map(withoutPayloads),
           attempts: records.attempts.map(withoutPayloads),
           childRuns: [
-            withoutPayloads((yield* load(ids.job)).run),
             withoutPayloads((yield* load(ids.child)).run),
+            withoutPayloads((yield* load(ids.job)).run),
           ],
         })
         // The detail is the one `inspect` gives beside the definition.
@@ -557,7 +557,8 @@ describe('reads of one run', () => {
         })
         expect(yield* Client.getNode(ids.root, 'fan')).toMatchObject({
           node: { kind: 'parallel', status: 'waiting' },
-          children: [{ childRunId: ids.job }, { childRunId: ids.child }],
+          // Members by key: `member:child` before `member:job`.
+          children: [{ childRunId: ids.child }, { childRunId: ids.job }],
           attempts: [],
         })
       }),

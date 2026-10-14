@@ -37,7 +37,7 @@ import type {
   UnitRecords,
 } from './store.ts'
 import { StaleClaim } from './errors.ts'
-import { isMap, STATUSES, storedError } from './model.ts'
+import { byCodePoint, isMap, STATUSES, storedError } from './model.ts'
 import {
   foundRuns,
   linking,
@@ -238,17 +238,6 @@ const SCHEDULES = 'schedules'
 
 const ended = (status: string) =>
   (STATUSES.terminal as readonly string[]).includes(status)
-
-/** By code point, which the order of UTF-16 units is not past the BMP. */
-function byCodePoint(a: string, b: string) {
-  const left = Array.from(a)
-  const right = Array.from(b)
-  for (let at = 0; at < left.length && at < right.length; at++) {
-    const order = left[at]!.codePointAt(0)! - right[at]!.codePointAt(0)!
-    if (order !== 0) return order
-  }
-  return left.length - right.length
-}
 
 /** JSON containment, as PostgreSQL's `@>`. */
 function contains(value: unknown, part: unknown): boolean {
