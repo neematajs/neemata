@@ -1,6 +1,6 @@
 {
   "name": "@nmtjs/workflows",
-  "version": "0.19.0-alpha.0",
+  "version": "0.19.0-alpha.1",
   "description": "Durable, Effect-native workflows for Neemata: tasks, workflow graphs, workers and PostgreSQL, Redis or in-memory stores.",
   "type": "module",
   "repository": {
