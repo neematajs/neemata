@@ -90,7 +90,10 @@ logs, annotations as fields and a cause as `err`.
 Neem stops a thread, on shutdown and on a development reload, by interrupting
 it: handlers are interrupted and their commands given back for another worker,
 passes under way are finished, then the handler services are released, then
-the store. Neem's stop deadline bounds all of it.
+the store. Neem's stop deadline bounds all of it. A store whose database has
+stopped answering is released only when its client gives up waiting: on
+`@effect/sql-pg`, give the client `PostgresPg.stream` with a deadline well
+inside Neem's (see [the PostgreSQL adapter](../postgres/README.md)).
 
 A handler that does not end within its pool's `cleanupTimeoutMs` fails the
 thread with `CleanupTimeout`, so Neem replaces it. The store and the handler
