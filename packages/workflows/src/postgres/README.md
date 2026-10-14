@@ -48,9 +48,41 @@ an `SqlError` of reason `StatementTimeoutError`. It is the time for an answer,
 whatever the statement waits for: one that waits for a guard which another
 transaction holds for longer fails too. For `claim`, `release` and `renew`,
 which are one statement each, the outcome is then unknown, as the contract says
-of a failure while committing. The statements that begin and end a
-transaction are the client's own and are not covered: bound those with the
-client's or the server's settings.
+of a failure while committing.
+
+The statements that begin and end a transaction are the client's own, and
+`answerTimeoutMs` does not reach them; nor does it bound the wait for the
+statement it cancels, which `@effect/sql-pg` gives 5 seconds before it drops
+the connection. A database that has stopped answering, stalled or cut off,
+answers neither `COMMIT` nor a cancel, and the server's own settings
+(`statement_timeout`, `lock_timeout`) only help one that still answers. Such a
+transaction waits without end, and so does the client's close, which waits for
+every connection out: a worker on that store cannot stop. On `@effect/sql-pg`,
+`PostgresPg.stream` gives the client sockets with a deadline of their own:
+
+```ts
+const client = PgClient.layer({
+  url,
+  // The address again: the client hands the stream no part of `url`.
+  stream: PostgresPg.stream({ host, port, answerTimeoutMs: 10_000 }),
+})
+```
+
+A connection that has sent something and heard nothing for that long is
+destroyed, which fails what waits on it with a `ConnectionError`, its
+transaction included. It bounds the time to the first byte of an answer, for
+every statement of the client, the application's too: one that runs or waits
+for a lock for longer is cut as well. So its deadline is above the longest
+statement of the client, and above the store's `answerTimeoutMs`, which
+cancels a statement and keeps its connection. A connection that owes nothing,
+idle or listening, is never cut. Of statements pipelined on one connection,
+as a `multiplex` client sends them, only the first answer is waited for. TLS,
+when the client asks for it, runs over these sockets as over its own.
+
+Closing a store does not wait for `UNLISTEN` on the connection it listened
+on: the connection goes back to the pool when the database confirms it or the
+connection is lost, and the client's close waits for that, which the
+deadline bounds.
 
 Hints travel on one `LISTEN` channel, `workflow_hints` unless `channel` says
 otherwise. A channel belongs to the database, so stores of two schemas in one

@@ -1305,7 +1305,11 @@ transaction, as [shown above](#starting-a-run).
 
 Options (`maxDeliveries`, `channel`, `answerTimeoutMs`), how commits are
 guarded, the tables and the migration:
-[`src/postgres/README.md`](./src/postgres/README.md).
+[`src/postgres/README.md`](./src/postgres/README.md). A database that stops
+answering holds a transaction's `COMMIT`, and with it a worker's stop, for as
+long as the client waits: `PostgresPg.stream` gives `@effect/sql-pg` a
+deadline for answers, which a deployment whose workers must stop in time
+needs.
 
 ### Redis
 

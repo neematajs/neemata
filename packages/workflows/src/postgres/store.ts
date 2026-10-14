@@ -84,7 +84,9 @@ export type PostgresOptions = {
    * it is cancelled and its operation fails with a `StorageError` whose
    * cause is an `SqlError` of reason `StatementTimeoutError`. Waiting for a
    * guard another transaction holds is waiting for an answer. The statements
-   * that begin and end a transaction are the client's, and are not covered.
+   * that begin and end a transaction are the client's, and are not covered:
+   * on `@effect/sql-pg`, the client's sockets bound them, as `stream` of
+   * `@nmtjs/workflows/postgres/pg` makes them.
    */
   readonly answerTimeoutMs?: number
   /**
