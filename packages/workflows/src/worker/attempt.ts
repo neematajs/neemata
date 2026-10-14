@@ -111,8 +111,8 @@ export const runAttempt =
 
       // Set by whatever ends the race below to stop the handler, before the
       // handler is told: its finalizers read it as they run. The first to
-      // say stands, as the handler is told once; told with nothing said, the
-      // worker itself is stopping.
+      // say stands, as the handler is told once; told with nothing said
+      // while it runs, the worker itself is stopping.
       let reason: StopReason | undefined
       const attempt = {
         ...begun.attempt,
@@ -170,7 +170,8 @@ export const runAttempt =
       // end counts from when it was told, whatever else is waited for first.
       let told: Fiber.Fiber<void, CleanupTimeout> | undefined
       const telling = Effect.suspend(() => {
-        reason ??= 'shutdown'
+        // A handler that has ended was not stopped, whatever ends the race.
+        if (fiber.pollUnsafe() === undefined) reason ??= 'shutdown'
         return told
           ? Effect.succeed(told)
           : Effect.map(

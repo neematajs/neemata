@@ -393,6 +393,27 @@ describe('starting an attempt', () => {
     },
   )
 
+  it.effect('gives no stop reason to a handler that ended by itself', () => {
+    const kept: AttemptInfo[] = []
+    const { served, provide } = setup([
+      task((_input, attempt) => {
+        kept.push(attempt)
+        // Ends while the race for it is under way.
+        return Effect.as(Effect.sleep(1_000), 'done')
+      }),
+    ])
+
+    return provide(
+      Effect.gen(function* () {
+        yield* execution(served)
+        const { run } = yield* startTask()
+        yield* elapse(1_000)
+        expect((yield* load(run.id)).run.status).toBe('completed')
+        expect(yield* kept[0]!.stopReason).toBeUndefined()
+      }),
+    )
+  })
+
   it.effect('does not run the handler of a run that is being cancelled', () => {
     const { seen, execute } = endless()
     const { served, provide, inspect } = setup([workflow(execute)])
