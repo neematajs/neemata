@@ -830,6 +830,10 @@ describe('watch', () => {
             kind: 'run',
             status: 'cancelling',
           })
+          // The root's pass, its child's, and the root's again: the hints of
+          // the first two fall in the window and end in the status.
+          yield* pass(served)
+          yield* pass(served)
           yield* pass(served)
           yield* idle
           expect(events.at(-1)).toStrictEqual({

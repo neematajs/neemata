@@ -907,13 +907,15 @@ describe('a parallel node', () => {
           yield* cancel(run.id)
           yield* pass(served)
 
+          // Everything is stopped in one pass, and the run, its node and the
+          // child waits for the child run that settles in a pass of its own.
           const ended = yield* load(run.id)
-          expect(ended.run.status).toBe('cancelled')
-          expect(ended.nodes).toMatchObject([{ status: 'cancelled' }])
+          expect(ended.run.status).toBe('cancelling')
+          expect(ended.nodes).toMatchObject([{ status: 'cancelling' }])
           expect(kids(ended, 'all').map(({ status }) => status)).toStrictEqual([
             'cancelled',
             'cancelled',
-            'cancelled',
+            'cancelling',
             'cancelled',
           ])
           expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
@@ -937,6 +939,12 @@ describe('a parallel node', () => {
           const freeRun = yield* load(free!.childRunId!)
           expect(freeRun.run.status).toBe('running')
           expect(freeRun.attempts).toMatchObject([{ status: 'started' }])
+          // The detached run is not waited for.
+          yield* pass(served)
+          const quiet = yield* load(run.id)
+          expect(quiet.run.status).toBe('cancelled')
+          expect(quiet.nodes).toMatchObject([{ status: 'cancelled' }])
+          expect(kids(quiet, 'all')[2]).toMatchObject({ status: 'cancelled' })
         }),
       )
     },
@@ -1338,11 +1346,21 @@ describe('a map', () => {
   })
 
   it.effect.each([
-    { policy: 'propagate', ends: 'cancelled' },
-    { policy: 'detach', ends: 'running' },
+    {
+      policy: 'propagate',
+      waits: 'cancelling',
+      told: 'cancelling',
+      ends: 'cancelled',
+    },
+    {
+      policy: 'detach',
+      waits: 'cancelled',
+      told: 'cancelled',
+      ends: 'running',
+    },
   ] as const)(
     'is cancelled with its run, child workflows unless detached: $policy',
-    ({ policy, ends }) => {
+    ({ policy, waits, told, ends }) => {
       const program = each({
         concurrency: 2,
         target: child('hold', { cancellation: policy }),
@@ -1361,12 +1379,12 @@ describe('a map', () => {
           yield* cancel(run.id)
           yield* pass(served)
           const ended = yield* load(run.id)
-          expect(ended.run.status).toBe('cancelled')
-          expect(ended.nodes).toMatchObject([{ status: 'cancelled' }])
+          expect(ended.run.status).toBe(waits)
+          expect(ended.nodes).toMatchObject([{ status: told }])
           // The item that was waiting for its turn never got a run.
           expect(ended.children).toMatchObject([
-            { status: 'cancelled' },
-            { status: 'cancelled' },
+            { status: told },
+            { status: told },
             { status: 'cancelled', item: 'c' },
           ])
           expect(ended.children[2]).not.toHaveProperty('childRunId')
@@ -1374,6 +1392,15 @@ describe('a map', () => {
           yield* pass(served)
           expect((yield* load(first!)).run.status).toBe(ends)
           expect((yield* load(second!)).run.status).toBe(ends)
+          yield* pass(served)
+          const quiet = yield* load(run.id)
+          expect(quiet.run.status).toBe('cancelled')
+          expect(quiet.nodes).toMatchObject([{ status: 'cancelled' }])
+          expect(quiet.children.map(({ status }) => status)).toStrictEqual([
+            'cancelled',
+            'cancelled',
+            'cancelled',
+          ])
         }),
       )
     },
@@ -1438,6 +1465,70 @@ describe('a map', () => {
         // everything loaded for each item made it sixty-four times.
         expect(wide / narrow).toBeLessThan(12)
       })
+    },
+  )
+
+  it.effect(
+    'reads, while its child runs end one by one, only those still ending',
+    () => {
+      const program = each({ target: child('hold') })
+      const { served, provide, store } = setup([program, hold])
+      // The runs of other ids than its own a pass of the map's run commits
+      // having read, by head, with what an open read linked, or whole.
+      let read: number[] = []
+      const counted = Store.of({
+        ...store,
+        transact: (scope, plan) =>
+          store.transact(scope, (snapshot) => {
+            const planned = plan(snapshot)
+            if (planned._tag !== 'Commit') return planned
+            const ids = new Set([
+              ...snapshot.heads.keys(),
+              ...snapshot.runs.keys(),
+            ])
+            for (const records of snapshot.open.values()) {
+              for (const id of records?.linked.keys() ?? []) ids.add(id)
+            }
+            for (const id of snapshot.open.keys()) ids.delete(id)
+            read.push(ids.size)
+            return planned
+          }),
+      })
+      const passOfRun = Effect.provideService(pass(served), Store, counted)
+
+      return provide(
+        Effect.gen(function* () {
+          const { run } = yield* begin(['a', 'b', 'c', 'd', 'e'])
+          yield* pass(served)
+          yield* pass(served)
+          yield* cancel(run.id)
+          read = []
+          expect(yield* passOfRun).toBe(1)
+          expect(read).toStrictEqual([5])
+
+          // Each child run ends in a pass of its own, and the map's run
+          // reads what is left after each.
+          const ending = yield* store.claim({
+            lanes: [{ kind: 'continueRun', routes: served.workflows }],
+            limit: 100,
+            leaseMs: LEASE,
+          })
+          expect(ending).toHaveLength(5)
+          read = []
+          for (const claim of ending) {
+            yield* coordinate(served, claim)
+            expect(yield* passOfRun).toBe(1)
+          }
+          // A child run seen ended is read no more: the work of a pass is
+          // what is still ending, not every child it once told.
+          expect(read).toStrictEqual([5, 4, 3, 2, 1])
+          const quiet = yield* load(run.id)
+          expect(quiet.run.status).toBe('cancelled')
+          expect(quiet.children.map(({ status }) => status)).toStrictEqual(
+            Array.from({ length: 5 }, () => 'cancelled'),
+          )
+        }),
+      )
     },
   )
 
@@ -1507,10 +1598,10 @@ describe('a map', () => {
           // The run, with the four child runs it reads.
           yield* wake(run)
           expect(yield* once()).toBe(1)
-          // Cancelling reads the run whole, which the pass finds it must
-          // once it has opened it, and everything the four task runs own.
+          // Cancelling reads what the run opened has in flight, and then
+          // everything the four task runs own, together.
           yield* cancel(run.id)
-          expect(yield* once()).toBe(4)
+          expect(yield* once()).toBe(2)
           expect((yield* load(run.id)).run.status).toBe('cancelled')
         }),
       )

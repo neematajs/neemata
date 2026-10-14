@@ -167,8 +167,9 @@ describe('a run past its timeout', () => {
     )
   })
 
-  it.effect('is failed whatever it was doing, being cancelled included', () => {
+  it.effect('is failed whatever it was doing, but being cancelled', () => {
     const { served, provide } = setup([flow()])
+    const program = served.workflow({ name: 'flow' })!
 
     return provide(
       Effect.gen(function* () {
@@ -182,14 +183,20 @@ describe('a run past its timeout', () => {
         yield* cancel(cancelling.run.id)
         yield* TestClock.adjust(5 * MINUTE + 1)
 
-        expect(yield* sweep(served)).toStrictEqual({ timedOut: 2 })
-        for (const { run } of [queued, cancelling]) {
-          expect((yield* load(run.id)).run).toMatchObject({
-            status: 'failed',
-            error: timedOut(run.id),
-          })
-        }
+        expect(yield* sweep(served)).toStrictEqual({ timedOut: 1 })
+        expect((yield* load(queued.run.id)).run).toMatchObject({
+          status: 'failed',
+          error: timedOut(queued.run.id),
+        })
         expect((yield* load(done.run.id)).run.status).toBe('completed')
+
+        // A cancellation asked for first stays one, however long the run
+        // takes to end: not even a timeout asked for by name fails it.
+        expect(yield* timeout(program, cancelling.run.id)).toBe(false)
+        yield* pass(served)
+        const cancelled = (yield* load(cancelling.run.id)).run
+        expect(cancelled.status).toBe('cancelled')
+        expect(cancelled.error).toBeUndefined()
       }),
     )
   })

@@ -269,6 +269,8 @@ describe('deleting a run', () => {
         // A handler is running when the family is cancelled around it.
         const [claim] = yield* claimAttempts(served)
         yield* Client.cancel(run.id)
+        // The parent's, the child's, and the parent's again once woken.
+        yield* pass(served)
         yield* pass(served)
         yield* pass(served)
         const family = yield* Client.getFamily(run.id)

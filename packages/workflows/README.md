@@ -632,7 +632,8 @@ at once. A `retry` on a step replaces the task's policy whole.
 
 A workflow's `timeout` counts from when the run was created, or from its last
 manual retry. Coordinators enforce it in a sweep (every 60 seconds by
-default), so a run ends up to one sweep late.
+default), so a run ends up to one sweep late. A run `cancelling` is not timed
+out (see [Cancelling](#cancelling)).
 
 ### What is rejected, and when
 
@@ -751,8 +752,22 @@ const placeOrder = (order: typeof Order.Type) =>
 `undefined` when none has the id. A task run is `cancelled` by the request
 itself. A workflow run becomes `cancelling`; its next coordination pass
 cancels what it has in flight, child runs included unless their step says
-`cancellation: 'detach'`, and ends it as `cancelled`. Handlers of the run are
-interrupted. Cancelling a run that has ended changes nothing.
+`cancellation: 'detach'`. A child workflow run is cancelled the same way, in
+passes of its own, and the run stays `cancelling` until every child run it
+cancelled has ended; then it ends as `cancelled`. The step of such a child,
+and its node, read `cancelling` meanwhile. So a run that reads `cancelled` has
+no run under it still going but those it detached, with one exception: a run
+failed from outside its own work, by its `timeout` or by the reaper, does not
+wait so. It ends `failed` at once, and the child runs it cancelled end after
+it; when that happens while a run above it is being cancelled, the runs above
+can end before those under it have. A run already `cancelling` is not timed
+out, so a cancellation asked for first stays one. Cancelling a run that has
+ended changes nothing.
+
+Handlers of the run are interrupted. Their worker learns of it from a hint,
+or at its next renewal without one, so a handler may still be ending, and
+its worker still holding the command, a moment after the run reads
+`cancelled`: `deleteRun` answers `RunBusy` until it lets go.
 
 ### Retry and restart
 
@@ -1122,7 +1137,8 @@ stay queued, untouched: nothing is claimed and nothing counts against them.
 Serving that revision again resumes them. Such a run is also **not timed
 out**: a coordinator sweeps only runs of the workflows it holds. Cancelling a
 workflow run of an unserved revision records `cancelling` and settles when a
-coordinator serving it returns; a task run is cancelled at once.
+coordinator serving it returns, and a parent that cancelled it stays
+`cancelling` until then; a task run is cancelled at once.
 
 A run never moves to another revision.
 
