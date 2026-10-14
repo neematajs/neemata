@@ -12,7 +12,6 @@ import {
   createTestName,
   requireServiceEnv,
   serviceTargets,
-  waitFor,
 } from '../tests/integration/helpers.ts'
 
 const benchmarkOptions = {
@@ -91,13 +90,6 @@ for (const target of serviceTargets) {
                 ),
                 scope!,
               )
-              yield* waitFor(async () => {
-                const result = await client!.pubsub(
-                  'NUMSUB',
-                  `${channelName}:${params.id}`,
-                )
-                return Number(result[1] ?? 0) === 1
-              })
             }).pipe(Scope.provide(scope)),
           )
           await roundTrip()

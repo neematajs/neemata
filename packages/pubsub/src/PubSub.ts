@@ -12,6 +12,18 @@ import type * as Channel from './Channel.ts'
 import type { PubSubConnectionLostError, PubSubError } from './PubSubError.ts'
 import { Broker } from './Broker.ts'
 
+type Subscription<
+  C extends Channel.Channel,
+  Selected extends Channel.Selection<C> | undefined = undefined,
+> = Effect.Effect<
+  Stream.Stream<
+    Channel.Message<C, Selected>,
+    PubSubConnectionLostError | PubSubError
+  >,
+  Schema.SchemaError | PubSubConnectionLostError | PubSubError,
+  Scope.Scope
+>
+
 export class PubSub extends Context.Service<
   PubSub,
   {
@@ -25,23 +37,25 @@ export class PubSub extends Context.Service<
      * Completes once the broker subscription is live, so a message published
      * afterwards is delivered. The stream can be consumed once; it
      * unsubscribes when it ends or its consumer stops, and otherwise when the
-     * scope closes. Omit `events` to receive every event of the channel.
+     * scope closes. Omit `events`, or pass `{}`, to receive every event of the
+     * channel.
      */
-    readonly subscribe: <
-      C extends Channel.Channel,
-      const Selected extends Channel.Selection<C> = {},
-    >(
-      channel: C,
-      params: Channel.ParamsOf<C>,
-      events?: Selected,
-    ) => Effect.Effect<
-      Stream.Stream<
-        Channel.Message<C, Selected>,
-        PubSubConnectionLostError | PubSubError
-      >,
-      Schema.SchemaError | PubSubConnectionLostError | PubSubError,
-      Scope.Scope
-    >
+    readonly subscribe: {
+      <C extends Channel.Channel>(
+        channel: C,
+        params: Channel.ParamsOf<C>,
+      ): Subscription<C>
+      // A required `events`, unlike an optional one, infers a selection that
+      // may be `undefined` with it, so that it is typed as every event.
+      <
+        C extends Channel.Channel,
+        const Selected extends Channel.Selection<C> | undefined,
+      >(
+        channel: C,
+        params: Channel.ParamsOf<C>,
+        events: Selected,
+      ): Subscription<C, Selected>
+    }
   }
 >()('@nmtjs/pubsub/PubSub') {}
 
@@ -69,10 +83,12 @@ export const make: Effect.Effect<PubSub['Service'], never, Broker> = Effect.gen(
       selected: Channel.Selection<Channel.Channel> | undefined,
     ) => {
       const events = channel.events as Record<string, Channel.Event | undefined>
+      // An empty selection means every event, as `Channel.Message` types it.
+      if (selected && Object.keys(selected).length === 0) selected = undefined
       return (message: Message) => {
         // Whatever is published to the broker channel arrives here, whoever
         // published it.
-        if (typeof (message as Message | null)?.event !== 'string')
+        if (typeof message?.event !== 'string')
           return Effect.as(
             Effect.logWarning('Malformed pubsub message').pipe(
               Effect.annotateLogs({ channel: name }),
@@ -92,17 +108,15 @@ export const make: Effect.Effect<PubSub['Service'], never, Broker> = Effect.gen(
           )
         if (selected && selected[message.event] !== true)
           return Effect.succeed(skip)
-        return Effect.matchEffect(event.decode(message.payload), {
-          onSuccess: (payload) =>
-            Effect.succeed(Result.succeed({ event: event.event, payload })),
-          onFailure: (error) =>
-            Effect.as(
-              Effect.logError('Unable to decode event payload', error).pipe(
-                Effect.annotateLogs({ channel: name, event: message.event }),
-              ),
-              skip,
+        return event.decode(message.payload).pipe(
+          Effect.map((payload) => ({ event: event.event, payload })),
+          Effect.tapError((error) =>
+            Effect.logError('Unable to decode event payload', error).pipe(
+              Effect.annotateLogs({ channel: name, event: message.event }),
             ),
-        })
+          ),
+          Effect.result,
+        )
       }
     }
 

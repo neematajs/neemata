@@ -60,10 +60,10 @@ program.pipe(Effect.scoped, Effect.provide(PubSubLive), NodeRuntime.runMain)
 ```
 
 `subscribe` is a scoped Effect that completes once the broker subscription is live,
-and yields a Stream of its messages. Omit the event selection to receive every event
-of the channel. The subscription is released when the scope closes, or earlier when
-the stream ends or its consumer stops; interrupting `subscribe` while it opens
-releases it too. The stream can be consumed once.
+and yields a Stream of its messages. Omit the event selection, or pass an empty one,
+to receive every event of the channel. The subscription is released when the scope
+closes, or earlier when the stream ends or its consumer stops; interrupting
+`subscribe` while it opens releases it too. The stream can be consumed once.
 
 Subscribe before reading the state that the messages update, so nothing committed in
 between is missed. Where that ordering does not matter,

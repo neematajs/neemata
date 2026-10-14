@@ -149,6 +149,32 @@ describe('PubSub', () => {
     }).pipe(Effect.provide(layer))
   })
 
+  it.effect('delivers every event without a selection', () => {
+    const { layer } = broker()
+    return Effect.gen(function* () {
+      const pubsub = yield* PubSub.PubSub
+      // Typed as selecting `seen`, but `undefined`, so every event arrives.
+      const optional = undefined as { seen: true } | undefined
+      const empty = yield* pubsub.subscribe(room, { roomId: 'a' }, {})
+      const none = yield* pubsub.subscribe(room, { roomId: 'a' }, optional)
+      type Every = Stream.Stream<
+        Channel.Message<typeof room>,
+        PubSubError.PubSubConnectionLostError | PubSubError.PubSubError
+      >
+      expectTypeOf(empty).toEqualTypeOf<Every>()
+      expectTypeOf(none).toEqualTypeOf<Every>()
+
+      yield* pubsub.publish(room.events.seen, { roomId: 'a' }, at)
+      yield* pubsub.publish(room.events.message, { roomId: 'a' }, { text: 'y' })
+
+      for (const messages of [empty, none])
+        expect(yield* Stream.runCollect(Stream.take(messages, 2))).toEqual([
+          { event: 'seen', payload: at },
+          { event: 'message', payload: { text: 'y' } },
+        ])
+    }).pipe(Effect.provide(layer))
+  })
+
   it.effect('delivers an event whatever it is named', () => {
     const { layer } = broker()
     const odd = Channel.make('odd', {
@@ -191,6 +217,17 @@ describe('PubSub', () => {
             PubSubError.PubSubConnectionLostError | PubSubError.PubSubError
           >
         >()
+        expectTypeOf<
+          Channel.Message<typeof room, { seen: true } | { message: true }>
+        >().toEqualTypeOf<Channel.Message<typeof room>>()
+        // As inferred from `condition ? { seen: true } : { message: true }`.
+        expectTypeOf<
+          Channel.Message<
+            typeof room,
+            | { seen: true; message?: undefined }
+            | { message: true; seen?: undefined }
+          >
+        >().toEqualTypeOf<Channel.Message<typeof room>>()
 
         yield* pubsub.publish(
           room.events.message,

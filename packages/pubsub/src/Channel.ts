@@ -74,16 +74,28 @@ type MessageOf<Events, K extends keyof Events> = {
   readonly payload: Events[K]
 }
 
+type AnyMessageOf<Events> = {
+  [K in keyof Events]: MessageOf<Events, K>
+}[keyof Events]
+
 /** What a subscription to `Selected` events of `C` delivers; all, if none. */
-export type Message<C extends Channel, Selected extends Selection<C> = {}> =
+export type Message<
+  C extends Channel,
+  Selected extends Selection<C> | undefined = undefined,
+> =
   C extends Channel<any, infer Events>
-    ? {} extends Selected
-      ? { [K in keyof Events]: MessageOf<Events, K> }[keyof Events]
-      : {
-          [K in keyof Selected]: K extends keyof Events
-            ? MessageOf<Events, K>
-            : never
-        }[keyof Selected]
+    ? // Distributes, so a union of selections delivers any of their events.
+      Selected extends unknown
+      ? Selected extends undefined
+        ? AnyMessageOf<Events>
+        : {} extends Selected
+          ? AnyMessageOf<Events>
+          : {
+              [K in keyof Selected]-?: K extends keyof Events
+                ? MessageOf<Events, K>
+                : never
+            }[keyof Selected]
+      : never
     : never
 
 type PayloadTypes<Events extends Record<string, PayloadSchema>> = {
@@ -97,9 +109,9 @@ function lazy<A>(make: () => A): () => A {
   return () => (made ??= make())
 }
 
-const isJson = lazy(() => Schema.is(Schema.Json))
-// Fails with the issue that says where the value stops being JSON.
-const asJson = lazy(() => Schema.decodeUnknownEffect(Schema.Json))
+const isJson = Schema.is(Schema.Json)
+// Fails with a `SchemaError` for a value that is not JSON.
+const asJson = Schema.decodeUnknownEffect(Schema.Json)
 
 function makeEvent(
   event: string,
@@ -118,12 +130,28 @@ function makeEvent(
         // The JSON codec passes `Schema.Any` through as it is, and a value
         // JSON would alter could never be decoded by a subscriber. An absent
         // payload stays absent, as JSON omits it.
-        encoded === undefined || isJson()(encoded)
+        encoded === undefined || isJson(encoded)
           ? Effect.succeed(encoded)
-          : asJson()(encoded),
+          : asJson(encoded),
       ),
     decode: (encoded) => decode()(encoded),
   }
+}
+
+function makeResolve(
+  name: string,
+  params: Schema.Codec<any, any> | undefined,
+  key: ((params: any) => string) | undefined,
+): Channel['resolve'] {
+  // An unkeyed channel is a single broker channel, whatever it is given.
+  if (!params || !key) return () => Effect.succeed(name)
+
+  const validate = Schema.decodeUnknownEffect(params)
+  return (value) =>
+    Effect.map(validate(value), (valid) => {
+      const suffix = encodeURIComponent(key(valid))
+      return `${name}${SEPARATOR}${suffix}`
+    })
 }
 
 /**
@@ -164,21 +192,8 @@ export function make(
   const { params, key } = options
   // No prototype, so that an event may have any name, `__proto__` included.
   const events: Record<string, Event> = Object.create(null)
-  const validate = lazy(() => Schema.decodeUnknownEffect(params!))
-  const channel: Channel = {
-    name,
-    params,
-    key,
-    events,
-    resolve:
-      params && key
-        ? (value) =>
-            Effect.map(
-              validate()(value),
-              (valid) => `${name}${SEPARATOR}${encodeURIComponent(key(valid))}`,
-            )
-        : () => Effect.succeed(name),
-  }
+  const resolve = makeResolve(name, params, key)
+  const channel: Channel = { name, params, key, events, resolve }
   for (const event in options.events)
     events[event] = makeEvent(event, options.events[event], channel)
   return channel

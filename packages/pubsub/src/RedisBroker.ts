@@ -18,8 +18,9 @@ import { PubSubConnectionLostError, PubSubError } from './PubSubError.ts'
 
 export type RedisClient = Redis | Valkey
 
-// Fails when its connection closes: the driver never settles a command that
-// was in flight then, as it does not resend it after the reconnect.
+// Fails when its connection closes, so no one waits on a command that was in
+// flight then: the driver does not resend it after the reconnect, and may leave
+// it pending.
 type Connection = Deferred.Deferred<never, PubSubConnectionLostError>
 
 type Listener = {
