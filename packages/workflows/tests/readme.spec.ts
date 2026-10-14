@@ -141,6 +141,42 @@ const Charge = task({
 })
 // #endregion
 
+// #region stop-reason
+/** Where readers watch a reply as it is written; the worker supplies it. */
+class Replies extends Context.Service<
+  Replies,
+  {
+    readonly write: (key: string, prompt: string) => Effect.Effect<string>
+    readonly end: (
+      key: string,
+      reason: 'cancelled' | 'timedOut',
+    ) => Effect.Effect<void>
+  }
+>()('readme/Replies') {}
+
+const Reply = task({
+  name: 'reply',
+  pool: 'chat',
+  input: Schema.String,
+  output: Schema.String,
+  timeout: '2m',
+  handler: (prompt, attempt) =>
+    Effect.flatMap(Replies, (replies) =>
+      replies.write(attempt.idempotencyKey, prompt).pipe(
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            const reason = yield* attempt.stopReason
+            // Otherwise left open for the delivery that takes the work over.
+            if (reason === 'cancelled' || reason === 'timedOut') {
+              yield* replies.end(attempt.idempotencyKey, reason)
+            }
+          }),
+        ),
+      ),
+    ),
+})
+// #endregion
+
 // #region start
 /** Starts the charge of an order, or names the run its tenant is busy with. */
 const admit = (order: typeof Order.Type) =>
@@ -265,6 +301,35 @@ describe('the quick start', () => {
         length: 10,
       })
     }),
+  )
+})
+
+describe('the stop reason example', () => {
+  it.effect(
+    'ends a reply for readers only when no delivery takes it over',
+    () => {
+      const { provide } = deployment()
+      const ended: string[] = []
+      const replies = Replies.of({
+        write: () => Effect.never,
+        end: (_key, reason) => Effect.sync(() => void ended.push(reason)),
+      })
+
+      return provide(
+        Effect.gen(function* () {
+          const run = yield* Client.start(Reply, 'hello')
+          // The workers stop under it: the reply is another delivery's.
+          yield* serve({ tasks: [Reply] }, 10_000)
+          expect(ended).toStrictEqual([])
+
+          yield* serve({ tasks: [Reply] }, 150_000)
+          expect(ended).toStrictEqual(['timedOut'])
+          expect((yield* Client.get(run.id))!.attempts).toMatchObject([
+            { status: 'timedOut' },
+          ])
+        }).pipe(Effect.provideService(Replies, replies)),
+      )
+    },
   )
 })
 

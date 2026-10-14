@@ -525,20 +525,80 @@ It receives the decoded input and returns the decoded output.
   cancelled, its attempt timed out, its worker is shutting down, or its claim
   was lost. There is no signal argument; use Effect's interruption, and
   `Effect.tryPromise` with its `AbortSignal` for Promise APIs.
+  `attempt.stopReason` says which, from before the handler is interrupted:
+  see [Why a handler was stopped](#why-a-handler-was-stopped).
 
 `attempt` says which work the handler runs:
 
-| Field            | Holds                                                                       |
-| ---------------- | --------------------------------------------------------------------------- |
-| `runId`          | the run the attempt belongs to; for a task, the task's own run              |
-| `nodeName`       | the step                                                                    |
-| `childKey`       | which child of the step: its only one, a branch's case, a parallel's member |
-| `attemptNumber`  | counts every attempt of the work, from 1                                    |
-| `idempotencyKey` | one opaque string for every attempt of this work, a manual retry's included |
+| Field            | Holds                                                                          |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `runId`          | the run the attempt belongs to; for a task, the task's own run                 |
+| `nodeName`       | the step                                                                       |
+| `childKey`       | which child of the step: its only one, a branch's case, a parallel's member    |
+| `attemptNumber`  | counts every attempt of the work, from 1                                       |
+| `idempotencyKey` | one opaque string for every attempt of this work, a manual retry's included    |
+| `stopReason`     | an `Effect` of why the worker is stopping the handler; `undefined` until it is |
 
 Pass `idempotencyKey` to whatever must not happen twice. A handler can run
 again after it succeeded, when its outcome could not be recorded, so this key
 is what keeps a side effect from repeating.
+
+#### Why a handler was stopped
+
+`attempt.stopReason` is set before the worker interrupts the handler, so its
+finalizers can read it:
+
+| Reason      | The worker stopped it because                                     | The work                           |
+| ----------- | ----------------------------------------------------------------- | ---------------------------------- |
+| `cancelled` | the run is being cancelled, or ended without it (its own timeout) | ends; the attempt is `cancelled`   |
+| `timedOut`  | the attempt ran past its `timeout`, a step's override included    | ends `timedOut`; retried by policy |
+| `shutdown`  | the worker is stopping                                            | is delivered to another worker     |
+| `claimLost` | its claim ended before it was renewed                             | may already be another delivery's  |
+
+It is `undefined` while the handler runs, and when something other than its
+worker interrupts it. It says why the worker stopped the handler, not who
+runs the work next: on `cancelled` and `timedOut` the worker ends the attempt
+once the handler has ended, on `shutdown` and `claimLost` it leaves the
+attempt to another delivery. A handler that overruns `cleanupTimeoutMs` ends
+nothing, and its attempt is delivered again whatever the reason, so a write
+that must happen once still goes by `idempotencyKey`. Here a reply is shown
+as ended only when the worker means to end its attempt:
+
+```ts
+/** Where readers watch a reply as it is written; the worker supplies it. */
+class Replies extends Context.Service<
+  Replies,
+  {
+    readonly write: (key: string, prompt: string) => Effect.Effect<string>
+    readonly end: (
+      key: string,
+      reason: 'cancelled' | 'timedOut',
+    ) => Effect.Effect<void>
+  }
+>()('readme/Replies') {}
+
+const Reply = task({
+  name: 'reply',
+  pool: 'chat',
+  input: Schema.String,
+  output: Schema.String,
+  timeout: '2m',
+  handler: (prompt, attempt) =>
+    Effect.flatMap(Replies, (replies) =>
+      replies.write(attempt.idempotencyKey, prompt).pipe(
+        Effect.onInterrupt(() =>
+          Effect.gen(function* () {
+            const reason = yield* attempt.stopReason
+            // Otherwise left open for the delivery that takes the work over.
+            if (reason === 'cancelled' || reason === 'timedOut') {
+              yield* replies.end(attempt.idempotencyKey, reason)
+            }
+          }),
+        ),
+      ),
+    ),
+})
+```
 
 ### Schemas and codecs
 
@@ -1529,9 +1589,6 @@ Errors are tagged and in the Effect failure channel; match them with
 - **Results are computed, not run.** The old `finish` could be an Effect with
   services; the result is now a pure value computed in the coordinator. Work
   that waits or needs services belongs in a last activity.
-- **No abort reason.** A handler is interrupted and cannot ask why. If it
-  must tell a timeout from a cancellation, it cannot; clean up the same way
-  for both.
 - **Schedules have a time zone.** A cron schedule is read in its stored
   `timeZone`. A schedule carried over from the old engine has none until a
   coordinator reconciles it.
