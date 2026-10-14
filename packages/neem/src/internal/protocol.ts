@@ -15,7 +15,8 @@ export type {
 
 // Only application-owned data bypasses JSON encoding; its envelope is validated.
 const opaque = Transferable.schema(Schema.Unknown, () => [])
-const error = Schema.ErrorInstance({ includeStack: true })
+// Errors cross threads as JSON-shaped data: Bun's structured clone drops `cause`.
+const error = Schema.toCodecJson(Schema.ErrorInstance({ includeStack: true }))
 const startFailure = Schema.Struct({
   origin: Schema.Literals(['bootstrap', 'start']),
   error,
