@@ -765,6 +765,11 @@ another's.
 Records hold stored values. `decodeRun(declaration, run)` turns a stored run
 into a typed one.
 
+`get`, `getDetail`, `getNode` and `inspect` give a run's records in one order
+on every store: nodes by name; children by step, a map's items by index and
+any other by key; attempts by child, in the order they were made. Names and
+keys compare by code point.
+
 A run id is the exact text the engine gave. The same id in another spelling,
 as a uuid in capitals, names no run in any call, on any store.
 

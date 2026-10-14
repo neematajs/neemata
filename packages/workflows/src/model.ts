@@ -225,7 +225,10 @@ export type StoredSchedule = {
   readonly updatedAt: Timestamp
 }
 
-/** A run with everything it owns. */
+/**
+ * A run with everything it owns. A store gives them in an order of its own;
+ * the client gives them `ordered`, the same on every store.
+ */
 export type RunRecords = {
   readonly run: StoredRun
   readonly nodes: readonly StoredNode[]
@@ -308,6 +311,49 @@ export const isMap = (kind: NodeKind): boolean =>
   (MAPS as readonly string[]).includes(kind)
 
 export type TerminalStatus = (typeof STATUSES.terminal)[number]
+
+/** By code point, which the order of UTF-16 units is not past the BMP. */
+export function byCodePoint(a: string, b: string) {
+  // Names of one node or child compare most often, and need no splitting.
+  if (a === b) return 0
+  const left = Array.from(a)
+  const right = Array.from(b)
+  for (let at = 0; at < left.length && at < right.length; at++) {
+    const order = left[at]!.codePointAt(0)! - right[at]!.codePointAt(0)!
+    if (order !== 0) return order
+  }
+  return left.length - right.length
+}
+
+/**
+ * A run's records in the one order a reader is given them, whatever order
+ * its store keeps them in: nodes by name; children by node, a map's items by
+ * index and any other by key; attempts by child, in the order they were made.
+ * Names and keys compare by code point.
+ */
+export function ordered({
+  run,
+  nodes,
+  children,
+  attempts,
+}: RunRecords): RunRecords {
+  return {
+    run,
+    nodes: nodes.toSorted((a, b) => byCodePoint(a.name, b.name)),
+    children: children.toSorted(
+      (a, b) =>
+        byCodePoint(a.nodeName, b.nodeName) ||
+        (a.ordinal ?? 0) - (b.ordinal ?? 0) ||
+        byCodePoint(a.childKey, b.childKey),
+    ),
+    attempts: attempts.toSorted(
+      (a, b) =>
+        byCodePoint(a.nodeName, b.nodeName) ||
+        byCodePoint(a.childKey, b.childKey) ||
+        a.attemptNumber - b.attemptNumber,
+    ),
+  }
+}
 
 export function isTerminal(status: RunStatus | NodeStatus): boolean {
   return (STATUSES.terminal as readonly string[]).includes(status)

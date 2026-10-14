@@ -160,6 +160,42 @@ function engine(real: boolean) {
     )
 
     test(
+      "reads a map's children in index order, past ten items",
+      Effect.gen(function* () {
+        yield* work({ pollMs: 50 })
+        const lines = Array.from({ length: 12 }, (_, index) => ({
+          sku: `s${index}`,
+          quantity: 1,
+        }))
+        const run = yield* Client.start(Fulfillment, {
+          id: 'f-12',
+          gift: false,
+          lines,
+        })
+        expect((yield* ended(run.id)).status).toBe('completed')
+
+        // Stored under keys that sort `item:1, item:10, item:11, item:2`.
+        const items = lines.map((_, index) => `item:${index}`)
+        const keys = (
+          children: readonly {
+            readonly nodeName: string
+            readonly childKey: string
+          }[],
+        ) =>
+          children
+            .filter(({ nodeName }) => nodeName === 'reserve')
+            .map(({ childKey }) => childKey)
+        const records = (yield* Client.get(run.id))!
+        expect(keys(records.children)).toStrictEqual(items)
+        expect(keys((yield* Client.getDetail(run.id))!.children)).toStrictEqual(
+          items,
+        )
+        const names = records.children.map(({ nodeName }) => nodeName)
+        expect(names).toStrictEqual(names.toSorted())
+      }),
+    )
+
+    test(
       'runs fulfillment: parallel members, both maps and a branch',
       Effect.gen(function* () {
         yield* work({ pollMs: 50 })

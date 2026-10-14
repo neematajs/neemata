@@ -29,6 +29,7 @@ import type {
   StoredSchedule,
   Timestamp,
 } from './model.ts'
+import type { Draft } from './plan/draft.ts'
 import type { RetryError } from './plan/retry.ts'
 import type { StartError, StartInput } from './plan/start.ts'
 import type { DeadCommand, ListedRun, RunFilter } from './store.ts'
@@ -46,7 +47,7 @@ import {
 } from './errors.ts'
 import { hashStructure } from './graph/revision.ts'
 import { parseStructure } from './graph/structure.ts'
-import { isTerminal } from './model.ts'
+import { isTerminal, ordered } from './model.ts'
 import { graphKey, label, revisionKey } from './plan/definitions.ts'
 import { familyTopic, planning } from './plan/draft.ts'
 import { unretryable } from './plan/retry.ts'
@@ -155,13 +156,22 @@ function answer<D extends Declaration>(
 /** Asks a run to stop; `undefined` when no such run exists. */
 export const cancel = (runId: string) => claimless(Engine.cancel(runId))
 
-/** A run with its nodes, children and attempts, as stored. */
+/**
+ * A run with its nodes, children and attempts, as stored, in the same order
+ * on every store: nodes by name; children by node, a map's items by index and
+ * any other by key; attempts by child, in the order they were made.
+ */
 export const get = (
   runId: string,
 ): Effect.Effect<RunRecords | undefined, StorageError, Store> =>
-  Effect.flatMap(Store, (store) => store.load(runId))
+  Effect.flatMap(Store, (store) =>
+    Effect.map(store.load(runId), (records) => records && ordered(records)),
+  )
 
-/** A run and what it owns without their payloads, and the runs it started. */
+/**
+ * A run and what it owns without their payloads, in the order `get` gives
+ * them, and the runs it started, in the order of the children that did.
+ */
 export type RunDetail = {
   readonly run: RunSummary
   readonly nodes: readonly Omit<StoredNode, 'input' | 'output'>[]
@@ -226,6 +236,34 @@ const withoutPayloads = ({ run, nodes, children, attempts }: RunRecords) => ({
   attempts: attempts.map(({ input: _, output: __, ...attempt }) => attempt),
 })
 
+/**
+ * A run's detail, with the runs it started and whatever `definitions` the
+ * caller reads beside it. All are asked for before anything is ordered: a
+ * plan that asks is planned again, and would order a large run twice.
+ */
+function detailOf(
+  draft: Draft,
+  stored: RunRecords,
+  definitions: readonly string[] = [],
+): RunDetail {
+  draft.require({
+    heads: stored.children.flatMap(({ childRunId }) =>
+      childRunId === undefined ? [] : [childRunId],
+    ),
+    definitions,
+  })
+  const records = ordered(stored)
+  return {
+    ...withoutPayloads(records),
+    // In the order of the children that started them.
+    childRuns: records.children.flatMap(({ childRunId }) => {
+      const child =
+        childRunId === undefined ? undefined : draft.head(childRunId)
+      return child ? [summary(child)] : []
+    }),
+  }
+}
+
 /** A stored graph is trusted only when it still hashes to the key it is under. */
 function verified(graphHash: string, stored: unknown) {
   try {
@@ -278,7 +316,7 @@ export const inspect = (
       planning((draft) => {
         const records = draft.records(runId)
         if (!records) return undefined
-        const { run, children } = records
+        const { run } = records
         const { kind, name, revision, graphHash } = run
 
         const graph = graphHash === undefined ? undefined : graphKey(graphHash)
@@ -286,22 +324,12 @@ export const inspect = (
           revision === undefined
             ? undefined
             : revisionKey({ kind, name, revision })
-        const started = children.flatMap(({ childRunId }) =>
-          childRunId === undefined ? [] : [childRunId],
-        )
-        draft.require({
-          heads: started,
-          definitions: [graph, manifest].filter((key) => key !== undefined),
-        })
-
         return {
-          detail: {
-            ...withoutPayloads(records),
-            childRuns: started.flatMap((id) => {
-              const child = draft.head(id)
-              return child ? [summary(child)] : []
-            }),
-          },
+          detail: detailOf(
+            draft,
+            records,
+            [graph, manifest].filter((key) => key !== undefined),
+          ),
           definition: definitionOf(
             run,
             graph && draft.definition(graph),
@@ -576,18 +604,7 @@ export const getDetail = (
       { runs: [runId] },
       planning((draft): RunDetail | undefined => {
         const records = draft.records(runId)
-        if (!records) return undefined
-        const started = records.children.flatMap(({ childRunId }) =>
-          childRunId === undefined ? [] : [childRunId],
-        )
-        draft.require({ heads: started })
-        return {
-          ...withoutPayloads(records),
-          childRuns: started.flatMap((id) => {
-            const child = draft.head(id)
-            return child ? [summary(child)] : []
-          }),
-        }
+        return records && detailOf(draft, records)
       }),
     ),
   ).pipe(claimless)
