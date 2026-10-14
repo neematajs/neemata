@@ -1,6 +1,7 @@
 # @nmtjs/pubsub
 
-Typed, ephemeral publish/subscribe across workers, processes and servers.
+Typed, ephemeral publish/subscribe across workers, processes and servers, for
+[Effect](https://effect.website) (`^4.0.0`).
 
 Delivery is at most once: there is no replay, and messages published while a
 subscriber is disconnected are lost. Subscribers need their own way to recover a
@@ -8,122 +9,157 @@ gap, such as refetching state when they resubscribe.
 
 ## Channels
 
-A channel names its events and, optionally, the params that key it. Schemas are
-Standard Schemas, so any conforming library works. A single schema serves a payload
-that is published as it is; a payload with a different published form declares both
-directions.
+A channel names its events and, optionally, the params that key it. Payloads are
+`effect/Schema` schemas, published through their JSON encoding, so a `Date`,
+`DateTime` or `bigint` travels as the schema encodes it.
 
 ```ts
-import { defineChannel } from '@nmtjs/pubsub'
-import * as z from 'zod'
+import { Channel } from '@nmtjs/pubsub'
+import { Schema } from 'effect'
 
-export const room = defineChannel({
-  name: 'chat.room',
-  params: z.object({ roomId: z.string() }),
+export const room = Channel.make('chat.room', {
+  params: Schema.Struct({ roomId: Schema.String }),
   key: ({ roomId }) => roomId,
   events: {
-    message: z.object({ text: z.string() }),
-    seen: {
-      decode: z.iso.datetime().transform((stored) => new Date(stored)),
-      encode: z.date().transform((value) => value.toISOString()),
-    },
+    message: Schema.Struct({ text: Schema.String }),
+    seen: Schema.DateTimeUtcFromString,
   },
 })
 ```
 
-Schemas must validate synchronously. A lone schema that transforms its input is
-rejected at compile time. Messages travel as JSON, so an encoded payload must be
-plain JSON: publishing a `Date`, `bigint` or other value JSON would alter throws a
-`TypeError`; declare `{ decode, encode }` to publish such values.
+Schemas may decode asynchronously but cannot require services. A value that a
+schema lets through but JSON cannot carry, such as a `Date` under `Schema.Any`,
+fails to publish with a `SchemaError`. The check reads a value's enumerable
+properties only, so a `toJSON` hidden with `Object.defineProperty` slips past it:
+Redis subscribers then receive what that `toJSON` returns, while in-memory
+subscribers receive the value itself. Give such values a schema instead.
 
 ## Publishing and subscribing
 
 ```ts
-import { PubSubManager } from '@nmtjs/pubsub'
-import { createRedisAdapter } from '@nmtjs/pubsub/redis'
-
-const adapter = await createRedisAdapter(redis) // an ioredis or iovalkey client
-const pubsub = new PubSubManager({ adapter, logger })
-
-await pubsub.publish(room.events.message, { roomId }, { text: 'hello' })
-
-const messages = await pubsub.subscribe(
-  room,
-  { roomId },
-  { message: true },
-  signal,
-)
-for await (const { event, payload } of messages) {
-  // event: 'message', payload: { text: string }
-}
-```
-
-`subscribe()` resolves once the broker subscription is live, so a message published
-after it resolves is delivered. Omit the event selection to receive every event of
-the channel. Unknown events and payloads that fail to decode are logged and skipped.
-Aborting the signal, or leaving the loop, releases the subscription.
-
-Each Redis adapter shares one subscriber connection across channels and subscribes
-to each channel once, however many local listeners it has. It does not own the
-client passed to it: call `adapter.dispose()` before closing the client; disposal
-ends live subscriptions. `logger` is optional and accepts a Pino logger.
-
-When the subscriber connection drops, the adapter does not resubscribe by itself:
-live subscriptions end with a `PubSubConnectionLostError` rather than delivering
-their unread backlog first, so their consumers can resubscribe and refetch what they
-missed. A manager or Effect stream may still hand out a few messages it had
-already read ahead. A subscription opened while the connection is down waits for it
-to come back, and rejects if the client stops reconnecting.
-
-Any broker can be plugged in through `PubSubAdapter`:
-
-```ts
-interface PubSubAdapter {
-  publish(channel: string, payload: unknown): Promise<boolean>
-  // Resolves once the broker delivers the channel's messages.
-  subscribe(
-    channel: string,
-    signal?: AbortSignal,
-  ): Promise<AsyncIterable<PubSubMessage>>
-}
-```
-
-## Effect
-
-`@nmtjs/pubsub/effect` needs the optional `effect` peer (`^4.0.0`).
-Its `defineChannel` takes `effect/Schema` schemas, published through their JSON
-encoding, and returns an ordinary channel. The `PubSub` service publishes with an
-Effect. `subscribe` is a scoped Effect that completes once the broker subscription
-is live, like the manager's `subscribe()`, and yields a Stream of its messages.
-
-```ts
-import { defineChannel, layer, PubSub } from '@nmtjs/pubsub/effect'
-
-const room = defineChannel({
-  name: 'chat.room',
-  params: Schema.Struct({ roomId: Schema.String }),
-  key: ({ roomId }) => roomId,
-  events: { message: Schema.Struct({ text: Schema.String }) },
-})
+import { NodeRuntime } from '@effect/platform-node'
+import { PubSub } from '@nmtjs/pubsub'
+import * as RedisBroker from '@nmtjs/pubsub/RedisBroker'
+import { Effect, Layer, Stream } from 'effect'
 
 const program = Effect.gen(function* () {
-  const pubsub = yield* PubSub
-  const messages = yield* pubsub.subscribe(room, { roomId })
+  const pubsub = yield* PubSub.PubSub
+  const messages = yield* pubsub.subscribe(room, { roomId }, { message: true })
   // Live from here: a message published now is delivered.
   yield* pubsub.publish(room.events.message, { roomId }, { text: 'hello' })
-  yield* Stream.runForEach(messages, handle)
+  yield* Stream.runForEach(messages, ({ event, payload }) =>
+    // event: 'message', payload: { text: string }
+    Effect.log(event, payload),
+  )
 })
 
-program.pipe(Effect.scoped, Effect.provide(layer({ adapter })))
+// `redis` is a connected ioredis or iovalkey client; see Brokers below.
+const PubSubLive = PubSub.layer.pipe(Layer.provide(RedisBroker.layer(redis)))
+
+program.pipe(Effect.scoped, Effect.provide(PubSubLive), NodeRuntime.runMain)
 ```
 
-The subscription is released when the scope closes, or earlier when the stream ends
-or its consumer stops; interrupting `subscribe` while it opens releases it too. The
-stream can be consumed once. Subscribe before reading the state that the messages
-update, so nothing committed in between is missed. Where that ordering does not
-matter, `Stream.unwrap(pubsub.subscribe(...))` gives a lazy stream that subscribes
-when it is run and unsubscribes when it ends.
+`subscribe` is a scoped Effect that completes once the broker subscription is live,
+and yields a Stream of its messages. Omit the event selection to receive every event
+of the channel. The subscription is released when the scope closes, or earlier when
+the stream ends or its consumer stops; interrupting `subscribe` while it opens
+releases it too. The stream can be consumed once.
 
-Failures are `PubSubError`s carrying the cause, such as the
-`PubSubConnectionLostError` that ends a stream when the connection drops. The layer
-does not own the adapter; acquire and dispose it in the application's own layer.
+Subscribe before reading the state that the messages update, so nothing committed in
+between is missed. Where that ordering does not matter,
+`Stream.unwrap(pubsub.subscribe(...))` gives a lazy stream that subscribes when it is
+run and unsubscribes when it ends.
+
+Malformed messages, events the channel does not declare and payloads that fail to
+decode are logged and skipped. Publishing and subscribing each run in a span (`PubSub.publish`,
+`PubSub.subscribe`), and everything is logged through Effect's logger.
+
+## Errors
+
+| Error                       | Meaning                                                                         |
+| --------------------------- | ------------------------------------------------------------------------------- |
+| `Schema.SchemaError`        | The params or the payload do not satisfy the channel's schemas.                 |
+| `PubSubConnectionLostError` | The broker connection closed; messages may have been missed.                    |
+| `PubSubError`               | The publish or the subscription failed, or its outcome is unknown; see `cause`. |
+
+A `PubSubError` from a publish does not prove the message was not delivered: a
+command that timed out may still reach the broker, so retrying a publish can
+deliver it twice.
+
+```ts
+const watch = Effect.gen(function* () {
+  const pubsub = yield* PubSub.PubSub
+  const messages = yield* pubsub.subscribe(room, { roomId })
+  // After subscribing, so nothing committed in between is missed.
+  yield* refetch
+  yield* Stream.runForEach(messages, apply)
+}).pipe(
+  Effect.scoped,
+  // Resubscribes and refetches what the gap may have hidden.
+  Effect.retry({
+    while: (error) => error._tag === 'PubSubConnectionLostError',
+  }),
+)
+```
+
+## Brokers
+
+`PubSub.layer` needs a `Broker`, the service that carries messages between
+processes.
+Closing a broker's layer ends its live subscriptions as finished streams.
+
+### Redis and Valkey
+
+`RedisBroker.layer(client)` takes an [ioredis](https://github.com/redis/ioredis) or
+[iovalkey](https://github.com/valkey-io/iovalkey) client, both optional peers. It
+shares one subscriber connection across channels and subscribes to each channel
+once, however many local subscriptions it has. It does not own the client: build the
+client in a layer of its own, so that it is closed after the broker.
+
+```ts
+class Redis extends Context.Service<Redis, IORedis>()('app/Redis') {}
+
+const RedisLive = Layer.effect(
+  Redis,
+  Effect.acquireRelease(
+    Effect.sync(() => new IORedis(url)),
+    (client) => Effect.promise(() => client.quit()),
+  ),
+)
+
+const BrokerLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return RedisBroker.layer(yield* Redis)
+  }),
+).pipe(Layer.provide(RedisLive))
+
+const PubSubLive = PubSub.layer.pipe(Layer.provide(BrokerLive))
+```
+
+When the subscriber connection drops, the broker does not resubscribe by itself:
+live subscriptions fail with a `PubSubConnectionLostError` rather than delivering
+their unread backlog first, so their consumers can resubscribe and refetch what they
+missed. A stream may still hand out the messages it had already pulled. A
+subscription opened while the connection is down waits for it to come back, and
+fails once the client stops reconnecting.
+
+### In memory
+
+`Broker.layerMemory` delivers within the process that built it, for tests and
+single-process deployments.
+
+### Your own
+
+```ts
+import { Broker } from '@nmtjs/pubsub'
+
+const BrokerLive = Layer.succeed(
+  Broker.Broker,
+  Broker.Broker.of({
+    publish: (channel, message) => ..., // Effect<void, PubSubError>
+    // Completes once the broker delivers the channel's messages; the
+    // subscription lasts until the scope closes.
+    subscribe: (channel) => ..., // Effect<Stream<Message, ...>, ..., Scope>
+  }),
+)
+```
