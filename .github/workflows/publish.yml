@@ -52,21 +52,8 @@ jobs:
   test:
     needs: [version]
     if: ${{ inputs.run_tests }}
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-      - uses: pnpm/action-setup@v6.1.0
-        with:
-          run_install: false
-      - run: pnpm install --frozen-lockfile
-      # The former reusable Test workflow was removed; gate releases here.
-      - run: pnpm run check
-      - run: pnpm test --reporter=agent --reporter=github-actions
-      - run: pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
-      - run: pnpm --filter @nmtjs/effect run test:e2e --reporter=agent --reporter=github-actions
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
 
   build-and-publish:
     needs: [version, test]
