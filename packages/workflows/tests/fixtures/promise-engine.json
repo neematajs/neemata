@@ -1,0 +1,809 @@
+{
+  "billing": {
+    "workflows": [
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"billing\",\"nodes\":[{\"kind\":\"task\",\"name\":\"invoice\",\"target\":{\"kind\":\"task\",\"name\":\"billing.invoice\"}},{\"cases\":[{\"key\":\"manual\",\"kind\":\"workflow\",\"target\":{\"kind\":\"workflow\",\"name\":\"billing.manual\"}},{\"key\":\"automatic\",\"kind\":\"task\",\"target\":{\"kind\":\"task\",\"name\":\"billing.charge\"}}],\"kind\":\"branch\",\"name\":\"payment\"}]}",
+        "graphHash": "32416e4d5f663dc613dd8413c7a48c46652266808f4af1af4ead58e4e5698cfe",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "workflow",
+          "name": "billing",
+          "nodes": [
+            {
+              "name": "invoice",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.invoice"
+              }
+            },
+            {
+              "name": "payment",
+              "kind": "branch",
+              "cases": [
+                {
+                  "key": "manual",
+                  "kind": "workflow",
+                  "target": {
+                    "kind": "workflow",
+                    "name": "billing.manual"
+                  }
+                },
+                {
+                  "key": "automatic",
+                  "kind": "task",
+                  "target": {
+                    "kind": "task",
+                    "name": "billing.charge"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "graph": {
+          "name": "billing",
+          "nodes": [
+            {
+              "name": "invoice",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.invoice"
+              }
+            },
+            {
+              "name": "payment",
+              "kind": "branch",
+              "cases": [
+                {
+                  "key": "manual",
+                  "kind": "workflow",
+                  "target": {
+                    "kind": "workflow",
+                    "name": "billing.manual"
+                  }
+                },
+                {
+                  "key": "automatic",
+                  "kind": "task",
+                  "target": {
+                    "kind": "task",
+                    "name": "billing.charge"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"billing.manual\",\"nodes\":[{\"kind\":\"task\",\"name\":\"approval\",\"target\":{\"kind\":\"task\",\"name\":\"billing.approval\"}},{\"kind\":\"task\",\"name\":\"record\",\"target\":{\"kind\":\"task\",\"name\":\"billing.record\"}}]}",
+        "graphHash": "bf384bb7d58e346cf25be2fc2f4a024edaaf599d8e53d6e48c394195fdd2c573",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "workflow",
+          "name": "billing.manual",
+          "nodes": [
+            {
+              "name": "approval",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.approval"
+              }
+            },
+            {
+              "name": "record",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.record"
+              }
+            }
+          ]
+        },
+        "graph": {
+          "name": "billing.manual",
+          "nodes": [
+            {
+              "name": "approval",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.approval"
+              }
+            },
+            {
+              "name": "record",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.record"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"billing.invoice\"}",
+        "graphHash": "3aee9d991768de5b3e70515d9d4ac022bb307341dd983052c451e65c3508a444",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "billing.invoice"
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"billing.approval\"}",
+        "graphHash": "9c3f207ca5781dd813f186191bb8113289d6b611ad23c28fe5b52f3b154e286d",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "billing.approval"
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"billing.record\"}",
+        "graphHash": "b132d5763371ea0072fba2a03482d1cace55d0d1ef280606d827adbb7ec58a4e",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "billing.record"
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"billing.charge\"}",
+        "graphHash": "65e09720a520e9a55afa0180985b48c7473ff14cd1bd61986ee045e30536ee2e",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "billing.charge"
+        }
+      }
+    ],
+    "catalog": {
+      "workflows": [
+        {
+          "name": "billing",
+          "nodes": [
+            {
+              "name": "invoice",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.invoice"
+              }
+            },
+            {
+              "name": "payment",
+              "kind": "branch",
+              "cases": [
+                {
+                  "key": "manual",
+                  "kind": "workflow",
+                  "target": {
+                    "kind": "workflow",
+                    "name": "billing.manual"
+                  }
+                },
+                {
+                  "key": "automatic",
+                  "kind": "task",
+                  "target": {
+                    "kind": "task",
+                    "name": "billing.charge"
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "billing.manual",
+          "nodes": [
+            {
+              "name": "approval",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.approval"
+              }
+            },
+            {
+              "name": "record",
+              "kind": "task",
+              "target": {
+                "kind": "task",
+                "name": "billing.record"
+              }
+            }
+          ]
+        }
+      ],
+      "tasks": [
+        {
+          "name": "billing.invoice"
+        },
+        {
+          "name": "billing.approval"
+        },
+        {
+          "name": "billing.record"
+        },
+        {
+          "name": "billing.charge"
+        }
+      ]
+    }
+  },
+  "fulfillment": {
+    "workflows": [
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"fulfillment\",\"nodes\":[{\"cases\":[{\"key\":\"units\",\"kind\":\"activity\"},{\"key\":\"risk\",\"kind\":\"task\",\"target\":{\"kind\":\"task\",\"name\":\"fulfillment.screen\"}}],\"kind\":\"parallel\",\"name\":\"checks\"},{\"kind\":\"mapTask\",\"name\":\"reserve\",\"target\":{\"kind\":\"task\",\"name\":\"fulfillment.reserve\"}},{\"kind\":\"mapWorkflow\",\"name\":\"ship\",\"target\":{\"kind\":\"workflow\",\"name\":\"fulfillment.ship\"}},{\"cases\":[{\"key\":\"gift\",\"kind\":\"activity\"},{\"key\":\"plain\",\"kind\":\"activity\"}],\"kind\":\"branch\",\"name\":\"wrap\"}]}",
+        "graphHash": "c477447966ede0604c07b33bc199dab74563ded7f355c699d9ec70ce262d5d20",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "workflow",
+          "name": "fulfillment",
+          "nodes": [
+            {
+              "name": "checks",
+              "kind": "parallel",
+              "cases": [
+                {
+                  "key": "units",
+                  "kind": "activity"
+                },
+                {
+                  "key": "risk",
+                  "kind": "task",
+                  "target": {
+                    "kind": "task",
+                    "name": "fulfillment.screen"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "reserve",
+              "kind": "mapTask",
+              "target": {
+                "kind": "task",
+                "name": "fulfillment.reserve"
+              }
+            },
+            {
+              "name": "ship",
+              "kind": "mapWorkflow",
+              "target": {
+                "kind": "workflow",
+                "name": "fulfillment.ship"
+              }
+            },
+            {
+              "name": "wrap",
+              "kind": "branch",
+              "cases": [
+                {
+                  "key": "gift",
+                  "kind": "activity"
+                },
+                {
+                  "key": "plain",
+                  "kind": "activity"
+                }
+              ]
+            }
+          ]
+        },
+        "graph": {
+          "name": "fulfillment",
+          "nodes": [
+            {
+              "name": "checks",
+              "kind": "parallel",
+              "cases": [
+                {
+                  "key": "units",
+                  "kind": "activity"
+                },
+                {
+                  "key": "risk",
+                  "kind": "task",
+                  "target": {
+                    "kind": "task",
+                    "name": "fulfillment.screen"
+                  }
+                }
+              ]
+            },
+            {
+              "name": "reserve",
+              "kind": "mapTask",
+              "target": {
+                "kind": "task",
+                "name": "fulfillment.reserve"
+              }
+            },
+            {
+              "name": "ship",
+              "kind": "mapWorkflow",
+              "target": {
+                "kind": "workflow",
+                "name": "fulfillment.ship"
+              }
+            },
+            {
+              "name": "wrap",
+              "kind": "branch",
+              "cases": [
+                {
+                  "key": "gift",
+                  "kind": "activity"
+                },
+                {
+                  "key": "plain",
+                  "kind": "activity"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"fulfillment.ship\",\"nodes\":[{\"kind\":\"activity\",\"name\":\"label\"}]}",
+        "graphHash": "df640c147b0ca61539fabe5c3d598204ae9db701bac9d454a4c5db348545246b",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "workflow",
+          "name": "fulfillment.ship",
+          "nodes": [
+            {
+              "name": "label",
+              "kind": "activity"
+            }
+          ]
+        },
+        "graph": {
+          "name": "fulfillment.ship",
+          "nodes": [
+            {
+              "name": "label",
+              "kind": "activity"
+            }
+          ]
+        }
+      }
+    ],
+    "tasks": [
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"fulfillment.screen\"}",
+        "graphHash": "c19e6adfe5e6199f71e972c1cd941ceaf64d51e822789ff9dd09b4573749baf8",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "fulfillment.screen"
+        }
+      },
+      {
+        "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"fulfillment.reserve\"}",
+        "graphHash": "bd91c7199b646e66e60d5304a9de9aa325567bec2d4fa46e1ed6e92b82dc3feb",
+        "structure": {
+          "formatVersion": 1,
+          "kind": "task",
+          "name": "fulfillment.reserve"
+        }
+      }
+    ]
+  },
+  "labelled": {
+    "task": {
+      "canonical": "{\"formatVersion\":1,\"kind\":\"task\",\"name\":\"graph.embed\"}",
+      "graphHash": "b9a2f1a3c587d2bd3a31c5ccaa15dc70f4d74c8b8d7662b0ac9c33ae19143715",
+      "structure": {
+        "formatVersion": 1,
+        "kind": "task",
+        "name": "graph.embed"
+      },
+      "presentation": {
+        "title": "T",
+        "description": "D"
+      },
+      "manifest": {
+        "kind": "task",
+        "name": "graph.embed",
+        "revision": "v1",
+        "graphHash": "b9a2f1a3c587d2bd3a31c5ccaa15dc70f4d74c8b8d7662b0ac9c33ae19143715",
+        "bindings": []
+      }
+    },
+    "child": {
+      "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"graph.child\",\"nodes\":[{\"kind\":\"activity\",\"name\":\"step\"}]}",
+      "graphHash": "e2def0b0db704cfb30983950f4db0c8d5692dc8c10548416d2e4570c4407494c",
+      "structure": {
+        "formatVersion": 1,
+        "kind": "workflow",
+        "name": "graph.child",
+        "nodes": [
+          {
+            "name": "step",
+            "kind": "activity"
+          }
+        ]
+      },
+      "presentation": {
+        "title": "T",
+        "description": "D"
+      },
+      "manifest": {
+        "kind": "workflow",
+        "name": "graph.child",
+        "revision": "v1",
+        "graphHash": "e2def0b0db704cfb30983950f4db0c8d5692dc8c10548416d2e4570c4407494c",
+        "bindings": []
+      },
+      "graph": {
+        "name": "graph.child",
+        "title": "T",
+        "description": "D",
+        "nodes": [
+          {
+            "name": "step",
+            "kind": "activity"
+          }
+        ]
+      }
+    },
+    "parent": {
+      "canonical": "{\"formatVersion\":1,\"kind\":\"workflow\",\"name\":\"graph.parent\",\"nodes\":[{\"kind\":\"activity\",\"name\":\"load\"},{\"kind\":\"task\",\"name\":\"embed\",\"target\":{\"kind\":\"task\",\"name\":\"graph.embed\"}},{\"cases\":[{\"key\":\"viaTask\",\"kind\":\"task\",\"target\":{\"kind\":\"task\",\"name\":\"graph.embed\"}},{\"key\":\"viaChild\",\"kind\":\"workflow\",\"target\":{\"kind\":\"workflow\",\"name\":\"graph.child\"}},{\"key\":\"inline\",\"kind\":\"activity\"}],\"kind\":\"branch\",\"name\":\"route\"},{\"cases\":[{\"key\":\"left\",\"kind\":\"task\",\"target\":{\"kind\":\"task\",\"name\":\"graph.embed\"}},{\"key\":\"right\",\"kind\":\"workflow\",\"target\":{\"kind\":\"workflow\",\"name\":\"graph.child\"}}],\"kind\":\"parallel\",\"name\":\"both\"},{\"kind\":\"mapTask\",\"name\":\"each\",\"target\":{\"kind\":\"task\",\"name\":\"graph.embed\"}},{\"kind\":\"mapWorkflow\",\"name\":\"eachChild\",\"target\":{\"kind\":\"workflow\",\"name\":\"graph.child\"}}]}",
+      "graphHash": "0226739e42568a5cde12cc62aeba5d012401abd4db06f4e8242a78390bfb6e90",
+      "structure": {
+        "formatVersion": 1,
+        "kind": "workflow",
+        "name": "graph.parent",
+        "nodes": [
+          {
+            "name": "load",
+            "kind": "activity"
+          },
+          {
+            "name": "embed",
+            "kind": "task",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed"
+            }
+          },
+          {
+            "name": "route",
+            "kind": "branch",
+            "cases": [
+              {
+                "key": "viaTask",
+                "kind": "task",
+                "target": {
+                  "kind": "task",
+                  "name": "graph.embed"
+                }
+              },
+              {
+                "key": "viaChild",
+                "kind": "workflow",
+                "target": {
+                  "kind": "workflow",
+                  "name": "graph.child"
+                }
+              },
+              {
+                "key": "inline",
+                "kind": "activity"
+              }
+            ]
+          },
+          {
+            "name": "both",
+            "kind": "parallel",
+            "cases": [
+              {
+                "key": "left",
+                "kind": "task",
+                "target": {
+                  "kind": "task",
+                  "name": "graph.embed"
+                }
+              },
+              {
+                "key": "right",
+                "kind": "workflow",
+                "target": {
+                  "kind": "workflow",
+                  "name": "graph.child"
+                }
+              }
+            ]
+          },
+          {
+            "name": "each",
+            "kind": "mapTask",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed"
+            }
+          },
+          {
+            "name": "eachChild",
+            "kind": "mapWorkflow",
+            "target": {
+              "kind": "workflow",
+              "name": "graph.child"
+            }
+          }
+        ]
+      },
+      "presentation": {
+        "title": "T",
+        "description": "D",
+        "nodes": {
+          "load": {
+            "title": "T",
+            "description": "D"
+          },
+          "embed": {
+            "title": "T",
+            "description": "D",
+            "target": {
+              "title": "T",
+              "description": "D"
+            }
+          },
+          "route": {
+            "title": "T",
+            "description": "D",
+            "cases": {
+              "viaTask": {
+                "title": "T",
+                "description": "D",
+                "target": {
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              "viaChild": {
+                "title": "T",
+                "description": "D",
+                "target": {
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              "inline": {
+                "title": "T",
+                "description": "D"
+              }
+            }
+          },
+          "both": {
+            "title": "T",
+            "description": "D",
+            "cases": {
+              "left": {
+                "target": {
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              "right": {
+                "target": {
+                  "title": "T",
+                  "description": "D"
+                }
+              }
+            }
+          },
+          "each": {
+            "title": "T",
+            "description": "D",
+            "target": {
+              "title": "T",
+              "description": "D"
+            }
+          },
+          "eachChild": {
+            "title": "T",
+            "description": "D",
+            "target": {
+              "title": "T",
+              "description": "D"
+            }
+          }
+        }
+      },
+      "manifest": {
+        "kind": "workflow",
+        "name": "graph.parent",
+        "revision": "v1",
+        "graphHash": "0226739e42568a5cde12cc62aeba5d012401abd4db06f4e8242a78390bfb6e90",
+        "bindings": [
+          {
+            "nodeName": "embed",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "route",
+            "caseKey": "viaTask",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "route",
+            "caseKey": "viaChild",
+            "target": {
+              "kind": "workflow",
+              "name": "graph.child",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "both",
+            "caseKey": "left",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "both",
+            "caseKey": "right",
+            "target": {
+              "kind": "workflow",
+              "name": "graph.child",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "each",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "revision": "v1"
+            }
+          },
+          {
+            "nodeName": "eachChild",
+            "target": {
+              "kind": "workflow",
+              "name": "graph.child",
+              "revision": "v1"
+            }
+          }
+        ]
+      },
+      "graph": {
+        "name": "graph.parent",
+        "title": "T",
+        "description": "D",
+        "nodes": [
+          {
+            "name": "load",
+            "kind": "activity",
+            "title": "T",
+            "description": "D"
+          },
+          {
+            "name": "embed",
+            "kind": "task",
+            "title": "T",
+            "description": "D",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "title": "T",
+              "description": "D"
+            }
+          },
+          {
+            "name": "route",
+            "kind": "branch",
+            "title": "T",
+            "description": "D",
+            "cases": [
+              {
+                "key": "viaTask",
+                "kind": "task",
+                "title": "T",
+                "description": "D",
+                "target": {
+                  "kind": "task",
+                  "name": "graph.embed",
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              {
+                "key": "viaChild",
+                "kind": "workflow",
+                "title": "T",
+                "description": "D",
+                "target": {
+                  "kind": "workflow",
+                  "name": "graph.child",
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              {
+                "key": "inline",
+                "kind": "activity",
+                "title": "T",
+                "description": "D"
+              }
+            ]
+          },
+          {
+            "name": "both",
+            "kind": "parallel",
+            "title": "T",
+            "description": "D",
+            "cases": [
+              {
+                "key": "left",
+                "kind": "task",
+                "target": {
+                  "kind": "task",
+                  "name": "graph.embed",
+                  "title": "T",
+                  "description": "D"
+                }
+              },
+              {
+                "key": "right",
+                "kind": "workflow",
+                "target": {
+                  "kind": "workflow",
+                  "name": "graph.child",
+                  "title": "T",
+                  "description": "D"
+                }
+              }
+            ]
+          },
+          {
+            "name": "each",
+            "kind": "mapTask",
+            "title": "T",
+            "description": "D",
+            "target": {
+              "kind": "task",
+              "name": "graph.embed",
+              "title": "T",
+              "description": "D"
+            }
+          },
+          {
+            "name": "eachChild",
+            "kind": "mapWorkflow",
+            "title": "T",
+            "description": "D",
+            "target": {
+              "kind": "workflow",
+              "name": "graph.child",
+              "title": "T",
+              "description": "D"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

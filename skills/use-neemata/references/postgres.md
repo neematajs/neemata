@@ -1,160 +1,136 @@
 # PostgreSQL workflows
 
-Use `@nmtjs/workflows/postgres` for `createPostgresWorkflowConnection`,
-`createPostgresWorkflowRuntime`, `verifyPostgresWorkflowSchema`,
-`createPostgresWorkflowWakeEvents` and connection/listener types.
+`@nmtjs/workflows/postgres` is a `Store` on Effect SQL. It depends on
+`SqlClient` alone, so `@effect/sql-pg` and `@effect/sql-pglite` share one code
+path. Exports: `layer`, `make`, `install`, `verify`, `migrateFrom4`,
+`MIGRATION_FROM_4`, `MIGRATION_FROM_4_SQL`, `SCHEMA_VERSION` (6), `CHANNEL`
+and `Notifications`.
 
-## Clients and transaction scopes
-
-`createPostgresWorkflowConnection(client)` accepts these structural surfaces:
-
-- A `pg.Pool`: `query`, `connect()`, and a borrowed client with
-  `query` / `release()`. Pool detection also checks for `totalCount`,
-  `idleCount` or `waitingCount`; `connect` alone is not sufficient.
-- A connected `pg.Client` / query-only client: transactions use
-  `BEGIN` / `COMMIT` / `ROLLBACK` on that session.
-- A transaction-capable client such as PGlite: `query` plus
-  `transaction(handler)`, where the handler receives a query client.
-  Its transaction API takes precedence over pool detection.
-
-Other drivers can implement `WorkflowPostgresConnection` directly.
-The application opens and closes the client/pool. The wrapper releases borrowed
-pool clients; it does not connect a plain client or close application
-resources.
-
-The runtime connection API is:
-
-- `query<T extends Record<string, unknown>>(sql: string,
-params?: readonly unknown[]): Promise<{ readonly rows: readonly T[] }>`.
-- `transaction<T>((connection: WorkflowPostgresConnection) => Promise<T>)
-: Promise<T>`.
-
-Inside a transaction, use only the connection passed to its callback. Nested
-`transaction` calls make savepoints; failure rolls back that nested scope,
-leaving the enclosing transaction usable. Queries and sibling nested scopes
-on one transaction connection are serialized because savepoints form a stack.
-A plain single-session wrapper also serializes top-level queries with whole
-transactions. A pool can run independent transactions on separate sessions.
-
-Awaiting the parent connection from inside a nested scope can deadlock on that
-serialization; with a pool it can instead run outside the intended transaction.
-Do not reuse a scoped connection after its handler settles. It rejects new work
-then, and commit/rollback waits for already queued work to finish. Await all
-transaction work inside the callback.
+## Store layer
 
 ```ts
-import { Pool } from 'pg'
-import { defineTask } from '@nmtjs/workflows'
-import { createWorkflowRuntimeClient } from '@nmtjs/workflows/runtime'
-import {
-  createPostgresWorkflowConnection,
-  createPostgresWorkflowRuntime,
-  verifyPostgresWorkflowSchema,
-} from '@nmtjs/workflows/postgres'
-import * as z from 'zod'
+import { PgClient } from '@effect/sql-pg'
+import * as Postgres from '@nmtjs/workflows/postgres'
+import * as PostgresPg from '@nmtjs/workflows/postgres/pg'
+import * as Layer from 'effect/Layer'
+import * as Redacted from 'effect/Redacted'
 
-const persistTask = defineTask({
-  name: 'documents.process',
-  input: z.object({ id: z.string() }),
-  output: z.object({ processed: z.boolean() }),
-})
-const pool = new Pool({ connectionString: process.env.DATABASE_URL })
-const connection = createPostgresWorkflowConnection(pool)
-await verifyPostgresWorkflowSchema(connection)
-const runtime = createPostgresWorkflowRuntime({ connection })
-const client = createWorkflowRuntimeClient(runtime)
-
-await connection.transaction(async (tx) => {
-  // App writes and workflow dispatch must commit or roll back together.
-  await tx.query('SELECT pg_advisory_xact_lock($1)', [42])
-  await client.start(
-    persistTask,
-    { id: 'd1' },
-    {
-      connection: tx,
-      idempotencyKey: ['documents.process', 'd1'],
-    },
-  )
+const database = PgClient.layer({
+  url: Redacted.make(process.env.DATABASE_URL!),
 })
 
-// At application shutdown, after its workers and watchers have stopped:
-await runtime.dispose?.()
-await pool.end()
+export const store = Postgres.layer({ maxDeliveries: 20 }).pipe(
+  // Optional: without it workers find work by polling alone.
+  Layer.provide(PostgresPg.notifications),
+  Layer.provide(database),
+)
 ```
 
-`start(..., { connection: tx })` returns a provisional run until the outer
-transaction commits; `restart(id, { connection: tx })` and
-`cancel(id, { connection: tx })` join the same way. Pass the callback's connection or a nesting-aware external
-transaction wrapper. Never wrap a bare query client already inside an external
-transaction: a new `BEGIN` / `COMMIT` would not preserve the caller's boundary.
-The in-memory adapter ignores a passed connection so PostgreSQL-facing code
-runs unchanged in tests.
+- Build the client without name transforms; the adapter is written for the
+  default `READ COMMITTED` isolation.
+- Options: `maxDeliveries` (20), `channel` (`workflow_hints`, 1 to 63
+  bytes), `answerTimeoutMs` (none). Invalid options make the layer die.
+- `answerTimeoutMs` cancels a statement the database has not answered in
+  time, including one waiting on another transaction's guard; the operation
+  fails with `StorageError` (cause: `SqlError` with `StatementTimeoutError`).
+  For `claim`, `release` and `renew` the outcome is then unknown. Transaction
+  begin/commit statements are the client's: bound them with client or server
+  settings.
+- Hints use `LISTEN` on one channel per database. Stores in two schemas of
+  one database hear each other's hints unless given different `channel`s;
+  that costs needless claims, not correctness. Use
+  `PostgresPglite.notifications` from `/postgres/pglite` on PGlite.
+- Processes that start runs and workers of one deployment must use the same
+  database and schema, and the same `channel` for their hints to reach the
+  workers.
 
-Effect SQL applications (`@effect/sql-pg`, Drizzle `effect-postgres`) wrap the
-client with `createEffectSqlWorkflowClient(client, { answerTimeoutMs })` from
-`@nmtjs/workflows/postgres/effect`. Its `start`, `restart` and `cancel` require
-`SqlClient`, join an open `sql.withTransaction` through a savepoint on the
-caller's session, and fail conflicts with `WorkflowRunConflictError` /
-`WorkflowIdempotencyConflictError` while the transaction stays usable. Outside a
-transaction they use the workflow pool like the Promise client.
+For tests and local development, PGlite runs PostgreSQL in the process:
 
-## Timestamps and runtime options
+```ts
+import { PgliteClient } from '@effect/sql-pglite'
+import * as PostgresPglite from '@nmtjs/workflows/postgres/pglite'
 
-Runtime timestamps are Unix milliseconds, including options and returned records.
-PostgreSQL columns remain `timestamptz`; writes use Date parameters internally.
-The caller owns timestamp parsers. Supported results are a `Date` (the pg and
-PGlite defaults), column text, or Unix milliseconds. An unreadable timestamp
-throws `TypeError` rather than allowing `NaN` into a record; do not configure
-a parser to return an unsupported representation such as a Temporal object.
+const database = Layer.orDie(PgliteClient.layer())
+const store = Postgres.layer().pipe(
+  Layer.provide(PostgresPglite.notifications),
+  // `install` is for tests; production migrations are the application's.
+  Layer.provide(Layer.effectDiscard(Effect.orDie(Postgres.install))),
+  Layer.provideMerge(database),
+)
+```
 
-`createPostgresWorkflowRuntime({ connection, maxDeliveries?, wakeEvents? })`
-returns store, executors, scheduler, retention pruner, atomic hooks and
-`connection`. `maxDeliveries` defaults to 20. Run start/dispatch, continuation
-and completion use transactions. This does not make handler side effects
-transactional. Runtime disposal only disposes supplied wake events; the caller
-still closes its command connection/pool.
+## Transactions
+
+A `Client.*` call made inside the caller's `sql.withTransaction` joins that
+transaction: the run commits or rolls back with the application's writes,
+its hints are sent at commit, and its guards are held until then. A fiber
+forked inside the transaction is part of it too.
+
+```ts
+const placeOrder = (order: typeof Order.Type) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    return yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO orders (id) VALUES (${order.id})`
+        return yield* Client.start(Charge, order)
+      }),
+    )
+  })
+```
+
+A start refused inside the transaction (`IdempotencyConflict`, `RunConflict`,
+`DefinitionConflict`) rolls back only itself, to a savepoint: catch it and
+the caller's transaction can still commit its other writes. The in-memory and
+Redis stores run the same `Client` code without a transaction.
+
+A failed statement, a lost connection or contention that did not clear is a
+`StorageError` carrying the `SqlError`. Workers log it and try again; clients
+return it. Nothing of the operation applies unless it failed while
+committing. Deadlocks against locks the adapter does not order are retried a
+bounded number of times. Run ids are the exact text the store returned; another
+spelling of the same UUID names no run.
 
 ## Schema and migrations
 
-The schema version is **4**, exported as
-`WORKFLOW_POSTGRES_SCHEMA_VERSION` alongside
-`WORKFLOW_POSTGRES_SCHEMA_MANIFEST`.
+The schema is generation **6**. The application owns production migrations.
 
-- `createSchema({ searchIndexes?: boolean })` from
-  `@nmtjs/workflows/postgres/drizzle` returns `tables` and `enums`.
-  Canonical physical names are required. Search GIN indexes on input/tags are
-  opt-in (default false) because they add write cost.
-- The optional Drizzle peer range is `>=1.0.0-rc.4 <2.0.0`.
-  Applications own production migrations and seed/update
-  `workflow_schema_version` with `id = 1, version = 4` after applying them.
-- Follow the package README's migration sections in order, with workers stopped.
-  Version 2 adds/backfills `active_since`; version 3 adds/backfills
-  `retry_attempt_number`; version 4 adds
-  `workflow_node_children.cancellation` and
-  `workflow_commands_attempt_idx` on non-null `attempt_id`.
-  Existing child edges with null cancellation propagate.
-- `verifyPostgresWorkflowSchema(connection)` verifies version and required
-  database objects at startup. Creating the runtime does not run migrations.
-- `installPostgresWorkflowSchemaForTesting(connection)` from
-  `@nmtjs/workflows/postgres/testing` bootstraps tests/local development;
-  it is not production migration tooling.
+- `createSchema({ searchIndexes? })` from `@nmtjs/workflows/postgres/drizzle`
+  returns the tables and enums as Drizzle objects; object names are fixed.
+  `searchIndexes: true` adds GIN indexes for the `tags` / `input` list
+  filters, at a cost on every run write. The optional `drizzle-orm` peer is
+  `>=1.0.0-rc.4 <2.0.0`.
+- `Postgres.verify` dies unless the schema on `search_path` is generation 6
+  with the columns and indexes the adapter needs. Run it at startup;
+  building the layer verifies nothing.
+- `Postgres.install` creates generation 6 on an empty database; it is for
+  tests and local development, not production migrations.
+- Tables: `workflow_runs`, `workflow_nodes`, `workflow_node_children`,
+  `workflow_attempts`, `workflow_keys`, `workflow_definitions`,
+  `workflow_commands` (dead commands have `dead_at`), `workflow_schedules`,
+  `workflow_schema_version`. Unqualified: set `search_path` to place them in
+  a schema.
 
-Retention requires terminal families and preserves unreaped dead commands.
-`batchSize` bounds root deletion per batch.
+Generations 1 to 4 belong to the Promise engine; its last release,
+`@nmtjs/workflows@0.18.0-alpha.4`, installs generation 4. No release
+installed a generation 5. To upgrade:
 
-## LISTEN ownership
+1. Bring the database to generation 4 with that release's upgrades.
+2. Stop starting runs on the old engine and let it finish or cancel them.
+3. Stop every process of the old engine.
+4. Run `Postgres.migrateFrom4` (in process) or `MIGRATION_FROM_4_SQL` (a
+   script) in one transaction, then start the new engine.
 
-`createPostgresWorkflowWakeEvents({ connect, reconnectDelayMs?, onError? })`
-opens a dedicated LISTEN connection; `connect` must return a connected client
-and may be called again after connection loss. A connected `pg.Client`
-satisfies `WorkflowPostgresListenerClient` with `query(sql)`,
-`on('notification' | 'error' | 'end', listener)`, and `end()`.
+The migration refuses unless the generation is 4, every run has ended and
+no command is queued; dead commands are deleted. It keeps history, identity
+keys and schedules, all unversioned (a failed old run is retried by a
+worker serving its name without a revision), rebuilds the command queue,
+and locks
+`workflow_runs` / `workflow_commands` for its whole length. The package's
+`src/postgres/README.md` lists every column it changes.
 
-Pass the result as `wakeEvents` when constructing the runtime. It listens for
-command, cancellation and family-change notifications, reconnects with a default
-1,000 ms delay, and closes its listener through `dispose()` (also called by
-runtime disposal). The command pool remains application-owned.
+## Retention
 
-Notifications reduce latency; polling/heartbeats remain the execution fallback.
-Coarse watcher changes are best-effort, without event replay. Delayed command
-enqueue skips the immediate wake.
+History stays until removed: give a coordinator `retention: { olderThan,
+statuses? }` or call `Client.pruneRuns`. Only fully ended root families are
+removed, whole. Saved definitions are never deleted.

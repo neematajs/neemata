@@ -16,8 +16,8 @@ export default createEffectRuntime({
 })
 ```
 
-Register the declaration in config `runtimes`. Unlike
-`createWorkflowsRuntime()`, `createEffectRuntime` directly takes the declaration.
+Register the declaration in config `runtimes`. Like `createWorkflowsRuntime`,
+`createEffectRuntime` directly takes the declaration.
 It defaults `planner` to `@nmtjs/effect/neem/planner`, whose default export
 returns `{ workers: [{}] }`: one worker with empty planner data. Supply a
 custom Neem planner entry to replace it. The preset adds no custom host or

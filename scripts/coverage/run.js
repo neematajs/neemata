@@ -43,14 +43,19 @@ const RUNS = [
     env: SERVICE_VARIABLES,
   },
   {
-    name: 'workflows-redis-contracts',
+    name: 'workflows-store-contracts',
     args: [
       '--project',
       '@nmtjs/workflows',
-      'packages/workflows/tests/runtime-adapter-contract.spec.ts',
-      'packages/workflows/tests/runtime-manual-retry.spec.ts',
+      'packages/workflows/tests/postgres.spec.ts',
+      'packages/workflows/tests/postgres-contract.spec.ts',
+      'packages/workflows/tests/postgres-engine.spec.ts',
+      'packages/workflows/tests/redis.spec.ts',
+      'packages/workflows/tests/redis-contract.spec.ts',
+      'packages/workflows/tests/redis-engine.spec.ts',
+      'packages/workflows/tests/neem-e2e.spec.ts',
     ],
-    env: ['REDIS_URL', 'VALKEY_URL'],
+    env: ['POSTGRES_URL', 'REDIS_URL', 'VALKEY_URL'],
   },
 ]
 

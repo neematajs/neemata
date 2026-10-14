@@ -1,13 +1,9 @@
-export { createWorkflowsRuntime, defineWorkflowsPlanner } from './planner.ts'
+// The main-thread side. The worker is `./worker.ts`, an entry of its own so
+// that a planner loads no Effect runtime.
+export { createWorkflowsRuntime, defineWorkflowsPlanner } from './plan.ts'
 export type {
+  CoordinatorPlan,
+  PoolPlan,
+  WorkerData,
   WorkflowsPlan,
-  WorkflowsPoolConfig,
-  WorkflowsRegistry,
-  WorkflowsWorkerData,
-  WorkflowsWorkerSettings,
-} from './runtime.ts'
-export { defineWorkflowsWorker } from './worker-entry.ts'
-export type {
-  WorkflowsWorkerDefinition,
-  WorkflowsWorkerResources,
-} from './worker-entry.ts'
+} from './plan.ts'

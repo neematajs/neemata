@@ -17,13 +17,20 @@ export default defineEffectWorker(() => ({
   layer: Layer.empty,
   main: (ready) =>
     Effect.gen(function* () {
-      yield* Effect.addFinalizer(() => Effect.sync(() => record('stopped')))
+      // Register before acquiring the server so this runs after its listener
+      // closes. The URL identifies a generation even when a reload starts
+      // several servers with the same marker.
+      const listener: { url?: string } = {}
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => record('stopped', listener.url)),
+      )
       const server = yield* NodeHttpServer.make(createServer, {
         host: '127.0.0.1',
         port: 0,
       })
       yield* server.serve(Effect.succeed(HttpServerResponse.text(marker)))
       const url = HttpServer.formatAddress(server.address)
+      listener.url = url
       record('started', url)
       yield* ready([{ type: 'http', url }])
       if (failureFile && !existsSync(failureFile)) {

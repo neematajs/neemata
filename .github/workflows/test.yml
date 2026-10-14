@@ -214,12 +214,16 @@ jobs:
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
-      - name: Run workflow adapter contracts and retries against Redis and Valkey
+      - name: Run workflow store contracts against PostgreSQL, Redis and Valkey
+        # The unit suite runs these on PGlite or skips them without a server.
         run: >-
           pnpm --filter @nmtjs/workflows exec vitest run
-          --config vitest.config.ts tests/runtime-adapter-contract.spec.ts
-          tests/runtime-manual-retry.spec.ts
+          --config vitest.config.ts tests/postgres.spec.ts
+          tests/postgres-contract.spec.ts tests/postgres-engine.spec.ts
+          tests/redis.spec.ts tests/redis-contract.spec.ts
+          tests/redis-engine.spec.ts tests/neem-e2e.spec.ts
           --reporter=agent --reporter=github-actions
         env:
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
+          POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata

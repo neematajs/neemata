@@ -1,7 +1,7 @@
 {
   "name": "@nmtjs/workflows",
   "version": "0.18.0-alpha.4",
-  "description": "Workflow design primitives for Neemata.",
+  "description": "Durable, Effect-native workflows for Neemata: tasks, workflow graphs, workers and PostgreSQL, Redis or in-memory stores.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -14,65 +14,45 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
-    "./effect": {
-      "types": "./src/effect/index.ts",
-      "import": "./dist/effect/index.js",
-      "module-sync": "./dist/effect/index.js"
-    },
-    "./effect/neem": {
-      "types": "./src/effect/neem.ts",
-      "import": "./dist/effect/neem.js",
-      "module-sync": "./dist/effect/neem.js"
-    },
-    "./runtime": {
-      "types": "./src/runtime/index.ts",
-      "import": "./dist/runtime/index.js",
-      "module-sync": "./dist/runtime/index.js"
-    },
-    "./inspector": {
-      "types": "./src/inspector/index.ts",
-      "import": "./dist/inspector/index.js",
-      "module-sync": "./dist/inspector/index.js"
-    },
     "./postgres": {
-      "types": "./src/adapters/postgres.ts",
-      "import": "./dist/adapters/postgres.js",
-      "module-sync": "./dist/adapters/postgres.js"
+      "types": "./src/postgres/index.ts",
+      "import": "./dist/postgres/index.js",
+      "module-sync": "./dist/postgres/index.js"
     },
-    "./postgres/testing": {
-      "types": "./src/adapters/postgres/testing.ts",
-      "import": "./dist/adapters/postgres/testing.js",
-      "module-sync": "./dist/adapters/postgres/testing.js"
+    "./postgres/pg": {
+      "types": "./src/postgres/pg.ts",
+      "import": "./dist/postgres/pg.js",
+      "module-sync": "./dist/postgres/pg.js"
+    },
+    "./postgres/pglite": {
+      "types": "./src/postgres/pglite.ts",
+      "import": "./dist/postgres/pglite.js",
+      "module-sync": "./dist/postgres/pglite.js"
     },
     "./postgres/drizzle": {
-      "types": "./src/adapters/postgres/drizzle.ts",
-      "import": "./dist/adapters/postgres/drizzle.js",
-      "module-sync": "./dist/adapters/postgres/drizzle.js"
-    },
-    "./postgres/effect": {
-      "types": "./src/effect/postgres.ts",
-      "import": "./dist/effect/postgres.js",
-      "module-sync": "./dist/effect/postgres.js"
+      "types": "./src/postgres/drizzle.ts",
+      "import": "./dist/postgres/drizzle.js",
+      "module-sync": "./dist/postgres/drizzle.js"
     },
     "./redis": {
-      "types": "./src/adapters/redis.ts",
-      "import": "./dist/adapters/redis.js",
-      "module-sync": "./dist/adapters/redis.js"
+      "types": "./src/redis/index.ts",
+      "import": "./dist/redis/index.js",
+      "module-sync": "./dist/redis/index.js"
     },
     "./neem": {
       "types": "./src/neem/index.ts",
       "import": "./dist/neem/index.js",
       "module-sync": "./dist/neem/index.js"
     },
-    "./neem/host": {
-      "types": "./src/neem/host.ts",
-      "import": "./dist/neem/host.js",
-      "module-sync": "./dist/neem/host.js"
+    "./neem/worker": {
+      "types": "./src/neem/worker.ts",
+      "import": "./dist/neem/worker.js",
+      "module-sync": "./dist/neem/worker.js"
     },
-    "./neem/worker-entry": {
-      "types": "./src/neem/worker-entry.ts",
-      "import": "./dist/neem/worker-entry.js",
-      "module-sync": "./dist/neem/worker-entry.js"
+    "./inspector": {
+      "types": "./src/inspector.ts",
+      "import": "./dist/inspector.js",
+      "module-sync": "./dist/inspector.js"
     }
   },
   "publishConfig": {
@@ -82,65 +62,45 @@
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
       },
-      "./effect": {
-        "types": "./dist/effect/index.d.ts",
-        "import": "./dist/effect/index.js",
-        "module-sync": "./dist/effect/index.js"
-      },
-      "./effect/neem": {
-        "types": "./dist/effect/neem.d.ts",
-        "import": "./dist/effect/neem.js",
-        "module-sync": "./dist/effect/neem.js"
-      },
-      "./runtime": {
-        "types": "./dist/runtime/index.d.ts",
-        "import": "./dist/runtime/index.js",
-        "module-sync": "./dist/runtime/index.js"
-      },
-      "./inspector": {
-        "types": "./dist/inspector/index.d.ts",
-        "import": "./dist/inspector/index.js",
-        "module-sync": "./dist/inspector/index.js"
-      },
       "./postgres": {
-        "types": "./dist/adapters/postgres.d.ts",
-        "import": "./dist/adapters/postgres.js",
-        "module-sync": "./dist/adapters/postgres.js"
+        "types": "./dist/postgres/index.d.ts",
+        "import": "./dist/postgres/index.js",
+        "module-sync": "./dist/postgres/index.js"
       },
-      "./postgres/testing": {
-        "types": "./dist/adapters/postgres/testing.d.ts",
-        "import": "./dist/adapters/postgres/testing.js",
-        "module-sync": "./dist/adapters/postgres/testing.js"
+      "./postgres/pg": {
+        "types": "./dist/postgres/pg.d.ts",
+        "import": "./dist/postgres/pg.js",
+        "module-sync": "./dist/postgres/pg.js"
+      },
+      "./postgres/pglite": {
+        "types": "./dist/postgres/pglite.d.ts",
+        "import": "./dist/postgres/pglite.js",
+        "module-sync": "./dist/postgres/pglite.js"
       },
       "./postgres/drizzle": {
-        "types": "./dist/adapters/postgres/drizzle.d.ts",
-        "import": "./dist/adapters/postgres/drizzle.js",
-        "module-sync": "./dist/adapters/postgres/drizzle.js"
-      },
-      "./postgres/effect": {
-        "types": "./dist/effect/postgres.d.ts",
-        "import": "./dist/effect/postgres.js",
-        "module-sync": "./dist/effect/postgres.js"
+        "types": "./dist/postgres/drizzle.d.ts",
+        "import": "./dist/postgres/drizzle.js",
+        "module-sync": "./dist/postgres/drizzle.js"
       },
       "./redis": {
-        "types": "./dist/adapters/redis.d.ts",
-        "import": "./dist/adapters/redis.js",
-        "module-sync": "./dist/adapters/redis.js"
+        "types": "./dist/redis/index.d.ts",
+        "import": "./dist/redis/index.js",
+        "module-sync": "./dist/redis/index.js"
       },
       "./neem": {
         "types": "./dist/neem/index.d.ts",
         "import": "./dist/neem/index.js",
         "module-sync": "./dist/neem/index.js"
       },
-      "./neem/host": {
-        "types": "./dist/neem/host.d.ts",
-        "import": "./dist/neem/host.js",
-        "module-sync": "./dist/neem/host.js"
+      "./neem/worker": {
+        "types": "./dist/neem/worker.d.ts",
+        "import": "./dist/neem/worker.js",
+        "module-sync": "./dist/neem/worker.js"
       },
-      "./neem/worker-entry": {
-        "types": "./dist/neem/worker-entry.d.ts",
-        "import": "./dist/neem/worker-entry.js",
-        "module-sync": "./dist/neem/worker-entry.js"
+      "./inspector": {
+        "types": "./dist/inspector.d.ts",
+        "import": "./dist/inspector.js",
+        "module-sync": "./dist/inspector.js"
       }
     }
   },
@@ -151,26 +111,26 @@
   "dependencies": {
     "@nmtjs/common": "workspace:*",
     "@nmtjs/neem": "workspace:*",
-    "@standard-schema/spec": "^1.1.0",
     "cron-parser": "^5.6.1"
   },
   "peerDependencies": {
+    "@effect/sql-pg": "^4.0.4",
+    "@effect/sql-pglite": "^4.0.4",
+    "@nmtjs/effect": "workspace:*",
     "drizzle-orm": ">=1.0.0-rc.4 <2.0.0",
-    "effect": "^4.0.0",
-    "ioredis": "^5.10.1",
-    "iovalkey": "^0.3.3"
+    "effect": "^4.0.4"
   },
   "peerDependenciesMeta": {
+    "@effect/sql-pg": {
+      "optional": true
+    },
+    "@effect/sql-pglite": {
+      "optional": true
+    },
+    "@nmtjs/effect": {
+      "optional": true
+    },
     "drizzle-orm": {
-      "optional": true
-    },
-    "effect": {
-      "optional": true
-    },
-    "ioredis": {
-      "optional": true
-    },
-    "iovalkey": {
       "optional": true
     }
   },
@@ -181,17 +141,14 @@
     "README.md"
   ],
   "devDependencies": {
-    "@effect/sql-pg": "^4.0.0",
-    "@electric-sql/pglite": "^0.5.3",
+    "@effect/platform-node": "4.0.4",
+    "@effect/sql-pg": "4.0.4",
+    "@effect/sql-pglite": "4.0.4",
+    "@effect/vitest": "4.0.4",
+    "@nmtjs/effect": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.10",
-    "@types/pg": "^8.20.0",
-    "drizzle-kit": "1.0.0-rc.4",
     "drizzle-orm": "1.0.0-rc.4",
-    "effect": "^4.0.0",
-    "ioredis": "^5.11.1",
-    "iovalkey": "^0.3.3",
-    "pg": "^8.22.0",
-    "pino": "^10.3.1",
-    "zod": "catalog:"
+    "effect": "4.0.4",
+    "redis": "6.2.1"
   }
 }

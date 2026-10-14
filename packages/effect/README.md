@@ -4,7 +4,7 @@ Run a supervised Effect application in a Neem worker. The application supplies i
 services, main effect, and upstreams; the preset owns their lifetime. Neem uses
 Effect internally, while this preset supplies the application-level integration.
 
-It targets **Effect 4** (`effect@^4.0.0`). The preset imports only stable
+It targets **Effect 4** (`effect@^4.0.4`). The preset imports only stable
 Effect modules, so it follows Effect's semver guarantees. Applications choose and
 pin their own HTTP, RPC, and platform integrations, including any modules marked
 `@stability unstable`.
@@ -101,7 +101,7 @@ For a Promise-based frontend, one tested pattern is an application-owned wrapper
 over `RpcClient`. Its ManagedRuntime owns the HTTP client protocol; each call owns
 an RPC scope and accepts an AbortSignal. The application explicitly
 marks the HTTP effect returned by `RpcServer.toHttpEffect` interruptible: in Effect
-4.0.0, the HTTP handler otherwise starts uninterruptible, so disconnecting
+4.0.4, the HTTP handler otherwise starts uninterruptible, so disconnecting
 a request does not promptly close its RPC scope. A server-finalizer test verifies
 this behavior. Interruption still does not guarantee a non-cooperative database
 query has stopped.
