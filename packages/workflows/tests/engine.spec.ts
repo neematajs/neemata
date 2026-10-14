@@ -941,11 +941,22 @@ describe('child workflows', () => {
   })
 
   it.effect.each([
-    { policy: 'propagate', child: 'cancelled', attempt: 'cancelled' },
-    { policy: 'detach', child: 'running', attempt: 'started' },
+    {
+      policy: 'propagate',
+      // The child settles in a pass of its own, and the parent waits for it.
+      parent: 'cancelling',
+      child: 'cancelled',
+      attempt: 'cancelled',
+    },
+    {
+      policy: 'detach',
+      parent: 'cancelled',
+      child: 'running',
+      attempt: 'started',
+    },
   ] as const)(
     'are cancelled with their parent unless detached: $policy',
-    ({ policy, child, attempt }) => {
+    ({ policy, parent, child, attempt }) => {
       const { served, provide } = setup([order(), checkout(policy)])
 
       return provide(
@@ -956,16 +967,144 @@ describe('child workflows', () => {
           const childRunId = (yield* load(run.id)).children[0]!.childRunId!
 
           yield* cancel(run.id)
-          // The parent ends in its own pass; the child settles in one of its own.
           yield* pass(served)
-          expect((yield* load(run.id)).run.status).toBe('cancelled')
+          expect((yield* load(run.id)).run.status).toBe(parent)
           yield* pass(served)
 
           const ended = yield* load(childRunId)
           expect(ended.run.status).toBe(child)
           expect(ended.attempts).toMatchObject([{ status: attempt }])
+          // The child's end wakes the parent, which ends then.
+          yield* pass(served)
+          expect((yield* load(run.id)).run.status).toBe('cancelled')
         }),
       )
     },
   )
+
+  describe('cancelled with their parent', () => {
+    /** A workflow whose one step is a child workflow, or an activity. */
+    const nest = (name: string, child?: string): Program => ({
+      kind: 'workflow',
+      name,
+      steps: [
+        child === undefined
+          ? {
+              kind: 'activity',
+              execute: unused,
+              name: 'hold',
+              input: (_outputs, input) => input,
+            }
+          : {
+              kind: 'workflow',
+              name: child,
+              workflow: { name: child },
+              input: (_outputs, input) => input,
+            },
+      ],
+      result: (outputs) => Object.values(outputs)[0],
+    })
+    const status = (runId: string) =>
+      Effect.map(load(runId), ({ run }) => run.status)
+    const childRun = (runId: string, index = 0) =>
+      Effect.map(load(runId), ({ children }) => children[index]!.childRunId!)
+
+    it.effect('end the root only once every run under it has ended', () => {
+      const { served, provide, inspect } = setup([
+        nest('root', 'mid'),
+        nest('mid', 'leaf'),
+        nest('leaf'),
+      ])
+
+      return provide(
+        Effect.gen(function* () {
+          const { run } = yield* start({ name: 'root', input: 1 })
+          yield* pass(served)
+          const mid = yield* childRun(run.id)
+          yield* pass(served)
+          const leaf = yield* childRun(mid)
+          yield* pass(served)
+          // The leaf's handler is running when the root is cancelled.
+          const [claim] = yield* claimAttempts(served)
+
+          yield* cancel(run.id)
+          const family = Effect.all([status(run.id), status(mid), status(leaf)])
+          const seen = [yield* family]
+          while ((yield* pass(served)) > 0) seen.push(yield* family)
+
+          // Each run is told in its parent's pass and waits for its own
+          // child; the end comes back up one wake at a time.
+          expect(seen).toStrictEqual([
+            ['cancelling', 'waiting', 'running'],
+            ['cancelling', 'cancelling', 'running'],
+            ['cancelling', 'cancelling', 'cancelling'],
+            ['cancelling', 'cancelling', 'cancelled'],
+            ['cancelling', 'cancelled', 'cancelled'],
+            ['cancelled', 'cancelled', 'cancelled'],
+          ])
+          expect(yield* settle(served, claim!, completed(1))).toBe('stale')
+          expect(inspect.queue()).toStrictEqual([])
+        }),
+      )
+    })
+
+    it.effect(
+      'keep a run whose child was cancelled alone cancelling until its other children end',
+      () => {
+        const { served, provide } = setup([
+          {
+            kind: 'workflow',
+            name: 'pair',
+            steps: [
+              {
+                kind: 'parallel',
+                name: 'both',
+                members: {
+                  a: {
+                    kind: 'workflow',
+                    workflow: { name: 'leaf' },
+                    input: () => 'a',
+                  },
+                  b: {
+                    kind: 'workflow',
+                    workflow: { name: 'leaf' },
+                    input: () => 'b',
+                  },
+                },
+              },
+            ],
+            result: ({ both }) => both,
+          },
+          nest('leaf'),
+        ])
+
+        return provide(
+          Effect.gen(function* () {
+            const { run } = yield* start({ name: 'pair', input: 1 })
+            yield* pass(served)
+            const [a, b] = [
+              yield* childRun(run.id, 0),
+              yield* childRun(run.id, 1),
+            ]
+            yield* pass(served)
+
+            yield* cancel(a)
+            const family = Effect.all([status(run.id), status(a), status(b)])
+            const seen = [yield* family]
+            while ((yield* pass(served)) > 0) seen.push(yield* family)
+
+            // The parent's pass that reads `a` cancelled stops `b`, and the
+            // parent waits for it as it would after a request of its own.
+            expect(seen).toStrictEqual([
+              ['waiting', 'cancelling', 'running'],
+              ['waiting', 'cancelled', 'running'],
+              ['cancelling', 'cancelled', 'cancelling'],
+              ['cancelling', 'cancelled', 'cancelled'],
+              ['cancelled', 'cancelled', 'cancelled'],
+            ])
+          }),
+        )
+      },
+    )
+  })
 })

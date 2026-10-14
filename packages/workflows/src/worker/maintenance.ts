@@ -52,12 +52,9 @@ export type MaintenanceOptions = {
   }
 }
 
-const ACTIVE: readonly RunStatus[] = [
-  'queued',
-  'running',
-  'waiting',
-  'cancelling',
-]
+// A run `cancelling` is not timed out: it ends `cancelled`, as it was asked
+// to, once the child runs it cancelled have ended.
+const OVERDUE: readonly RunStatus[] = ['queued', 'running', 'waiting']
 
 function batch({ batchSize = 100 }: SweepOptions) {
   if (!Number.isInteger(batchSize) || batchSize < 1) {
@@ -118,7 +115,7 @@ export const timeoutRuns = Effect.fnUntraced(function* (
           kind: 'workflow',
           name: program.name,
           revision: program.revision ?? null,
-          status: ACTIVE,
+          status: OVERDUE,
           activeBefore: now - timeoutMs,
         },
         limit,

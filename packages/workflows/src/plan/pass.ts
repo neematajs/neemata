@@ -138,6 +138,14 @@ export function planPass(
   })
 }
 
+/**
+ * What driving a node answers when a child of it was found cancelled: the
+ * run is cancelled, and the node with it. The node is not ended here, while
+ * other children of it may be in flight: stopping reads what is in flight
+ * from the nodes that have not ended.
+ */
+const CANCELLED = Symbol('cancelled')
+
 function advance(draft: Draft, program: WorkflowProgram, run: StoredRun) {
   const outputs: Record<string, unknown> = Object.create(null)
   const selected: Record<string, string> = Object.create(null)
@@ -183,12 +191,14 @@ function advance(draft: Draft, program: WorkflowProgram, run: StoredRun) {
             selected,
           )
 
+    if (node === CANCELLED || node.status === 'cancelled') {
+      return cancelRun(draft, run)
+    }
     if (node.status === 'completed') {
       complete(node)
       continue
     }
     if (node.status === 'failed') return fail(node)
-    if (node.status === 'cancelled') return cancelRun(draft, run)
 
     const status = node.status === 'running' ? 'running' : 'waiting'
     if (run.status !== status) draft.updateRun(run, { status })
@@ -373,7 +383,7 @@ function fan(
  * Moves a node as far as its children allow: settles the children whose runs
  * have ended, starts those whose turn it is, and settles the node once every
  * child has settled. A failure therefore never stops a sibling; only a
- * cancelled child ends the node early, and with it the run.
+ * cancelled child stops the others early, by cancelling the run.
  */
 function drive(
   draft: Draft,
@@ -382,7 +392,7 @@ function drive(
   node: StoredNode,
   outputs: Outputs,
   selected: Selected,
-): StoredNode {
+): StoredNode | typeof CANCELLED {
   const { slots, limit, output } = fan(step, node, outputs, run.input, selected)
   const child = ({ childKey }: Slot) => draft.child(run.id, node.name, childKey)
   const started = slots.flatMap((slot) => {
@@ -396,9 +406,7 @@ function drive(
     ),
   })
   const observed = started.map((existing) => observe(draft, existing))
-  if (observed.some(({ status }) => status === 'cancelled')) {
-    return draft.updateNode(node, { status: 'cancelled' })
-  }
+  if (observed.some(({ status }) => status === 'cancelled')) return CANCELLED
 
   let inFlight = observed.filter(({ status }) => !isTerminal(status)).length
   // The runs of children a retry reopened, as many as can start now.
@@ -465,7 +473,7 @@ function driveMap(
   node: NodeWithoutInput,
   outputs: Outputs,
   selected: Selected,
-): NodeWithoutInput {
+): NodeWithoutInput | typeof CANCELLED {
   const limit = step.concurrency ?? Infinity
   const write = (patch: Partial<NodeWithoutInput>) =>
     draft.updateNodeKeepingInput(node, patch)
@@ -477,9 +485,7 @@ function driveMap(
     ),
   })
   const observed = active.map((existing) => observe(draft, existing))
-  if (observed.some(({ status }) => status === 'cancelled')) {
-    return write({ status: 'cancelled' })
-  }
+  if (observed.some(({ status }) => status === 'cancelled')) return CANCELLED
 
   let inFlight = observed.filter(({ status }) => !isTerminal(status)).length
   const { pending, pendingLimit, hasMore } = draft.work(

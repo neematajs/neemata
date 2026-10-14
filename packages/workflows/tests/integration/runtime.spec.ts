@@ -1,8 +1,10 @@
 import { Client, Store, task, Worker, workflow } from '@nmtjs/workflows'
 import * as Deferred from 'effect/Deferred'
 import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
 import * as Queue from 'effect/Queue'
 import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
 import { describe, expect } from 'vitest'
 
 import type { OrderInput } from './fixtures/app.ts'
@@ -574,6 +576,79 @@ for (const target of targets) {
             status: 'cancelled',
           })
           expect((yield* Client.get(run.id))!.run.output).toBeUndefined()
+        }),
+    )
+
+    scenario(
+      target,
+      'ends a cancelled root only once every workflow run under it has ended',
+      () =>
+        Effect.gen(function* () {
+          const running = yield* Deferred.make<void>()
+          const Leaf = workflow(
+            { ...text, name: 'nest.leaf', pool: 'p' },
+            function* (w) {
+              return yield* w.activity('block', {
+                ...text,
+                from: w.input,
+                handler: () =>
+                  Deferred.succeed(running, undefined).pipe(
+                    Effect.andThen(Effect.never),
+                  ),
+              })
+            },
+          )
+          const Mid = workflow(
+            { ...text, name: 'nest.mid', pool: 'p' },
+            function* (w) {
+              return yield* w.workflow('leaf', Leaf, { input: w.input })
+            },
+          )
+          const Root = workflow(
+            { ...text, name: 'nest.root', pool: 'p' },
+            function* (w) {
+              return yield* w.workflow('mid', Mid, { input: w.input })
+            },
+          )
+          yield* serve(
+            Worker.coordinator({ workflows: [Root, Mid], ...fast }),
+            Worker.execution({ workflows: [Leaf], ...fast }),
+          )
+          // The leaf's passes are coordinated apart, to be held back below.
+          const leafScope = yield* Scope.make()
+          yield* serve(Worker.coordinator({ workflows: [Leaf], ...fast })).pipe(
+            Scope.provide(leafScope),
+          )
+          const run = yield* Client.start(Root, 'a')
+          yield* Deferred.await(running)
+          yield* Scope.close(leafScope, Exit.void)
+
+          const statuses = Effect.map(Client.getFamily(run.id), (family) =>
+            Object.fromEntries(family.map(({ run }) => [run.name, run.status])),
+          )
+          const mid = (yield* Client.get(run.id))!.children[0]!.childRunId!
+          const leaf = (yield* Client.get(mid))!.children[0]!.childRunId!
+
+          // The mid's pass tells the leaf to cancel; nothing ends the leaf
+          // while its passes are not coordinated, so neither run above ends.
+          yield* Client.cancel(run.id)
+          yield* reached(leaf, 'cancelling')
+          yield* Effect.sleep('500 millis')
+          expect(yield* statuses).toEqual({
+            'nest.root': 'cancelling',
+            'nest.mid': 'cancelling',
+            'nest.leaf': 'cancelling',
+          })
+
+          yield* serve(Worker.coordinator({ workflows: [Leaf], ...fast }))
+          // The family is read after the root ended: every run under it
+          // ended before the root could.
+          yield* ended(run.id)
+          expect(yield* statuses).toEqual({
+            'nest.root': 'cancelled',
+            'nest.mid': 'cancelled',
+            'nest.leaf': 'cancelled',
+          })
         }),
     )
 

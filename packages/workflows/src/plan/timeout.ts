@@ -23,7 +23,7 @@ export function timeoutScope(
  * Fails a run that has been active for longer than its workflow allows, and
  * cancels what it has in flight. The limit is that of the program given, so
  * it applies to runs of exactly that program: a run of another revision, or
- * of this revision as other code, is left alone.
+ * of this revision as other code, is left alone. So is a run `cancelling`.
  *
  * `false` when the run is not, or no longer, overdue.
  */
@@ -43,6 +43,9 @@ export function planTimeout(
       run.name !== name ||
       run.revision !== revision ||
       isTerminal(run.status) ||
+      // Being cancelled, it ends so once the child runs it cancelled have:
+      // failing it now would replace the outcome asked for first.
+      run.status === 'cancelling' ||
       // Since its last manual retry, not since it was created.
       draft.now - run.activeSince <= timeoutMs ||
       drift(draft, run, program.definition)
