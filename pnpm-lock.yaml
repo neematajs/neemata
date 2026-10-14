@@ -344,14 +344,10 @@ importers:
         version: 8.22.0
 
   packages/pubsub:
-    dependencies:
-      '@nmtjs/common':
-        specifier: workspace:*
-        version: link:../common
-      '@standard-schema/spec':
-        specifier: ^1.1.0
-        version: 1.1.0
     devDependencies:
+      '@effect/vitest':
+        specifier: ^4.0.0
+        version: 4.0.3(effect@4.0.0)(vitest@5.0.2)
       effect:
         specifier: ^4.0.0
         version: 4.0.0
@@ -361,9 +357,6 @@ importers:
       iovalkey:
         specifier: ^0.3.3
         version: 0.3.3(supports-color@10.2.2)
-      zod:
-        specifier: 'catalog:'
-        version: 4.4.3
 
   packages/vite:
     dependencies:
@@ -667,6 +660,12 @@ packages:
     resolution: {integrity: sha512-w0sRMA08Tgz73aReYpFSxD+nz2LUKYhH/4zaRpo4G5b5YG+eqiAL7XYhqIjvGZ8MZacazbG71Jhprv6ccz9HDg==}
     peerDependencies:
       effect: ^4.0.0
+
+  '@effect/vitest@4.0.3':
+    resolution: {integrity: sha512-jsIkpssf0CFuOeycW2sQZkWx0qzlsRv+JIkzd9qQpoFDcHC9JZFSdIjEBAhsdp20pDy4Y/b2vT/ew7wXZxvEig==}
+    peerDependencies:
+      effect: ^4.0.3
+      vitest: '>=5.0.0 <6.0.0'
 
   '@electric-sql/pglite@0.5.3':
     resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
@@ -7964,6 +7963,11 @@ snapshots:
   '@effect/sql-pg@4.0.0(effect@4.0.0)':
     dependencies:
       effect: 4.0.0
+
+  '@effect/vitest@4.0.3(effect@4.0.0)(vitest@5.0.2)':
+    dependencies:
+      effect: 4.0.0
+      vitest: 5.0.2(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@5.0.2)(@vitest/ui@5.0.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
 
   '@electric-sql/pglite@0.5.3': {}
 

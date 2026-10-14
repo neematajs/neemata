@@ -1,7 +1,7 @@
 {
   "name": "@nmtjs/pubsub",
   "version": "0.18.0-alpha.4",
-  "description": "Typed ephemeral publish/subscribe channels with Redis and Valkey adapters.",
+  "description": "Typed ephemeral publish/subscribe channels for Effect, with Redis and Valkey brokers.",
   "type": "module",
   "repository": {
     "type": "git",
@@ -19,15 +19,10 @@
       "import": "./dist/index.js",
       "module-sync": "./dist/index.js"
     },
-    "./effect": {
-      "types": "./src/effect/index.ts",
-      "import": "./dist/effect/index.js",
-      "module-sync": "./dist/effect/index.js"
-    },
-    "./redis": {
-      "types": "./src/redis.ts",
-      "import": "./dist/redis.js",
-      "module-sync": "./dist/redis.js"
+    "./*": {
+      "types": "./src/*.ts",
+      "import": "./dist/*.js",
+      "module-sync": "./dist/*.js"
     }
   },
   "publishConfig": {
@@ -37,27 +32,18 @@
         "import": "./dist/index.js",
         "module-sync": "./dist/index.js"
       },
-      "./effect": {
-        "types": "./dist/effect/index.d.ts",
-        "import": "./dist/effect/index.js",
-        "module-sync": "./dist/effect/index.js"
-      },
-      "./redis": {
-        "types": "./dist/redis.d.ts",
-        "import": "./dist/redis.js",
-        "module-sync": "./dist/redis.js"
+      "./*": {
+        "types": "./dist/*.d.ts",
+        "import": "./dist/*.js",
+        "module-sync": "./dist/*.js"
       }
     }
   },
-  "dependencies": {
-    "@nmtjs/common": "workspace:*",
-    "@standard-schema/spec": "^1.1.0"
-  },
   "devDependencies": {
+    "@effect/vitest": "^4.0.0",
     "effect": "^4.0.0",
     "ioredis": "^5.11.1",
-    "iovalkey": "^0.3.3",
-    "zod": "catalog:"
+    "iovalkey": "^0.3.3"
   },
   "peerDependencies": {
     "effect": "^4.0.0",
@@ -65,9 +51,6 @@
     "iovalkey": "^0.3.3"
   },
   "peerDependenciesMeta": {
-    "effect": {
-      "optional": true
-    },
     "ioredis": {
       "optional": true
     },

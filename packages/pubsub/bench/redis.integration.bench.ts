@@ -1,15 +1,17 @@
-import { defineChannel, PubSubManager } from '@nmtjs/pubsub'
-import { RedisPubSubAdapter } from '@nmtjs/pubsub/redis'
+import * as Effect from 'effect/Effect'
+import * as Exit from 'effect/Exit'
+import * as Schema from 'effect/Schema'
+import * as Scope from 'effect/Scope'
+import * as Stream from 'effect/Stream'
 import { test } from 'vitest'
-import * as z from 'zod'
 
-import type { RedisPubSubClient } from '../src/redis.ts'
+import type { RedisClient } from '../src/RedisBroker.ts'
+import { Broker, Channel, PubSub } from '../src/index.ts'
+import * as RedisBroker from '../src/RedisBroker.ts'
 import {
-  createTestLogger,
   createTestName,
   requireServiceEnv,
   serviceTargets,
-  waitFor,
 } from '../tests/integration/helpers.ts'
 
 const benchmarkOptions = {
@@ -27,62 +29,70 @@ for (const target of serviceTargets) {
     `${target.name} PubSub round trip`,
     async ({ bench }) => {
       const channelName = createTestName('pubsub-benchmark')
-      const channel = defineChannel({
-        name: channelName,
-        params: z.object({ id: z.string() }),
-        events: {
-          message: z.object({ text: z.string() }),
-        },
+      const channel = Channel.make(channelName, {
+        params: Schema.Struct({ id: Schema.String }),
         key: ({ id }) => id,
+        events: { message: Schema.Struct({ text: Schema.String }) },
       })
       const params = { id: 'room-1' }
       const payload = { text: 'benchmark' }
-      let adapter: RedisPubSubAdapter | undefined
-      let client: RedisPubSubClient | undefined
-      let controller: AbortController | undefined
-      let iterator: AsyncIterator<unknown> | undefined
-      let pendingMessage: Promise<IteratorResult<unknown>> | undefined
+      let client: RedisClient | undefined
+      let scope: Scope.Closeable | undefined
+      let pubsub: PubSub.PubSub['Service'] | undefined
+      // Settle the pending round trip: on the next message, or when the
+      // consumer stops, so a dead stream fails the benchmark rather than
+      // hanging it.
+      let received: (() => void) | undefined
+      let stopped: ((error: Error) => void) | undefined
+      let ended: Error | undefined
+
+      const roundTrip = async () => {
+        if (ended) throw ended
+        const arrived = new Promise<void>((resolve, reject) => {
+          received = resolve
+          stopped = reject
+        })
+        // Awaited together, so either failure ends the round trip and
+        // neither goes unhandled.
+        await Promise.all([
+          Effect.runPromise(
+            pubsub!.publish(channel.events.message, params, payload),
+          ),
+          arrived,
+        ])
+      }
 
       async function setup() {
-        if (adapter) return
+        if (scope) return
 
         try {
           client = target.createClient()
-          adapter = new RedisPubSubAdapter(
-            client,
-            createTestLogger(`${target.name.toLowerCase()}-benchmark`),
+          scope = Effect.runSync(Scope.make())
+          await Effect.runPromise(
+            Effect.gen(function* () {
+              const broker = yield* RedisBroker.make(client!)
+              pubsub = yield* PubSub.make.pipe(
+                Effect.provideService(Broker.Broker, broker),
+              )
+              const messages = yield* pubsub.subscribe(channel, params)
+              yield* Effect.forkIn(
+                Stream.runForEach(messages, () =>
+                  Effect.sync(() => received?.()),
+                ).pipe(
+                  Effect.onExit((exit) =>
+                    Effect.sync(() => {
+                      ended = new Error('PubSub benchmark stream ended', {
+                        cause: exit,
+                      })
+                      stopped?.(ended)
+                    }),
+                  ),
+                ),
+                scope!,
+              )
+            }).pipe(Scope.provide(scope)),
           )
-          await adapter.initialize()
-
-          const manager = new PubSubManager({
-            logger: createTestLogger(`${target.name.toLowerCase()}-benchmark`),
-            adapter,
-          })
-          controller = new AbortController()
-          const stream = await manager.subscribe(
-            channel,
-            params,
-            undefined,
-            controller.signal,
-          )
-          iterator = stream[Symbol.asyncIterator]()
-          pendingMessage = iterator.next()
-
-          await waitFor(async () => {
-            const result = await client!.pubsub(
-              'NUMSUB',
-              `${channelName}:${params.id}`,
-            )
-            return Number(result[1] ?? 0) === 1
-          })
-
-          await manager.publish(channel.events.message, params, payload)
-          const received = await pendingMessage
-          if (received.done) throw new Error('PubSub benchmark stream closed')
-          pendingMessage = iterator.next()
-
-          publish = () =>
-            manager.publish(channel.events.message, params, payload)
+          await roundTrip()
         } catch (error) {
           await teardown()
           throw error
@@ -90,19 +100,15 @@ for (const target of serviceTargets) {
       }
 
       async function teardown() {
-        controller?.abort()
-        await iterator?.return?.()
-        await adapter?.dispose()
+        if (scope) await Effect.runPromise(Scope.close(scope, Exit.void))
         await client?.quit()
-        adapter = undefined
         client = undefined
-        controller = undefined
-        iterator = undefined
-        pendingMessage = undefined
-        publish = async () => false
+        scope = undefined
+        pubsub = undefined
+        received = undefined
+        stopped = undefined
+        ended = undefined
       }
-
-      let publish: () => Promise<boolean> = async () => false
 
       // Tinybench skips afterAll hooks when an iteration throws.
       try {
@@ -110,12 +116,8 @@ for (const target of serviceTargets) {
           `publishes and receives ${messagesPerSample} messages`,
           { beforeAll: setup },
           async () => {
-            for (let index = 0; index < messagesPerSample; index++) {
-              const received = pendingMessage!
-              if (!(await publish())) throw new Error('PubSub publish failed')
-              if ((await received).done) throw new Error('PubSub stream closed')
-              pendingMessage = iterator!.next()
-            }
+            for (let index = 0; index < messagesPerSample; index++)
+              await roundTrip()
           },
         ).run(benchmarkOptions)
       } finally {
