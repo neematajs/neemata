@@ -129,6 +129,7 @@ export type {
   Program,
   Registry,
   Step,
+  StopReason,
   Target,
   TaskProgram,
   WorkflowProgram,

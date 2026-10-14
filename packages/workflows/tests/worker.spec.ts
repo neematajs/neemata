@@ -14,6 +14,7 @@ import type {
   Program,
   Registry,
   RetryPolicy,
+  StopReason,
   TaskProgram,
   WorkflowProgram,
 } from '../src/index.ts'
@@ -63,17 +64,22 @@ const workflow = (
   result: ({ act }) => act,
 })
 
-/** A handler that runs until it is interrupted, and says when it was. */
+/** A handler that runs until it is interrupted, and says when and why. */
 function endless() {
-  const seen = { started: 0, interruptedAt: undefined as number | undefined }
-  const execute: Execute = () =>
+  const seen = {
+    started: 0,
+    interruptedAt: undefined as number | undefined,
+    stopReason: undefined as StopReason | undefined,
+  }
+  const execute: Execute = (_input, attempt) =>
     Effect.suspend(() => {
       seen.started += 1
       return Effect.never
     }).pipe(
       Effect.onInterrupt(() =>
-        Effect.map(Clock.currentTimeMillis, (now) => {
-          seen.interruptedAt = now
+        Effect.gen(function* () {
+          seen.interruptedAt = yield* Clock.currentTimeMillis
+          seen.stopReason = yield* attempt.stopReason
         }),
       ),
     )
@@ -386,6 +392,27 @@ describe('starting an attempt', () => {
       )
     },
   )
+
+  it.effect('gives no stop reason to a handler that ended by itself', () => {
+    const kept: AttemptInfo[] = []
+    const { served, provide } = setup([
+      task((_input, attempt) => {
+        kept.push(attempt)
+        // Ends while the race for it is under way.
+        return Effect.as(Effect.sleep(1_000), 'done')
+      }),
+    ])
+
+    return provide(
+      Effect.gen(function* () {
+        yield* execution(served)
+        const { run } = yield* startTask()
+        yield* elapse(1_000)
+        expect((yield* load(run.id)).run.status).toBe('completed')
+        expect(yield* kept[0]!.stopReason).toBeUndefined()
+      }),
+    )
+  })
 
   it.effect('does not run the handler of a run that is being cancelled', () => {
     const { seen, execute } = endless()
@@ -718,7 +745,11 @@ describe('a heartbeat', () => {
         // One beat missed, the next in time: still the first delivery.
         yield* elapse(LEASE * 2)
         expect(renewals).toBe(6)
-        expect(seen).toStrictEqual({ started: 1, interruptedAt: undefined })
+        expect(seen).toStrictEqual({
+          started: 1,
+          interruptedAt: undefined,
+          stopReason: undefined,
+        })
       }),
       Store,
       flaky,
@@ -771,6 +802,7 @@ describe('a heartbeat', () => {
 
         yield* elapse(5_000)
         expect(seen.interruptedAt).toBe(LEASE + 5_000)
+        expect(seen.stopReason).toBe('claimLost')
       }),
     )
   })
@@ -840,6 +872,7 @@ describe('a heartbeat', () => {
 
         yield* elapse(12_000)
         expect(seen.interruptedAt).toBe(12_000)
+        expect(seen.stopReason).toBe('timedOut')
         // The outcome is a write of its own, made once the renewal is.
         expect((yield* load(run.id)).attempts).toMatchObject([
           { status: 'started' },
@@ -869,6 +902,7 @@ describe('a heartbeat', () => {
         const stopping = yield* Effect.forkScoped(Fiber.interrupt(worker))
         yield* idle
         expect(seen.interruptedAt).toBe(11_000)
+        expect(seen.stopReason).toBe('shutdown')
         // Given back only when the renewal has come back.
         expect(stopping.pollUnsafe()).toBeUndefined()
         expect(inspect.queue()).toMatchObject([{ claim: {} }])
@@ -907,6 +941,7 @@ describe('a heartbeat', () => {
 
           yield* elapse(BEAT - 1_000)
           expect(seen.interruptedAt).toBe(BEAT)
+          expect(seen.stopReason).toBe('cancelled')
           expect((yield* load(run.id)).attempts).toMatchObject([
             { status: 'cancelled' },
           ])
@@ -937,6 +972,7 @@ describe('a heartbeat', () => {
           yield* idle
           // Long before the beat: the hint made the worker look at once.
           expect(seen.interruptedAt).toBe(1_000)
+          expect(seen.stopReason).toBe('cancelled')
           expect((yield* load(run.id)).run.status).toBe('cancelled')
           expect(inspect.queue()).toStrictEqual([])
         }),
@@ -1152,6 +1188,7 @@ describe('a worker that stops', () => {
           // Interrupting returns when the worker has given everything back.
           yield* Fiber.interrupt(worker)
           expect(seen.interruptedAt).toBe(0)
+          expect(seen.stopReason).toBe('shutdown')
           const [queued] = inspect.queue()
           expect(queued).not.toHaveProperty('claim')
           expect(queued).not.toHaveProperty('error')
@@ -1170,6 +1207,43 @@ describe('a worker that stops', () => {
       )
     },
   )
+
+  it.effect('does not start a handler it was stopped while preparing', () => {
+    const { seen, execute } = endless()
+    const { served, provide, inspect, store } = setup([task(execute)])
+    let open: () => void = () => {}
+    // Subscribing waits: the worker is stopped after the work has begun and
+    // before its handler would start.
+    const gated = Store.of({
+      ...store,
+      listen: (topic) =>
+        Effect.andThen(
+          Effect.callback<void>((resume) => {
+            open = () => resume(Effect.void)
+          }),
+          store.listen(topic),
+        ),
+    })
+
+    return provide(
+      Effect.gen(function* () {
+        const worker = yield* Effect.provideService(
+          execution(served),
+          Store,
+          gated,
+        )
+        yield* startTask()
+        yield* idle
+        const stopping = yield* Effect.forkScoped(Fiber.interrupt(worker))
+        yield* idle
+        open()
+        yield* Fiber.join(stopping)
+
+        expect(seen.started).toBe(0)
+        expect(inspect.queue()[0]).not.toHaveProperty('claim')
+      }),
+    )
+  })
 
   it.effect(
     'lets its handlers finish when the store fails it, then fails itself',

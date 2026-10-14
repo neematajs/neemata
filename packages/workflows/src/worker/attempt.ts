@@ -6,7 +6,7 @@ import * as Formatter from 'effect/Formatter'
 import * as Option from 'effect/Option'
 
 import type { AttemptCommand, StoredError } from '../model.ts'
-import type { Registry } from '../program.ts'
+import type { Registry, StopReason } from '../program.ts'
 import type { Claim } from '../store.ts'
 import { begin, settle } from '../engine.ts'
 import { CleanupTimeout } from '../errors.ts'
@@ -99,20 +99,30 @@ export const runAttempt =
       }
       const { execute, timeout } = begun.executable
 
-      // Beginning is a write and was not interrupted. A worker that was told
-      // to stop meanwhile learns it here, before any of the handler has run:
-      // the work goes back untouched.
-      const stopping = yield* Effect.exit(Effect.interruptible(Effect.void))
-      if (Exit.isFailure(stopping)) return yield* store.release(claim)
-
       // Told that the run was asked to stop or has ended. Subscribed before
       // the handler starts, so no request made while it runs is missed.
       const stopped = yield* store.listen(stopTopic(runId))
 
+      // Beginning and subscribing were not interrupted. A worker that was
+      // told to stop meanwhile learns it here, before any of the handler has
+      // run: the work goes back untouched.
+      const stopping = yield* Effect.exit(Effect.interruptible(Effect.void))
+      if (Exit.isFailure(stopping)) return yield* store.release(claim)
+
+      // Set by whatever ends the race below to stop the handler, before the
+      // handler is told: its finalizers read it as they run. The first to
+      // say stands, as the handler is told once; told with nothing said
+      // while it runs, the worker itself is stopping.
+      let reason: StopReason | undefined
+      const attempt = {
+        ...begun.attempt,
+        stopReason: Effect.sync(() => reason),
+      }
+
       // Programs erase what their handlers require: the worker's `R` is the
       // promise that it is provided. A handler owns a scope for its attempt.
       const handler = Effect.scoped(
-        Effect.suspend(() => execute(command.input, begun.attempt)),
+        Effect.suspend(() => execute(command.input, attempt)),
       ) as Effect.Effect<unknown, unknown, R>
       // Detached, so that nothing waits for it but `stop`, which gives up.
       const fiber = yield* Effect.forkDetach(handler, {
@@ -137,8 +147,12 @@ export const runAttempt =
             ),
           )
           if (Exit.isSuccess(unwanted)) {
-            if (unwanted.value) return 'unwanted' as const
+            if (unwanted.value) {
+              reason ??= 'cancelled'
+              return 'unwanted' as const
+            }
           } else if (Cause.hasFails(unwanted.cause)) {
+            reason ??= 'claimLost'
             return 'lost' as const
           }
         }
@@ -146,22 +160,27 @@ export const runAttempt =
       const limit =
         timeoutMs === undefined
           ? Effect.never
-          : Effect.as(Effect.sleep(timeoutMs), 'timedOut' as const)
+          : Effect.map(Effect.sleep(timeoutMs), () => {
+              reason ??= 'timedOut'
+              return 'timedOut' as const
+            })
 
       // The handler is told to stop once, in a fiber of its own, and that
       // fiber is what is waited for afterwards: the time the handler has to
       // end counts from when it was told, whatever else is waited for first.
       let told: Fiber.Fiber<void, CleanupTimeout> | undefined
-      const telling = Effect.suspend(() =>
-        told
+      const telling = Effect.suspend(() => {
+        // A handler that has ended was not stopped, whatever ends the race.
+        if (fiber.pollUnsafe() === undefined) reason ??= 'shutdown'
+        return told
           ? Effect.succeed(told)
           : Effect.map(
               Effect.forkDetach(stop(fiber, cleanupTimeoutMs), {
                 startImmediately: true,
               }),
               (stopping) => (told = stopping),
-            ),
-      )
+            )
+      })
       const halted = Effect.flatMap(telling, Fiber.join)
 
       // Interrupted with the others when the race below is over, whatever

@@ -74,7 +74,37 @@ export type AttemptInfo = {
    * it is to be compared, never read.
    */
   readonly idempotencyKey: string
+  /**
+   * Why the worker is stopping the handler, once it is: set before the
+   * handler is interrupted, so its finalizers can read it. `undefined` while
+   * nothing stops it, and for a handler that is interrupted by anything but
+   * its worker.
+   */
+  readonly stopReason: Effect.Effect<StopReason | undefined>
 }
+
+/**
+ * Why a worker stops a handler. On the first two the worker ends the attempt
+ * once the handler has; on the last two it leaves the attempt to another
+ * delivery. A handler that overruns `cleanupTimeoutMs` ends nothing, and its
+ * attempt is delivered again whatever the reason.
+ */
+export type StopReason =
+  /**
+   * The run no longer wants the work: it is being cancelled, or it ended
+   * without it, as a run past its own timeout does. The attempt is recorded
+   * as `cancelled`.
+   */
+  | 'cancelled'
+  /** The attempt ran past its `timeout`; it is recorded as `timedOut`. */
+  | 'timedOut'
+  /** The worker is stopping; the work is given back for another worker. */
+  | 'shutdown'
+  /**
+   * The worker lost its claim: its lease ended before it was renewed, and
+   * the work may already be another delivery's.
+   */
+  | 'claimLost'
 
 /**
  * A task or activity handler, from stored input to stored output. A failure

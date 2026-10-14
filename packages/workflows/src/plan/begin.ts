@@ -1,3 +1,5 @@
+import * as Effect from 'effect/Effect'
+
 import type { DefinitionConflict } from '../errors.ts'
 import type { AttemptCommand } from '../model.ts'
 import type { AttemptInfo, Executable, Registry } from '../program.ts'
@@ -27,6 +29,8 @@ export type Begun =
   /** The attempt no longer counts; its command was dropped. */
   | { readonly _tag: 'Stale' }
   | Unroutable
+
+const unstopped = Effect.succeed(undefined)
 
 /**
  * The attempt's unit, and the manifest its revision is checked against:
@@ -95,6 +99,8 @@ export function planBegin(
         attemptNumber: attempt.attemptNumber,
         // Unambiguous whatever the names contain, which a joined path is not.
         idempotencyKey: JSON.stringify([runId, nodeName, childKey]),
+        // Nothing stops a handler but a worker, which says why itself.
+        stopReason: unstopped,
       },
     }
   })
