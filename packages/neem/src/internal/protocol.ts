@@ -28,6 +28,8 @@ export const FATAL_FRAME = 2
 export type WorkerFatal = SerializedError & { origin: NeemWorkerErrorOrigin }
 export type FatalFrame = readonly [typeof FATAL_FRAME, WorkerFatal]
 
+// Optional fields use `optional`, not `optionalKey`: producers spread values
+// that may be undefined, and `optionalKey` rejects a present undefined key.
 export const workerUpdateSchema = Schema.Union([
   Schema.Struct({
     type: Schema.Literal('Patch'),
@@ -37,7 +39,7 @@ export const workerUpdateSchema = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal('FullReload'),
-    reason: Schema.optionalKey(Schema.String),
+    reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal('Noop') }),
 ])
@@ -63,7 +65,7 @@ export const ThreadRpcs = RpcGroup.make(
   Rpc.make('patch', {
     payload: {
       update: workerUpdateSchema,
-      url: Schema.optionalKey(Schema.String),
+      url: Schema.optional(Schema.String),
     },
     success: patchResult,
   }),

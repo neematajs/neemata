@@ -71,6 +71,19 @@ describe('Effect boundary schemas', () => {
     )
     expect(() => Schema.decodeUnknownSync(schema)({ workers: 42 })).toThrow()
   })
+  it('accepts patch requests whose optional fields are present but undefined', () => {
+    const schema = ThreadRpcs.requests.get('patch')!.payloadSchema
+    for (const update of [
+      { type: 'Noop' as const },
+      { type: 'FullReload' as const, reason: undefined },
+    ]) {
+      const payload = { update, url: undefined }
+      const encoded = Schema.encodeSync(schema)(payload)
+      expect(
+        Schema.decodeUnknownSync(schema)(structuredClone(encoded)),
+      ).toMatchObject({ update: { type: update.type } })
+    }
+  })
   it('carries the startup error name, stack, and cause through the RPC codec', () => {
     const schema = ThreadRpcs.requests.get('start')!.errorSchema
     const error = new TypeError('startup failed', {
