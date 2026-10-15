@@ -50,6 +50,30 @@ describe('Neem runtime restart', () => {
     }
   }, 60_000)
 
+  it('keeps both threads running after an edit that changes no code', async () => {
+    const fixture = await createFixture()
+    const neem = await startWithPatchClients(fixture)
+    await generations(fixture, neem, 'v1', 1)
+
+    // A comment-only edit reaches the threads as an update with no patch file.
+    await replaceInFile(
+      fixture.valueFile,
+      "marker: 'v1'",
+      "marker: 'v1' /* unchanged */",
+      neem,
+    )
+    const outcome = await neem.waitForEvent(
+      (event) =>
+        event.event === 'runtime:patch-applied' ||
+        event.event === 'runtime:patch-fallback',
+      30_000,
+    )
+    expect(outcome).toMatchObject({ event: 'runtime:patch-applied' })
+    expect(
+      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
+    ).toHaveLength(0)
+  }, 60_000)
+
   it('restarts both threads from fresh output when upstreams change', async () => {
     const fixture = await createFixture()
     const neem = await startWithPatchClients(fixture)
