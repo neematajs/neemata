@@ -264,6 +264,14 @@ are off unless asked for, and `verify` asks for neither.
 Ids are UUIDv7, so runs made at one instant are listed in the order they were
 made in, exactly so when one process made them.
 
+Times are stored as `timestamptz` and read back as whole Unix milliseconds,
+rounded down. The engine writes whole milliseconds; a column can hold
+microseconds all the same, set by `now()` (as generation 4 set several, and
+column defaults do) or by hand, and reads as the millisecond it falls in. A
+filter by time compares what the column holds, so a schedule whose
+`next_run_at` is past a whole millisecond is due a millisecond after the one
+it reads as. Cursors keep the microseconds.
+
 A command's row says where it is: `lease_token` is set by its first claim and
 kept, `lease_expires_at` is set while a claim is out. A command with no token
 was never claimed, one with a token and no expiry was given back, and a claim

@@ -856,7 +856,8 @@ an earlier page of the same filter).
 
 A run is `queued`, `running`, `waiting` (on child runs), `cancelling`, and
 ends as `completed`, `failed` or `cancelled`. Times are Unix milliseconds, so
-records are plain JSON.
+records are plain JSON, and whole: the PostgreSQL store rounds down to the
+millisecond a time stored with microseconds, as one set by `now()` or by hand.
 
 ### Watching a run
 

@@ -58,6 +58,7 @@ import {
   ACTIVE,
   attempts,
   children,
+  millis,
   nodes,
   PENDING,
   runs,
@@ -201,7 +202,6 @@ const uuids = (param: string) =>
 const texts = (param: string) =>
   `ANY(ARRAY(SELECT jsonb_array_elements_text(${param}::jsonb)))`
 const instant = (param: string) => `to_timestamp(${param}::float8 / 1000)`
-const millis = (column: string) => `extract(epoch FROM ${column}) * 1000`
 /** A timestamp as a cursor carries it, and back: exact, whatever the session. */
 const micros = (column: string) =>
   `(extract(epoch FROM ${column}) * 1000000)::bigint`
@@ -533,7 +533,7 @@ function load({ held, units, open, linked, results }: LoadShape) {
   ]
   const text = `${ctes.length > 0 ? `WITH ${ctes.join(', ')}` : ''}
   SELECT jsonb_build_object(
-    'now', floor(${millis('clock_timestamp()')}),
+    'now', ${millis('clock_timestamp()')},
     'runs', (SELECT ${runs.rows} FROM ${
       held ? 'head' : `workflow_runs WHERE id = ${uuids($('records'))}`
     }),

@@ -114,6 +114,23 @@ const storageFailure = (exit: Exit.Exit<unknown, unknown>) => {
   return cause as SqlError.SqlError
 }
 
+/**
+ * A time with microseconds, as `now()` writes one, and the whole milliseconds
+ * the store reads it as: rounded down, which `.678999` tells from rounding.
+ */
+const MICROS = '2026-01-02T03:04:05.678999Z'
+const MILLIS = Date.parse('2026-01-02T03:04:05.678Z')
+
+/** What the column of the table's one row holds, rounded down to ms, exactly. */
+const floored = (table: string, column: string) =>
+  Effect.map(
+    query<{ micros: string }>(
+      `SELECT (extract(epoch FROM ${column}) * 1000000)::bigint::text AS micros
+       FROM ${table}`,
+    ),
+    ([row]) => Number(BigInt(row!.micros) / 1000n),
+  )
+
 // Each test starts a database of its own and installs or migrates a whole
 // schema in it: seconds on a slow runner, past the default timeout.
 describe('the schema', { timeout: 30_000 }, () => {
@@ -397,6 +414,33 @@ describe('the schema', { timeout: 30_000 }, () => {
       expect(yield* store.dead({ limit: 10 })).toEqual({ items: [] })
       expect(yield* query('SELECT id FROM workflow_commands')).toEqual([])
     }).pipe(Effect.scoped, Effect.provide(database)),
+  )
+
+  it.live(
+    'times the old engine wrote with microseconds read as whole milliseconds',
+    () =>
+      Effect.gen(function* () {
+        yield* generation4
+        // As the old engine stamped them, by `now()`: `active_since` already is.
+        yield* apply([
+          `UPDATE workflow_runs SET updated_at = '${MICROS}'`,
+          `UPDATE workflow_nodes SET updated_at = '${MICROS}'`,
+          `UPDATE workflow_node_children
+           SET created_at = '${MICROS}', updated_at = '${MICROS}'`,
+          `UPDATE workflow_attempts
+           SET dispatched_at = '${MICROS}', completed_at = '${MICROS}'`,
+        ])
+        yield* Postgres.migrateFrom4
+        const activeSince = yield* floored('workflow_runs', 'active_since')
+        const store = yield* Postgres.make()
+
+        expect(yield* store.load(RUN)).toMatchObject({
+          run: { activeSince, updatedAt: MILLIS },
+          nodes: [{ updatedAt: MILLIS }],
+          children: [{ createdAt: MILLIS, updatedAt: MILLIS }],
+          attempts: [{ dispatchedAt: MILLIS, completedAt: MILLIS }],
+        })
+      }).pipe(Effect.scoped, Effect.provide(database)),
   )
 
   const ROOT = '00000000-0000-4000-8000-000000000011'
@@ -1174,6 +1218,130 @@ function adapter(real: boolean) {
         // The claim is held all the while, by the id it was given under.
         yield* store.transact({}, () => commit({ ack: [claimed!] }, 0))
         expect(yield* claim()).toEqual([])
+      }),
+    )
+
+    test(
+      'times written with microseconds read as whole milliseconds',
+      Effect.gen(function* () {
+        const store = yield* Store
+        const run = yield* create
+        const at = run.createdAt
+        const step = { runId: run.id, version: 1, createdAt: at, updatedAt: at }
+        const scope = {
+          runs: [run.id],
+          schedules: ['nightly'],
+          scheduleNames: true,
+        } as const
+        yield* store.transact(scope, () =>
+          commit(
+            {
+              nodes: [
+                { ...step, name: 'step', kind: 'task', status: 'running' },
+              ],
+              children: [
+                {
+                  ...step,
+                  nodeName: 'step',
+                  childKey: '$self',
+                  kind: 'task',
+                  status: 'running',
+                  attemptCount: 1,
+                },
+              ],
+              attempts: [
+                {
+                  id: crypto.randomUUID(),
+                  runId: run.id,
+                  nodeName: 'step',
+                  childKey: '$self',
+                  status: 'completed',
+                  attemptNumber: 1,
+                  retryAttemptNumber: 1,
+                  input: {},
+                  dispatchedAt: at,
+                  completedAt: at,
+                },
+              ],
+              schedules: [
+                {
+                  name: 'nightly',
+                  runnable: { kind: 'workflow', name: 'flow' },
+                  input: 1,
+                  tags: {},
+                  everyMs: 60_000,
+                  enabled: true,
+                  nextRunAt: at,
+                  lastSlotAt: at,
+                  version: 1,
+                  createdAt: at,
+                  updatedAt: at,
+                },
+              ],
+            },
+            undefined,
+          ),
+        )
+        // As an operator, a column default or the old engine writes them.
+        yield* apply([
+          `UPDATE workflow_runs SET active_since = '${MICROS}',
+             created_at = '${MICROS}', updated_at = now()`,
+          `UPDATE workflow_nodes
+           SET created_at = '${MICROS}', updated_at = '${MICROS}'`,
+          `UPDATE workflow_node_children
+           SET created_at = '${MICROS}', updated_at = '${MICROS}'`,
+          `UPDATE workflow_attempts
+           SET dispatched_at = '${MICROS}', completed_at = '${MICROS}'`,
+          `UPDATE workflow_schedules SET next_run_at = '${MICROS}',
+             last_slot_at = '${MICROS}', created_at = '${MICROS}',
+             updated_at = '${MICROS}'`,
+          `UPDATE workflow_commands SET lease_token = 'dead',
+             created_at = '${MICROS}', dead_at = '${MICROS}'`,
+        ])
+        const updatedAt = yield* floored('workflow_runs', 'updated_at')
+        const times = { activeSince: MILLIS, createdAt: MILLIS, updatedAt }
+        const nodeTimes = { createdAt: MILLIS, updatedAt: MILLIS }
+        const schedule = {
+          nextRunAt: MILLIS,
+          lastSlotAt: MILLIS,
+          createdAt: MILLIS,
+          updatedAt: MILLIS,
+        }
+        const dead = { createdAt: MILLIS, deadAt: MILLIS }
+
+        // Every read that gives records back gives them so.
+        expect(yield* store.load(run.id)).toMatchObject({
+          run: times,
+          nodes: [nodeTimes],
+          children: [nodeTimes],
+          attempts: [{ dispatchedAt: MILLIS, completedAt: MILLIS }],
+        })
+        expect(yield* store.runs({ limit: 10 })).toMatchObject({
+          items: [times],
+        })
+        expect(yield* store.schedules({ limit: 10 })).toMatchObject({
+          items: [schedule],
+        })
+        const buried = yield* store.dead({ limit: 10 })
+        expect(buried).toMatchObject({ items: [dead] })
+        const deadId = buried.items[0]!.id
+        const snapshot = yield* store.transact(
+          {
+            runs: [run.id],
+            heads: [run.id],
+            schedules: ['nightly'],
+            dead: [deadId],
+            families: [run.id],
+          },
+          (snapshot) => commit({}, snapshot),
+        )
+        expect(snapshot.runs.get(run.id)?.run).toMatchObject(times)
+        expect(snapshot.heads.get(run.id)).toMatchObject(times)
+        expect(snapshot.schedules.get('nightly')).toMatchObject(schedule)
+        expect(snapshot.dead.get(deadId)).toMatchObject(dead)
+        expect(snapshot.families.get(run.id)?.root).toMatchObject(times)
+        // And `now` stays whole: the clock it reads has microseconds too.
+        expect(Number.isInteger(snapshot.now)).toBe(true)
       }),
     )
 
