@@ -57,6 +57,17 @@ export const ACTIVE = `status IN (${STATUSES.active
   .map((status) => `'${status}'`)
   .join(', ')})`
 
+/**
+ * A time as the store gives it back: whole Unix milliseconds, rounded down.
+ * The engine writes whole milliseconds, which stay as they are; a column can
+ * still hold microseconds, from `now()` or by hand. Down agrees with filters,
+ * which compare a column with whole milliseconds by `<`: a value is below a
+ * whole number exactly when its floor is (the `<=` of due schedules takes
+ * such a value a millisecond late). Cursors keep the microseconds.
+ */
+export const millis = (column: string) =>
+  `floor(extract(epoch FROM ${column}) * 1000)`
+
 /** The column's value, taken from the record `x`. */
 function written({ path, type }: Field) {
   // A JSON `null` is a value and a missing field is none: `#>` keeps them
@@ -76,7 +87,7 @@ function read({ column, type }: Field) {
   if (type === 'json') {
     return `CASE WHEN ${column} IS NULL THEN NULL ELSE jsonb_build_array(${column}) END`
   }
-  if (type === 'time') return `extract(epoch FROM ${column}) * 1000`
+  if (type === 'time') return millis(column)
   return column
 }
 
