@@ -10,6 +10,8 @@ export type AppWorkerData = {
   crashOnceFile?: string
   // `hang` never settles; `block` never yields the thread again.
   stop?: 'hang' | 'block' | 'throw'
+  // Patches wait until the test releases them, then are rejected.
+  holdPatch?: boolean
 }
 
 // Every event reaches the test through this channel.
@@ -22,6 +24,24 @@ export default defineRuntimeWorker<AppWorkerData, { app: true }>({
     emit(data.id, 'create')
     if (data.createDelayMs) await wait(data.createDelayMs)
     emit(data.id, 'created')
+    if (data.holdPatch) {
+      // Stands in for the patch client a DevEngine build installs.
+      ;(globalThis as { __neem_patches__?: unknown }).__neem_patches__ = {
+        clientId: data.id,
+        apply: () => {
+          // Its own channel: `start` takes over the shared one's handler.
+          const releases = new BroadcastChannel('neem-unit')
+          emit(data.id, 'patch')
+          return new Promise((resolve) => {
+            releases.onmessage = (event) => {
+              if (event.data?.release !== data.id) return
+              releases.close()
+              resolve({ outcome: 'rejected', delivered: false, reason: 'held' })
+            }
+          })
+        },
+      }
+    }
     return {
       start() {
         emit(data.id, 'start')

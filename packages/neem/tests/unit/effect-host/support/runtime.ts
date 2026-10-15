@@ -110,6 +110,7 @@ export function listenToWorkers() {
   return {
     events,
     crash: (id: string) => channel.postMessage({ crash: id }),
+    release: (id: string) => channel.postMessage({ release: id }),
     waitFor: async (event: string, timeoutMs = 10_000) => {
       const until = Date.now() + timeoutMs
       while (!events.includes(event)) {
