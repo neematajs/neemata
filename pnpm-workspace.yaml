@@ -5,7 +5,7 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  rolldown: ^1.2.12
+  rolldown: ^1.2.14
   zod: ^4.4.3
 
 # 3 days, in minutes.
@@ -15,13 +15,31 @@ minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  # The workspace is pinned to Effect 4.0.4, published 2026-10-13, which
-  # @nmtjs/workflows targets. Only that version is admitted early: any
-  # later Effect release still waits out the policy. These entries are
-  # redundant from 2026-10-17 and can be removed.
-  - effect@4.0.4
-  - '@effect/platform-node@4.0.4'
-  - '@effect/platform-node-shared@4.0.4'
-  - '@effect/sql-pg@4.0.4'
-  - '@effect/sql-pglite@4.0.4'
-  - '@effect/vitest@4.0.4'
+  # The workspace is pinned to Effect 4.0.5 and Rolldown 1.2.14, published
+  # 2026-10-15 and 2026-10-14. Only these versions (and Rolldown's exact
+  # @oxc-project/types pin) are admitted early: any later release still waits
+  # out the policy. These entries are redundant from 2026-10-18 and can be
+  # removed.
+  - effect@4.0.5
+  - '@effect/platform-node@4.0.5'
+  - '@effect/platform-node-shared@4.0.5'
+  - '@effect/sql-pg@4.0.5'
+  - '@effect/sql-pglite@4.0.5'
+  - '@effect/vitest@4.0.5'
+  - rolldown@1.2.14
+  - '@rolldown/binding-android-arm-eabi@1.2.14'
+  - '@rolldown/binding-android-arm64@1.2.14'
+  - '@rolldown/binding-darwin-arm64@1.2.14'
+  - '@rolldown/binding-darwin-x64@1.2.14'
+  - '@rolldown/binding-freebsd-x64@1.2.14'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.14'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.14'
+  - '@rolldown/binding-linux-arm64-musl@1.2.14'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.14'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.14'
+  - '@rolldown/binding-linux-x64-gnu@1.2.14'
+  - '@rolldown/binding-linux-x64-musl@1.2.14'
+  - '@rolldown/binding-openharmony-arm64@1.2.14'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.14'
+  - '@rolldown/binding-win32-x64-msvc@1.2.14'
+  - '@oxc-project/types@0.154.0'
