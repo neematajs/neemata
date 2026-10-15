@@ -15,6 +15,7 @@ export default defineRuntimeWorker({
     const crashFile = process.env.NEEM_RESTART_CRASH_FILE
     const retiredFile = process.env.NEEM_RESTART_RETIRED_FILE
     const lazyFile = process.env.NEEM_RESTART_LAZY_FILE
+    const holdFile = process.env.NEEM_RESTART_HOLD_FILE
     let crashTimer: NodeJS.Timeout | undefined
     let lazyTimer: NodeJS.Timeout | undefined
     return {
@@ -37,6 +38,10 @@ export default defineRuntimeWorker({
           throw new Error(`Worker start failed for ${marker}`)
         }
         if (startDelayMs) await wait(startDelayMs)
+        // Keeps a replacement generation starting until the test releases it.
+        while (holdFile && generation > 1 && !existsSync(holdFile)) {
+          await wait(25)
+        }
         // One thread consumes the signal; host recovery restarts the pool.
         if (crashFile) {
           crashTimer = setInterval(() => {

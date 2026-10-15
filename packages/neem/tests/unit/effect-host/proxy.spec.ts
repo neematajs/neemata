@@ -8,7 +8,7 @@ import { Host } from '../../../src/host.ts'
 import { createHostHooks } from '../../../src/internal/hooks.ts'
 import { Deadline } from '../../../src/internal/lifetime.ts'
 import { ProxyController } from '../../../src/internal/proxy.ts'
-import { createSupervisor } from './support/runtime.ts'
+import { createSupervisor, listenToWorkers } from './support/runtime.ts'
 
 const native = vi.hoisted(() => ({
   attempts: 0,
@@ -16,6 +16,8 @@ const native = vi.hoisted(() => ({
   stopped: 0,
   failRemove: false,
   registered: new Set<number>(),
+  // Every readiness the host published, in order.
+  published: [] as boolean[],
 }))
 vi.mock('@nmtjs/proxy', () => ({
   Proxy: class {
@@ -39,7 +41,9 @@ vi.mock('@nmtjs/proxy', () => ({
       if (!native.registered.delete(upstream.port))
         throw new Error('missing upstream')
     }
-    setHealth() {}
+    setHealth(status: { ready: boolean }) {
+      native.published.push(status.ready)
+    }
   },
 }))
 
@@ -49,6 +53,7 @@ beforeEach(() => {
   native.stopped = 0
   native.failRemove = false
   native.registered.clear()
+  native.published = []
 })
 const desired = [
   {
@@ -169,6 +174,48 @@ it('does not execute an interrupted host operation after it leaves the queue', a
     await Effect.runPromise(Fiber.join(starting))
     expect(starts).toBe(1)
   } finally {
+    await Effect.runPromise(host.stop(Deadline.after(1000)))
+  }
+})
+
+it('keeps a stopping host unready when the stop interrupts a patch in flight', async () => {
+  const workers = listenToWorkers()
+  const { snapshot } = createSupervisor({
+    plan: [{ id: 'held', holdPatch: true }],
+  })
+  const host = new Host({ snapshot, hooks: createHostHooks() })
+  try {
+    await Effect.runPromise(host.start())
+    expect(native.published.at(-1)).toBe(true)
+    const [thread] = host.getHealth().runtimes[0]!.threads
+    const patching = Effect.runFork(
+      host.applyPatch('app', [
+        {
+          clientId: thread!.id,
+          update: {
+            type: 'Patch',
+            filename: 'patch.js',
+            seq: 1,
+            changedIds: [],
+          },
+        },
+      ]),
+    )
+    await workers.waitFor('held:patch')
+    expect(native.published.at(-1)).toBe(false)
+    const since = native.published.length
+
+    const stopping = Effect.runFork(host.stop(Deadline.after(5_000)))
+    // The host abandons the patch at once; the worker still holds it, as a
+    // worker holds a generation replacement it cannot interrupt. The release
+    // comes later, so a stale publish has time to happen meanwhile.
+    await Effect.runPromise(Fiber.await(patching))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    workers.release('held')
+    await Effect.runPromise(Fiber.join(stopping))
+    expect(native.published.slice(since)).not.toContain(true)
+  } finally {
+    workers.close()
     await Effect.runPromise(host.stop(Deadline.after(1000)))
   }
 })

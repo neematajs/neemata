@@ -35,6 +35,7 @@ export function createSupervisor(options: {
   stopTimeout?: number
   recoveryAttempts?: number
   prepareRecovery?: () => Promise<void>
+  onStateChange?: () => void
 }) {
   const manifest: Manifest = {
     schemaVersion: 5,
@@ -82,7 +83,7 @@ export function createSupervisor(options: {
     onFailure: (error) => failures.push(error),
     onRecovered: () => recovered++,
     onUpstreamsChange: () => Effect.void,
-    onStateChange: () => {},
+    onStateChange: () => options.onStateChange?.(),
   })
   // Failed assertions must still release native threads so the test runner can exit.
   onTestFinished(() =>
@@ -109,6 +110,7 @@ export function listenToWorkers() {
   return {
     events,
     crash: (id: string) => channel.postMessage({ crash: id }),
+    release: (id: string) => channel.postMessage({ release: id }),
     waitFor: async (event: string, timeoutMs = 10_000) => {
       const until = Date.now() + timeoutMs
       while (!events.includes(event)) {

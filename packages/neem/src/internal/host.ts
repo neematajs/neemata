@@ -282,6 +282,11 @@ export class Host {
 
   private runStop(deadline: Deadline): Effect.Effect<readonly Error[]> {
     return Effect.gen({ self: this }, function* () {
+      // Published before the interrupts: an interrupted operation can settle
+      // runtime state on its way out, e.g. a patch that no longer counts as in
+      // flight, and must not report the server ready again.
+      this.markState('stopping')
+      this.logger.info('Neem server stopping')
       const errors: Error[] = []
       const operations = [...(this.operations ?? [])]
       for (const fiber of operations) fiber.interruptUnsafe()
@@ -303,8 +308,6 @@ export class Host {
       )
       this.operations = undefined
       this.operationsScope = Scope.makeUnsafe()
-      this.markState('stopping')
-      this.logger.info('Neem server stopping')
       const hook = yield* Effect.exit(
         releaseStep(
           'Neem hook [server:stop]',
@@ -585,7 +588,10 @@ export class Host {
     this.logger = childLogger(snapshot.logger, 'neem:server')
   }
 
+  // Only the stop ends `stopping`: an operation or runtime failure settling
+  // after the stop began must not move the server to another state.
   private markState(state: NeemRuntimeServerState, error?: Error): void {
+    if (this.state === 'stopping' && state !== 'stopped') return
     const previous = this.state
     this.state = state
     this.lastError = error

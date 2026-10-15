@@ -164,6 +164,37 @@ describe('RuntimeSupervisor', () => {
     expect(errors).toHaveLength(1)
   })
 
+  it('reports a runtime unready while a patch is in flight, also when the patch is rejected', async () => {
+    const readiness: boolean[] = []
+    const { supervisor } = createSupervisor({
+      plan: [{ id: 'patched' }],
+      onStateChange: () => readiness.push(supervisor.getHealth().ready),
+    })
+    await Effect.runPromise(supervisor.start())
+    expect(supervisor.getHealth().ready).toBe(true)
+    readiness.length = 0
+
+    // The fixture worker has no patch client, so the worker rejects the patch.
+    const [thread] = supervisor.listThreads()
+    const result = await Effect.runPromise(
+      supervisor.applyPatch([
+        {
+          clientId: thread!.id,
+          update: {
+            type: 'Patch',
+            filename: 'patch.js',
+            seq: 1,
+            changedIds: [],
+          },
+        },
+      ]),
+    )
+    expect(result).toMatchObject({ outcome: 'rejected' })
+    expect(readiness).toEqual([false, true])
+    expect(supervisor.getState()).toBe('ready')
+    expect(supervisor.getHealth().ready).toBe(true)
+  })
+
   it('fails the runtime when preparing every recovery attempt fails', async () => {
     workers = listenToWorkers()
     const marker = join(await createTempDir('neem-recovery-'), 'crash')
