@@ -55,12 +55,12 @@
     "@nmtjs/neem": "workspace:*"
   },
   "peerDependencies": {
-    "effect": "^4.0.4"
+    "effect": "^4.0.5"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.0.4",
+    "@effect/platform-node": "4.0.5",
     "@types/node": "^24.13.2",
-    "effect": "4.0.4",
+    "effect": "4.0.5",
     "pino": "^10.3.1"
   },
   "files": [
