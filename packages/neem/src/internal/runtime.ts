@@ -54,7 +54,7 @@ export type RuntimeSupervisorOptions = {
   onRecovered: () => void
   // Failed or released threads stopped advertising upstreams.
   onUpstreamsChange: () => Effect.Effect<void>
-  // Runtime state feeds the host's readiness.
+  // Runtime state and patches in flight feed the host's readiness.
   onStateChange: () => void
 }
 
@@ -87,6 +87,7 @@ export class RuntimeSupervisor {
   private readonly lifetime: Lifetime
   private state: NeemRuntimeState = 'idle'
   private lastError: Error | undefined
+  private patching = 0
   private current: Generation | undefined
   private recovery: Fiber.Fiber<void> | undefined
   private stopping: Fiber.Fiber<readonly Error[]> | undefined
@@ -121,7 +122,10 @@ export class RuntimeSupervisor {
     return {
       name: this.name,
       // A recovering runtime has no threads for a moment and still serves nothing.
-      ready: this.state === 'ready',
+      // Neither does a patching one: a worker closes its generation before it
+      // starts the replacement, which must bind the same upstreams, so the two
+      // cannot overlap and nothing else serves the runtime meanwhile.
+      ready: this.state === 'ready' && this.patching === 0,
       state: this.state,
       pool: this.getPoolHealth(),
       threads: this.listThreads().map((thread) => thread.getHealth()),
@@ -194,7 +198,7 @@ export class RuntimeSupervisor {
         )
       }
       const byId = new Map(threads.map((thread) => [thread.id, thread]))
-      return Effect.forEach(
+      const patch = Effect.forEach(
         updates,
         ({ clientId, update }): Effect.Effect<PatchOutcome> => {
           const thread = byId.get(clientId)
@@ -219,7 +223,19 @@ export class RuntimeSupervisor {
         },
         { concurrency: 'unbounded' },
       ).pipe(Effect.map((results) => this.summarizePatch(results)))
+      // Only readiness changes: the state stays ready, so a thread the patch
+      // retires still fails into recovery.
+      return Effect.acquireUseRelease(
+        Effect.sync(() => this.trackPatch(1)),
+        () => patch,
+        () => Effect.sync(() => this.trackPatch(-1)),
+      )
     })
+  }
+
+  private trackPatch(delta: 1 | -1): void {
+    this.patching += delta
+    this.options.onStateChange()
   }
 
   private summarizePatch(results: readonly PatchOutcome[]): RuntimePatchResult {

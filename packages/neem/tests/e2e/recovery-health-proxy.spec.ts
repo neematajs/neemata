@@ -10,7 +10,9 @@ import {
   getDistinctFreePorts,
   readRuntimeEvents,
   spawnNeem,
+  updateFileAtomically,
   waitFor,
+  waitForPatchClients,
 } from './support/e2e.ts'
 
 describe('Neem recovery health and proxy behavior', () => {
@@ -356,6 +358,74 @@ describe('Neem recovery health and proxy behavior', () => {
 
     await neem.stop()
   }, 90_000)
+})
+
+describe('Neem readiness during worker patches', () => {
+  it('reports /ready as unavailable while a patch replaces the worker generation', async () => {
+    const fixture = await createNeemFixture({ config: 'runtime-restart' })
+    const caseDir = resolve(fixture.fixtureDir, 'cases/runtime-restart')
+    const holdFile = resolve(fixture.dir, 'restart-hold')
+    await updateFileAtomically(fixture.configFile, (content) =>
+      content.replace(
+        'defineConfig({',
+        "defineConfig({ server: { hostname: '127.0.0.1' },",
+      ),
+    )
+    const [serverPort] = await getDistinctFreePorts(1)
+    const readyUrl = `http://127.0.0.1:${serverPort}/ready`
+
+    const neem = spawnNeem(
+      ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
+      {
+        env: {
+          NEEM_SERVER_PORT: String(serverPort),
+          NEEM_RESTART_HOLD_FILE: holdFile,
+          NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
+        },
+      },
+    )
+    await waitForPatchClients(neem, { threads: 2, runtimeName: 'api' })
+    await waitForJson(
+      readyUrl,
+      (response) => response.status === 200,
+      30_000,
+      () => formatSpawnedOutput(neem),
+    )
+
+    await editWorkerFile(neem, resolve(caseDir, 'definition.ts'), (content) =>
+      content.replace("marker: 'v1'", "marker: 'v2'"),
+    )
+    // Both threads closed their first generation; the replacements are held.
+    await waitForMatchingEventCount(
+      fixture.eventsFile,
+      (event) =>
+        event.event === 'worker-generation-start' &&
+        event.marker === 'v2' &&
+        event.generation === 2,
+      2,
+    )
+    const patching = await waitForJson(
+      readyUrl,
+      (response) => response.status === 503,
+      10_000,
+      () => formatSpawnedOutput(neem),
+    )
+    expect(patching.body).toEqual({ ok: false, healthy: true, ready: false })
+
+    await writeFile(holdFile, '')
+    await waitForProbeEventCount(neem, 'runtime:patch-applied', 1)
+    await waitForJson(
+      readyUrl,
+      (response) => response.status === 200 && response.body.ready === true,
+      30_000,
+      () => formatSpawnedOutput(neem),
+    )
+    expect(
+      neem.events().filter((event) => event.event === 'runtime:thread-stopped'),
+    ).toHaveLength(0)
+
+    await neem.stop()
+  }, 60_000)
 })
 
 async function waitForMatchingEventCount(

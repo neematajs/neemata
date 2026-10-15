@@ -146,7 +146,7 @@ set with `server.health.paths`), before routing, so they never reach a runtime:
 - `/health` returns 503 once the server failed or began stopping, otherwise 200.
 - `/ready` returns 200 only when the server is running, every runtime pool is
   ready, and proxy routing has converged; otherwise 503. Use readiness during
-  startup, reload, and recovery.
+  startup, reload, recovery, and while `neem dev` patches a worker.
 - Bodies are only `{ ok, healthy, ready }`, where `ok` is the probed flag. The
   detailed health report stays in-process: plugins read it with `getHealth()`.
 
