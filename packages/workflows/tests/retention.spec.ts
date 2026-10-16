@@ -269,21 +269,27 @@ describe('deleting a run', () => {
         // A handler is running when the family is cancelled around it.
         const [claim] = yield* claimAttempts(served)
         yield* Client.cancel(run.id)
-        // The parent's, the child's, and the parent's again once woken.
-        yield* pass(served)
+        // The parent's, then the child's: the child waits for the handler,
+        // and the parent for the child.
         yield* pass(served)
         yield* pass(served)
         const family = yield* Client.getFamily(run.id)
         expect(family.map(({ run }) => run.status)).toEqual([
-          'cancelled',
-          'cancelled',
+          'cancelling',
+          'cancelling',
         ])
-
         expect(yield* Effect.flip(Client.deleteRun(run.id))).toEqual(
-          new RunBusy({ runId: run.id, busyRunId: claim!.command.runId }),
+          new RunBusy({ runId: run.id, busyRunId: run.id }),
         )
-        // Its lease over, nothing holds the family any more.
+
+        // Its lease over, nothing holds the family any more: the sweep ends
+        // the child, and the parent with it.
         yield* TestClock.adjust(LEASE)
+        expect(yield* Worker.drainCancellations()).toEqual({ drained: 2 })
+        expect(
+          (yield* Client.getFamily(run.id)).map(({ run }) => run.status),
+        ).toEqual(['cancelled', 'cancelled'])
+        expect(claim!.command.runId).not.toBe(run.id)
         expect(yield* Client.deleteRun(run.id)).toEqual({ deleted: true })
       }),
     )
@@ -397,7 +403,8 @@ describe('pruning', () => {
     return provide(
       Effect.gen(function* () {
         for (let made = 0; made < 5; made++) yield* ended(served)
-        // One whose family stays is passed over, not asked for again.
+        // One asked to stop while its handler runs has not ended: it is not
+        // among those that may go.
         const { run: held } = yield* start({
           kind: 'task',
           name: 'job',
@@ -417,8 +424,9 @@ describe('pruning', () => {
             counting,
           ),
         ).toEqual({ deleted: 5 })
-        // Three pages of those that completed, one of those cancelled.
-        expect(reads).toEqual([2, 2, 1, 1])
+        // Three pages of those that completed, an empty one of those
+        // cancelled.
+        expect(reads).toEqual([2, 2, 1, 0])
         expect(yield* exists(held.id)).toBe(true)
       }),
     )

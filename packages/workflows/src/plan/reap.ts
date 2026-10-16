@@ -1,6 +1,7 @@
+import type { StoredRun } from '../model.ts'
 import type { DeadCommand, Plan } from '../store.ts'
 import { isTerminal } from '../model.ts'
-import { conclude, current } from './attempt.ts'
+import { conclude, current, retire } from './attempt.ts'
 import { planning } from './draft.ts'
 import { failRun } from './finish.ts'
 import { canonical } from './keys.ts'
@@ -16,10 +17,13 @@ import { canonical } from './keys.ts'
  * the dead command as it is loaded.
  *
  * `false` when nothing waits for the command any more, or when it is dead no
- * longer.
+ * longer; otherwise the task runs a run failed here cancelled that wait for
+ * their handlers.
  */
-export function planReap(listed: DeadCommand): Plan<boolean> {
-  return planning<boolean>((draft) => {
+export function planReap(
+  listed: DeadCommand,
+): Plan<false | readonly StoredRun[]> {
+  return planning<false | readonly StoredRun[]>((draft) => {
     // A retry or a requeue since the read took the command off the dead, and
     // what it stood for is decided by the command queued in its place:
     // failing that work now would fail the run that was just reopened. And
@@ -38,21 +42,22 @@ export function planReap(listed: DeadCommand): Plan<boolean> {
     if (command.kind === 'continueRun') {
       const run = draft.records(command.runId)?.run
       if (!run || isTerminal(run.status)) return false
-      failRun(draft, run, error)
-      return true
+      return failRun(draft, run, error).tasks
     }
 
     // An attempt that was superseded or settled is not this command's to
     // fail: a retry of the run made another, with a command of its own.
+    // A dead command has no claim, so no handler of its attempt is running:
+    // one its run's cancellation waits for has ended.
     const counted = current(draft, command)
-    if (!counted) return false
+    if (!counted) return retire(draft, command) ? [] : false
     draft.updateAttempt(counted.attempt, {
       status: 'failed',
       error,
       completedAt: draft.now,
     })
     conclude(draft, counted, { status: 'failed', error })
-    return true
+    return []
   })
 }
 

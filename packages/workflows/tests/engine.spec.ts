@@ -1033,16 +1033,24 @@ describe('child workflows', () => {
           while ((yield* pass(served)) > 0) seen.push(yield* family)
 
           // Each run is told in its parent's pass and waits for its own
-          // child; the end comes back up one wake at a time.
+          // child, and the leaf, in a pass of its own, for its handler.
           expect(seen).toStrictEqual([
             ['cancelling', 'waiting', 'running'],
             ['cancelling', 'cancelling', 'running'],
+            ['cancelling', 'cancelling', 'cancelling'],
+            ['cancelling', 'cancelling', 'cancelling'],
+          ])
+
+          // The handler ends; the end comes back up one wake at a time.
+          expect(yield* settle(served, claim!, completed(1))).toBe('stale')
+          const ended = [yield* family]
+          while ((yield* pass(served)) > 0) ended.push(yield* family)
+          expect(ended).toStrictEqual([
             ['cancelling', 'cancelling', 'cancelling'],
             ['cancelling', 'cancelling', 'cancelled'],
             ['cancelling', 'cancelled', 'cancelled'],
             ['cancelled', 'cancelled', 'cancelled'],
           ])
-          expect(yield* settle(served, claim!, completed(1))).toBe('stale')
           expect(inspect.queue()).toStrictEqual([])
         }),
       )

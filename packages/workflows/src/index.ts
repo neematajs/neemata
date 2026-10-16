@@ -32,6 +32,7 @@ export {
   begin,
   cancel,
   coordinate,
+  drain,
   fire,
   prune,
   reap,

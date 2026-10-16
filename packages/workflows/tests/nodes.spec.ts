@@ -16,7 +16,14 @@ import type {
   TaskProgram,
   WorkflowProgram,
 } from '../src/index.ts'
-import { cancel, coordinate, settle, start, Store } from '../src/index.ts'
+import {
+  cancel,
+  coordinate,
+  drain,
+  settle,
+  start,
+  Store,
+} from '../src/index.ts'
 import {
   claimAttempts,
   completed,
@@ -176,7 +183,25 @@ describe('a task run', () => {
     )
   })
 
-  it.effect('is cancelled by the request itself, attempt included', () => {
+  it.effect('is cancelled by the request itself when nothing runs it', () => {
+    const { provide, inspect } = setup([embed])
+
+    return provide(
+      Effect.gen(function* () {
+        const { run } = yield* start({ kind: 'task', name: 'embed', input: 1 })
+
+        expect(yield* cancel(run.id)).toMatchObject({ status: 'cancelled' })
+        const ended = yield* load(run.id)
+        expect(ended.nodes).toMatchObject([{ status: 'cancelled' }])
+        expect(ended.children).toMatchObject([{ status: 'cancelled' }])
+        expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
+        // Its command is dropped by the next delivery's begin.
+        expect(inspect.queue()).toHaveLength(1)
+      }),
+    )
+  })
+
+  it.effect('is cancelled once the handler that runs it has stopped', () => {
     const { served, provide, inspect } = setup([embed])
 
     return provide(
@@ -184,14 +209,20 @@ describe('a task run', () => {
         const { run } = yield* start({ kind: 'task', name: 'embed', input: 1 })
         const [claim] = yield* claimAttempts(served)
 
-        expect(yield* cancel(run.id)).toMatchObject({ status: 'cancelled' })
+        // Claimed, so its handler may be running: the run keeps its key.
+        expect(yield* cancel(run.id)).toMatchObject({ status: 'cancelling' })
+        const ending = yield* load(run.id)
+        expect(ending.nodes).toMatchObject([{ status: 'cancelling' }])
+        expect(ending.children).toMatchObject([{ status: 'cancelling' }])
+        expect(ending.attempts).toMatchObject([{ status: 'started' }])
+
+        // The outcome is discarded, and the handler is known to have ended.
+        expect(yield* settle(served, claim!, completed(1))).toBe('stale')
         const ended = yield* load(run.id)
+        expect(ended.run.status).toBe('cancelled')
         expect(ended.nodes).toMatchObject([{ status: 'cancelled' }])
         expect(ended.children).toMatchObject([{ status: 'cancelled' }])
         expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
-
-        expect(yield* settle(served, claim!, completed(1))).toBe('stale')
-        expect((yield* load(run.id)).run.status).toBe('cancelled')
         expect(inspect.queue()).toStrictEqual([])
       }),
     )
@@ -268,6 +299,63 @@ describe('a task run', () => {
         expect(served.executable(tasks[0]!.command)?.execute).toBe(works)
         // The stray pass left nothing behind but the two attempts.
         expect(inspect.queue()).toHaveLength(2)
+      }),
+    )
+  })
+})
+
+describe('an activity being cancelled', () => {
+  const flaky = flow('flaky', [
+    { name: 'act', ...activity({ retry: { attempts: 2, delay: '1h' } }) },
+  ])
+
+  it.effect('ends at once when its next attempt only waits to be due', () => {
+    const { served, provide } = setup([flaky])
+
+    return provide(
+      Effect.gen(function* () {
+        const { run } = yield* start({ name: 'flaky', input: 1 })
+        yield* pass(served)
+        expect(yield* work(served, failed('first'))).toBe('retrying')
+
+        // Nothing holds the retry's command, so no handler of it runs: the
+        // pass leaves the run waiting for it, and the drain after ends it.
+        yield* cancel(run.id)
+        yield* pass(served)
+        const ended = yield* load(run.id)
+        expect(ended.run.status).toBe('cancelled')
+        expect(ended.nodes).toMatchObject([{ status: 'cancelled' }])
+        expect(ended.attempts.map(({ status }) => status)).toStrictEqual([
+          'failed',
+          'cancelled',
+        ])
+      }),
+    )
+  })
+
+  it.effect('waits for a handler that holds its command', () => {
+    const { served, provide } = setup([flaky])
+
+    return provide(
+      Effect.gen(function* () {
+        const { run } = yield* start({ name: 'flaky', input: 1 })
+        yield* pass(served)
+        const [claim] = yield* claimAttempts(served)
+
+        yield* cancel(run.id)
+        yield* pass(served)
+        const ending = yield* load(run.id)
+        expect(ending.run.status).toBe('cancelling')
+        expect(ending.children).toMatchObject([{ status: 'cancelling' }])
+        expect(ending.attempts).toMatchObject([{ status: 'started' }])
+
+        // The handler fails as it stops: the failure is not retried, and
+        // ends the attempt the run waited for.
+        expect(yield* settle(served, claim!, failed('stopped'))).toBe('stale')
+        yield* pass(served)
+        const ended = yield* load(run.id)
+        expect(ended.run.status).toBe('cancelled')
+        expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
       }),
     )
   })
@@ -907,31 +995,42 @@ describe('a parallel node', () => {
           yield* cancel(run.id)
           yield* pass(served)
 
-          // Everything is stopped in one pass, and the run, its node and the
-          // child waits for the child run that settles in a pass of its own.
+          // Everything is told to stop in one pass. The run, its node and each
+          // child wait for what may still be running: the claimed attempt,
+          // the task run whose attempt is claimed, and the child run that
+          // settles in a pass of its own. Only the detached run is let go.
           const ended = yield* load(run.id)
           expect(ended.run.status).toBe('cancelling')
           expect(ended.nodes).toMatchObject([{ status: 'cancelling' }])
           expect(kids(ended, 'all').map(({ status }) => status)).toStrictEqual([
-            'cancelled',
-            'cancelled',
+            'cancelling',
+            'cancelling',
             'cancelling',
             'cancelled',
           ])
-          expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
-          // A task run has no pass to cancel it in: it ended in this commit.
+          expect(ended.attempts).toMatchObject([{ status: 'started' }])
           const jobRun = yield* load(job!.childRunId!)
-          expect(jobRun.run.status).toBe('cancelled')
-          expect(jobRun.attempts).toMatchObject([{ status: 'cancelled' }])
+          expect(jobRun.run.status).toBe('cancelling')
+          expect(jobRun.attempts).toMatchObject([{ status: 'started' }])
           expect((yield* load(sub!.childRunId!)).run.status).toBe('cancelling')
 
+          // Each handler that ends is the end of its attempt; what it came to
+          // is discarded. A task run has no pass: it ends in that commit.
           expect(
             yield* settle(served, at(claims, 'member:act'), completed(1)),
           ).toBe('stale')
           expect(
             yield* settle(served, at(claims, job!.childRunId!), completed(1)),
           ).toBe('stale')
+          const jobEnded = yield* load(job!.childRunId!)
+          expect(jobEnded.run.status).toBe('cancelled')
+          expect(jobEnded.attempts).toMatchObject([{ status: 'cancelled' }])
 
+          yield* pass(served)
+          expect((yield* load(sub!.childRunId!)).run.status).toBe('cancelling')
+          expect(
+            yield* settle(served, at(claims, sub!.childRunId!), completed(1)),
+          ).toBe('stale')
           yield* pass(served)
           const subRun = yield* load(sub!.childRunId!)
           expect(subRun.run.status).toBe('cancelled')
@@ -944,7 +1043,15 @@ describe('a parallel node', () => {
           const quiet = yield* load(run.id)
           expect(quiet.run.status).toBe('cancelled')
           expect(quiet.nodes).toMatchObject([{ status: 'cancelled' }])
-          expect(kids(quiet, 'all')[2]).toMatchObject({ status: 'cancelled' })
+          expect(kids(quiet, 'all').map(({ status }) => status)).toStrictEqual([
+            'cancelled',
+            'cancelled',
+            'cancelled',
+            'cancelled',
+          ])
+          expect((yield* load(run.id)).attempts).toMatchObject([
+            { status: 'cancelled' },
+          ])
         }),
       )
     },
@@ -963,7 +1070,9 @@ describe('a parallel node', () => {
           const [, job, sub, free] = kids(yield* load(run.id), 'all')
 
           yield* cancel(sub!.childRunId!)
-          // The member ends in its own pass, the parent in the one that wakes.
+          // The member ends in its own pass, the parent in the one that wakes:
+          // nothing of either is claimed, so each is drained as its pass
+          // leaves it, the parent with its task run.
           yield* pass(served)
           yield* pass(served)
 
@@ -1453,6 +1562,8 @@ describe('a map', () => {
             yield* pass(served)
             yield* cancel(run.id)
             yield* Effect.provideService(pass(served), Store, counted)
+            // Its task runs, drained as the pass left them, wake it to end.
+            yield* pass(served)
             expect((yield* load(run.id)).run.status).toBe('cancelled')
             return count
           }),
@@ -1506,8 +1617,8 @@ describe('a map', () => {
           expect(yield* passOfRun).toBe(1)
           expect(read).toStrictEqual([5])
 
-          // Each child run ends in a pass of its own, and the map's run
-          // reads what is left after each.
+          // Each child run ends in a pass of its own, drained as its
+          // coordinator does, and the map's run reads what is left after each.
           const ending = yield* store.claim({
             lanes: [{ kind: 'continueRun', routes: served.workflows }],
             limit: 100,
@@ -1516,7 +1627,10 @@ describe('a map', () => {
           expect(ending).toHaveLength(5)
           read = []
           for (const claim of ending) {
-            yield* coordinate(served, claim)
+            const result = yield* coordinate(served, claim)
+            if (result._tag === 'Advanced' && result.draining) {
+              yield* drain(result.draining)
+            }
             expect(yield* passOfRun).toBe(1)
           }
           // A child run seen ended is read no more: the work of a pass is
@@ -1547,6 +1661,28 @@ describe('a map', () => {
         yield* cancel(run.id)
         yield* pass(served)
 
+        // The item that never started is cancelled; the two task runs wait
+        // for their handlers, and the run for them.
+        const ending = yield* load(run.id)
+        expect(ending.run.status).toBe('cancelling')
+        expect(ending.children.map(({ status }) => status)).toStrictEqual([
+          'cancelling',
+          'cancelling',
+          'cancelled',
+        ])
+        for (const taskRunId of [first!, second!]) {
+          const taskRun = yield* load(taskRunId)
+          expect(taskRun.run.status).toBe('cancelling')
+          expect(taskRun.attempts).toMatchObject([{ status: 'started' }])
+          expect(
+            yield* settle(served, at(claims, taskRunId), completed(1)),
+          ).toBe('stale')
+          const ended = yield* load(taskRunId)
+          expect(ended.run.status).toBe('cancelled')
+          expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
+        }
+
+        yield* pass(served)
         const ended = yield* load(run.id)
         expect(ended.run.status).toBe('cancelled')
         expect(ended.children.map(({ status }) => status)).toStrictEqual([
@@ -1554,14 +1690,6 @@ describe('a map', () => {
           'cancelled',
           'cancelled',
         ])
-        for (const taskRunId of [first!, second!]) {
-          const taskRun = yield* load(taskRunId)
-          expect(taskRun.run.status).toBe('cancelled')
-          expect(taskRun.attempts).toMatchObject([{ status: 'cancelled' }])
-        }
-        expect(yield* settle(served, at(claims, first!), completed(1))).toBe(
-          'stale',
-        )
       }),
     )
   })
@@ -1586,7 +1714,14 @@ describe('a map', () => {
           leaseMs: LEASE,
         })
         plans = 0
-        yield* Effect.provideService(coordinate(served, claim!), Store, counted)
+        const result = yield* Effect.provideService(
+          coordinate(served, claim!),
+          Store,
+          counted,
+        )
+        if (result._tag === 'Advanced' && result.draining) {
+          yield* drain(result.draining)
+        }
         return plans
       })
 
@@ -1602,7 +1737,47 @@ describe('a map', () => {
           // everything the four task runs own, together.
           yield* cancel(run.id)
           expect(yield* once()).toBe(2)
+          // Its task runs, drained as the pass left them, wake it to end.
+          yield* pass(served)
           expect((yield* load(run.id)).run.status).toBe('cancelled')
+        }),
+      )
+    },
+  )
+
+  it.effect(
+    'is never read whole while the handlers of its task runs stop one by one',
+    () => {
+      const { served, provide, store } = setup([each(), embed])
+      let runId: string | undefined
+      let whole = 0
+      // Every plan, a drain's included, that is handed the map's run whole.
+      const counted = Store.of({
+        ...store,
+        transact: (scope, plan) =>
+          store.transact(scope, (snapshot) => {
+            if (runId !== undefined && snapshot.runs.has(runId)) whole += 1
+            return plan(snapshot)
+          }),
+      })
+      const passOfRun = Effect.provideService(pass(served), Store, counted)
+
+      return provide(
+        Effect.gen(function* () {
+          const { run } = yield* begin(['a', 'b', 'c', 'd'])
+          yield* pass(served)
+          const claims = yield* claimAttempts(served)
+          runId = run.id
+
+          yield* cancel(run.id)
+          yield* passOfRun
+          for (const claim of claims) {
+            expect((yield* load(run.id)).run.status).toBe('cancelling')
+            expect(yield* settle(served, claim, completed(1))).toBe('stale')
+            yield* passOfRun
+          }
+          expect((yield* load(run.id)).run.status).toBe('cancelled')
+          expect(whole).toBe(0)
         }),
       )
     },

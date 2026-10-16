@@ -21,6 +21,7 @@ import {
   cancel,
   Client,
   coordinate,
+  drain,
   isTerminal,
   reap,
   registry,
@@ -250,7 +251,13 @@ const passes = Effect.fnUntraced(function* () {
     limit: 100,
     leaseMs: LEASE,
   })
-  for (const claim of claims) yield* coordinate(served, claim)
+  // As a coordinator does, a run a pass leaves cancelling is drained.
+  for (const claim of claims) {
+    const result = yield* coordinate(served, claim)
+    if (result._tag === 'Advanced' && result.draining) {
+      yield* drain(result.draining)
+    }
+  }
   return claims.length
 })
 
@@ -719,8 +726,17 @@ export function mapPlans<R>(
             start({ name: 'maps.pairs', input: [0, 1, 2, 3, 4, 5] }),
           )
           yield* provide(passes())
-          const [zero] = yield* provide(attempts())
+          const [zero, one] = yield* provide(attempts())
           yield* provide(cancel(zero!.command.runId))
+          // The item's run ends once its handler has; the map then stops the
+          // other item under way, whose run waits for its handler in turn.
+          expect(yield* provide(settle(served, zero!, completed(0)))).toBe(
+            'stale',
+          )
+          yield* provide(quiet())
+          expect(yield* provide(settle(served, one!, completed(1)))).toBe(
+            'stale',
+          )
           yield* provide(quiet())
 
           const ended = yield* provide(records(run.id))
@@ -816,7 +832,7 @@ export function mapPlans<R>(
           start({ name: 'maps.timed', input: [0, 1, 2, 3] }),
         )
         yield* provide(passes())
-        const [zero] = yield* provide(attempts())
+        const [zero, ...others] = yield* provide(attempts())
         yield* provide(settle(served, zero!, completed(0)))
         yield* harness.elapse(300)
 
@@ -824,6 +840,9 @@ export function mapPlans<R>(
         yield* provide(passes())
         yield* acted
         yield* provide(quiet())
+        // The handlers of the items under way end, and their runs with them.
+        for (const claim of others)
+          yield* provide(settle(served, claim, completed(1)))
 
         const ended = yield* provide(records(run.id))
         expect(ended.run).toMatchObject({

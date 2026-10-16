@@ -17,6 +17,7 @@ import {
   begin,
   cancel,
   coordinate,
+  drain,
   reap,
   registry,
   remove,
@@ -30,6 +31,7 @@ import {
 import { unitOf } from '../src/plan/attempt.ts'
 import { uniqueKey } from '../src/plan/keys.ts'
 import { unitKey } from '../src/store.ts'
+import { drainCancellations } from '../src/worker/maintenance.ts'
 
 /**
  * Begin and settle on each adapter: what a plan of one attempt loads, and
@@ -164,7 +166,13 @@ const passes = Effect.fnUntraced(function* () {
     limit: 100,
     leaseMs: LEASE,
   })
-  for (const claim of claims) yield* coordinate(served, claim)
+  // As a coordinator does, a run a pass leaves cancelling is drained.
+  for (const claim of claims) {
+    const result = yield* coordinate(served, claim)
+    if (result._tag === 'Advanced' && result.draining) {
+      yield* drain(result.draining)
+    }
+  }
   return claims.length
 })
 
@@ -595,8 +603,12 @@ export function unitPlans<R>(
         const [claim] = yield* provide(attempts(SHORT))
         yield* provide(cancel(run.id))
         yield* provide(quiet())
-        // The run has ended and the claim with it: the family may go.
+        // The claim's lease ends, and the sweep ends the run that waited for
+        // it: the family may go.
         yield* harness.elapse(PAST_SHORT)
+        expect(yield* provide(drainCancellations())).toStrictEqual({
+          drained: 1,
+        })
 
         const acted = inGap!(Effect.orDie(provide(remove(run.id))))
         const settled = yield* Effect.flip(

@@ -23,8 +23,9 @@ export type SweepOptions = {
 
 export type MaintenanceOptions = {
   /**
-   * Fails what the dead commands were to continue, so that no run waits
-   * forever for a command nobody is given any more. Every 30 seconds unless
+   * Fails what the dead commands were to continue, and ends the
+   * cancellations of runs nothing of which is claimed any more, so that no
+   * run waits forever for work nobody is given. Every 30 seconds unless
    * `false`.
    */
   readonly reaping?: false | SweepOptions
@@ -87,6 +88,33 @@ export const reapDeadCommands = Effect.fnUntraced(function* (
     after = page.next
   } while (after !== undefined)
   return { reaped }
+})
+
+/**
+ * One sweep over the runs being cancelled, each drained when nothing of it
+ * is claimed: a cancellation waits for handlers to stop, and one whose
+ * worker died, or whose work no worker serves, has nobody else to end it.
+ * Answers how many it drained.
+ */
+export const drainCancellations = Effect.fnUntraced(function* (
+  options: Pick<SweepOptions, 'batchSize'> = {},
+) {
+  const store = yield* Store
+  const limit = batch(options)
+  let drained = 0
+  let after: string | undefined
+  do {
+    const page = yield* store.runs({
+      filter: { status: ['cancelling'] },
+      limit,
+      ...(after === undefined ? {} : { after }),
+    })
+    // Seen `cancelling` before their claims are read, as a drain's are.
+    const left = yield* Engine.drain(page.items)
+    drained += left.filter(({ status }) => status !== 'cancelling').length
+    after = page.next
+  } while (after !== undefined)
+  return { drained }
 })
 
 /**
@@ -244,7 +272,10 @@ export function jobs(
     enabled.push({
       name: 'reaping',
       everyMs: every('reaping', reaping, 30_000),
-      run: reapDeadCommands(reaping),
+      run: Effect.andThen(
+        reapDeadCommands(reaping),
+        drainCancellations(reaping),
+      ),
     })
   }
   if (runTimeouts) {

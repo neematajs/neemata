@@ -4,7 +4,7 @@ import type { DefinitionConflict } from '../errors.ts'
 import type { AttemptCommand } from '../model.ts'
 import type { AttemptInfo, Executable, Registry } from '../program.ts'
 import type { Claim, Plan, ReadScope } from '../store.ts'
-import { current, unitOf } from './attempt.ts'
+import { current, retire, unitOf } from './attempt.ts'
 import { drift, revisionKey } from './definitions.ts'
 import { planning } from './draft.ts'
 
@@ -70,6 +70,9 @@ export function planBegin(
   return planning<Begun>((draft) => {
     const counted = current(draft, command)
     if (!counted) {
+      // Asked before the handler begins, or once it has stopped: no handler
+      // of this delivery runs, so a cancellation waiting for it is answered.
+      retire(draft, command)
       draft.ack(claim)
       return { _tag: 'Stale' }
     }

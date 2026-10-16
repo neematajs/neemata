@@ -252,7 +252,8 @@ describe('the reaper', () => {
   )
 
   it.effect.each([
-    ['cancels a child run', undefined, 'cancelled'] as const,
+    // Told to stop, and stopping while its activity's handler holds a claim.
+    ['cancels a child run', undefined, 'cancelling'] as const,
     ['leaves a detached child run to itself', 'detach', 'running'] as const,
   ])(
     'fails the run of a dead continuation, and %s',
@@ -339,11 +340,13 @@ describe('the reaper', () => {
         yield* pass(served)
         yield* kill(served, ['runAttempt', 'runTask'], new Error('dead'))
 
-        // One run is asked to stop and the other has ended since.
+        // One run is asked to stop, and waits for the attempt its dead
+        // command was for: no handler holds it, so reaping ends it. The
+        // other run has ended since, with nothing claimed to wait for.
         yield* cancel(cancelled.run.id)
         yield* cancel(ended.run.id)
         expect(inspect.dead()).toHaveLength(2)
-        expect(yield* reap).toStrictEqual({ reaped: 0 })
+        expect(yield* reap).toStrictEqual({ reaped: 1 })
 
         yield* pass(served)
         for (const { run } of [cancelled, ended]) {
