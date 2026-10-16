@@ -13,7 +13,7 @@ import type { Claim } from '../store.ts'
 import type { MaintenanceOptions } from './maintenance.ts'
 import type { PoolOptions } from './pool.ts'
 import type { PoolServices, Served } from './serve.ts'
-import { coordinate } from '../engine.ts'
+import { coordinate, drain } from '../engine.ts'
 import { Store } from '../store.ts'
 import { runAttempt } from './attempt.ts'
 import { jobs, periodically, reconcileSchedules } from './maintenance.ts'
@@ -67,6 +67,18 @@ export const coordinator = (
   const pass = (claim: Claim<ContinueRun>) =>
     Effect.gen(function* () {
       const result = yield* coordinate(registry, claim)
+      if (result._tag === 'Advanced') {
+        // The pass gave up its claim, so a drain may find nothing of the run
+        // claimed. One that fails is the sweep's to do again.
+        if (result.draining) {
+          yield* drain(result.draining).pipe(
+            Effect.catchTag('StorageError', (error) =>
+              Effect.logWarning('Workflow cancellation drain failed', error),
+            ),
+          )
+        }
+        return
+      }
       if (result._tag !== 'Unroutable') return
       const { name, revision, runId } = claim.command
       const store = yield* Store
@@ -161,6 +173,7 @@ export function execution(
 }
 
 export {
+  drainCancellations,
   fireSchedules,
   pruneRuns,
   reapDeadCommands,

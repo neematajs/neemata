@@ -749,25 +749,32 @@ const placeOrder = (order: typeof Order.Type) =>
 ### Cancelling
 
 `Client.cancel(runId)` asks a run to stop and answers with the run, or
-`undefined` when none has the id. A task run is `cancelled` by the request
-itself. A workflow run becomes `cancelling`; its next coordination pass
-cancels what it has in flight, child runs included unless their step says
-`cancellation: 'detach'`. A child workflow run is cancelled the same way, in
-passes of its own, and the run stays `cancelling` until every child run it
-cancelled has ended; then it ends as `cancelled`. The step of such a child,
-and its node, read `cancelling` meanwhile. So a run that reads `cancelled` has
-no run under it still going but those it detached, with one exception: a run
-failed from outside its own work, by its `timeout` or by the reaper, does not
-wait so. It ends `failed` at once, and the child runs it cancelled end after
-it; when that happens while a run above it is being cancelled, the runs above
-can end before those under it have. A run already `cancelling` is not timed
-out, so a cancellation asked for first stays one. Cancelling a run that has
-ended changes nothing.
+`undefined` when none has the id. The run becomes `cancelling`, holds on to
+its unique key, and ends as `cancelled` once nothing of it is still running:
 
-Handlers of the run are interrupted. Their worker learns of it from a hint,
-or at its next renewal without one, so a handler may still be ending, and
-its worker still holding the command, a moment after the run reads
-`cancelled`: `deleteRun` answers `RunBusy` until it lets go.
+- **Handlers.** Each handler of its attempts is interrupted: its worker learns
+  of it from a hint, or at its next renewal without one. The attempt ends
+  `cancelled` once the handler has ended, finalizers included, and an outcome
+  it came to meanwhile is discarded. An attempt no worker holds, one waiting
+  out its retry delay for instance, ends at once. A handler that overruns
+  `cleanupTimeoutMs` is left behind by its worker, and the run waits for its
+  claim's lease to end; the coordinator's `reaping` sweep then ends it.
+- **Child runs.** A workflow run's next coordination pass cancels what it has
+  in flight, child runs included unless their step says
+  `cancellation: 'detach'`. A child run is cancelled the same way, and the
+  run stays `cancelling` until every child run it cancelled has ended. The
+  step of such a child, and its node, read `cancelling` meanwhile.
+
+So a run that reads `cancelled` has no handler still holding its work, and no
+run under it still going but those it detached. A run failed from outside its
+own work, by its `timeout` or by the reaper, does not wait so. It ends
+`failed` at once, and the child runs it cancelled, and the handlers of its
+attempts, end after it; when that happens while a run above it is being
+cancelled, the runs above can end before those under it have. Until a
+handler of such a run has ended, its worker holds the command, and
+`deleteRun` answers `RunBusy`. A run already `cancelling` is not timed out,
+so a cancellation asked for first stays one. Cancelling a run that has ended
+changes nothing.
 
 ### Retry and restart
 
@@ -1032,13 +1039,13 @@ long an interrupted handler may take to end, finalizers included.
 
 `Worker.coordinator` also takes the maintenance options:
 
-| Option        | Default                 | Does                                                                                   |
-| ------------- | ----------------------- | -------------------------------------------------------------------------------------- |
-| `reaping`     | every 30 s; `false` off | fails the work dead commands stood for, so no run waits for a command nobody is given  |
-| `runTimeouts` | every 60 s; `false` off | fails runs of its workflows that are past their `timeout`                              |
-| `schedules`   | none                    | the deployment's schedules, all of them; omitted, stored schedules are left alone      |
-| `scheduling`  | every 1 s               | how due schedules are fired, when `schedules` is given                                 |
-| `retention`   | none                    | `{ olderThan, statuses? }`: prunes ended root runs older than the duration, every 60 s |
+| Option        | Default                 | Does                                                                                                                                 |
+| ------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `reaping`     | every 30 s; `false` off | fails the work dead commands stood for, and ends cancellations nothing holds any more, so no run waits for a command nobody is given |
+| `runTimeouts` | every 60 s; `false` off | fails runs of its workflows that are past their `timeout`                                                                            |
+| `schedules`   | none                    | the deployment's schedules, all of them; omitted, stored schedules are left alone                                                    |
+| `scheduling`  | every 1 s               | how due schedules are fired, when `schedules` is given                                                                               |
+| `retention`   | none                    | `{ olderThan, statuses? }`: prunes ended root runs older than the duration, every 60 s                                               |
 
 Each of `reaping`, `runTimeouts`, `scheduling` and `retention` takes
 `everyMs` and `batchSize` (100). Options a worker cannot run with throw when
@@ -1139,7 +1146,8 @@ Serving that revision again resumes them. Such a run is also **not timed
 out**: a coordinator sweeps only runs of the workflows it holds. Cancelling a
 workflow run of an unserved revision records `cancelling` and settles when a
 coordinator serving it returns, and a parent that cancelled it stays
-`cancelling` until then; a task run is cancelled at once.
+`cancelling` until then; a task run that no worker holds is cancelled at
+once.
 
 A run never moves to another revision.
 

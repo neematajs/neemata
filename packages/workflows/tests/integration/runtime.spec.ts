@@ -687,17 +687,14 @@ for (const target of targets) {
           const run = yield* Client.start(Late, 'a')
           yield* Deferred.await(running)
 
+          // The run waits for the handler, whose worker holds its command.
           yield* Client.cancel(run.id)
-          const cancelled = yield* reached(run.id, 'cancelled')
+          yield* reached(run.id, 'cancelling')
+          expect((yield* settled([run.id])).claimed).toEqual([run.id])
           yield* Deferred.succeed(finish, undefined)
-          // The worker lets go of the command once the handler has ended.
-          yield* until(
-            'the late handler to be let go',
-            Effect.map(
-              settled([run.id]),
-              ({ claimed }) => claimed.length === 0,
-            ),
-          )
+          const cancelled = yield* reached(run.id, 'cancelled')
+          // The worker let go of the command when the handler ended.
+          expect((yield* settled([run.id])).claimed).toEqual([])
 
           const after = (yield* Client.get(run.id))!
           expect(after).toEqual(cancelled)

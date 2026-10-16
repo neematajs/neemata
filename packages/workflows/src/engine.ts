@@ -1,6 +1,7 @@
 import * as Effect from 'effect/Effect'
 
-import type { AttemptCommand, ContinueRun } from './model.ts'
+import type { StaleClaim, StorageError } from './errors.ts'
+import type { AttemptCommand, ContinueRun, StoredRun } from './model.ts'
 import type { Outcome } from './plan/attempt.ts'
 import type { Retention } from './plan/remove.ts'
 import type { ScheduleEntry } from './plan/schedule.ts'
@@ -9,7 +10,7 @@ import type { Registry, WorkflowProgram } from './program.ts'
 import type { Claim, DeadCommand } from './store.ts'
 import { planSettle, settleScope } from './plan/attempt.ts'
 import { beginScope, planBegin } from './plan/begin.ts'
-import { planCancel } from './plan/cancel.ts'
+import { planCancel, planDrain } from './plan/cancel.ts'
 import { passScope, planPass } from './plan/pass.ts'
 import { planReap, planRequeue } from './plan/reap.ts'
 import { planDelete, planPrune } from './plan/remove.ts'
@@ -61,10 +62,45 @@ export const settle = (
     ),
   )
 
-/** Asks a run to stop; `undefined` when no such run exists. */
+/**
+ * Goes on with the cancellation of the runs `seen`, each as it was seen
+ * `cancelling`, of those nothing of which is claimed: what they wait for
+ * ends at once (`planDrain`). One with anything claimed is left alone, as the
+ * delivery that holds it answers for its own work.
+ *
+ * The claims are read after the runs were seen `cancelling`, without a guard:
+ * no attempt of a run begins once it is, so nothing claimed then is nothing
+ * running from then on. Answers the runs it drained, as it left them.
+ */
+export const drain = (
+  seen: readonly Pick<StoredRun, 'id' | 'version'>[],
+): Effect.Effect<readonly StoredRun[], StorageError | StaleClaim, Store> =>
+  Effect.gen(function* () {
+    if (seen.length === 0) return []
+    const store = yield* Store
+    const held = new Set(yield* store.claimed(seen.map(({ id }) => id)))
+    const quiet = seen.filter(({ id }) => !held.has(id))
+    if (quiet.length === 0) return []
+    return yield* store.transact(
+      { runs: quiet.map(({ id }) => id) },
+      planDrain(quiet),
+    )
+  })
+
+/**
+ * Asks a run to stop; `undefined` when no such run exists. A task run has no
+ * pass to go on with its cancellation in: one whose attempt nothing has
+ * claimed has no handler running, and is drained at once.
+ */
 export const cancel = (runId: string) =>
   Effect.flatMap(Store, (store) =>
     store.transact({ runs: [runId] }, planCancel(runId)),
+  ).pipe(
+    Effect.flatMap((run) =>
+      run?.kind === 'task' && run.status === 'cancelling'
+        ? Effect.map(drain([run]), ([drained]) => drained ?? run)
+        : Effect.succeed(run),
+    ),
   )
 
 /**
@@ -77,6 +113,12 @@ export const retry = (runId: string, expectedVersion?: number) =>
     store.transact({ runs: [runId] }, planRetry(runId, expectedVersion)),
   )
 
+/** Drains the task runs a run failed from outside left waiting; whether any. */
+const drained = (
+  ended: false | readonly StoredRun[],
+): Effect.Effect<boolean, StorageError | StaleClaim, Store> =>
+  ended === false ? Effect.succeed(false) : Effect.as(drain(ended), true)
+
 /** Ends what a dead command was to continue; `false` when nothing waits. */
 export const reap = (dead: DeadCommand) =>
   Effect.flatMap(Store, (store) =>
@@ -84,13 +126,13 @@ export const reap = (dead: DeadCommand) =>
       { runs: [dead.command.runId], dead: [dead.id] },
       planReap(dead),
     ),
-  )
+  ).pipe(Effect.flatMap(drained))
 
 /** Fails a run of the program that is past its timeout; `false` otherwise. */
 export const timeout = (program: WorkflowProgram, runId: string) =>
   Effect.flatMap(Store, (store) =>
     store.transact(timeoutScope(program, runId), planTimeout(program, runId)),
-  )
+  ).pipe(Effect.flatMap(drained))
 
 /**
  * Queues the dead command of an id again; `false` when none has it. Decided

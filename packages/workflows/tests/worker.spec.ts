@@ -935,16 +935,17 @@ describe('a heartbeat', () => {
           yield* elapse(1_000)
           yield* cancel(run.id)
           yield* idle
-          // The run is settled at once; the handler learns at its next beat.
-          expect((yield* load(run.id)).run.status).toBe('cancelled')
+          // The handler learns at its next beat; the run waits for it.
+          expect((yield* load(run.id)).run.status).toBe('cancelling')
           expect(seen.interruptedAt).toBeUndefined()
 
           yield* elapse(BEAT - 1_000)
           expect(seen.interruptedAt).toBe(BEAT)
           expect(seen.stopReason).toBe('cancelled')
-          expect((yield* load(run.id)).attempts).toMatchObject([
-            { status: 'cancelled' },
-          ])
+          yield* idle
+          const ended = yield* load(run.id)
+          expect(ended.run.status).toBe('cancelled')
+          expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
           expect(inspect.queue()).toStrictEqual([])
         }),
       )
@@ -974,6 +975,54 @@ describe('a heartbeat', () => {
           expect(seen.interruptedAt).toBe(1_000)
           expect(seen.stopReason).toBe('cancelled')
           expect((yield* load(run.id)).run.status).toBe('cancelled')
+          expect(inspect.queue()).toStrictEqual([])
+        }),
+      )
+    },
+  )
+
+  it.effect.each([
+    ['a workflow run', 'flow', workflow] as const,
+    ['a task run', 'job', task] as const,
+  ])(
+    'keeps %s cancelling, and its unique key held, while its handler cleans up',
+    ([, name, program]) => {
+      // Two seconds of cleanup once told to stop.
+      const execute: Execute = () =>
+        Effect.never.pipe(Effect.onInterrupt(() => Effect.sleep(2_000)))
+      const { served, provide, inspect } = setup([program(execute)])
+      const keyed = () =>
+        start({
+          ...(program === task ? { kind: 'task' as const } : {}),
+          name,
+          input: null,
+          unique: { key: ['entity', 1] },
+        })
+
+      return provide(
+        Effect.gen(function* () {
+          yield* coordinator(served)
+          yield* execution(served)
+          const { run } = yield* keyed()
+          yield* idle
+
+          yield* cancel(run.id)
+          yield* elapse(1_000)
+          // Told at once, and still cleaning up: nothing else may hold the
+          // key, as its work is not over.
+          const ending = yield* load(run.id)
+          expect(ending.run.status).toBe('cancelling')
+          expect(ending.attempts).toMatchObject([{ status: 'started' }])
+          expect((yield* Effect.flip(keyed()))._tag).toBe('RunConflict')
+
+          yield* elapse(1_000)
+          const ended = yield* load(run.id)
+          expect(ended.run.status).toBe('cancelled')
+          expect(ended.attempts).toMatchObject([{ status: 'cancelled' }])
+          const { run: next } = yield* keyed()
+          expect(next.id).not.toBe(run.id)
+          yield* cancel(next.id)
+          yield* elapse(2_000)
           expect(inspect.queue()).toStrictEqual([])
         }),
       )
@@ -1475,27 +1524,46 @@ describe('a handler that does not yield to interruption', () => {
     )
   })
 
-  it.effect('is no reason to wait when a run is cancelled under it', () => {
-    const { execute } = stubborn()
-    const { served, provide } = setup([task(execute)])
+  it.effect(
+    'keeps a run cancelling, and its key held, until its lease ends',
+    () => {
+      const { execute } = stubborn()
+      const { served, provide } = setup([task(execute)])
+      const keyed = () =>
+        start({
+          kind: 'task',
+          name: 'job',
+          input: null,
+          unique: { key: ['stubborn'] },
+        })
 
-    return provide(
-      Effect.gen(function* () {
-        const worker = yield* execution(served, { cleanupTimeoutMs: 1_000 })
-        const { run } = yield* startTask()
-        yield* idle
+      return provide(
+        Effect.gen(function* () {
+          const worker = yield* execution(served, { cleanupTimeoutMs: 1_000 })
+          const { run } = yield* keyed()
+          yield* idle
 
-        yield* cancel(run.id)
-        yield* elapse(900, 100)
-        expect(worker.pollUnsafe()).toBeUndefined()
-        yield* elapse(100, 100)
-        expect(yield* Effect.flip(Fiber.join(worker))).toStrictEqual(
-          new CleanupTimeout({ timeoutMs: 1_000 }),
-        )
-        expect((yield* load(run.id)).run.status).toBe('cancelled')
-      }),
-    )
-  })
+          yield* cancel(run.id)
+          yield* elapse(900, 100)
+          expect(worker.pollUnsafe()).toBeUndefined()
+          yield* elapse(100, 100)
+          expect(yield* Effect.flip(Fiber.join(worker))).toStrictEqual(
+            new CleanupTimeout({ timeoutMs: 1_000 }),
+          )
+          // Left behind, it may still be running while its claim lasts.
+          expect((yield* load(run.id)).run.status).toBe('cancelling')
+          expect((yield* Effect.flip(keyed()))._tag).toBe('RunConflict')
+
+          // Its lease over, nothing of the run is held: the sweep ends it.
+          yield* elapse(30_000)
+          expect(yield* Worker.drainCancellations()).toEqual({ drained: 1 })
+          expect((yield* load(run.id)).run.status).toBe('cancelled')
+          const { run: next } = yield* keyed()
+          expect(next.id).not.toBe(run.id)
+        }),
+      )
+    },
+  )
 
   it.effect('refuses a wait no worker can keep', () =>
     Effect.sync(() => {

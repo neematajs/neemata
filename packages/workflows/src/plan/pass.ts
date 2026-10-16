@@ -40,13 +40,20 @@ import {
   save,
 } from './definitions.ts'
 import { planning, Unwritten } from './draft.ts'
-import { cancelRun, finishRun, wakeParent } from './finish.ts'
+import { cancelRun, draining, finishRun, wakeParent } from './finish.ts'
 import { canonical } from './keys.ts'
 import { reattempt, reopenRun, reopenWork } from './retry.ts'
 import { startTask } from './task.ts'
 
 export type PassResult =
-  | { readonly _tag: 'Advanced' }
+  | {
+      readonly _tag: 'Advanced'
+      /**
+       * Left `cancelling`, waiting for work only a drain may end when
+       * nothing holds it any more: the run, and task runs under it.
+       */
+      readonly draining?: readonly StoredRun[]
+    }
   /** The run is gone; the command was dropped. */
   | { readonly _tag: 'Ignored' }
   | Unroutable
@@ -134,7 +141,10 @@ export function planPass(
     }
 
     draft.ack(claim)
-    return { _tag: 'Advanced' }
+    const waiting = draining(draft, draft.head(run.id)!)
+    return waiting.length > 0
+      ? { _tag: 'Advanced', draining: waiting }
+      : { _tag: 'Advanced' }
   })
 }
 

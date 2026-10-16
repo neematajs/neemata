@@ -8,7 +8,14 @@ import type {
   Program,
   Registry,
 } from '../src/index.ts'
-import { coordinate, InMemory, registry, settle, Store } from '../src/index.ts'
+import {
+  coordinate,
+  drain,
+  InMemory,
+  registry,
+  settle,
+  Store,
+} from '../src/index.ts'
 
 export const LEASE = 30_000
 
@@ -36,7 +43,10 @@ export function setup(
   return { ...memory, served, provide }
 }
 
-/** Claims and runs every due coordination command once; returns how many. */
+/**
+ * Claims and runs every due coordination command once, and drains a run a
+ * pass leaves cancelling, as a coordinator does; returns how many.
+ */
 export const pass = Effect.fnUntraced(function* (served: Registry) {
   const store = yield* Store
   const claims = yield* store.claim({
@@ -44,7 +54,12 @@ export const pass = Effect.fnUntraced(function* (served: Registry) {
     limit: 100,
     leaseMs: LEASE,
   })
-  for (const claim of claims) yield* coordinate(served, claim)
+  for (const claim of claims) {
+    const result = yield* coordinate(served, claim)
+    if (result._tag === 'Advanced' && result.draining) {
+      yield* drain(result.draining)
+    }
+  }
   return claims.length
 })
 

@@ -9,7 +9,7 @@ import type { Claim, Plan, ReadScope, UnitRead } from '../store.ts'
 import type { Draft } from './draft.ts'
 import { continueRun, isTerminal, parseDurationMs } from '../model.ts'
 import { planning } from './draft.ts'
-import { finishRun } from './finish.ts'
+import { cancelRun, finishRun } from './finish.ts'
 
 export type Outcome =
   | { readonly _tag: 'Completed'; readonly output: unknown }
@@ -76,6 +76,35 @@ export function current(draft: Draft, command: AttemptCommand) {
   return { run, node, child, attempt }
 }
 
+/**
+ * Ends the attempt of a run being cancelled, once its handler is known to
+ * have stopped or never to have begun: the delivery holding its command
+ * says so, or its command is dead. Answers whether there was one to end.
+ *
+ * Its child ends `cancelled`. A task run is then cancelled here, as nothing
+ * else of it is ending; a workflow run is woken, and its pass sees what else
+ * is.
+ */
+export function retire(draft: Draft, command: AttemptCommand): boolean {
+  const { run, child, attempt } = draft.unit(unitOf(command))
+  if (
+    run?.status !== 'cancelling' ||
+    // A workflow run's pass may not have come to the child yet.
+    (child?.status !== 'cancelling' && child?.status !== 'running') ||
+    child.currentAttemptId !== command.attemptId ||
+    attempt?.status !== 'started'
+  ) {
+    return false
+  }
+  if (run.kind === 'task') draft.require({ runs: [run.id] })
+
+  draft.updateAttempt(attempt, { status: 'cancelled', completedAt: draft.now })
+  draft.updateChild(child, { status: 'cancelled' })
+  if (run.kind === 'task') cancelRun(draft, run)
+  else draft.enqueue(continueRun(run))
+  return true
+}
+
 type Result =
   | { readonly status: 'completed'; readonly output: unknown }
   | { readonly status: 'failed'; readonly error: StoredError }
@@ -119,7 +148,11 @@ export function planSettle(
     draft.ack(claim)
 
     const counted = current(draft, command)
-    if (!counted) return 'stale'
+    if (!counted) {
+      // The handler ended as its run was being cancelled: that stands.
+      retire(draft, command)
+      return 'stale'
+    }
     const { child, attempt } = counted
 
     const completedAt = draft.now

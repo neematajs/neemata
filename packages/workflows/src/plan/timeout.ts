@@ -1,3 +1,4 @@
+import type { StoredRun } from '../model.ts'
 import type { WorkflowProgram } from '../program.ts'
 import type { Plan, ReadScope } from '../store.ts'
 import { isTerminal, parseDurationMs } from '../model.ts'
@@ -25,16 +26,17 @@ export function timeoutScope(
  * it applies to runs of exactly that program: a run of another revision, or
  * of this revision as other code, is left alone. So is a run `cancelling`.
  *
- * `false` when the run is not, or no longer, overdue.
+ * `false` when the run is not, or no longer, overdue; otherwise the task
+ * runs it cancelled that wait for their handlers.
  */
 export function planTimeout(
   program: WorkflowProgram,
   runId: string,
-): Plan<boolean> {
+): Plan<false | readonly StoredRun[]> {
   const { name, revision, timeout } = program
   const timeoutMs = parseDurationMs(timeout)
 
-  return planning<boolean>((draft) => {
+  return planning<false | readonly StoredRun[]>((draft) => {
     const run = draft.records(runId)?.run
     if (
       !run ||
@@ -53,10 +55,9 @@ export function planTimeout(
       return false
     }
 
-    failRun(draft, run, {
+    return failRun(draft, run, {
       name: 'RunTimeout',
       message: `Workflow run [${run.id}] timed out after [${timeout}]`,
-    })
-    return true
+    }).tasks
   })
 }
