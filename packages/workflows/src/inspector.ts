@@ -2,7 +2,7 @@
 // Node APIs, so a dashboard can show runs and graphs an API serves without
 // bundling the engine. Hashing a graph needs `node:crypto` and is in the
 // package's main entry.
-import type { RunDetail } from './client.ts'
+import type { RunDetail, RunInspection } from './client.ts'
 import type { Definition, WorkflowGraph } from './graph/structure.ts'
 import type {
   NodeStatus,
@@ -14,7 +14,7 @@ import type {
   Timestamp,
 } from './model.ts'
 import { labels, serializeWorkflowGraph } from './graph/structure.ts'
-import { parseChildKey } from './model.ts'
+import { isTerminal, parseChildKey } from './model.ts'
 
 export type {
   RunDefinition,
@@ -239,15 +239,31 @@ export type DurableRunView = {
 }
 
 /**
- * The view of a durable run from its detail, read with `children` for the
- * attempts of each operation's work; `undefined` for a run with steps,
- * whose nodes carry no operations. Pure, so it runs where the detail is
- * shown.
+ * Whether a run is a durable workflow's: by the graph it was created with,
+ * or, with none to trust, by its nodes, every one of which a durable body
+ * asked for. A run with no node yet and no graph cannot be told.
  */
-export function durableView(detail: RunDetail): DurableRunView | undefined {
-  const { run, nodes, children, childRuns, childDetails } = detail
-  if (nodes.some(({ operation }) => operation === undefined)) return undefined
+function durable({ detail, definition }: RunInspection): boolean {
+  if (definition.source === 'saved') {
+    const { structure } = definition
+    return structure.kind === 'workflow' && structure.mode === 'durable'
+  }
+  const { nodes } = detail
+  return nodes.length > 0 && nodes.every(({ operation }) => operation)
+}
+
+/**
+ * The view of a durable run from its inspection, read with `children` for
+ * the attempts of each operation's work; `undefined` for any other run.
+ * Pure, so it runs where the inspection is shown.
+ */
+export function durableView(
+  inspection: RunInspection,
+): DurableRunView | undefined {
+  if (!durable(inspection)) return undefined
+  const { run, nodes, children, childRuns, childDetails } = inspection.detail
   const runs = new Map(childRuns.map((child) => [child.id, child]))
+  const edges = new Map(children.map((child) => [child.nodeName, child]))
 
   const operations = nodes
     .toSorted(
@@ -266,7 +282,7 @@ export function durableView(detail: RunDetail): DurableRunView | undefined {
       switch (node.kind) {
         case 'task':
         case 'workflow': {
-          const child = children.find(({ nodeName }) => nodeName === node.name)
+          const child = edges.get(node.name)
           const childRunId = child?.childRunId
           const childRun =
             childRunId === undefined ? undefined : runs.get(childRunId)
@@ -322,8 +338,12 @@ export function durableView(detail: RunDetail): DurableRunView | undefined {
       }
     })
 
+  // Only a run that is blocked now is blocked by its marks: one cancelled
+  // or timed out keeps them as they were, with nothing left to resume.
+  const blocked = run.status === 'blocked'
+  const going = !isTerminal(run.status) && run.status !== 'cancelling'
   const blockers: BlockerView[] = []
-  if (run.status === 'blocked' && run.error?.name === 'ReplayMismatch') {
+  if (blocked && run.error?.name === 'ReplayMismatch') {
     blockers.push({
       kind: 'mismatch',
       error: run.error,
@@ -332,14 +352,14 @@ export function durableView(detail: RunDetail): DurableRunView | undefined {
   }
   for (const operation of operations) {
     if (operation.kind !== 'task' && operation.kind !== 'workflow') continue
-    if (operation.blocked) {
+    if (operation.blocked && blocked) {
       blockers.push({
         kind: 'operation',
         operation: operation.name,
         ...(operation.error === undefined ? {} : { error: operation.error }),
         actions: ['resume', 'cancel'],
       })
-    } else if (operation.childRun?.status === 'blocked') {
+    } else if (going && operation.childRun?.status === 'blocked') {
       blockers.push({
         kind: 'child',
         operation: operation.name,

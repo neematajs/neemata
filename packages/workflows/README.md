@@ -1574,7 +1574,7 @@ browser receives. Hashing (`hashStructure`, `describeDefinition`) needs
 ### A durable run
 
 A durable run has no graph to draw: its operations are known as it comes to
-them. `durableView` turns its detail, read with `children` for each
+them. `durableView` turns its inspection, read with `children` for each
 operation's work and attempts, into what a screen or an operator shows: the
 operations in the order the run took them, and what blocks it with the
 actions that may unblock it.
@@ -1582,13 +1582,13 @@ actions that may unblock it.
 ```ts
 import { durableView } from '@nmtjs/workflows/inspector'
 
-// Server: the run, and the runs its operations started, in one read.
-const durableDetail = (runId: string) =>
-  Client.getDetail(runId, { children: true })
+// Server: the run, its definition, and the runs its operations started.
+const durableInspection = (runId: string) =>
+  Client.inspect(runId, { children: true })
 
-// Browser: what the run did, waits for, and is blocked by.
-const show = (detail: RunDetail) => {
-  const view = durableView(detail)
+// Browser: what the run did, waits for, and which run to resume.
+const show = (inspection: RunInspection) => {
+  const view = durableView(inspection)
   if (!view) return undefined
   return {
     waitingFor: view.operations.flatMap((operation) =>
@@ -1596,8 +1596,11 @@ const show = (detail: RunDetail) => {
         ? [`${operation.family} ${operation.key}`]
         : [],
     ),
-    canResume: view.blockers.some(({ actions }) =>
-      actions.some((action) => action === 'resume'),
+    // `Client.resume(runId)` for the run itself...
+    resumeRun: view.blockers.some(({ kind }) => kind !== 'child'),
+    // ...and `Client.resume(childRunId)` for each child blocked in its place.
+    resumeChildren: view.blockers.flatMap((blocker) =>
+      blocker.kind === 'child' ? [blocker.childRunId] : [],
     ),
   }
 }

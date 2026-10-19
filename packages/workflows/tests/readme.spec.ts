@@ -17,7 +17,7 @@ import type {
   StorageError,
   Store,
 } from '../src/index.ts'
-import type { RunDetail, RunInspection } from '../src/inspector.ts'
+import type { RunInspection } from '../src/inspector.ts'
 import {
   Client,
   decodeRun,
@@ -393,13 +393,13 @@ const unblock = (runId: string, version: number) =>
 // #endregion
 
 // #region durable-view
-// Server: the run, and the runs its operations started, in one read.
-const durableDetail = (runId: string) =>
-  Client.getDetail(runId, { children: true })
+// Server: the run, its definition, and the runs its operations started.
+const durableInspection = (runId: string) =>
+  Client.inspect(runId, { children: true })
 
-// Browser: what the run did, waits for, and is blocked by.
-const show = (detail: RunDetail) => {
-  const view = durableView(detail)
+// Browser: what the run did, waits for, and which run to resume.
+const show = (inspection: RunInspection) => {
+  const view = durableView(inspection)
   if (!view) return undefined
   return {
     waitingFor: view.operations.flatMap((operation) =>
@@ -407,8 +407,11 @@ const show = (detail: RunDetail) => {
         ? [`${operation.family} ${operation.key}`]
         : [],
     ),
-    canResume: view.blockers.some(({ actions }) =>
-      actions.some((action) => action === 'resume'),
+    // `Client.resume(runId)` for the run itself...
+    resumeRun: view.blockers.some(({ kind }) => kind !== 'child'),
+    // ...and `Client.resume(childRunId)` for each child blocked in its place.
+    resumeChildren: view.blockers.flatMap((blocker) =>
+      blocker.kind === 'child' ? [blocker.childRunId] : [],
     ),
   }
 }
@@ -498,10 +501,11 @@ describe('the durable view example', () => {
           sections: ['intro'],
         })
         yield* serve(Review)
-        const detail = yield* durableDetail(run.id)
-        expect(show(detail!)).toEqual({
+        const inspection = yield* durableInspection(run.id)
+        expect(show(inspection!)).toEqual({
           waitingFor: ['verdict intro'],
-          canResume: false,
+          resumeRun: false,
+          resumeChildren: [],
         })
       }),
     )

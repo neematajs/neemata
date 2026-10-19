@@ -475,6 +475,38 @@ function detailOf(
   }
 }
 
+/**
+ * A detail with the details of the runs its run started, when asked for. All
+ * of them, and the heads their own details name, are asked for at once,
+ * before any is made: a plan that asks is planned again, once per ask.
+ */
+function withChildren(
+  draft: Draft,
+  records: RunRecords,
+  detail: RunDetail,
+  children: boolean,
+): RunDetail {
+  if (!children) return detail
+  const ids = records.children.flatMap(({ childRunId }) =>
+    childRunId === undefined ? [] : [childRunId],
+  )
+  draft.require({ runs: ids })
+  const found = ids.flatMap((id) => {
+    const child = draft.records(id)
+    return child ? [child] : []
+  })
+  draft.require({
+    heads: found.flatMap(({ children: under }) =>
+      under.flatMap(({ childRunId }) =>
+        childRunId === undefined ? [] : [childRunId],
+      ),
+    ),
+  })
+  const childDetails: Record<string, RunDetail> = Object.create(null)
+  for (const child of found) childDetails[child.run.id] = detailOf(draft, child)
+  return { ...detail, childDetails }
+}
+
 /** A stored graph is trusted only when it still hashes to the key it is under. */
 function verified(graphHash: string, stored: unknown) {
   try {
@@ -520,6 +552,7 @@ function definitionOf(
  */
 export const inspect = (
   runId: string,
+  { children = false }: DetailOptions = {},
 ): Effect.Effect<RunInspection | undefined, StorageError, Store> =>
   Effect.flatMap(Store, (store) =>
     store.transact(
@@ -536,10 +569,15 @@ export const inspect = (
             ? undefined
             : revisionKey({ kind, name, revision })
         return {
-          detail: detailOf(
+          detail: withChildren(
             draft,
             records,
-            [graph, manifest].filter((key) => key !== undefined),
+            detailOf(
+              draft,
+              records,
+              [graph, manifest].filter((key) => key !== undefined),
+            ),
+            children,
           ),
           definition: definitionOf(
             run,
@@ -818,18 +856,7 @@ export const getDetail = (
       planning((draft): RunDetail | undefined => {
         const records = draft.records(runId)
         if (!records) return undefined
-        if (!children) return detailOf(draft, records)
-        const ids = records.children.flatMap(({ childRunId }) =>
-          childRunId === undefined ? [] : [childRunId],
-        )
-        // All of them asked for at once: a plan that asks is planned again.
-        draft.require({ runs: ids })
-        const childDetails: Record<string, RunDetail> = Object.create(null)
-        for (const id of ids) {
-          const child = draft.records(id)
-          if (child) childDetails[id] = detailOf(draft, child)
-        }
-        return { ...detailOf(draft, records), childDetails }
+        return withChildren(draft, records, detailOf(draft, records), children)
       }),
     ),
   ).pipe(claimless)

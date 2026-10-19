@@ -5,6 +5,7 @@ import * as Schema from 'effect/Schema'
 import type { AnyTask, ServedWorkflow } from '../src/index.ts'
 import { Client, durable, task } from '../src/index.ts'
 import { durableView } from '../src/inspector.ts'
+import { Fix, Review as Steps } from './fixtures/review.ts'
 import { coordinate, deployment, serve } from './typed-support.ts'
 
 const served = (
@@ -49,8 +50,8 @@ const Review = durable(
 )
 
 const view = (runId: string) =>
-  Effect.map(Client.getDetail(runId, { children: true }), (detail) =>
-    durableView(detail!),
+  Effect.map(Client.inspect(runId, { children: true }), (inspection) =>
+    durableView(inspection!),
   )
 
 describe('a view of a durable run', () => {
@@ -202,15 +203,80 @@ describe('a view of a durable run', () => {
     )
   })
 
-  it('is no view of a run with steps', () => {
-    expect(
-      durableView({
-        run: {} as never,
-        nodes: [{ name: 'step', kind: 'task' } as never],
-        children: [],
-        attempts: [],
-        childRuns: [],
+  it.effect(
+    'tells a durable run from one with steps before either has run',
+    () => {
+      const { provide } = deployment()
+      return provide(
+        Effect.gen(function* () {
+          const durableRun = yield* Client.start(Steps, { steps: [] })
+          const staticRun = yield* Client.start(Fix, 'a')
+          expect(yield* view(durableRun.id)).toMatchObject({
+            operations: [],
+            blockers: [],
+          })
+          expect(yield* view(staticRun.id)).toBeUndefined()
+        }),
+      )
+    },
+  )
+
+  it.effect('shows no blockers once a blocked run is cancelled', () => {
+    const Failing = task({
+      name: 'visibility.cancelled.failing',
+      revision: 'v1',
+      pool: 'default',
+      input: Schema.Void,
+      output: Schema.Void,
+      handler: () => Effect.fail(new Error('provider down')),
+    })
+    const Child = durable(
+      {
+        name: 'visibility.cancelled.child',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.Void,
+        tasks: [Failing],
+      },
+      (_, d) => d.task('call', Failing, undefined),
+    )
+    const Parent = durable(
+      {
+        name: 'visibility.cancelled.parent',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.Void,
+        tasks: [Failing],
+        workflows: [Child],
+      },
+      (_, d) =>
+        Effect.asVoid(
+          Effect.all(
+            [
+              d.task('call', Failing, undefined),
+              d.workflow('child', Child, undefined),
+            ],
+            { concurrency: 'unbounded' },
+          ),
+        ),
+    )
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Parent, undefined)
+        yield* serve(served(Parent))
+        expect((yield* view(run.id))!.blockers).toHaveLength(2)
+
+        yield* Client.cancel(run.id)
+        yield* serve(served(Parent))
+        const { run: cancelled, operations, blockers } = (yield* view(run.id))!
+        expect(cancelled.status).toBe('cancelled')
+        expect(blockers).toEqual([])
+        // What it did stays shown as it was.
+        expect(operations.map(({ name }) => name)).toEqual(['call', 'child'])
       }),
-    ).toBeUndefined()
+    )
   })
 })
