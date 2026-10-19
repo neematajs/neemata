@@ -727,8 +727,12 @@ block.
   cancelled; a run timeout goes on counting, and `resume` resets none of it.
   `expectedVersion` covers what blocks the run, as every change to it writes
   the run; it does not cover every change in the runs under it.
-- **Refused:** `RunNotBlocked`, `StaleRunVersion`, and `BlockerNotResumable`
-  for an operation that does not block the run.
+- **Refused:** `RunNotBlocked`, `StaleRunVersion`, `BlockerNotResumable`
+  for an operation that does not block the run, and `RunBusy` while anything
+  under the work to reopen is still ending: a run failed by its timeout ends
+  before its handlers have, and the work must not run twice.
+- **What blocks is what the body waits on.** An operation it let go of, the
+  loser of a race say, no longer blocks the run.
 
 A blocked run is not failed, so `Client.retry` has nothing to do with it; a
 durable run that did fail is not retried in place either, as its body may

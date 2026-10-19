@@ -54,8 +54,14 @@ export type MaintenanceOptions = {
 }
 
 // A run `cancelling` is not timed out: it ends `cancelled`, as it was asked
-// to, once the child runs it cancelled have ended.
-const OVERDUE: readonly RunStatus[] = ['queued', 'running', 'waiting']
+// to, once the child runs it cancelled have ended. A `blocked` one is: its
+// deadline does not wait for an operator.
+const OVERDUE: readonly RunStatus[] = [
+  'queued',
+  'running',
+  'waiting',
+  'blocked',
+]
 
 function batch({ batchSize = 100 }: SweepOptions) {
   if (!Number.isInteger(batchSize) || batchSize < 1) {

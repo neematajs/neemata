@@ -3,7 +3,8 @@ import * as Effect from 'effect/Effect'
 import * as Schema from 'effect/Schema'
 
 import type { AnyTask, ServedWorkflow } from '../src/index.ts'
-import { Client, durable, task, workflow } from '../src/index.ts'
+import { Client, durable, task, Worker, workflow } from '../src/index.ts'
+import { elapse, idle } from './support.ts'
 import { coordinate, deployment, serve } from './typed-support.ts'
 
 const served = (
@@ -361,6 +362,145 @@ describe('blocking durable runs', () => {
         yield* serve(served(Stuck))
         expect((yield* records(run.id)).run.status).toBe('cancelled')
       }),
+    )
+  })
+
+  it.effect('times out a blocked run', () => {
+    const { Call } = provider()
+    const Deadline = durable(
+      {
+        name: 'blocking.deadline',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.String,
+        tasks: [Call],
+        timeout: '2m',
+      },
+      (_, d) => d.task('call', Call, 'a'),
+    )
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Deadline, undefined)
+        yield* serve(served(Deadline))
+        expect((yield* records(run.id)).run.status).toBe('blocked')
+        yield* serve(served(Deadline), 4 * 60_000)
+        const { run: done } = yield* records(run.id)
+        expect(done.status).toBe('failed')
+        expect(done.error?.name).toBe('RunTimeout')
+      }),
+    )
+  })
+
+  it.effect('lets go of a block the body no longer waits on', () => {
+    const { Call } = provider()
+    const Fallback = durable(
+      {
+        name: 'blocking.fallback',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.String,
+        tasks: [Call],
+        inputs: { override: Schema.String, next: Schema.String },
+      },
+      (_, d) =>
+        Effect.gen(function* () {
+          // Whichever comes first: the work, or an answer given by hand.
+          const first = yield* Effect.raceFirst(
+            d.task('call', Call, 'a'),
+            d.input('override', 'a'),
+          )
+          const next = yield* d.input('next', 'b')
+          return `${first} ${next}`
+        }),
+    )
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Fallback, undefined)
+        yield* serve(served(Fallback))
+        expect((yield* records(run.id)).run.status).toBe('blocked')
+
+        yield* Client.send(Fallback, run.id, 'override', 'a', 'by hand')
+        yield* serve(served(Fallback))
+        const { run: waiting, nodes } = yield* records(run.id)
+        expect(waiting.status).toBe('waiting')
+        expect(
+          nodes.find(({ name }) => name === 'call')?.operation?.blocked,
+        ).toBeUndefined()
+        const refused = yield* Effect.flip(Client.resume(run.id))
+        expect(refused._tag).toBe('RunNotBlocked')
+      }),
+    )
+  })
+
+  it.effect('refuses to resume work a handler of which is still ending', () => {
+    // Only the first attempt is slow to stop, so the test's own end is not.
+    let slow = true
+    const Stuck = workflow(
+      {
+        name: 'blocking.stuck',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.Void,
+        // Fails the run from outside its work, which goes on ending.
+        timeout: '30s',
+      },
+      function* (w) {
+        return yield* w.activity('hang', {
+          input: Schema.Void,
+          output: Schema.Void,
+          from: w.input,
+          // Slow to stop: its cleanup outlasts the run it was for.
+          handler: () =>
+            Effect.onInterrupt(Effect.never, () =>
+              slow ? Effect.sleep('5 seconds') : Effect.void,
+            ),
+        })
+      },
+    )
+    const Parent = durable(
+      {
+        name: 'blocking.stuck-parent',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.Void,
+        workflows: [Stuck],
+      },
+      (_, d) => d.workflow('child', Stuck, undefined),
+    )
+    const { provide } = deployment()
+    return provide(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const started = yield* Client.start(Parent, undefined)
+          const { workflows, tasks } = served(Parent)
+          yield* Effect.forkScoped(
+            Worker.coordinator({ workflows, pollMs: 1_000 }),
+          )
+          yield* Effect.forkScoped(
+            Worker.execution({ workflows, tasks, pollMs: 1_000 }),
+          )
+          yield* idle
+          // Just past the sweep that times the child out, its handler still
+          // cleaning up.
+          yield* elapse(62_000)
+
+          expect((yield* records(started.id)).run.status).toBe('blocked')
+          // The activity's handler still runs, under its worker's claim.
+          const busy = yield* Effect.flip(Client.resume(started.id))
+          expect(busy._tag).toBe('RunBusy')
+          // Once it has stopped, the work runs again.
+          yield* elapse(30_000)
+          slow = false
+          const resumed = yield* Client.resume(started.id)
+          expect(resumed.status).toBe('waiting')
+        }),
+      ),
     )
   })
 })

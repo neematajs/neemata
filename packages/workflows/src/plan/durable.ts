@@ -100,13 +100,23 @@ export function advanceDurable(
     }
   }
 
-  // Blocked once, a node keeps it: every block writes the run too, so the
-  // version an operator read before resuming says whether it still holds.
+  // Blocked once, a node keeps it while the body waits on it, whatever the
+  // code says of failures since. One the body no longer waits on, a branch
+  // it let go of, blocks nothing and is let go of too. Every change writes
+  // the run, so the version an operator read says whether it still holds.
   let blocking = false
+  const waitedOn = new Set(blocked)
   for (const name of blocked) {
     const node = draft.node(run.id, name)!
     if (node.operation?.blocked) continue
     draft.updateNode(node, { operation: { ...node.operation!, blocked: true } })
+    blocking = true
+  }
+  for (const read of draft.nodes(run.id)) {
+    if (!read.operation?.blocked || waitedOn.has(read.name)) continue
+    const node = draft.node(run.id, read.name)!
+    const { blocked: _, ...operation } = node.operation!
+    draft.updateNode(node, { operation })
     blocking = true
   }
 

@@ -44,6 +44,11 @@ export class Durable extends Context.Service<
     readonly waits: () => void
     /** The body waits on an operation whose work failed: it blocks the run. */
     readonly blocks: (name: string) => void
+    /**
+     * The body let go of a wait in the replay, as a race does of its loser:
+     * it no longer waits there, nor is blocked there.
+     */
+    readonly releases: (name: string, blocked: boolean) => void
   }
 >()('@nmtjs/workflows/dsl/Durable') {}
 
@@ -568,7 +573,7 @@ function operate<A>(
     ) {
       replaying.blocks(operation.name)
       replaying.waits()
-      return Effect.never
+      return wait(replaying, operation.name, true)
     }
     if (node?.status === 'failed') {
       return Effect.fail(
@@ -581,9 +586,19 @@ function operate<A>(
     // Not opened yet, still under way, or cancelled: a cancelled node never
     // gives a value, and the pass that finds it cancels the run.
     replaying.waits()
-    return Effect.never
+    return wait(replaying, operation.name, false)
   })
 }
+
+/** A wait that ends only when the replay lets go of it. */
+const wait = (
+  replaying: Durable['Service'],
+  name: string,
+  blocked: boolean,
+): Effect.Effect<never> =>
+  Effect.onInterrupt(Effect.never, () =>
+    Effect.sync(() => replaying.releases(name, blocked)),
+  )
 
 /**
  * A body as the engine runs it: replayed whole and synchronously against a
@@ -596,7 +611,8 @@ function replay(
 ): Replay {
   return (history) => {
     const operations: Operation[] = []
-    const blocked: string[] = []
+    // Counted, as one name is waited on once, but a branch may wait twice.
+    const blocked = new Map<string, number>()
     let waiting = 0
     // Disposing of a replay that waits interrupts it, which runs what it
     // has to run when interrupted: its finalizers, `Effect.ensuring` and
@@ -617,7 +633,16 @@ function replay(
             if (!over) waiting += 1
           },
           blocks: (name) => {
-            if (!over) blocked.push(name)
+            if (!over) blocked.set(name, (blocked.get(name) ?? 0) + 1)
+          },
+          // A wait let go of while the replay runs, not by its disposal.
+          releases: (name, block) => {
+            if (over) return
+            waiting -= 1
+            if (!block) return
+            const left = (blocked.get(name) ?? 1) - 1
+            if (left > 0) blocked.set(name, left)
+            else blocked.delete(name)
           },
         },
       ),
@@ -644,6 +669,6 @@ function replay(
         ),
       }
     })()
-    return { outcome, operations, blocked }
+    return { outcome, operations, blocked: Array.from(blocked.keys()) }
   }
 }
