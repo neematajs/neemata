@@ -11,6 +11,7 @@ import { InMemory, Store, Worker } from '../src/index.ts'
 import { elapse, idle } from './support.ts'
 
 const POLL = 1_000
+const LONG = 10 * 60_000
 
 /** An in-memory store of its own, and the effect that runs against it. */
 export function deployment(options?: InMemory.InMemoryOptions) {
@@ -21,7 +22,11 @@ export function deployment(options?: InMemory.InMemoryOptions) {
   return { ...memory, provide }
 }
 
-/** Runs workers while the clock moves `ms`, then stops them and waits. */
+/**
+ * Runs workers while the clock moves `ms`, then stops them and waits. Hours
+ * of a durable sleep move a minute at a time: each adjust still wakes every
+ * poll in order, and a step a second costs seconds on slow runners.
+ */
 const during = <R>(
   workers: readonly Effect.Effect<
     never,
@@ -34,7 +39,7 @@ const during = <R>(
     Effect.gen(function* () {
       for (const worker of workers) yield* Effect.forkScoped(worker)
       yield* idle
-      yield* elapse(ms)
+      yield* elapse(ms, ms >= LONG ? 60_000 : 1_000)
     }),
   )
 
