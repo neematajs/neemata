@@ -199,15 +199,18 @@ export const Document = durable(
 )
 ```
 
-| Operation                                              | Gives                                                |
-| ------------------------------------------------------ | ---------------------------------------------------- |
-| `d.task(name, Task, input, { retry?, timeout? })`      | the task's output, or `OperationFailed`              |
-| `d.workflow(name, Workflow, input, { cancellation? })` | a static or durable child's output                   |
-| `d.sleep(name, '1h')`                                  | `void`, the duration after first reaching it         |
-| `d.now(name)`                                          | Unix ms when first reached, the same on every replay |
+| Operation                                              | Gives                                                    |
+| ------------------------------------------------------ | -------------------------------------------------------- |
+| `d.task(name, Task, input, { retry?, timeout? })`      | the task's output, or `OperationFailed`                  |
+| `d.workflow(name, Workflow, input, { cancellation? })` | a static or durable child's output                       |
+| `d.sleep(name, '1h')`                                  | `void`, the duration after first reaching it             |
+| `d.now(name)`                                          | Unix ms when first reached, the same on every replay     |
+| `d.input(family, key)`                                 | the value sent with `Client.send`, however long it takes |
+| `d.input(family, key, { timeout: '7d' })`              | `{ _tag: 'Received', value }` or `{ _tag: 'TimedOut' }`  |
 
-Options are `workflow`'s plus `revision` (required), `tasks` and `workflows`:
-every target must be versioned and declared once, at one revision. Serve
+Options are `workflow`'s plus `revision` (required), `tasks`, `workflows` and
+`inputs` (`{ family: Schema }`): every target must be versioned and declared
+once, at one revision; a family is an identifier (`[a-zA-Z_$][\w$-]*`). Serve
 `Document.workflows` / `Document.tasks` as for any workflow.
 
 ### Operation names
@@ -229,6 +232,8 @@ The app chooses each operation's name, and **the name is its identity**.
   timestamp, a random value or anything read outside `d.*`. Use a literal for
   a one-off (`'approve'`) and put the round in a repeated one
   (`` `review:${id}:round-${n}` ``, with `n` counted from stored results).
+- Names starting with `@` are the engine's (inputs are stored as
+  `@family:key`), so `d.task('@x', ...)` throws.
 - Only operations the replay reaches are compared: a call the code no longer
   makes leaves its node unused, unnoticed. Renaming, removing or changing an
   operation that runs in flight have stored is a **new revision**, served
@@ -249,6 +254,40 @@ The app chooses each operation's name, and **the name is its identity**.
   operations per run, not thousands.
 - `Client.retry` refuses a failed durable run (`RunNotRetryable`), since its
   body may have decided from the failure; use `Client.restart`.
+
+### Inputs
+
+A body waits for a value from outside with `d.input(family, key)`; the app
+sends it with `Client.send`, by run id or by the unique key the run holds, in
+its own transaction when it is in one:
+
+```ts
+const decide = (id: string, section: string, approved: boolean) =>
+  Client.send(Review, { unique: ['review', id] }, 'verdict', section, {
+    approved,
+  })
+// Receipt: { runId, input: '@verdict:<section>', receivedAt, duplicate }
+```
+
+- **Kept until read.** A value sent before the body reaches its input is
+  stored and read when it gets there. Open an input together with the work
+  that prompts it (`Effect.all`) so the wait exists as soon as anyone can
+  answer.
+- **First value wins.** The same value again answers with its receipt,
+  `duplicate: true`; another fails with `InputRefused` (`reason: 'received'`).
+- **A timeout is a deadline** from when the body first reaches the input; a
+  value after it is refused (`closed`) even before a pass has noticed.
+- **Refused otherwise:** `missing` (no run for the id or key), `other` (a run
+  of another workflow, or of a revision not given; `found` names it),
+  `ended` (ended or cancelling).
+- **A receipt is storage, not processing**: the run reads the value when its
+  body reaches the input, if it does.
+- **Across revisions** pass every revision the sender may reach:
+  `Client.send([ReviewV1, ReviewV2], to, family, key, value)`. The value's
+  type is what all of them take; it is encoded in the commit by the run's own
+  revision's schema, so schemas must be pure.
+- Authorization and validation beyond the schema are the app's, before it
+  sends.
 
 ## Client
 
@@ -288,6 +327,10 @@ decoded run, written in one commit with its command and saved definition.
 - Errors are tagged; handle them with `Effect.catchTag('RunConflict', ...)`.
 
 Other calls:
+
+- `send(Durable | [revisions], runId | { unique, scope? }, family, key,
+value)`: an input for a durable run, see [Inputs](#inputs). Fails with
+  `InputRefused` (`reason`, `input`, `runId?`, `found?`).
 
 - `cancel(runId)`: the run or `undefined`. A task run is cancelled at once; a
   workflow run becomes `cancelling` until its next coordination pass cancels

@@ -204,8 +204,8 @@ type InputValue<Ds, F> = (
   ) extends (box: infer Box) => void
     ? Box
     : never
-) extends // Indexed, not inferred again: inferring from `[A] & [B]` takes one of them.
-infer Box extends [unknown]
+) extends infer Box extends // Indexed, not inferred again: inferring from `[A] & [B]` takes one of them.
+  [unknown]
   ? Box[0]
   : never
 
