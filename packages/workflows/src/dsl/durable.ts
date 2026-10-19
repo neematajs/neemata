@@ -24,7 +24,7 @@ import type { ServedWorkflow } from './workflow.ts'
 import { OperationFailed } from '../errors.ts'
 import { describe } from '../graph/revision.ts'
 import { parseDurationMs, storedError } from '../model.ts'
-import { inputName } from '../plan/send.ts'
+import { ENGINE, inputName } from '../plan/send.ts'
 import { boundary } from './codec.ts'
 import { assertRevision, route } from './declaration.ts'
 
@@ -61,8 +61,8 @@ export type InputSchemas = Readonly<Record<string, EffectSchema<any>>>
 
 type SchemaType<S> = S extends EffectSchema<infer A> ? A : never
 
-/** What an input with a timeout came to. */
-export type Awaited<A> =
+/** What a wait for an input with a timeout came to. */
+export type InputOutcome<A> =
   | { readonly _tag: 'Received'; readonly value: A }
   | { readonly _tag: 'TimedOut' }
 
@@ -123,7 +123,7 @@ export type Operations<
       family: F,
       key: string,
       options: { readonly timeout: DurationString },
-    ): Effect.Effect<Awaited<SchemaType<I[F]>>, never, Durable>
+    ): Effect.Effect<InputOutcome<SchemaType<I[F]>>, never, Durable>
   }
 }
 
@@ -350,9 +350,14 @@ const assertName = (workflow: string, name: unknown) => {
       `Durable workflow [${workflow}] has an operation without a name`,
     )
   }
+  if (name.startsWith(ENGINE)) {
+    throw new Error(
+      `Durable workflow [${workflow}] names operation [${name}] with [${ENGINE}], which starts the names of the engine's own nodes`,
+    )
+  }
 }
 
-// Families name inputs as `family:key`, so a family holds no colon.
+// Inputs are named `@family:key`, so a family holds no colon.
 const familyPattern = /^[a-zA-Z_$][a-zA-Z0-9_$-]*$/
 
 function operationsOf<

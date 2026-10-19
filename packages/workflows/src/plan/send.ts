@@ -1,12 +1,23 @@
-import type { Route, RunUnique, Timestamp } from '../model.ts'
+import type { RunUnique, Timestamp } from '../model.ts'
 import type { Plan, ReadScope } from '../store.ts'
 import { InputRefused } from '../errors.ts'
 import { continueRun, isTerminal } from '../model.ts'
 import { planning, Refused } from './draft.ts'
 import { canonical, uniqueKey } from './keys.ts'
 
-/** The name of an input's node in a run: its family and its key. */
-export const inputName = (family: string, key: string) => `${family}:${key}`
+/**
+ * What starts the names of the nodes the engine names itself, as it does
+ * inputs: a body's operations never start with it, so a name a sender picks
+ * never lands on one of them.
+ */
+export const ENGINE = '@'
+
+/**
+ * The name of an input's node in a run: its family and its key. A family
+ * holds no colon, so the first one ends it, whatever the key holds.
+ */
+export const inputName = (family: string, key: string) =>
+  `${ENGINE}${family}:${key}`
 
 /** A unique key as a sender names it: `active` when no scope is given. */
 export type HeldKey = Pick<RunUnique, 'key'> & Partial<Pick<RunUnique, 'scope'>>
@@ -16,13 +27,24 @@ export type Recipient =
   | { readonly runId: string }
   | { readonly unique: HeldKey }
 
+/** The key of a revision among a send's encoders; the unversioned lane's. */
+export const revisionOf = (revision: string | undefined) =>
+  revision === undefined ? '' : `@${revision}`
+
 export type SendInput = {
-  /** The durable workflow the input is declared on. */
-  readonly route: Route
+  /** The durable workflow the input is declared on, by name. */
+  readonly name: string
   readonly to: Recipient
   readonly family: string
   readonly key: string
-  /** Encoded by the declaration's schema for the family. */
+  /**
+   * How the family's value is encoded for a run of each revision the sender
+   * holds, by `revisionOf`: the run's own revision decides. Called in the
+   * plan, which may run more than once, so it must be pure: synchronous,
+   * deterministic, and without effects on the value.
+   */
+  readonly encode: Readonly<Record<string, (value: unknown) => unknown>>
+  /** As the sender holds it; encoded for the run it reaches. */
   readonly value: unknown
 }
 
@@ -53,16 +75,21 @@ export function sendScope({ to }: SendInput): ReadScope {
  * same one sent again is answered with its receipt, another is refused.
  */
 export function planSend(input: SendInput): Plan<Receipt, InputRefused> {
-  const { route, to, family, key, value } = input
+  const { name: workflow, to, family, key, encode } = input
   const name = inputName(family, key)
 
   return planning<Receipt, InputRefused>((draft) => {
-    const refuse = (reason: InputRefused['reason'], runId?: string) =>
+    const refuse = (
+      reason: InputRefused['reason'],
+      runId?: string,
+      found?: InputRefused['found'],
+    ) =>
       new Refused(
         new InputRefused({
           reason,
           input: name,
           ...(runId === undefined ? {} : { runId }),
+          ...(found === undefined ? {} : { found }),
         }),
       )
 
@@ -71,18 +98,32 @@ export function planSend(input: SendInput): Plan<Receipt, InputRefused> {
     const run = draft.head(runId)
     if (!run) return refuse('missing', runId)
     // A task may share the workflow's name and revision: it is another run.
-    if (
-      run.kind !== 'workflow' ||
-      run.name !== route.name ||
-      run.revision !== route.revision
-    ) {
-      return refuse('other', runId)
+    // Of the workflow, a run of a revision the sender holds no schema of is
+    // another one too: only that revision's schema may encode for it.
+    const encoder = Object.hasOwn(encode, revisionOf(run.revision))
+      ? encode[revisionOf(run.revision)]
+      : undefined
+    if (run.kind !== 'workflow' || run.name !== workflow || !encoder) {
+      const { kind, name: found, revision } = run
+      return refuse('other', runId, {
+        kind,
+        name: found,
+        ...(revision === undefined ? {} : { revision }),
+      })
     }
     // The run's nodes are what decide, so they are read with it.
     draft.nodes(runId)
+    // Encoded for this run, by its revision: a value its schema refuses is
+    // a defect, and nothing is written.
+    const value = encoder(input.value)
 
     const node = draft.nodeRead(runId, name)?.record
-    if (node && node.kind !== 'input') return refuse('taken', runId)
+    // A body cannot name an operation so: one stored is a store gone wrong.
+    if (node && node.kind !== 'input') {
+      throw new Error(
+        `Node [${name}] of run [${runId}] has an input's name and is a ${node.kind}`,
+      )
+    }
     const receivedAt = node?.operation?.receivedAt
     if (node?.status === 'completed') {
       if (node.operation?.timedOut) return refuse('closed', runId)

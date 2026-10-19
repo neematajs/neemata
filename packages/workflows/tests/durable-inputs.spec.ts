@@ -89,7 +89,7 @@ describe('inputs of durable workflows', () => {
         const receipt = yield* Client.send(Session, run.id, 'answer', 'a', {
           text: 'yes',
         })
-        expect(receipt).toMatchObject({ input: 'answer:a', duplicate: false })
+        expect(receipt).toMatchObject({ input: '@answer:a', duplicate: false })
         yield* serve(served(Session))
 
         const { run: done } = yield* records(run.id)
@@ -249,7 +249,7 @@ describe('inputs of durable workflows', () => {
     )
   })
 
-  it.effect('refuses an input under the name of another operation', () => {
+  it.effect('keeps inputs apart from operations of the same name', () => {
     const Noted = durable(
       {
         name: 'inputs.noted',
@@ -260,19 +260,41 @@ describe('inputs of durable workflows', () => {
         tasks: [Prompt],
         inputs: { note: Answer },
       },
-      (_, d) => d.task('note:a', Prompt, 'a'),
+      (_, d) =>
+        Effect.gen(function* () {
+          // The same text as the input's family and key, and another node.
+          const prompt = yield* d.task('note:a', Prompt, 'a')
+          const { text } = yield* d.input('note', 'a')
+          return `${prompt}: ${text}`
+        }),
     )
     const { provide } = deployment()
     return provide(
       Effect.gen(function* () {
         const run = yield* Client.start(Noted, undefined)
-        yield* coordinate(Noted.workflows)
-        const taken = yield* Effect.flip(
-          Client.send(Noted, run.id, 'note', 'a', { text: 'x' }),
-        )
-        expect(taken).toMatchObject({ reason: 'taken' })
+        yield* Client.send(Noted, run.id, 'note', 'a', { text: 'kept' })
+        yield* serve(served(Noted))
+        expect((yield* records(run.id)).run.output).toBe('question a: kept')
       }),
     )
+  })
+
+  it('refuses operation names the engine keeps for its own nodes', () => {
+    const Engine = durable(
+      {
+        name: 'inputs.engine-name',
+        revision: 'v1',
+        pool: 'default',
+        input: Schema.Void,
+        output: Schema.Number,
+      },
+      (_, d) => d.now('@answer:a'),
+    )
+    const outcome = Engine.program.replay({
+      input: undefined,
+      node: () => undefined,
+    })
+    expect(outcome.outcome).toMatchObject({ _tag: 'Failed' })
   })
 
   it.effect('refuses a task run that shares the workflow name', () => {
@@ -291,9 +313,84 @@ describe('inputs of durable workflows', () => {
         const other = yield* Effect.flip(
           Client.send(Session, run.id, 'answer', 'a', { text: 'x' }),
         )
-        expect(other).toMatchObject({ reason: 'other' })
+        expect(other).toMatchObject({
+          reason: 'other',
+          found: { kind: 'task', name: Session.name },
+        })
       }),
     )
+  })
+
+  it.effect("encodes for the run's own revision", () => {
+    // One family, stored as text by v1 and as a number by v2.
+    const options = {
+      name: 'inputs.scored',
+      pool: 'default',
+      input: Schema.Void,
+      output: Schema.Number,
+    } as const
+    const V1 = durable(
+      {
+        ...options,
+        revision: 'v1',
+        inputs: { score: Schema.NumberFromString },
+      },
+      (_, d) => d.input('score', 'only'),
+    )
+    const V2 = durable(
+      {
+        ...options,
+        revision: 'v2',
+        inputs: { score: Schema.Number, note: Schema.String },
+      },
+      (_, d) => d.input('score', 'only'),
+    )
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const old = yield* Client.start(V1, undefined)
+        // A sender of the new code only cannot write for the old run.
+        const refused = yield* Effect.flip(
+          Client.send(V2, old.id, 'score', 'only', 5),
+        )
+        expect(refused).toMatchObject({
+          reason: 'other',
+          found: { kind: 'workflow', name: options.name, revision: 'v1' },
+        })
+        // Holding both, it writes with the run's own schema.
+        yield* Client.send([V1, V2], old.id, 'score', 'only', 5)
+        yield* serve(served(V1, V2))
+        const { run, nodes } = yield* records(old.id)
+        expect(run.output).toBe(5)
+        expect(nodes.find(({ kind }) => kind === 'input')?.output).toBe('5')
+      }),
+    )
+  })
+
+  it('types a send to several revisions by what they all take', () => {
+    const options = {
+      name: 'inputs.revised',
+      pool: 'default',
+      input: Schema.Void,
+      output: Schema.Void,
+    } as const
+    const V1 = durable(
+      { ...options, revision: 'v1', inputs: { flag: Schema.Boolean } },
+      () => Effect.void,
+    )
+    const V2 = durable(
+      {
+        ...options,
+        revision: 'v2',
+        inputs: { flag: Schema.Boolean, extra: Schema.String },
+      },
+      () => Effect.void,
+    )
+    expect(() => Client.send([V1, V2], 'run', 'flag', 'k', true)).not.toThrow()
+    expect(() =>
+      // @ts-expect-error a family only one revision takes
+      Client.send([V1, V2], 'run', 'extra', 'k', 'x'),
+    ).not.toThrow()
   })
 
   it('types the families a workflow takes and their values', () => {

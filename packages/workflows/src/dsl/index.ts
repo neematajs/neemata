@@ -3,10 +3,10 @@ export { decodeRun } from './declaration.ts'
 export { Durable, durable } from './durable.ts'
 export type {
   AnyDurableWorkflow,
-  Awaited,
   Closed,
   DurableOptions,
   DurableWorkflow,
+  InputOutcome,
   InputSchemas,
   Operations,
 } from './durable.ts'

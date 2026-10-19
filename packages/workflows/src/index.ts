@@ -22,6 +22,7 @@ export type {
   DurableOptions,
   DurableWorkflow,
   EffectSchema,
+  InputOutcome,
   InputSchemas,
   Handler,
   InputOf,

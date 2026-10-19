@@ -54,6 +54,7 @@ import { isTerminal, ordered } from './model.ts'
 import { graphKey, label, revisionKey } from './plan/definitions.ts'
 import { familyTopic, planning } from './plan/draft.ts'
 import { unretryable } from './plan/retry.ts'
+import { revisionOf } from './plan/send.ts'
 import { Store } from './store.ts'
 import * as Maintenance from './worker/maintenance.ts'
 
@@ -159,20 +160,69 @@ function answer<D extends Declaration>(
 /** Asks a run to stop; `undefined` when no such run exists. */
 export const cancel = (runId: string) => claimless(Engine.cancel(runId))
 
-/** The value type of one input family of a durable workflow. */
-type InputValue<D extends AnyDurableWorkflow, F> = F extends keyof D['inputs']
-  ? D['inputs'][F] extends Boundary<infer A>
-    ? A
+/**
+ * The run an input is sent to: its id, or the unique key it holds, `active`
+ * unless a scope is given. A run that ended no longer holds an `active` key,
+ * so a sender that may come after the end keeps the run's id.
+ */
+export type SendTo =
+  | string
+  | { readonly unique: HeldKey['key']; readonly scope?: HeldKey['scope'] }
+
+/** One durable workflow, or revisions of one, a sender holds the schemas of. */
+type Revisions = AnyDurableWorkflow | readonly AnyDurableWorkflow[]
+
+type Listed<Ds> = Extract<
+  Ds extends readonly (infer D)[] ? D : Ds,
+  AnyDurableWorkflow
+>
+
+/**
+ * The input families every revision listed takes: `keyof` a union of input
+ * maps is the keys they share.
+ */
+type SharedFamilies<Ds> = keyof Listed<Ds>['inputs'] & string
+
+/**
+ * A value of the family as every revision listed takes it: the intersection
+ * of their types, each in a box so that a union of its own, as `boolean`, is
+ * not split apart.
+ */
+type InputValue<Ds, F> = (
+  (
+    Listed<Ds> extends infer D
+      ? D extends AnyDurableWorkflow
+        ? (
+            box: [
+              D['inputs'][F & keyof D['inputs']] extends Boundary<infer A>
+                ? A
+                : never,
+            ],
+          ) => void
+        : never
+      : never
+  ) extends (box: infer Box) => void
+    ? Box
     : never
+) extends [infer A]
+  ? A
   : never
 
 /**
  * Sends an input to a run of a durable workflow, named by its id or by the
  * unique key it holds (`active` unless a scope is given). The input is its
- * family and its key, `family:key` in the run: what the body waits for with
- * `d.input(family, key)`. It is one commit, in the caller's transaction when
- * there is one: a value sent before the run comes to its input is kept for
- * it, one sent while the run waits completes the wait and wakes the run.
+ * family and its key: what the body waits for with `d.input(family, key)`.
+ * It is one commit, in the caller's transaction when there is one: a value
+ * sent before the run comes to its input is kept for it, one sent while the
+ * run waits completes the wait and wakes the run.
+ *
+ * A run is pinned to a revision, and only that revision's schema may encode
+ * for it: a sender that may reach runs of older revisions gives each it
+ * holds, revisions of one workflow, and the value is encoded in the commit
+ * by the run's own. The value's type is one every revision given takes. A
+ * run of a revision not given is refused as `other`, with `found` saying
+ * which; reading `run.revision` and sending with that declaration is what is
+ * left when no value fits every revision.
  *
  * The first value of an input is its value. The same value sent again is
  * answered with the receipt, `duplicate` set; any other is refused with
@@ -180,32 +230,46 @@ type InputValue<D extends AnyDurableWorkflow, F> = F extends keyof D['inputs']
  * cancelled, and one after the run's wait for it timed out. A value its
  * family's schema does not encode is a defect: nothing is written.
  */
-export const send = <
-  D extends AnyDurableWorkflow,
-  F extends keyof D['inputs'] & string,
->(
-  declaration: D,
-  to:
-    | string
-    | { readonly unique: HeldKey['key']; readonly scope?: HeldKey['scope'] },
+export const send = <const Ds extends Revisions, F extends SharedFamilies<Ds>>(
+  declarations: Ds,
+  to: SendTo,
   family: F,
   key: string,
-  value: InputValue<D, F>,
+  value: InputValue<Ds, F>,
 ): Effect.Effect<Receipt, InputRefused | StorageError, Store> =>
   Effect.suspend(() => {
-    const boundary = Object.hasOwn(declaration.inputs, family)
-      ? (declaration.inputs[family] as Boundary<unknown>)
-      : undefined
-    if (!boundary) {
-      return Effect.die(
-        new Error(
-          `Durable workflow [${declaration.name}] takes no input [${family}]`,
-        ),
-      )
+    const listed: readonly AnyDurableWorkflow[] = Array.isArray(declarations)
+      ? declarations
+      : [declarations as AnyDurableWorkflow]
+    const [first] = listed
+    if (!first) {
+      return Effect.die(new Error('Client.send needs a durable workflow'))
     }
-    const { name, revision } = declaration
+    const encode: Record<string, (value: unknown) => unknown> =
+      Object.create(null)
+    for (const declaration of listed) {
+      if (declaration.name !== first.name) {
+        return Effect.die(
+          new Error(
+            `Client.send was given revisions of [${first.name}] and of [${declaration.name}]: one workflow at a time`,
+          ),
+        )
+      }
+      const boundary = Object.hasOwn(declaration.inputs, family)
+        ? (declaration.inputs[family] as Boundary<unknown>)
+        : undefined
+      if (!boundary) {
+        return Effect.die(
+          new Error(
+            `Durable workflow [${declaration.name}@${declaration.revision}] takes no input [${family}]`,
+          ),
+        )
+      }
+      encode[revisionOf(declaration.revision)] = (value) =>
+        boundary.encode(value)
+    }
     return Engine.send({
-      route: { name, revision },
+      name: first.name,
       to:
         typeof to === 'string'
           ? { runId: to }
@@ -217,7 +281,8 @@ export const send = <
             },
       family,
       key,
-      value: boundary.encode(value),
+      encode,
+      value,
     })
   }).pipe(claimless)
 

@@ -662,16 +662,30 @@ const decide = (id: string, section: string, approved: boolean) =>
 - **The first value is the input's.** The same value sent again is answered
   with its receipt, `duplicate` set; another is refused with `InputRefused`
   (`received`).
+- **A receipt is storage, not reading.** It says the input is stored for the
+  run, when, and whether this send repeated it; the run reads it when its
+  body comes to it, if it does.
 - **A timeout is a deadline.** With `timeout`, the wait ends that long after
   the run first comes to it, with `TimedOut`; a value sent after it is
   refused (`closed`), whether or not a pass has seen the time pass.
-- **Refused otherwise:** `missing` when no run has the id or the key, `other`
-  for a run of another workflow or revision, `ended` for one that has ended
-  or is being cancelled, `taken` for a name another operation holds.
+- **Refused otherwise:** `missing` when no run has the id or the key,
+  `other` for a run of another workflow or revision (`found` says which),
+  `ended` for one that has ended or is being cancelled.
 
-Input names share the run's operation names, which is why a family holds no
-colon. Authorizing a sender and validating more than the schema does are the
-application's, before it sends.
+**Sending across revisions.** A run is pinned to its revision, and only that
+revision's schema may encode a value for it. A sender that may reach runs
+started before a deploy gives every revision it holds, of one workflow:
+`Client.send([ReviewV1, ReviewV2], to, 'verdict', section, value)`. The
+value's type is one every revision given takes, and it is encoded in the
+send's commit by the schema of the run's own revision. A run of a revision
+not given is refused as `other`, with `found` naming it. A schema encodes in
+that commit, which may be planned more than once, so it must be pure:
+deterministic, and leaving the value as it found it.
+
+An input is stored under `@family:key`, a name no operation of the body can
+have: names starting with `@` are the engine's, so whatever key a sender
+picks, it never lands on an operation. Authorizing a sender and validating
+more than the schema does are the application's, before it sends.
 
 Each pass replays every operation the run has done, so a run is meant for
 tens or hundreds of them; a list of thousands is a map in a static workflow,
