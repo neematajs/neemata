@@ -580,10 +580,14 @@ What a replay requires:
 - **One name, one operation.** A name stands for one operation for the whole
   run: in a loop it takes the loop's position, as `draft:${section.id}` does.
   A name asked for twice in one replay fails the run with `ReplayMismatch`.
+  The application chooses names, and they must stay the same for as long as
+  runs of the revision are in flight: build them from ids the run holds,
+  never from a timestamp, a random value or a list position that may move.
 - **The same operation every time.** Each node keeps what it was opened with,
   its kind, target and input, and a replay that asks for something else
   under its name fails the run with `ReplayMismatch`: what a node holds is
-  never changed to fit other code.
+  never changed to fit other code. Only what a replay reaches is compared:
+  a call the code no longer makes leaves its node unused, unnoticed.
 - **A pure, synchronous body.** It may require nothing but `Durable`, so a
   handler's service is a type error. It must not read the clock or draw
   random numbers, which types cannot refuse: use `d.now`, and a task for
@@ -1484,7 +1488,9 @@ The schema is the application's to migrate.
 (`createSchema()`), `Postgres.install` creates it on an empty database for
 tests, and `Postgres.verify` dies at startup unless the installed schema is
 the one the adapter needs. Engine calls take part in the caller's
-transaction, as [shown above](#starting-a-run).
+transaction, as [shown above](#starting-a-run). This release's schema is
+generation 7: a database at 6 moves to it with `Postgres.migrateFrom6`, which
+only adds, once the older release's workers are stopped.
 
 Options (`maxDeliveries`, `channel`, `answerTimeoutMs`), how commits are
 guarded, the tables and the migration:
@@ -1740,7 +1746,7 @@ case:
 2. Stop every process of the old engine.
 3. Upgrade the storage as below, then start the new engine.
 
-**PostgreSQL: generation 4 to 6.** `0.18.0-alpha.4` installs schema
+**PostgreSQL: generation 4 to 7.** `0.18.0-alpha.4` installs schema
 generation 4; a database at an earlier generation applies that release's
 upgrades to 4 first. The migration keeps history, identity keys and
 schedules in place, all unversioned, and rebuilds the command queue. It
