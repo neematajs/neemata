@@ -1571,6 +1571,46 @@ The inspector entry also exports the record types (`RunDetail`,
 browser receives. Hashing (`hashStructure`, `describeDefinition`) needs
 `node:crypto` and is in the main entry.
 
+### A durable run
+
+A durable run has no graph to draw: its operations are known as it comes to
+them. `durableView` turns its detail, read with `children` for each
+operation's work and attempts, into what a screen or an operator shows: the
+operations in the order the run took them, and what blocks it with the
+actions that may unblock it.
+
+```ts
+import { durableView } from '@nmtjs/workflows/inspector'
+
+// Server: the run, and the runs its operations started, in one read.
+const durableDetail = (runId: string) =>
+  Client.getDetail(runId, { children: true })
+
+// Browser: what the run did, waits for, and is blocked by.
+const show = (detail: RunDetail) => {
+  const view = durableView(detail)
+  if (!view) return undefined
+  return {
+    waitingFor: view.operations.flatMap((operation) =>
+      operation.kind === 'input' && operation.state === 'waiting'
+        ? [`${operation.family} ${operation.key}`]
+        : [],
+    ),
+    canResume: view.blockers.some(({ actions }) =>
+      actions.some((action) => action === 'resume'),
+    ),
+  }
+}
+```
+
+An input is `waiting` while the run waits for it, `buffered` while a value
+sent before the run came to it is kept, `received` once the run read it,
+`timedOut` when its wait ended with no value. A blocker is an operation whose
+work failed (`resume`), a replay that no longer matches (`resume` once code
+that matches is deployed), or a child run blocked itself, which is resumed
+in its place. `status: ['blocked']` finds blocked runs in `Client.list`, a
+family's with `rootRunId`.
+
 ## Stores
 
 A store is a `Layer` that provides `Store`. The client and the workers of one

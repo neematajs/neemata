@@ -376,6 +376,19 @@ export type RunDetail = {
   readonly children: readonly Omit<StoredChild, 'item' | 'input' | 'output'>[]
   readonly attempts: readonly Omit<StoredAttempt, 'input' | 'output'>[]
   readonly childRuns: readonly RunSummary[]
+  /**
+   * The detail of each run it started, by id, when asked for with
+   * `children`: one level, as each holds its own `childRuns` to go deeper.
+   */
+  readonly childDetails?: Readonly<Record<string, RunDetail>>
+}
+
+export type DetailOptions = {
+  /**
+   * Reads the runs the run started whole too, a task run's attempts among
+   * them: what a view of a durable run shows of each operation's work.
+   */
+  readonly children?: boolean
 }
 
 /**
@@ -797,13 +810,26 @@ export const list = (
  */
 export const getDetail = (
   runId: string,
+  { children = false }: DetailOptions = {},
 ): Effect.Effect<RunDetail | undefined, StorageError, Store> =>
   Effect.flatMap(Store, (store) =>
     store.transact(
       { runs: [runId] },
       planning((draft): RunDetail | undefined => {
         const records = draft.records(runId)
-        return records && detailOf(draft, records)
+        if (!records) return undefined
+        if (!children) return detailOf(draft, records)
+        const ids = records.children.flatMap(({ childRunId }) =>
+          childRunId === undefined ? [] : [childRunId],
+        )
+        // All of them asked for at once: a plan that asks is planned again.
+        draft.require({ runs: ids })
+        const childDetails: Record<string, RunDetail> = Object.create(null)
+        for (const id of ids) {
+          const child = draft.records(id)
+          if (child) childDetails[id] = detailOf(draft, child)
+        }
+        return { ...detailOf(draft, records), childDetails }
       }),
     ),
   ).pipe(claimless)

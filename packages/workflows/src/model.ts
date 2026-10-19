@@ -166,6 +166,11 @@ export type StoredOperation = {
   readonly input?: { readonly family: string; readonly key: string }
   /** When an `input` node's value was received. */
   readonly receivedAt?: Timestamp
+  /**
+   * When the body first came to an `input` node that had its value: before
+   * then the value was only kept for it.
+   */
+  readonly readAt?: Timestamp
   /** An `input` node whose wait ended with no value: its `until` came first. */
   readonly timedOut?: true
   /**

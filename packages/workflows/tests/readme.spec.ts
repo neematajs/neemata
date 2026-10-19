@@ -17,7 +17,7 @@ import type {
   StorageError,
   Store,
 } from '../src/index.ts'
-import type { RunInspection } from '../src/inspector.ts'
+import type { RunDetail, RunInspection } from '../src/inspector.ts'
 import {
   Client,
   decodeRun,
@@ -29,6 +29,7 @@ import {
   workflow,
 } from '../src/index.ts'
 import {
+  durableView,
   nodeUnits,
   renderWorkflowGraph,
   serializeWorkflowCatalog,
@@ -391,6 +392,28 @@ const unblock = (runId: string, version: number) =>
   Client.resume(runId, { expectedVersion: version })
 // #endregion
 
+// #region durable-view
+// Server: the run, and the runs its operations started, in one read.
+const durableDetail = (runId: string) =>
+  Client.getDetail(runId, { children: true })
+
+// Browser: what the run did, waits for, and is blocked by.
+const show = (detail: RunDetail) => {
+  const view = durableView(detail)
+  if (!view) return undefined
+  return {
+    waitingFor: view.operations.flatMap((operation) =>
+      operation.kind === 'input' && operation.state === 'waiting'
+        ? [`${operation.family} ${operation.key}`]
+        : [],
+    ),
+    canResume: view.blockers.some(({ actions }) =>
+      actions.some((action) => action === 'resume'),
+    ),
+  }
+}
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -460,6 +483,26 @@ describe('the resume example', () => {
         const run = yield* Client.start(Review, { id: 'r-2', sections: [] })
         const refused = yield* Effect.flip(unblock(run.id, run.version))
         expect(refused._tag).toBe('RunNotBlocked')
+      }),
+    )
+  })
+})
+
+describe('the durable view example', () => {
+  it.effect('shows what a durable run waits for', () => {
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Review, {
+          id: 'r-3',
+          sections: ['intro'],
+        })
+        yield* serve(Review)
+        const detail = yield* durableDetail(run.id)
+        expect(show(detail!)).toEqual({
+          waitingFor: ['verdict intro'],
+          canResume: false,
+        })
       }),
     )
   })

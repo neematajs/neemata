@@ -4,7 +4,15 @@
 // package's main entry.
 import type { RunDetail } from './client.ts'
 import type { Definition, WorkflowGraph } from './graph/structure.ts'
-import type { ParsedChildKey, RunSummary } from './model.ts'
+import type {
+  NodeStatus,
+  ParsedChildKey,
+  Route,
+  RunSummary,
+  StoredError,
+  StoredOperation,
+  Timestamp,
+} from './model.ts'
 import { labels, serializeWorkflowGraph } from './graph/structure.ts'
 import { parseChildKey } from './model.ts'
 
@@ -140,4 +148,205 @@ export function nodeUnits(
         ...(childRun === undefined ? {} : { childRun }),
       }
     })
+}
+
+/** One attempt of an operation's work, as a view of a durable run shows it. */
+export type AttemptView = RunDetail['attempts'][number]
+
+type OperationBase = {
+  readonly name: string
+  /** The order the run admitted its operations in. */
+  readonly ordinal: number
+  readonly status: NodeStatus
+  readonly error?: StoredError
+  readonly createdAt: Timestamp
+  readonly updatedAt: Timestamp
+}
+
+/** One operation of a durable run, by what it is. */
+export type OperationView = OperationBase &
+  (
+    | {
+        readonly kind: 'task' | 'workflow'
+        readonly target?: Route
+        /** The run doing the work; absent while none was started. */
+        readonly childRun?: RunSummary
+        /** Its attempts, when the detail was read with `children`. */
+        readonly attempts?: readonly AttemptView[]
+        readonly limits?: StoredOperation['limits']
+        /** Its work failed and blocks the run until resumed. */
+        readonly blocked: boolean
+      }
+    | { readonly kind: 'sleep'; readonly until?: Timestamp }
+    | { readonly kind: 'now' }
+    | {
+        readonly kind: 'input'
+        readonly family: string
+        readonly key: string
+        /**
+         * `waiting`: the run waits for it. `buffered`: a value is kept for
+         * the run, which has not come to it. `received`: the run read it.
+         * `timedOut`: the wait ended with no value. `cancelled`: the run let
+         * go of it.
+         */
+        readonly state:
+          | 'waiting'
+          | 'buffered'
+          | 'received'
+          | 'timedOut'
+          | 'cancelled'
+        readonly until?: Timestamp
+        readonly receivedAt?: Timestamp
+        readonly readAt?: Timestamp
+      }
+  )
+
+/**
+ * What blocks a durable run, and what may unblock it. The actions are
+ * advice: the command decides again from what is stored.
+ */
+export type BlockerView =
+  /** An operation whose work failed: `resume` runs it again. */
+  | {
+      readonly kind: 'operation'
+      readonly operation: string
+      readonly error?: StoredError
+      readonly actions: readonly ('resume' | 'cancel')[]
+    }
+  /** A replay that no longer matched: resume once code that does is deployed. */
+  | {
+      readonly kind: 'mismatch'
+      readonly error: StoredError
+      readonly actions: readonly ('resume' | 'cancel')[]
+    }
+  /**
+   * A child run that is blocked itself: it is the child that is resumed. Its
+   * parent waits on it and is not blocked by it.
+   */
+  | {
+      readonly kind: 'child'
+      readonly operation: string
+      readonly childRunId: string
+      readonly actions: readonly 'resume'[]
+    }
+
+/** A durable run as people look at it: its operations and what blocks it. */
+export type DurableRunView = {
+  readonly run: RunSummary
+  /** In the order the run admitted them. */
+  readonly operations: readonly OperationView[]
+  readonly blockers: readonly BlockerView[]
+}
+
+/**
+ * The view of a durable run from its detail, read with `children` for the
+ * attempts of each operation's work; `undefined` for a run with steps,
+ * whose nodes carry no operations. Pure, so it runs where the detail is
+ * shown.
+ */
+export function durableView(detail: RunDetail): DurableRunView | undefined {
+  const { run, nodes, children, childRuns, childDetails } = detail
+  if (nodes.some(({ operation }) => operation === undefined)) return undefined
+  const runs = new Map(childRuns.map((child) => [child.id, child]))
+
+  const operations = nodes
+    .toSorted(
+      (a, b) => (a.operation?.ordinal ?? 0) - (b.operation?.ordinal ?? 0),
+    )
+    .map((node): OperationView => {
+      const operation = node.operation!
+      const base = {
+        name: node.name,
+        ordinal: operation.ordinal,
+        status: node.status,
+        ...(node.error === undefined ? {} : { error: node.error }),
+        createdAt: node.createdAt,
+        updatedAt: node.updatedAt,
+      }
+      switch (node.kind) {
+        case 'task':
+        case 'workflow': {
+          const child = children.find(({ nodeName }) => nodeName === node.name)
+          const childRunId = child?.childRunId
+          const childRun =
+            childRunId === undefined ? undefined : runs.get(childRunId)
+          const work =
+            childRunId === undefined ? undefined : childDetails?.[childRunId]
+          return {
+            ...base,
+            kind: node.kind,
+            ...(operation.target === undefined
+              ? {}
+              : { target: operation.target }),
+            ...(childRun === undefined ? {} : { childRun }),
+            ...(work === undefined ? {} : { attempts: work.attempts }),
+            ...(operation.limits === undefined
+              ? {}
+              : { limits: operation.limits }),
+            blocked: operation.blocked === true,
+          }
+        }
+        case 'sleep':
+          return {
+            ...base,
+            kind: 'sleep',
+            ...(operation.until === undefined
+              ? {}
+              : { until: operation.until }),
+          }
+        case 'input': {
+          const state =
+            node.status === 'cancelled'
+              ? 'cancelled'
+              : operation.timedOut
+                ? 'timedOut'
+                : node.status !== 'completed'
+                  ? 'waiting'
+                  : operation.readAt === undefined
+                    ? 'buffered'
+                    : 'received'
+          const { until, receivedAt, readAt } = operation
+          return {
+            ...base,
+            kind: 'input',
+            family: operation.input?.family ?? '',
+            key: operation.input?.key ?? '',
+            state,
+            ...(until === undefined ? {} : { until }),
+            ...(receivedAt === undefined ? {} : { receivedAt }),
+            ...(readAt === undefined ? {} : { readAt }),
+          }
+        }
+        default:
+          return { ...base, kind: 'now' }
+      }
+    })
+
+  const blockers: BlockerView[] = []
+  if (run.status === 'blocked' && run.error?.name === 'ReplayMismatch') {
+    blockers.push({
+      kind: 'mismatch',
+      error: run.error,
+      actions: ['resume', 'cancel'],
+    })
+  }
+  for (const operation of operations) {
+    if (operation.kind !== 'task' && operation.kind !== 'workflow') continue
+    if (operation.blocked) {
+      blockers.push({
+        kind: 'operation',
+        operation: operation.name,
+        ...(operation.error === undefined ? {} : { error: operation.error }),
+        actions: ['resume', 'cancel'],
+      })
+    } else if (operation.childRun?.status === 'blocked') {
+      blockers.push({
+        kind: 'child',
+        operation: operation.name,
+        childRunId: operation.childRun.id,
+        actions: ['resume'],
+      })
+    }
+  }
+  return { run, operations, blockers }
 }
