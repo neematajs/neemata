@@ -1609,7 +1609,10 @@ sent before the run came to it is kept, `received` once the run read it,
 work failed (`resume`), a replay that no longer matches (`resume` once code
 that matches is deployed), or a child run blocked itself, which is resumed
 in its place. `status: ['blocked']` finds blocked runs in `Client.list`, a
-family's with `rootRunId`.
+family's with `rootRunId`. A run's status changes less often than what is
+shown of it, an input received or an operation blocked: `Client.watch(runId,
+{ wake: true })` also tells of every change in its family, which is when to
+read the view again.
 
 ## Stores
 
