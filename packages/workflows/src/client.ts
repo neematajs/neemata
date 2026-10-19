@@ -32,6 +32,7 @@ import type {
   Timestamp,
 } from './model.ts'
 import type { Draft } from './plan/draft.ts'
+import type { ResumeOptions } from './plan/resume.ts'
 import type { RetryError } from './plan/retry.ts'
 import type { HeldKey, Receipt } from './plan/send.ts'
 import type { StartError, StartInput } from './plan/start.ts'
@@ -288,6 +289,21 @@ export const send = <const Ds extends Revisions, F extends SharedFamilies<Ds>>(
   }).pipe(claimless)
 
 /**
+ * Unblocks a blocked durable run, in one commit. Each operation named, all
+ * that block it when none is, has its failed work run again as the same
+ * run: its completed work kept, a fresh retry budget, the same idempotency
+ * keys for its handlers. A run blocked because its replay no longer matched
+ * is replayed again by the code deployed now, and blocks again if that still
+ * does not match. Nothing of the run's own lifetime is reset.
+ *
+ * Refused with `RunNotBlocked` when the run is not blocked, `StaleRunVersion`
+ * when `expectedVersion` is not its version, and `BlockerNotResumable` for an
+ * operation that does not block it; nothing is reopened then.
+ */
+export const resume = (runId: string, options: ResumeOptions = {}) =>
+  claimless(Engine.resume(runId, options))
+
+/**
  * A run with its nodes, children and attempts, as stored, in the same order
  * on every store: nodes by name; children by node, a map's items by index and
  * any other by key; attempts by child, in the order they were made.
@@ -531,6 +547,7 @@ const ACTIVE: readonly RunStatus[] = [
   'queued',
   'running',
   'waiting',
+  'blocked',
   'cancelling',
 ]
 

@@ -238,3 +238,29 @@ export class InputRefused extends Data.TaggedError('InputRefused')<{
     return `Input [${this.input}]${run} was refused: ${this.reason}`
   }
 }
+
+/** A resume asked of a run that is not blocked: there is nothing to resume. */
+export class RunNotBlocked extends Data.TaggedError('RunNotBlocked')<{
+  readonly runId: string
+  readonly status: RunStatus
+}> {
+  override get message() {
+    return `Workflow run [${this.runId}] is ${this.status}, not blocked`
+  }
+}
+
+/**
+ * A resume named an operation that does not block the run, or whose work
+ * cannot run again: it is not blocked, or its work has not failed.
+ */
+export class BlockerNotResumable extends Data.TaggedError(
+  'BlockerNotResumable',
+)<{
+  readonly runId: string
+  readonly operation: string
+  readonly reason: 'not-blocked' | 'not-failed'
+}> {
+  override get message() {
+    return `Operation [${this.operation}] of workflow run [${this.runId}] cannot be resumed: ${this.reason}`
+  }
+}

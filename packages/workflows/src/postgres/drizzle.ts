@@ -68,6 +68,7 @@ export function createSchema(options: CreateSchemaOptions = {}) {
       'cancelled',
       'failed',
       'completed',
+      'blocked',
     ]),
     nodeStatus: pgEnum('workflow_node_status', [
       'pending',

@@ -183,7 +183,7 @@ describe('durable workflows', () => {
       },
       (_, d) =>
         d
-          .task('call', Flaky, undefined)
+          .task('call', Flaky, undefined, { onFailure: 'fail' })
           .pipe(
             Effect.catchTag('OperationFailed', ({ operation, error }) =>
               Effect.succeed(`${operation}: ${error.message}`),
@@ -198,6 +198,7 @@ describe('durable workflows', () => {
         input: Schema.Void,
         output: Schema.String,
         tasks: [Flaky],
+        onFailure: 'fail',
       },
       (_, d) => d.task('call', Flaky, undefined),
     )
@@ -221,7 +222,7 @@ describe('durable workflows', () => {
     )
   })
 
-  it.effect('fails a run whose body asks for one name twice', () => {
+  it.effect('blocks a run whose body asks for one name twice', () => {
     const Twice = durable(
       {
         name: 'durable.twice',
@@ -244,14 +245,14 @@ describe('durable workflows', () => {
         const run = yield* Client.start(Twice, undefined)
         yield* serve(served(Twice))
         const { run: done } = yield* records(run.id)
-        expect(done.status).toBe('failed')
+        expect(done.status).toBe('blocked')
         expect(done.error?.name).toBe('ReplayMismatch')
       }),
     )
   })
 
   it.effect(
-    'fails a run whose code asks for an operation it was not opened with',
+    'blocks a run whose code asks for an operation it was not opened with',
     () => {
       const options = {
         name: 'durable.changed',
@@ -281,7 +282,7 @@ describe('durable workflows', () => {
           yield* coordinate(Before.workflows)
           yield* serve(served(After))
           const { run: done } = yield* records(run.id)
-          expect(done.status).toBe('failed')
+          expect(done.status).toBe('blocked')
           expect(done.error?.name).toBe('ReplayMismatch')
           expect(done.error?.message).toContain('another input')
         }),
@@ -337,6 +338,7 @@ describe('durable workflows', () => {
         input: Schema.Void,
         output: Schema.Void,
         tasks: [Slow, Broken],
+        onFailure: 'fail',
       },
       (_, d) =>
         Effect.asVoid(

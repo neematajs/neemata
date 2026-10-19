@@ -53,6 +53,7 @@ export {
   reconcile,
   remove,
   requeue,
+  resume,
   retry,
   send,
   setScheduleEnabled,
@@ -62,6 +63,7 @@ export {
   trigger,
 } from './engine.ts'
 export {
+  BlockerNotResumable,
   CleanupTimeout,
   DefinitionConflict,
   IdempotencyConflict,
@@ -69,6 +71,7 @@ export {
   OperationFailed,
   RunBusy,
   RunConflict,
+  RunNotBlocked,
   RunNotFailed,
   RunNotFound,
   RunNotRetryable,
@@ -133,6 +136,7 @@ export type { Outcome, Settled } from './plan/attempt.ts'
 export type { Begun, Unroutable } from './plan/begin.ts'
 export type { PassResult } from './plan/pass.ts'
 export type { Retention } from './plan/remove.ts'
+export type { ResumeError, ResumeOptions } from './plan/resume.ts'
 export type { RetryError } from './plan/retry.ts'
 export type { HeldKey, Receipt, Recipient, SendInput } from './plan/send.ts'
 export type { Cadence, Fired, ScheduleEntry } from './plan/schedule.ts'

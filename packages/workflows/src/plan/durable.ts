@@ -60,15 +60,21 @@ export function advanceDurable(
   run: StoredRun,
 ): readonly StoredRun[] {
   settle(draft, run)
+  // Blocked for a mismatch, the run opens nothing until an operator resumes
+  // it, whatever code is deployed by then: its work settles meanwhile.
+  if (run.error?.name === MISMATCH) return []
 
+  let blocked: readonly string[] = []
   for (let replay = 1; ; replay++) {
-    const { outcome, operations } = program.replay(history(draft, run))
+    const replayed = program.replay(history(draft, run))
+    const { outcome, operations } = replayed
     // Checked before anything is written: a body that no longer asks what
-    // its run was opened with must not start anything on that reading.
+    // its run was opened with must not start anything on that reading. The
+    // run waits for code that replays it as it was, and for a resume.
     const mismatch = diverged(draft, run, operations)
-    if (mismatch)
-      return conclude(draft, run, { _tag: 'Failed', error: mismatch })
+    if (mismatch) return block(draft, run, mismatch)
     if (outcome._tag !== 'Suspended') return conclude(draft, run, outcome)
+    blocked = replayed.blocked
 
     // A node of the run found cancelled was cancelled from outside, as a
     // child run of it can be: the run is cancelled with it, as a workflow
@@ -94,12 +100,42 @@ export function advanceDurable(
     }
   }
 
+  // Blocked once, a node keeps it: every block writes the run too, so the
+  // version an operator read before resuming says whether it still holds.
+  let blocking = false
+  for (const name of blocked) {
+    const node = draft.node(run.id, name)!
+    if (node.operation?.blocked) continue
+    draft.updateNode(node, { operation: { ...node.operation!, blocked: true } })
+    blocking = true
+  }
+
   wakeAtNextDeadline(draft, run)
-  const status = draft.nodes(run.id).some(({ status }) => status === 'running')
-    ? 'running'
-    : 'waiting'
+  const nodes = draft.nodes(run.id)
+  const status = nodes.some(({ operation }) => operation?.blocked)
+    ? 'blocked'
+    : nodes.some(({ status }) => status === 'running')
+      ? 'running'
+      : 'waiting'
   const head = draft.head(run.id)!
-  if (head.status !== status) draft.updateRun(head, { status })
+  if (head.status !== status || blocking) draft.updateRun(head, { status })
+  return []
+}
+
+/** The name of the error a run blocked for a replay mismatch holds. */
+export const MISMATCH = 'ReplayMismatch'
+
+/**
+ * Blocks a run whose replay no longer asks what it stored: nothing is
+ * opened or ended, its other work settles as it does, and it waits for code
+ * that replays it as it was and a `Client.resume`, which replays it again.
+ */
+function block(
+  draft: Draft,
+  run: StoredRun,
+  error: StoredError,
+): readonly StoredRun[] {
+  draft.updateRun(draft.head(run.id)!, { status: 'blocked', error })
   return []
 }
 
@@ -178,7 +214,7 @@ function diverged(
   operations: readonly Operation[],
 ): StoredError | undefined {
   const error = (message: string): StoredError => ({
-    name: 'ReplayMismatch',
+    name: MISMATCH,
     message,
   })
   const seen = new Set<string>()
@@ -277,6 +313,19 @@ function open(
         operation: {
           ordinal,
           target: { name, ...(revision === undefined ? {} : { revision }) },
+          ...(operation.kind === 'task' &&
+          (operation.retry !== undefined || operation.timeout !== undefined)
+            ? {
+                limits: {
+                  ...(operation.retry === undefined
+                    ? {}
+                    : { retry: operation.retry }),
+                  ...(operation.timeout === undefined
+                    ? {}
+                    : { timeout: operation.timeout }),
+                },
+              }
+            : {}),
         },
       })
       const target =
