@@ -222,6 +222,7 @@ export const nodes = table<StoredNode>('workflow_nodes', ['runId', 'name'], {
   output: ['output', 'json'],
   error: ['error', 'json'],
   selectedCase: ['selected_case', 'text'],
+  operation: ['operation', 'json'],
   version: ['version', 'int'],
   createdAt: ['created_at', 'time'],
   updatedAt: ['updated_at', 'time'],

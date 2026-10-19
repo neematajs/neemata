@@ -1,5 +1,5 @@
 import type { StoredRun } from '../model.ts'
-import type { WorkflowProgram } from '../program.ts'
+import type { AnyWorkflowProgram } from '../program.ts'
 import type { Plan, ReadScope } from '../store.ts'
 import { isTerminal, parseDurationMs } from '../model.ts'
 import { drift, revisionKey } from './definitions.ts'
@@ -7,7 +7,7 @@ import { planning } from './draft.ts'
 import { failRun } from './finish.ts'
 
 export function timeoutScope(
-  program: WorkflowProgram,
+  program: AnyWorkflowProgram,
   runId: string,
 ): ReadScope {
   const { name, revision } = program
@@ -30,7 +30,7 @@ export function timeoutScope(
  * runs it cancelled that wait for their handlers.
  */
 export function planTimeout(
-  program: WorkflowProgram,
+  program: AnyWorkflowProgram,
   runId: string,
 ): Plan<false | readonly StoredRun[]> {
   const { name, revision, timeout } = program

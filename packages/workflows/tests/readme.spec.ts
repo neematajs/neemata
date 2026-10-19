@@ -20,6 +20,7 @@ import type { RunInspection } from '../src/inspector.ts'
 import {
   Client,
   decodeRun,
+  durable,
   InMemory,
   schedule,
   task,
@@ -293,6 +294,47 @@ const ended = (runId: string) =>
     return (yield* Client.get(runId))!.run
   })
 
+// #region durable
+const Section = Schema.Struct({ id: Schema.String, hard: Schema.Boolean })
+
+const DraftSection = task({
+  name: 'docs.draft',
+  revision: 'v1',
+  pool: 'docs',
+  input: Section,
+  output: Schema.Struct({ text: Schema.String, ok: Schema.Boolean }),
+  handler: ({ id, hard }) => Effect.succeed({ text: `draft ${id}`, ok: !hard }),
+})
+
+const Document = durable(
+  {
+    name: 'docs.document',
+    revision: 'v1',
+    pool: 'docs',
+    input: Schema.Struct({ sections: Schema.Array(Section) }),
+    output: Schema.Array(Schema.String),
+    // Everything the body may start, each with a revision of its own.
+    tasks: [DraftSection],
+  },
+  ({ sections }, d) =>
+    Effect.gen(function* () {
+      const drafts: string[] = []
+      // Steps from the run's input, one operation name per occurrence.
+      for (const section of sections) {
+        const draft = yield* d.task(
+          `draft:${section.id}`,
+          DraftSection,
+          section,
+        )
+        drafts.push(draft.text)
+        // A decision on a real value: nothing like it is declared beforehand.
+        if (!draft.ok) yield* d.sleep(`cool-off:${section.id}`, '1h')
+      }
+      return drafts
+    }),
+)
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -302,6 +344,31 @@ describe('the quick start', () => {
       })
     }),
   )
+})
+
+describe('the durable workflow example', () => {
+  it.effect('decides its steps from the run and sleeps durably', () => {
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Document, {
+          sections: [
+            { id: 'intro', hard: true },
+            { id: 'body', hard: false },
+          ],
+        })
+        // The hard section sleeps an hour before the next is drafted.
+        yield* serve(Document, 30 * 60_000)
+        expect((yield* Client.get(run.id))!.run.status).toBe('waiting')
+        yield* serve(Document, 40 * 60_000)
+        const done = (yield* Client.get(run.id))!.run
+        expect(decodeRun(Document, done).output).toEqual([
+          'draft intro',
+          'draft body',
+        ])
+      }),
+    )
+  })
 })
 
 describe('the stop reason example', () => {

@@ -8,10 +8,10 @@ import { ACTIVE, PENDING } from './records.ts'
 /**
  * The schema generation this adapter reads and writes. Generations 1 to 4
  * are those of the Promise engine (`@nmtjs/workflows` up to 0.18.0-alpha.4,
- * which installs 4); 6 is reached from 4 by `MIGRATION_FROM_4`. No release
- * installed a generation 5.
+ * which installs 4); 6 is reached from 4 by `MIGRATION_FROM_4`, and 7 from 6
+ * by `MIGRATION_FROM_6`. No release installed a generation 5.
  */
-export const SCHEMA_VERSION = 6
+export const SCHEMA_VERSION = 7
 
 const TERMINAL = STATUSES.terminal.map((status) => `'${status}'`).join(', ')
 
@@ -36,7 +36,7 @@ const CHILD_INDEXES = [
 ]
 
 /**
- * Generation 6 on a database that has no workflow tables. For tests and
+ * Generation 7 on a database that has no workflow tables. For tests and
  * local development: applications own their production migrations. Table
  * names are unqualified, so `search_path` chooses the schema.
  */
@@ -50,7 +50,8 @@ export const INSTALL: readonly string[] = [
   `INSERT INTO workflow_schema_version (id, version) VALUES (1, ${SCHEMA_VERSION})`,
   `CREATE TYPE workflow_run_kind AS ENUM ('workflow', 'task')`,
   `CREATE TYPE workflow_node_kind AS ENUM (
-    'activity', 'task', 'workflow', 'branch', 'parallel', 'mapTask', 'mapWorkflow'
+    'activity', 'task', 'workflow', 'branch', 'parallel', 'mapTask', 'mapWorkflow',
+    'sleep', 'now', 'input'
   )`,
   `CREATE TYPE workflow_node_child_kind AS ENUM ('activity', 'task', 'workflow')`,
   `CREATE TYPE workflow_run_status AS ENUM (
@@ -114,6 +115,7 @@ export const INSTALL: readonly string[] = [
     output jsonb,
     error jsonb,
     selected_case text,
+    operation jsonb,
     version integer NOT NULL,
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
@@ -477,12 +479,34 @@ const AFTER_KEYS: readonly string[] = [
   `CREATE INDEX workflow_runs_created_idx ON workflow_runs (created_at, id)`,
   // And over every child kept: a failed map retried later is read by them.
   ...CHILD_INDEXES,
-
-  `UPDATE workflow_schema_version SET version = ${SCHEMA_VERSION} WHERE id = 1`,
 ]
 
 /**
- * Generation 4 to 6, in place, one statement per entry; run them in one
+ * Generation 6 to 7: the nodes of durable workflows, which run nothing of
+ * their own, and what a durable workflow's body asked each of its nodes to
+ * be. Adds only: generation 6 runs read as they did.
+ */
+const TO_7: readonly string[] = [
+  `ALTER TYPE workflow_node_kind ADD VALUE 'sleep'`,
+  `ALTER TYPE workflow_node_kind ADD VALUE 'now'`,
+  `ALTER TYPE workflow_node_kind ADD VALUE 'input'`,
+  `ALTER TABLE workflow_nodes ADD COLUMN operation jsonb`,
+]
+
+const VERSIONED = `UPDATE workflow_schema_version SET version = ${SCHEMA_VERSION} WHERE id = 1`
+
+/**
+ * Generation 6 to 7, in place, one statement per entry; run them in one
+ * transaction. It adds and never rewrites, so it takes no time that grows
+ * with the history.
+ */
+export const MIGRATION_FROM_6: readonly string[] = [...TO_7, VERSIONED]
+
+/** The migration from 6 as one script. */
+export const MIGRATION_FROM_6_SQL = `BEGIN;\n\n${MIGRATION_FROM_6.join(';\n\n')};\n\nCOMMIT;\n`
+
+/**
+ * Generation 4 to 7, in place, one statement per entry; run them in one
  * transaction. See `README.md` beside this file for what it requires, and
  * for the identity keys it refuses to carry over.
  */
@@ -490,6 +514,7 @@ export const MIGRATION_FROM_4: readonly string[] = [
   ...BEFORE_KEYS,
   ...KEYS_IN_SQL,
   ...AFTER_KEYS,
+  ...MIGRATION_FROM_6,
 ]
 
 /** The migration as one script. */
@@ -506,6 +531,9 @@ const apply = (statements: readonly string[]) =>
   )
 
 export const install = apply(INSTALL)
+
+/** Generation 6 to 7, in one transaction. */
+export const migrateFrom6 = apply(MIGRATION_FROM_6)
 
 const KEY_BATCH = 1_000
 
@@ -560,7 +588,7 @@ export const migrateFrom4 = Effect.flatMap(SqlClient.SqlClient, (sql) =>
   sql.withTransaction(
     Effect.andThen(
       Effect.andThen(apply(BEFORE_KEYS), carryKeys),
-      apply(AFTER_KEYS),
+      apply([...AFTER_KEYS, ...MIGRATION_FROM_6]),
     ),
   ),
 )
@@ -574,7 +602,7 @@ export const COLUMNS: Readonly<Record<string, string>> = {
   workflow_runs:
     'id uuid, kind workflow_run_kind, name text, status workflow_run_status, input jsonb?, output jsonb?, error jsonb?, parent_run_id uuid?, parent_node_name text?, parent_route_name text?, parent_route_revision text?, root_run_id uuid, tags jsonb, idempotency_key jsonb?, unique_key jsonb?, unique_scope text?, unique_behavior text?, execution_revision text?, graph_hash text?, graph_presentation jsonb?, version int4, active_since timestamptz, created_at timestamptz, updated_at timestamptz',
   workflow_nodes:
-    'run_id uuid, name text, kind workflow_node_kind, status workflow_node_status, input jsonb?, output jsonb?, error jsonb?, selected_case text?, version int4, created_at timestamptz, updated_at timestamptz',
+    'run_id uuid, name text, kind workflow_node_kind, status workflow_node_status, input jsonb?, output jsonb?, error jsonb?, selected_case text?, operation jsonb?, version int4, created_at timestamptz, updated_at timestamptz',
   workflow_attempts:
     'id uuid, run_id uuid, node_name text, child_key text, status workflow_attempt_status, attempt_number int4, retry_attempt_number int4, input jsonb?, output jsonb?, error jsonb?, dispatched_at timestamptz, completed_at timestamptz?',
   workflow_node_children:

@@ -11,6 +11,12 @@ type Declared<Kind extends RunKind> = GraphLabels & {
 
 type WorkflowDefinition = Declared<'workflow'> & {
   readonly steps: readonly Placed[]
+  /**
+   * A durable workflow: no steps, a body that may start any of `uses`, in
+   * whatever order its runs come to them.
+   */
+  readonly mode?: 'durable'
+  readonly uses?: readonly Definition[]
 }
 
 /**
@@ -133,8 +139,14 @@ export type WorkflowStructure = {
   readonly formatVersion: typeof STRUCTURE_FORMAT_VERSION
   readonly kind: 'workflow'
   readonly name: string
-  /** In definition order, which is execution order. */
+  /** In definition order, which is execution order. Empty when durable. */
   readonly nodes: readonly StructuralNode[]
+  /**
+   * Set for a durable workflow, whose nodes are known only as its runs come
+   * to them: its graph is what its body may start, in declaration order.
+   */
+  readonly mode?: 'durable'
+  readonly uses?: readonly StructuralTarget[]
 }
 
 export type TaskStructure = {
@@ -194,7 +206,15 @@ export function projectStructure(definition: Definition): DefinitionStructure {
     }
   })
 
-  return { formatVersion, kind: 'workflow', name: graph.name, nodes }
+  const structure: WorkflowStructure = {
+    formatVersion,
+    kind: 'workflow',
+    name: graph.name,
+    nodes,
+  }
+  if (definition.mode !== 'durable') return structure
+  const uses = (definition.uses ?? []).map(structureOfTarget)
+  return { ...structure, mode: 'durable', uses }
 }
 
 function isEmpty(value: object) {
@@ -463,7 +483,7 @@ export function parseStructure(value: unknown): DefinitionStructure {
     value,
     'structure',
     ['formatVersion', 'kind', 'name'],
-    ['nodes'],
+    ['nodes', 'mode', 'uses'],
   )
   const formatVersion = STRUCTURE_FORMAT_VERSION
   if (record.formatVersion !== formatVersion) {
@@ -473,11 +493,42 @@ export function parseStructure(value: unknown): DefinitionStructure {
 
   if (record.kind === 'task') {
     if (record.nodes !== undefined) invalid('task structure has nodes')
+    if (record.mode !== undefined) invalid('task structure has a mode')
+    if (record.uses !== undefined) invalid('task structure has uses')
     return { formatVersion, kind: 'task', name }
   }
   if (record.kind !== 'workflow') {
     invalid(`unknown kind [${String(record.kind)}]`)
   }
+  if (record.mode !== undefined) {
+    if (record.mode !== 'durable') {
+      invalid(`unknown mode [${JSON.stringify(record.mode)}]`)
+    }
+    if (parseList(record.nodes, 'structure nodes').length > 0) {
+      invalid('durable structure has nodes')
+    }
+    const used = new Set<string>()
+    const uses = parseList(record.uses, 'structure uses').map((item, index) => {
+      const { kind } = parseRecord(item, `use ${index}`, ['kind', 'name'])
+      if (kind !== 'task' && kind !== 'workflow') {
+        invalid(`use ${index} has unknown kind [${String(kind)}]`)
+      }
+      const target = parseTarget(item, `use ${index}`, kind)
+      const key = `${target.kind}:${target.name}`
+      if (used.has(key)) invalid(`repeated use [${key}]`)
+      used.add(key)
+      return target
+    })
+    return {
+      formatVersion,
+      kind: 'workflow',
+      name,
+      nodes: [],
+      mode: 'durable',
+      uses,
+    }
+  }
+  if (record.uses !== undefined) invalid('structure has uses without a mode')
 
   const names = new Set<string>()
   const nodes = parseList(record.nodes, 'structure nodes').map(
@@ -497,11 +548,20 @@ export type StructuralSlot = {
   readonly target: StructuralTarget
 }
 
+/**
+ * The node name of a durable workflow's slots: one per target its body may
+ * start, none tied to a node, as no node exists before a run comes to it.
+ */
+export const USES = '$uses'
+
 /** The named-target slots of a structure, in node order, then case order. */
 export function structureSlots(
   structure: DefinitionStructure,
 ): readonly StructuralSlot[] {
   if (structure.kind === 'task') return []
+  if (structure.mode === 'durable') {
+    return (structure.uses ?? []).map((target) => ({ nodeName: USES, target }))
+  }
 
   const slots: StructuralSlot[] = []
   for (const node of structure.nodes) {

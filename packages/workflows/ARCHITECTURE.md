@@ -155,7 +155,17 @@ it is given back and the worker goes on.
 A program is a workflow's steps or a task's handler as plain functions over
 **stored** values. The engine never sees a schema: the authoring layer
 (`src/dsl/`) builds programs whose functions decode what they read and encode
-what they return. A program also carries the description of its definition
+what they return.
+
+A durable workflow's program is a `replay` instead of steps: its body, run
+whole and synchronously against a run's history in every pass, answering the
+operations it came to and where it ended (`src/plan/durable.ts`). The pass
+that runs it is a plan like any other, so a replay is planned again on a
+conflict as any pass is, and needs no lease of its own: a send or a child's
+end that lands during a pass voids it. Each operation is a node, kept with
+what it was opened with (`StoredNode.operation`), and the work of a task or
+workflow node is a child run, as a step's is. Its runs are workflow runs to
+everything outside the pass. A program also carries the description of its definition
 (`src/graph/`): the graph, its hash, its labels, and for a revision its
 manifest. The engine saves and compares these as text and never reads into
 them.

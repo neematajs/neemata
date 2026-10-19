@@ -7,7 +7,9 @@ import type {
   DurationString,
   RetryPolicy,
   Route,
+  StoredError,
 } from './model.ts'
+import type { NodeWithoutInput } from './store.ts'
 import { caseKey, memberKey, SELF } from './model.ts'
 
 /**
@@ -184,6 +186,79 @@ export type WorkflowProgram = Route & {
   readonly definition?: Described
 }
 
+/**
+ * What a durable workflow's body asks a run for: a run of a task or a child
+ * workflow, a durable sleep, the time. Encoded as stored: the authoring
+ * layer encodes an input before the engine sees it.
+ */
+export type Operation = { readonly name: string } & (
+  | (AttemptPolicy & {
+      readonly kind: 'task'
+      readonly task: Reference
+      readonly input: unknown
+    })
+  | {
+      readonly kind: 'workflow'
+      readonly workflow: Reference
+      readonly input: unknown
+      readonly cancellation?: CancellationPolicy
+    }
+  | { readonly kind: 'sleep'; readonly durationMs: number }
+  | { readonly kind: 'now' }
+)
+
+/** What a replay may read of a run: its input and its nodes, as stored. */
+export type History = {
+  readonly input: unknown
+  /** `undefined` when the run has no node of the name. */
+  readonly node: (name: string) => NodeWithoutInput | undefined
+}
+
+/**
+ * Where a replay of a body ended: with the run's output, encoded; with the
+ * error that fails the run; or waiting on operations not done yet.
+ */
+export type ReplayOutcome =
+  | { readonly _tag: 'Completed'; readonly output: unknown }
+  | { readonly _tag: 'Failed'; readonly error: StoredError }
+  | { readonly _tag: 'Suspended' }
+
+export type Replayed = {
+  readonly outcome: ReplayOutcome
+  /**
+   * Every operation the body came to, in the order it came to them: those
+   * it has a node for are checked against the node, the others are opened.
+   */
+  readonly operations: readonly Operation[]
+}
+
+/**
+ * A durable workflow's body as the coordinator runs it: replayed from the
+ * start against a run's history in every pass, pure and synchronous like
+ * every value the coordinator computes. It never throws: what fails the run
+ * is its outcome.
+ */
+export type Replay = (history: History) => Replayed
+
+/**
+ * What the coordinator needs to advance runs of one durable workflow
+ * revision: a body instead of steps. Its runs are workflow runs, as
+ * everything outside the pass sees them.
+ */
+export type DurableProgram = Route & {
+  readonly kind: 'workflow'
+  readonly mode: 'durable'
+  readonly replay: Replay
+  /** Limits the whole run. */
+  readonly timeout?: DurationString
+  readonly definition?: Described
+  /**
+   * The definitions of everything the body may start, so a pass that starts
+   * a run has them loaded with its own.
+   */
+  readonly references: readonly Reference[]
+}
+
 /** One task revision: a handler that runs as a run of its own. */
 export type TaskProgram = Route &
   AttemptPolicy & {
@@ -192,7 +267,14 @@ export type TaskProgram = Route &
     readonly definition?: Described
   }
 
-export type Program = WorkflowProgram | TaskProgram
+/** A program that advances workflow runs: by steps, or by a body. */
+export type AnyWorkflowProgram = WorkflowProgram | DurableProgram
+
+export type Program = AnyWorkflowProgram | TaskProgram
+
+export const isDurable = (
+  program: AnyWorkflowProgram,
+): program is DurableProgram => 'mode' in program && program.mode === 'durable'
 
 /**
  * The handler an attempt command names, with the limits it runs under: an
@@ -202,7 +284,7 @@ export type Program = WorkflowProgram | TaskProgram
 export type Executable = AttemptPolicy & { readonly execute: Execute }
 
 export type Registry = {
-  readonly workflow: (route: Route) => WorkflowProgram | undefined
+  readonly workflow: (route: Route) => AnyWorkflowProgram | undefined
   readonly task: (route: Route) => TaskProgram | undefined
   /** `undefined` when no registered code can run the attempt. */
   readonly executable: (command: AttemptCommand) => Executable | undefined
@@ -236,7 +318,7 @@ function leaf(step: Step, childKey: string): Leaf | undefined {
 }
 
 export function registry(programs: readonly Program[]): Registry {
-  const workflows = new Map<string, WorkflowProgram>()
+  const workflows = new Map<string, AnyWorkflowProgram>()
   const tasks = new Map<string, TaskProgram>()
 
   for (const program of programs) {
@@ -267,9 +349,12 @@ export function registry(programs: readonly Program[]): Registry {
         )
       }
 
-      const step = workflows
-        .get(routeKey(command))
-        ?.steps.find((step) => step.name === command.nodeName)
+      // A durable workflow has no activities: its work is runs of tasks.
+      const program = workflows.get(routeKey(command))
+      const step =
+        program && !isDurable(program)
+          ? program.steps.find((step) => step.name === command.nodeName)
+          : undefined
       const target = step && leaf(step, command.childKey)
       return target?.kind === 'activity' ? target : undefined
     },

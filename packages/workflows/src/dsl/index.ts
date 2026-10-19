@@ -1,5 +1,13 @@
 export type { Boundary, EffectSchema } from './codec.ts'
 export { decodeRun } from './declaration.ts'
+export { Durable, durable } from './durable.ts'
+export type {
+  AnyDurableWorkflow,
+  Closed,
+  DurableOptions,
+  DurableWorkflow,
+  Operations,
+} from './durable.ts'
 export type {
   DecodedRun,
   Handler,
