@@ -1614,8 +1614,9 @@ that matches is deployed), or a child run blocked itself, which is resumed
 in its place. `status: ['blocked']` finds blocked runs in `Client.list`, a
 family's with `rootRunId`. A run's status changes less often than what is
 shown of it, an input received or an operation blocked: `Client.watch(runId,
-{ wake: true })` also tells of every change in its family, which is when to
-read the view again.
+{ wake: true })` also gives a `change` on hints that its family changed,
+which is when to read the view again. Hints are best-effort, so a screen
+that must not go stale also reads it again now and then.
 
 ## Stores
 
