@@ -53,11 +53,18 @@ jobs:
         os:
           - ubuntu-24.04
           - macos-26
+        include:
+          # node-caged publishes Linux images; latest tracks its newest Node build.
+          - node: latest, caged
+            os: ubuntu-24.04
+            container: platformatic/node-caged:latest
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Use Node.js ${{ matrix.node }}
+        if: ${{ !matrix.container }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -65,6 +72,13 @@ jobs:
         uses: pnpm/action-setup@v6.1.0
         with:
           run_install: false
+      - name: Verify caged runtime
+        if: ${{ matrix.container }}
+        run: >-
+          pnpm exec node -e '
+          console.log(process.version, process.execPath);
+          if (process.config.variables.v8_enable_pointer_compression !== 1)
+          throw new Error("Expected node-caged with V8 pointer compression");'
       - name: Get pnpm store directory
         shell: bash
         run: |
