@@ -387,6 +387,30 @@ describe('inputs of durable workflows', () => {
       () => Effect.void,
     )
     expect(() => Client.send([V1, V2], 'run', 'flag', 'k', true)).not.toThrow()
+    const Shape1 = durable(
+      {
+        ...options,
+        revision: 's1',
+        inputs: { shape: Schema.Struct({ a: Schema.String }) },
+      },
+      () => Effect.void,
+    )
+    const Shape2 = durable(
+      {
+        ...options,
+        revision: 's2',
+        inputs: { shape: Schema.Struct({ b: Schema.Number }) },
+      },
+      () => Effect.void,
+    )
+    // A value every revision takes: what both need.
+    expect(() =>
+      Client.send([Shape1, Shape2], 'run', 'shape', 'k', { a: 'x', b: 1 }),
+    ).not.toThrow()
+    expect(() =>
+      // @ts-expect-error what only one of them takes
+      Client.send([Shape1, Shape2], 'run', 'shape', 'k', { b: 1 }),
+    ).not.toThrow()
     expect(() =>
       // @ts-expect-error a family only one revision takes
       Client.send([V1, V2], 'run', 'extra', 'k', 'x'),
