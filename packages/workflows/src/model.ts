@@ -150,8 +150,17 @@ export type StoredOperation = {
   readonly ordinal: number
   /** The task or workflow a `task` or `workflow` node starts a run of. */
   readonly target?: Route
-  /** When a `sleep` ends, as an instant: replaying never moves it. */
+  /**
+   * When a `sleep` ends, or an `input` stops being waited for, as an
+   * instant: replaying never moves it.
+   */
   readonly until?: Timestamp
+  /** Which input an `input` node is: its family and its key in it. */
+  readonly input?: { readonly family: string; readonly key: string }
+  /** When an `input` node's value was received. */
+  readonly receivedAt?: Timestamp
+  /** An `input` node whose wait ended with no value: its `until` came first. */
+  readonly timedOut?: true
 }
 
 /**

@@ -17,6 +17,8 @@ type WorkflowDefinition = Declared<'workflow'> & {
    */
   readonly mode?: 'durable'
   readonly uses?: readonly Definition[]
+  /** The inputs a durable workflow takes, by family, in declaration order. */
+  readonly inputs?: Readonly<Record<string, unknown>>
 }
 
 /**
@@ -147,6 +149,8 @@ export type WorkflowStructure = {
    */
   readonly mode?: 'durable'
   readonly uses?: readonly StructuralTarget[]
+  /** Its input families; absent when it takes none. */
+  readonly inputs?: readonly string[]
 }
 
 export type TaskStructure = {
@@ -214,7 +218,14 @@ export function projectStructure(definition: Definition): DefinitionStructure {
   }
   if (definition.mode !== 'durable') return structure
   const uses = (definition.uses ?? []).map(structureOfTarget)
-  return { ...structure, mode: 'durable', uses }
+  const inputs = Object.keys(definition.inputs ?? {})
+  return {
+    ...structure,
+    mode: 'durable',
+    uses,
+    // Absent when empty, so a durable workflow without inputs keeps its hash.
+    ...(inputs.length === 0 ? {} : { inputs }),
+  }
 }
 
 function isEmpty(value: object) {
@@ -483,7 +494,7 @@ export function parseStructure(value: unknown): DefinitionStructure {
     value,
     'structure',
     ['formatVersion', 'kind', 'name'],
-    ['nodes', 'mode', 'uses'],
+    ['nodes', 'mode', 'uses', 'inputs'],
   )
   const formatVersion = STRUCTURE_FORMAT_VERSION
   if (record.formatVersion !== formatVersion) {
@@ -494,6 +505,7 @@ export function parseStructure(value: unknown): DefinitionStructure {
   if (record.kind === 'task') {
     if (record.nodes !== undefined) invalid('task structure has nodes')
     if (record.mode !== undefined) invalid('task structure has a mode')
+    if (record.inputs !== undefined) invalid('task structure has inputs')
     if (record.uses !== undefined) invalid('task structure has uses')
     return { formatVersion, kind: 'task', name }
   }
@@ -519,6 +531,17 @@ export function parseStructure(value: unknown): DefinitionStructure {
       used.add(key)
       return target
     })
+    const families = new Set<string>()
+    const inputs =
+      record.inputs === undefined
+        ? undefined
+        : parseList(record.inputs, 'structure inputs').map((item, index) => {
+            const family = parseName(item, `input ${index}`)
+            if (families.has(family)) invalid(`repeated input [${family}]`)
+            families.add(family)
+            return family
+          })
+    if (inputs?.length === 0) invalid('durable structure has empty inputs')
     return {
       formatVersion,
       kind: 'workflow',
@@ -526,9 +549,13 @@ export function parseStructure(value: unknown): DefinitionStructure {
       nodes: [],
       mode: 'durable',
       uses,
+      ...(inputs === undefined ? {} : { inputs }),
     }
   }
   if (record.uses !== undefined) invalid('structure has uses without a mode')
+  if (record.inputs !== undefined) {
+    invalid('structure has inputs without a mode')
+  }
 
   const names = new Set<string>()
   const nodes = parseList(record.nodes, 'structure nodes').map(

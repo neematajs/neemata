@@ -113,7 +113,8 @@ function history(draft: Draft, run: StoredRun): History {
 
 /**
  * Settles the nodes whose work has ended since the last pass: a task or
- * workflow node once its child run has, a sleep once its time has come.
+ * workflow node once its child run has, a sleep once its time has come, and
+ * an input whose value did not come before its time did.
  */
 function settle(draft: Draft, run: StoredRun) {
   const open = draft
@@ -145,14 +146,21 @@ function settle(draft: Draft, run: StoredRun) {
   }
 
   for (const read of open) {
-    const until = read.operation?.until
-    if (read.kind !== 'sleep' || until === undefined || until > draft.now) {
-      continue
+    const { operation } = read
+    const until = operation?.until
+    if (until === undefined || until > draft.now) continue
+    const node = draft.node(run.id, read.name)!
+    if (read.kind === 'sleep') {
+      draft.updateNode(node, { status: 'completed', output: null })
+    } else if (read.kind === 'input') {
+      // A value sent before its time completed the node then: one still
+      // waiting has none, whenever the pass that finds it runs.
+      draft.updateNode(node, {
+        status: 'completed',
+        output: null,
+        operation: { ...operation!, timedOut: true },
+      })
     }
-    draft.updateNode(draft.node(run.id, read.name)!, {
-      status: 'completed',
-      output: null,
-    })
   }
 }
 
@@ -223,6 +231,21 @@ function open(
   const base = { runId: run.id, name: operation.name, kind: operation.kind }
 
   switch (operation.kind) {
+    case 'input': {
+      const { family, key, timeoutMs } = operation
+      draft.createNode({
+        ...base,
+        status: 'waiting',
+        operation: {
+          ordinal,
+          input: { family, key },
+          ...(timeoutMs === undefined
+            ? {}
+            : { until: draft.now + Math.max(0, timeoutMs) }),
+        },
+      })
+      return false
+    }
     case 'now':
       draft.createNode({
         ...base,
@@ -311,12 +334,16 @@ function conclude(
   return tasks
 }
 
-/** Queues the pass that wakes the run when its nearest sleep is over. */
+/**
+ * Queues the pass that wakes the run at its nearest deadline: a sleep that
+ * ends, an input that stops being waited for. A wake that comes earlier,
+ * for anything else, queues it again from its own pass.
+ */
 function wakeAtNextDeadline(draft: Draft, run: StoredRun) {
   let next: number | undefined
   for (const node of draft.nodes(run.id)) {
     const until = node.operation?.until
-    if (node.kind !== 'sleep' || node.status !== 'waiting') continue
+    if (node.status !== 'waiting') continue
     if (until !== undefined && (next === undefined || until < next)) {
       next = until
     }

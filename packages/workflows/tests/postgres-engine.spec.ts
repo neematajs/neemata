@@ -35,7 +35,7 @@ import {
   Screen,
   Ship,
 } from './fixtures/fulfillment.ts'
-import { Review } from './fixtures/review.ts'
+import { Approval, Review } from './fixtures/review.ts'
 import { pglite, postgres, POSTGRES_URL, provided } from './postgres-support.ts'
 
 /**
@@ -45,7 +45,14 @@ import { pglite, postgres, POSTGRES_URL, provided } from './postgres-support.ts'
  */
 
 const served = {
-  workflows: [Billing, ManualBilling, Fulfillment, Ship, ...Review.workflows],
+  workflows: [
+    Billing,
+    ManualBilling,
+    Fulfillment,
+    Ship,
+    ...Review.workflows,
+    ...Approval.workflows,
+  ],
   tasks: [
     ...Review.tasks,
     CreateInvoice,
@@ -158,6 +165,51 @@ function engine(real: boolean) {
           output: { order: 'o-2', invoice: 'inv-o-2', paidBy: 'card' },
         })
         expect(handlers.charged).toEqual(['inv-o-2'])
+      }),
+    )
+
+    test(
+      'takes an input sent to a durable run, kept until it comes to it',
+      Effect.gen(function* () {
+        const run = yield* Client.start(Approval, 'invoice')
+        const receipt = yield* Client.send(
+          Approval,
+          run.id,
+          'decision',
+          'invoice',
+          true,
+        )
+        expect(receipt.duplicate).toBe(false)
+        yield* work({ pollMs: 50 })
+        expect(yield* ended(run.id)).toMatchObject({
+          status: 'completed',
+          output: 'invoice approved',
+        })
+      }),
+    )
+
+    test(
+      'a send commits and rolls back with its caller',
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient
+        const run = yield* Client.start(Approval, 'contract')
+        // The caller's transaction fails after the send: the input goes with it.
+        yield* sql
+          .withTransaction(
+            Effect.andThen(
+              Client.send(Approval, run.id, 'decision', 'contract', false),
+              Effect.fail('rolled back'),
+            ),
+          )
+          .pipe(Effect.flip)
+        expect((yield* Client.get(run.id))!.nodes).toEqual([])
+        yield* sql.withTransaction(
+          Client.send(Approval, run.id, 'decision', 'contract', false),
+        )
+        yield* work({ pollMs: 50 })
+        expect(yield* ended(run.id)).toMatchObject({
+          output: 'contract rejected',
+        })
       }),
     )
 

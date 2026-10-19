@@ -5,6 +5,7 @@ import type { AttemptCommand, ContinueRun, StoredRun } from './model.ts'
 import type { Outcome } from './plan/attempt.ts'
 import type { Retention } from './plan/remove.ts'
 import type { ScheduleEntry } from './plan/schedule.ts'
+import type { SendInput } from './plan/send.ts'
 import type { StartInput } from './plan/start.ts'
 import type { AnyWorkflowProgram, Registry } from './program.ts'
 import type { Claim, DeadCommand } from './store.ts'
@@ -21,6 +22,7 @@ import {
   planSetEnabled,
   planTrigger,
 } from './plan/schedule.ts'
+import { planSend, sendScope } from './plan/send.ts'
 import { planStart, startScope } from './plan/start.ts'
 import { planTimeout, timeoutScope } from './plan/timeout.ts'
 import { Store } from './store.ts'
@@ -32,6 +34,15 @@ import { Store } from './store.ts'
 export const start = (input: StartInput) =>
   Effect.flatMap(Store, (store) =>
     store.transact(startScope(input), planStart(input)),
+  )
+
+/**
+ * Takes an input for a durable run: kept until the run comes to it, or
+ * completing the wait it is in.
+ */
+export const send = (input: SendInput) =>
+  Effect.flatMap(Store, (store) =>
+    store.transact(sendScope(input), planSend(input)),
   )
 
 /** Advances the run a claimed command names as far as stored state allows. */

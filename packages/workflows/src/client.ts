@@ -3,15 +3,17 @@ import * as Clock from 'effect/Clock'
 import * as Effect from 'effect/Effect'
 import * as Stream from 'effect/Stream'
 
+import type { Boundary } from './dsl/codec.ts'
 import type {
   DecodedRun,
   InputOf,
   OutputOf,
   UniqueBuilder,
 } from './dsl/declaration.ts'
+import type { AnyDurableWorkflow } from './dsl/durable.ts'
 import type { AnyTask } from './dsl/task.ts'
 import type { ServedWorkflow } from './dsl/workflow.ts'
-import type { StorageError, UnknownSchedule } from './errors.ts'
+import type { InputRefused, StorageError, UnknownSchedule } from './errors.ts'
 import type { RevisionManifest, RunnableRevision } from './graph/revision.ts'
 import type {
   DefinitionStructure,
@@ -31,6 +33,7 @@ import type {
 } from './model.ts'
 import type { Draft } from './plan/draft.ts'
 import type { RetryError } from './plan/retry.ts'
+import type { HeldKey, Receipt } from './plan/send.ts'
 import type { StartError, StartInput } from './plan/start.ts'
 import type { DeadCommand, ListedRun, RunFilter } from './store.ts'
 import type { PruneParams } from './worker/maintenance.ts'
@@ -155,6 +158,68 @@ function answer<D extends Declaration>(
 
 /** Asks a run to stop; `undefined` when no such run exists. */
 export const cancel = (runId: string) => claimless(Engine.cancel(runId))
+
+/** The value type of one input family of a durable workflow. */
+type InputValue<D extends AnyDurableWorkflow, F> = F extends keyof D['inputs']
+  ? D['inputs'][F] extends Boundary<infer A>
+    ? A
+    : never
+  : never
+
+/**
+ * Sends an input to a run of a durable workflow, named by its id or by the
+ * unique key it holds (`active` unless a scope is given). The input is its
+ * family and its key, `family:key` in the run: what the body waits for with
+ * `d.input(family, key)`. It is one commit, in the caller's transaction when
+ * there is one: a value sent before the run comes to its input is kept for
+ * it, one sent while the run waits completes the wait and wakes the run.
+ *
+ * The first value of an input is its value. The same value sent again is
+ * answered with the receipt, `duplicate` set; any other is refused with
+ * `InputRefused`, as is a send to a run that has ended or is being
+ * cancelled, and one after the run's wait for it timed out. A value its
+ * family's schema does not encode is a defect: nothing is written.
+ */
+export const send = <
+  D extends AnyDurableWorkflow,
+  F extends keyof D['inputs'] & string,
+>(
+  declaration: D,
+  to:
+    | string
+    | { readonly unique: HeldKey['key']; readonly scope?: HeldKey['scope'] },
+  family: F,
+  key: string,
+  value: InputValue<D, F>,
+): Effect.Effect<Receipt, InputRefused | StorageError, Store> =>
+  Effect.suspend(() => {
+    const boundary = Object.hasOwn(declaration.inputs, family)
+      ? (declaration.inputs[family] as Boundary<unknown>)
+      : undefined
+    if (!boundary) {
+      return Effect.die(
+        new Error(
+          `Durable workflow [${declaration.name}] takes no input [${family}]`,
+        ),
+      )
+    }
+    const { name, revision } = declaration
+    return Engine.send({
+      route: { name, revision },
+      to:
+        typeof to === 'string'
+          ? { runId: to }
+          : {
+              unique: {
+                key: to.unique,
+                ...(to.scope === undefined ? {} : { scope: to.scope }),
+              },
+            },
+      family,
+      key,
+      value: boundary.encode(value),
+    })
+  }).pipe(claimless)
 
 /**
  * A run with its nodes, children and attempts, as stored, in the same order

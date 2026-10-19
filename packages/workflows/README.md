@@ -565,6 +565,7 @@ const Document = durable(
 | `d.workflow(name, Workflow, input)` | a child run of the workflow, static or durable                       |
 | `d.sleep(name, duration)`           | a wait that ends `duration` after the run first came to it           |
 | `d.now(name)`                       | the time the run first came to it, the same in every replay after it |
+| `d.input(family, key, opts?)`       | a value sent with `Client.send`, see [Inputs](#inputs)               |
 
 Concurrent branches are Effect's: `Effect.all` and `Effect.forEach` with a
 `concurrency` open every operation they come to in one pass, and a bounded
@@ -598,6 +599,79 @@ What a replay requires:
   that keeps what runs in flight have stored ships under the same revision;
   anything else is a new one, served beside the old until its runs have
   ended.
+
+#### Inputs
+
+A durable workflow may wait for values sent from outside its run: an answer,
+a decision, an event. It declares its input families with their schemas, and
+`d.input(family, key)` waits for one input under the name `family:key`. The
+sender calls `Client.send`, by run id or by the unique key the run holds, in
+its own transaction when it is in one.
+
+```ts
+const Publish = task({
+  name: 'docs.publish',
+  revision: 'v1',
+  pool: 'docs',
+  input: Schema.String,
+  output: Schema.Void,
+  handler: () => Effect.void,
+})
+
+const Review = durable(
+  {
+    name: 'docs.review',
+    revision: 'v1',
+    pool: 'docs',
+    input: Schema.Struct({
+      id: Schema.String,
+      sections: Schema.Array(Schema.String),
+    }),
+    output: Schema.Array(Schema.String),
+    tasks: [Publish],
+    inputs: { verdict: Schema.Struct({ approved: Schema.Boolean }) },
+    unique: { key: ({ id }) => ['review', id], behavior: 'join' },
+  },
+  ({ sections }, d) =>
+    Effect.forEach(sections, (section) =>
+      Effect.gen(function* () {
+        // Opened together: a verdict sent as soon as the section is out
+        // finds the wait there, and one sent earlier is kept for it.
+        const [, verdict] = yield* Effect.all(
+          [
+            d.task(`publish:${section}`, Publish, section),
+            d.input('verdict', section, { timeout: '7d' }),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        if (verdict._tag === 'TimedOut') return `${section}: expired`
+        return `${section}: ${verdict.value.approved ? 'approved' : 'rejected'}`
+      }),
+    ),
+)
+
+/** Sent with the reviewer's own writes, or not at all. */
+const decide = (id: string, section: string, approved: boolean) =>
+  Client.send(Review, { unique: ['review', id] }, 'verdict', section, {
+    approved,
+  })
+```
+
+- **Kept until read.** A value sent before the run comes to its input is
+  stored for it; the run reads it when it gets there.
+- **The first value is the input's.** The same value sent again is answered
+  with its receipt, `duplicate` set; another is refused with `InputRefused`
+  (`received`).
+- **A timeout is a deadline.** With `timeout`, the wait ends that long after
+  the run first comes to it, with `TimedOut`; a value sent after it is
+  refused (`closed`), whether or not a pass has seen the time pass.
+- **Refused otherwise:** `missing` when no run has the id or the key, `other`
+  for a run of another workflow or revision, `ended` for one that has ended
+  or is being cancelled, `taken` for a name another operation holds.
+
+Input names share the run's operation names, which is why a family holds no
+colon. Authorizing a sender and validating more than the schema does are the
+application's, before it sends.
 
 Each pass replays every operation the run has done, so a run is meant for
 tens or hundreds of them; a list of thousands is a map in a static workflow,
@@ -1606,9 +1680,9 @@ only through a durable store. Details, logging and stopping:
   `branch` and maps, or a [durable workflow](#durable-workflows).
 - Branches, parallels or maps nested in one another, a map over activities,
   a member reading another member, cancelling siblings when one fails.
-- Waiting inside a workflow for a signal or an event. A durable workflow
-  waits for a timer with `d.sleep`; a run can be delayed as a whole with
-  `startAt`.
+- Waiting inside a static workflow for a signal, an event or a timer. A
+  durable workflow waits for them with `d.input` and `d.sleep`; a run can be
+  delayed as a whole with `startAt`.
 - Limits across a deployment: `concurrency` is per worker, a map's per step.
 - Moving a run to another revision.
 - Schemas other than `effect/Schema`, and handlers that are not Effects.

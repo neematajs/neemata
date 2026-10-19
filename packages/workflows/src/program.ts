@@ -205,6 +205,13 @@ export type Operation = { readonly name: string } & (
     }
   | { readonly kind: 'sleep'; readonly durationMs: number }
   | { readonly kind: 'now' }
+  | {
+      readonly kind: 'input'
+      readonly family: string
+      readonly key: string
+      /** How long the run waits for the value once it comes to it. */
+      readonly timeoutMs?: number
+    }
 )
 
 /** What a replay may read of a run: its input and its nodes, as stored. */
