@@ -3,11 +3,17 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
+import type {
+  BuildOptions,
+  OutputBundle,
+  RolldownOptions,
+  RolldownOutput,
+} from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BuildTarget } from '../../src/internal/build/graph.ts'
+import type { NeemRolldownPlugin } from '../../src/shared/types.ts'
 import {
   compileGraph,
   compileTarget,
@@ -279,6 +285,45 @@ describe('Neem compiler', () => {
       watcher: { debounceDelay: 50, useDebounce: true },
     })
     expect(options.watch).not.toHaveProperty('buildDelay')
+  })
+
+  it('gives each plugin the build context before any Rolldown build', async () => {
+    const root = await createTempDir('neem-compiler-')
+    const calls: string[] = []
+    const plugin = (name: string): NeemRolldownPlugin => ({
+      name,
+      configureNeemBuild: ({ command, mode }) =>
+        calls.push(`${name}:${command}:${mode}`),
+    })
+    // The planner shares the host's build, so both targets carry the plugins.
+    const graph = createPluginGraph(root, [
+      plugin('shared'),
+      Promise.resolve([plugin('nested'), false]),
+    ])
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      calls.push('build')
+      const input = options.input
+      if (isRecord(input)) {
+        return { output: multiOutput(input) } as unknown as RolldownOutput
+      }
+      const target = graph.targets.find(
+        (target) => target.artifact.entry === input,
+      )
+      return rolldownOutput('index.js', target!)
+    })
+
+    await compileGraph(graph, 'preview')
+    expect(calls.slice(0, 3)).toEqual([
+      'shared:preview:production',
+      'nested:preview:production',
+      'build',
+    ])
+    expect(calls.filter((call) => call !== 'build')).toHaveLength(2)
+
+    calls.length = 0
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+    await watchGraph(createPluginGraph(root, [plugin('watched')]))
+    expect(calls).toEqual(['watched:dev:development'])
   })
 
   it('uses root watch config for build delay and debounce', async () => {
@@ -666,6 +711,31 @@ function fileWatcherOptions(options: BuildOptions) {
   const watch = options.watch
   if (!watch) throw new Error('watch options missing')
   return watch.watcher
+}
+
+function createPluginGraph(
+  root: string,
+  plugins: NonNullable<RolldownOptions['plugins']>,
+) {
+  return createBuildGraph({
+    configFile: resolve(root, 'neem.config.ts'),
+    outDir: resolve(root, 'dist'),
+    config: {
+      runtimes: {
+        api: {
+          name: 'api',
+          file: resolve(root, 'api/neem.runtime.ts'),
+          directory: resolve(root, 'api'),
+          planner: './planner.ts',
+          declaration: defineRuntime({
+            name: 'api',
+            host: { entry: './host.ts', build: { rolldown: { plugins } } },
+            planner: './planner.ts',
+          }),
+        },
+      },
+    },
+  })
 }
 
 function rolldownOutput(fileName: string, target: BuildTarget): RolldownOutput {

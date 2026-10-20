@@ -10,7 +10,11 @@ import type {
   LoggerOptions,
   StreamEntry,
 } from 'pino'
-import type { OutputOptions, RolldownOptions } from 'rolldown'
+import type {
+  OutputOptions,
+  Plugin as RolldownPlugin,
+  RolldownOptions,
+} from 'rolldown'
 
 import type { HostHooks } from '../internal/hooks.ts'
 
@@ -91,6 +95,7 @@ export type NeemEnv = Record<string, string>
 
 export type NeemBuildConfig = {
   sourcemap?: OutputOptions['sourcemap']
+  /** Defaults to include for application artifacts, exclude for Neem infrastructure. */
   sourcemapSources?: 'include' | 'exclude'
   minify?: boolean | 'dce-only'
   define?: Record<string, string>
@@ -113,6 +118,33 @@ export type NeemBuildWatchConfig = {
 }
 
 export type NeemPluginBuild = { rolldown?: NeemRolldownOptions }
+
+/**
+ * The CLI command a build serves. `preview` is a production build that Neem
+ * serves locally right after it completes; its artifacts run in production
+ * mode, so it differs from `build` only where a pipeline opts into it.
+ */
+export type NeemBuildCommand = 'build' | 'preview' | 'dev'
+
+export type NeemBuildContext = {
+  command: NeemBuildCommand
+  /** Mode the artifacts run in: `development` only for `dev`. */
+  mode: NeemMode
+}
+
+/**
+ * A Rolldown plugin that also receives Neem's build context, for pipelines
+ * that build beyond the bundle (for example a framework's own server and
+ * client output in `writeBundle`).
+ */
+export type NeemRolldownPlugin = RolldownPlugin & {
+  /**
+   * Called before Neem starts the Rolldown builds or watchers that include
+   * this plugin. Every artifact of one command gets the same context, so a
+   * plugin shared by several artifacts may be called more than once.
+   */
+  configureNeemBuild?: (context: NeemBuildContext) => void
+}
 
 export type NeemPluginInput = {
   name: string

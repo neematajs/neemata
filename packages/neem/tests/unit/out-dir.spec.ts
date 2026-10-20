@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 import {
   resolveBuildOutDir,
   resolveDevOutDir,
+  resolvePreviewOutDir,
   resolveStartOutDir,
 } from '../../src/internal/commands/out-dir.ts'
 import { createTempDir } from '../support/temp.ts'
@@ -68,6 +69,23 @@ describe('resolveDevOutDir', () => {
     expect(
       resolveDevOutDir({ cwd, configFile: defaultConfig, outDir: '.dev' }),
     ).toBe('/workspace/.dev')
+  })
+})
+
+describe('resolvePreviewOutDir', () => {
+  it('separates previews from deployment and development output', () => {
+    expect(resolvePreviewOutDir({ cwd, configFile: defaultConfig })).toBe(
+      '/workspace/app/sub/.neem/preview/neem.config',
+    )
+    expect(resolvePreviewOutDir({ cwd, configFile: otherConfig })).toBe(
+      '/workspace/app/sub/.neem/preview/neem.other.config',
+    )
+  })
+
+  it('resolves an explicit outDir from cwd', () => {
+    expect(
+      resolvePreviewOutDir({ cwd, configFile: defaultConfig, outDir: 'p' }),
+    ).toBe('/workspace/p')
   })
 })
 

@@ -10,6 +10,7 @@ The CLI and package name remain `neem` and `@nmtjs/neem`.
 neem dev --config neem.config.ts
 neem build --config neem.config.ts
 neem start --out-dir dist
+neem preview --config neem.config.ts
 # Or run the built application directly:
 node dist/start.js
 ```
@@ -48,6 +49,84 @@ neem dev api,jobs --no-cache --env-files .env,.env.local
 `--outDir` and `--cacheDir` remain aliases for `--out-dir` and `--cache-dir`.
 Flags are validated before running a command. On SIGINT/SIGTERM the CLI waits
 for cleanup; failed cleanup exits unsuccessfully. Diagnostics go to stderr.
+
+## Preview
+
+`neem preview` builds production artifacts and serves them, for checking
+production behavior locally with mapped stack traces. There is no watcher;
+run it again after edits. It accepts the `build` arguments and `--env-files`,
+loaded before the build so config evaluation and runtime workers both see them.
+
+- Output defaults to `.neem/preview/<config name>` next to the config, apart from
+  deployment (`outDir`) and development (`.neem/<config name>`) output.
+  `--out-dir` overrides it under the same safety checks as `build`.
+- Source maps are forced on (`build.sourcemap: true`); other build settings,
+  including `sourcemapSources` and `minify`, apply as configured.
+- The build, including framework builders, runs in a child process with this
+  process's runtime flags, minus inspector options (also removed from
+  `NODE_OPTIONS`). Rolldown keeps native threads and memory after a build, so
+  the CLI waits for that process to exit, then serves from its own process,
+  which never loads the compiler.
+- On POSIX the build process leads its own process group. Helpers it starts
+  in that group are stopped once it exits, after success too, and on
+  cancellation: SIGTERM, then SIGKILL after 5 seconds. A helper that moves to
+  its own process group or session is outside this cleanup.
+- A failed build exits unsuccessfully without serving earlier output.
+  SIGINT/SIGTERM during the build stops the build and exits without serving;
+  while serving, they stop the server like `neem start`.
+
+On Node, preview enables source maps for the serving process and its runtime
+workers, also under a plain `node` launch or `--no-enable-source-maps`; the
+build process gets `--enable-source-maps`. A programmatic caller of the command
+gets its previous setting back when it returns. Only modules loaded after that
+point are mapped; workers that application code starts itself follow Node's
+flags. See [Source maps and memory](#source-maps-and-memory) for Bun.
+
+### Build context for custom pipelines
+
+A runtime or plugin whose Rolldown plugin builds beyond the bundle (for
+example a framework's own server and client output in `writeBundle`) can
+receive the command before Neem starts any build:
+
+```ts
+import type { NeemRolldownPlugin } from '@nmtjs/neem'
+
+let preview = false
+const plugin: NeemRolldownPlugin = {
+  name: 'my-framework',
+  configureNeemBuild({ command, mode }) {
+    // command: 'build' | 'preview' | 'dev'; mode: 'production' | 'development'
+    preview = command === 'preview'
+  },
+  async writeBundle(output) {
+    // Build the framework into output.dir, with browser maps when `preview`.
+  },
+}
+```
+
+`preview` runs in production mode like `build`: artifacts, planners, and
+workers see `mode: 'production'`, so only pipelines that opt in can tell them
+apart. Each artifact's own output directory is Rolldown's `output.dir`.
+
+## Source maps and memory
+
+Neem generates source maps for both application and host infrastructure. The CLI
+enables Node's source-map support; use `node --enable-source-maps dist/start.js`
+to enable it for a standalone production launch too.
+
+Bun 1.4.3 reports generated locations in the tested error stacks for these external
+Rolldown maps; mapped-stack guarantees below apply to Node.
+
+Application maps embed their original source text. Infrastructure maps retain
+file/line/column mappings but omit embedded dependency sources by default, since
+each worker otherwise caches another copy. Stack locations still map to the
+original files; a debugger needs those files to display infrastructure source.
+Set `build.sourcemapSources: 'include'` to embed sources in every map, or
+`'exclude'` to omit them from application maps as well. `build.sourcemap: false`
+disables generated maps and gives up mapped application stack traces.
+
+See [RAM and CPU benchmarking](../../docs/benchmarking.md#neem-ram-and-cpu)
+for repeatable development, production runtime, and build measurements.
 
 ## Ownership and transport
 

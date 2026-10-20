@@ -103,7 +103,38 @@ describe('Neem package consumer smoke', () => {
     )
 
     await node.stop()
-  }, 120_000)
+
+    // Preview resolves its build process entry inside the installed package.
+    const previewEvents = `${fixture.eventsFile}.preview`
+    const preview = spawnNode(
+      [
+        resolve(fixture.consumerDir, 'node_modules/@nmtjs/neem/bin/neem.js'),
+        'preview',
+        '--config',
+        'neem.config.ts',
+      ],
+      {
+        cwd: fixture.consumerDir,
+        env: { NEEM_PACKAGING_EVENTS_FILE: previewEvents },
+      },
+    )
+    await waitFor(
+      async () =>
+        (await readRuntimeEvents(previewEvents)).some(
+          (event) =>
+            event.event === 'start' && event.message === 'packaging-smoke',
+        ),
+      60_000,
+      () => formatSpawnedOutput(preview),
+    )
+    await expectFile(
+      resolve(
+        fixture.consumerDir,
+        '.neem/preview/neem.config/neem.manifest.json',
+      ),
+    )
+    expect(await preview.stop()).toEqual({ code: 0, signal: null })
+  }, 180_000)
 })
 
 async function createConsumerFixture(): Promise<{

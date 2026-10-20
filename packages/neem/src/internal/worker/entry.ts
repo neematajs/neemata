@@ -16,10 +16,14 @@ import { hostSettings } from '../config.ts'
 import { attempt, Deadline } from '../lifetime.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { ThreadRpcs } from '../protocol.ts'
+import { inheritSourceMaps } from '../source-maps.ts'
 import { importDefault, normalizeError } from '../utils.ts'
 import { WorkerExit } from '../worker-exit.ts'
 import { importPatch } from './patch-import.ts'
 import { WorkerRuntime } from './runtime.ts'
+
+// Before user code loads; see `enableSourceMaps`.
+inheritSourceMaps()
 
 const LABEL = 'Neem runtime'
 const data = rawWorkerData as ThreadWorkerData

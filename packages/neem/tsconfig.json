@@ -4,7 +4,7 @@
     "rootDir": "../..",
     "types": ["node"]
   },
-  "include": ["src/**/*", "lib/**/*", "tests/**/*", "vitest*.ts"],
+  "include": ["src/**/*", "lib/**/*", "bench/**/*", "tests/**/*", "vitest*.ts"],
   "exclude": [
     "**/dist/**",
     "**/coverage/**",

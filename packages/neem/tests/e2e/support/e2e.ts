@@ -218,6 +218,37 @@ export async function createNeemFixture(
   }
 }
 
+/**
+ * Writes a `--import` module that fails any load of build or development
+ * tooling. A preview build's child process inherits the flag and is exempt:
+ * it is where that tooling belongs.
+ */
+export async function writeProductionImportGuard(path: string): Promise<void> {
+  await writeFile(
+    path,
+    String.raw`
+    const forbidden = /^(rolldown(?:\/|$)|oxc-resolver$)|\/dev\/session\./
+    const reject = (specifier) => {
+      throw new Error('Production loaded development tooling: ' + specifier)
+    }
+    if (/preview-build\.[jt]s$/.test(process.argv[1] ?? '')) {
+      // Build process: the guard applies to the serving process only.
+    } else if (process.versions.bun) {
+      const { plugin } = await import('bun')
+      plugin({ name: 'production-import-guard', setup(build) {
+        build.onResolve({ filter: forbidden }, ({ path }) => reject(path))
+      } })
+    } else {
+      const { registerHooks } = await import('node:module')
+      registerHooks({ resolve(specifier, context, next) {
+        if (forbidden.test(specifier)) reject(specifier)
+        return next(specifier, context)
+      } })
+    }
+  `,
+  )
+}
+
 export async function readRuntimeEvents(file: string): Promise<RuntimeEvent[]> {
   const content = await readFile(file, 'utf8').catch((error) => {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ''

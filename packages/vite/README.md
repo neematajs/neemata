@@ -20,6 +20,11 @@ export default createViteRuntime({
 - `neem build` — a rolldown plugin on the worker artifact runs `vite build`
   into the artifact's `app/` directory; the prod worker serves it with an
   srvx-based static server (bundled into the artifact) and never imports vite.
+- `neem preview` — the same production build and server with linked browser
+  source maps, even when the app config sets `false` or `'hidden'` in `build`,
+  `environments.client.build` or a Rolldown output (`rolldownOptions.output` /
+  `rollupOptions.output`). Regular builds keep the app's setting. Maps changed
+  later by a Vite plugin's config hooks are not overridden.
 
 The dev/prod split is done at bundle time: the plugin resolves the
 `neem-vite:impl` virtual module to `neem/dev.ts` when the worker is built by
@@ -28,4 +33,5 @@ or a plain `rolldown.watch`, and to `neem/prod.ts` under `rolldown.build`, so
 neither artifact carries the other mode's code or any mode flags.
 
 See `playground/` for a runnable example (`pnpm run playground:dev`,
-`pnpm run playground:build`, `pnpm run playground:start`).
+`pnpm run playground:build`, `pnpm run playground:start`). `pnpm test` builds
+and previews a copy of it.

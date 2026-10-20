@@ -27,8 +27,12 @@ import { hostSettings } from '../config.ts'
 import { attempt, causeErrors, Deadline, within } from '../lifetime.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { RunnerRpcs } from '../protocol.ts'
+import { inheritSourceMaps } from '../source-maps.ts'
 import { importDefault } from '../utils.ts'
 import { WorkerExit } from '../worker-exit.ts'
+
+// Before user code loads; see `enableSourceMaps`.
+inheritSourceMaps()
 
 const LABEL = 'Neem host'
 const data = rawWorkerData as RunnerWorkerData

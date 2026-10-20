@@ -1,4 +1,12 @@
-import { access, cp, mkdtemp, rm } from 'node:fs/promises'
+import {
+  access,
+  cp,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+} from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -75,6 +83,17 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
         'dist/runtime/web/worker/app/public/about/index.html',
       ),
     )
+    // The admin app's deployment map settings hold: hidden browser maps,
+    // none for Nitro.
+    const adminApp = resolve(fixtureDir, 'dist/runtime/admin/worker/app')
+    const adminScripts = await listFiles(resolve(adminApp, 'public/_nuxt'))
+    const script = adminScripts.find((file) => file.endsWith('.js'))
+    if (!script) throw new Error('Admin build emitted no JavaScript asset')
+    expect(adminScripts).toContain(`${script}.map`)
+    expect(
+      await readFile(resolve(adminApp, 'public/_nuxt', script), 'utf8'),
+    ).not.toContain('sourceMappingURL')
+    expect(await listMaps(resolve(adminApp, 'server'))).toEqual([])
   })
 
   it('serves SSR, prerendered, API, and immutable assets through neem start', async () => {
@@ -128,6 +147,68 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
     )
   }, 90_000)
 
+  it('serves a separately built preview with browser and server maps', async () => {
+    const devBuildFile = resolve(fixtureDir, 'web/.nuxt/tsconfig.server.json')
+    const devBuildWritten = (await stat(devBuildFile)).mtimeMs
+    const neem = spawnWithCapture([neemBin, 'preview'], fixtureDir, env)
+    processes.push(neem)
+    const html = await waitFor(
+      async () => {
+        const response = await fetch(origin)
+        const body = await response.text()
+        return response.status === 200 && body.includes('neem-web-marker')
+          ? body
+          : false
+      },
+      180_000,
+      () => `stdout:\n${neem.stdout()}\nstderr:\n${neem.stderr()}`,
+    )
+
+    await expect((await fetch(`${origin}/api/hello`)).json()).resolves.toEqual({
+      message: 'hello-from-neem-api',
+    })
+    const adminHtml = await (await fetch(`${origin}/admin/`)).text()
+    expect(adminHtml).toContain('neem-admin-marker')
+    // The admin app hides browser maps and disables Nitro maps for
+    // deployment; preview links them anyway.
+    for (const [page, assets] of [
+      [html, /(?:src|href)="([^"]*\/_nuxt\/[^"]+\.js)"/],
+      [adminHtml, /(?:src|href)="([^"]*\/admin\/_nuxt\/[^"]+\.js)"/],
+    ] as const) {
+      const asset = page.match(assets)?.[1]
+      if (!asset) throw new Error('Preview HTML referenced no JavaScript asset')
+      const assetUrl = new URL(asset, origin)
+      expect(await (await fetch(assetUrl)).text()).toMatch(
+        /\/\/# sourceMappingURL=\S+\.js\.map\s*$/,
+      )
+      const map = await fetch(`${assetUrl.href}.map`)
+      expect(map.status).toBe(200)
+      const { sources } = (await map.json()) as { sources: string[] }
+      expect(sources.length).toBeGreaterThan(0)
+    }
+
+    const previewRuntimes = resolve(
+      fixtureDir,
+      '.neem/preview/neem.config/runtime',
+    )
+    for (const runtime of ['web', 'admin']) {
+      expect(
+        await listMaps(resolve(previewRuntimes, runtime, 'worker/app/server')),
+      ).not.toEqual([])
+      // Nuxt's intermediates stay with the preview output.
+      await access(
+        resolve(previewRuntimes, runtime, '.nuxt/tsconfig.server.json'),
+      )
+    }
+    expect((await stat(devBuildFile)).mtimeMs).toBe(devBuildWritten)
+    // The deployment build keeps Nuxt's production default: no browser maps.
+    expect(
+      await listMaps(
+        resolve(fixtureDir, 'dist/runtime/web/worker/app/public/_nuxt'),
+      ),
+    ).toEqual([])
+  }, 240_000)
+
   it('proxies both apps and the Vite HMR handshake through neem dev', async () => {
     const neem = spawnWithCapture([neemBin, 'dev'], fixtureDir, env)
     processes.push(neem)
@@ -166,3 +247,11 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
     socket.close()
   }, 120_000)
 })
+
+async function listFiles(dir: string): Promise<string[]> {
+  return await readdir(dir, { recursive: true })
+}
+
+async function listMaps(dir: string): Promise<string[]> {
+  return (await listFiles(dir)).filter((file) => file.endsWith('.map'))
+}

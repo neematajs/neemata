@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path'
 import { consola } from 'consola'
 import { colorize } from 'consola/utils'
 
-import type { NeemConfig } from '../../shared/types.ts'
+import type { NeemBuildCommand, NeemConfig } from '../../shared/types.ts'
 import type { Manifest } from '../manifest/manifest.ts'
 import { assertSafeNeemOutDir, cleanNeemOutDir } from '../build/clean.ts'
 import { compileGraph } from '../build/compiler.ts'
@@ -18,6 +18,11 @@ export type NeemBuildOptions = {
   outDir?: string
   cwd?: string
   runtimes?: readonly string[]
+  /**
+   * `preview` builds the same production artifacts with source maps forced
+   * on, and tells plugins that opt into the build context.
+   */
+  command?: Exclude<NeemBuildCommand, 'dev'>
 }
 
 export type NeemBuildResult = {
@@ -44,7 +49,10 @@ export async function buildNeem(
     outDir: options.outDir,
   })
 
-  logger.start('Building Neem bundle')
+  const command = options.command ?? 'build'
+  logger.start(
+    command === 'preview' ? 'Building Neem preview' : 'Building Neem bundle',
+  )
   logger.debug(`  config: ${colorize('green', configFile)}`)
   logger.debug(`  outDir: ${colorize('green', outDir)}`)
 
@@ -55,13 +63,21 @@ export async function buildNeem(
   const graph = createBuildGraph({
     configFile,
     outDir,
-    config: resolvedConfig,
+    // Preview exists to inspect production behavior with mapped stacks, so
+    // a config that disables or hides maps for deployment does not apply.
+    config:
+      command === 'preview'
+        ? {
+            ...resolvedConfig,
+            build: { ...resolvedConfig.build, sourcemap: true },
+          }
+        : resolvedConfig,
     runtimes: options.runtimes,
   })
 
   assertSafeNeemOutDir({ outDir, configDir: dirname(configFile) })
   await cleanNeemOutDir(outDir)
-  const compiled = await compileGraph(graph)
+  const compiled = await compileGraph(graph, command)
   const manifest = createManifest(compiled)
   const manifestFile = await writeManifest(outDir, manifest)
 
