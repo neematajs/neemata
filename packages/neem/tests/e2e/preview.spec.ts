@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
@@ -216,12 +217,24 @@ function hasEvent(events: readonly NeemProbeEvent[], name: string): boolean {
   return events.some((event) => event.event === name)
 }
 
+/**
+ * Whether a process can still run. An orphan stays a zombie under a PID 1
+ * that never reaps, as in some containers, and `kill` still finds it.
+ */
 function isAlive(pid: unknown): boolean {
   if (typeof pid !== 'number') throw new Error('Missing build process pid')
   try {
     process.kill(pid, 0)
-    return true
   } catch {
     return false
+  }
+  if (process.platform !== 'linux') return true
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8')
+    return !/^[ZX]/.test(stat.slice(stat.lastIndexOf(')') + 2))
+  } catch (error) {
+    // Reaped since the check above.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
   }
 }

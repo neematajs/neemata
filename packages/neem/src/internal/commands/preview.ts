@@ -1,6 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { spawn } from 'node:child_process'
-import { extname } from 'node:path'
+import { readdir, readFile } from 'node:fs/promises'
+import { extname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
@@ -15,6 +16,7 @@ export type PreviewBuildHandlers = { onSpawn?: (pid: number) => void }
 const KILL_AFTER_MS = 5_000
 const EXIT_POLL_MS = 50
 const POSIX = process.platform !== 'win32'
+const PID_ENTRY = /^\d+$/
 
 // A shared inspector port would fail the build, and `--inspect-brk` would
 // wait for a debugger nobody attaches.
@@ -110,8 +112,9 @@ export async function runPreviewBuild(
 
 /**
  * Stops the build's process group: SIGTERM, then SIGKILL after a grace
- * period, settling once no process is left in it. The group outlives its
+ * period, settling once no process in it can run. The group outlives its
  * leader, so escalation keeps going after the build process itself exits.
+ * Rejects when a member survives SIGKILL, so nothing is served next to it.
  */
 async function stopProcessTree(child: ChildProcess): Promise<void> {
   const pid = child.pid
@@ -124,16 +127,77 @@ async function stopProcessTree(child: ChildProcess): Promise<void> {
     return
   }
   if (!signalGroup(pid, 'SIGTERM')) return
-  for (const [timeout, next] of [
-    [KILL_AFTER_MS, 'SIGKILL'],
-    // SIGKILL cannot be ignored, but exits are asynchronous.
-    [KILL_AFTER_MS, undefined],
-  ] as const) {
-    for (let waited = 0; waited < timeout; waited += EXIT_POLL_MS) {
+  // `kill` still finds a member that exited but was never reaped: orphans go
+  // to PID 1, and a container's PID 1 may never wait for them. Linux lists
+  // those zombies in procfs; elsewhere PID 1 reaps, so the group must empty.
+  const hasRunningMember =
+    process.platform === 'linux'
+      ? groupMemberProbe(pid)
+      : () => Promise.resolve(true)
+  const settle = async (): Promise<'gone' | 'idle' | 'running'> => {
+    for (let waited = 0; waited < KILL_AFTER_MS; waited += EXIT_POLL_MS) {
       await sleep(EXIT_POLL_MS)
-      if (!signalGroup(pid, 0)) return
+      if (!signalGroup(pid, 0)) return 'gone'
+      if (!(await hasRunningMember())) return 'idle'
     }
-    if (next) signalGroup(pid, next)
+    return 'running'
+  }
+  if ((await settle()) === 'gone') return
+  // Only zombies are left, or the grace period ran out. A scan can miss a
+  // process forked while it ran; after SIGKILL the group cannot grow, so the
+  // scans that follow are final.
+  signalGroup(pid, 'SIGKILL')
+  // SIGKILL cannot be ignored, but exits are asynchronous.
+  if ((await settle()) === 'running') {
+    throw new Error(
+      `Neem preview build left processes running in process group ${pid}`,
+    )
+  }
+}
+
+/**
+ * Returns a check for whether a Linux process group still has a member that
+ * is not a zombie. Anything procfs does not answer for certain counts as
+ * running, so a failed read can only delay the stop or fail it.
+ */
+export function groupMemberProbe(
+  pgid: number,
+  procRoot = '/proc',
+): () => Promise<boolean> {
+  // A member found running usually stays so for several polls; checking it
+  // first spares rescanning every process until it exits.
+  let running: string | undefined
+  const mayRun = async (entry: string) => {
+    let stat: string
+    try {
+      stat = await readFile(join(procRoot, entry, 'stat'), 'utf8')
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code
+      // Reaped since the listing.
+      return code !== 'ENOENT' && code !== 'ESRCH'
+    }
+    // `pid (comm) state ppid pgrp ...`; comm may hold spaces and parentheses.
+    const close = stat.lastIndexOf(')')
+    const [state, , pgrp] = stat.slice(close + 2).split(' ')
+    if (close === -1 || !state || !PID_ENTRY.test(pgrp ?? '')) return true
+    return Number(pgrp) === pgid && state !== 'Z' && state !== 'X'
+  }
+  return async () => {
+    if (running !== undefined && (await mayRun(running))) return true
+    running = undefined
+    let entries: string[]
+    try {
+      entries = await readdir(procRoot)
+    } catch {
+      return true
+    }
+    for (const entry of entries) {
+      if (PID_ENTRY.test(entry) && (await mayRun(entry))) {
+        running = entry
+        return true
+      }
+    }
+    return false
   }
 }
 
