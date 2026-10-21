@@ -37,6 +37,24 @@ export function resolveDevOutDir(options: {
   )
 }
 
+// Preview never defaults to the config's outDir: that is the deployment output,
+// and a preview build forces settings a deployment may not want. Like dev, it
+// is keyed by config file name and needs no config evaluation.
+export function resolvePreviewOutDir(options: {
+  cwd: string
+  configFile: string
+  outDir?: string
+}): string {
+  if (options.outDir !== undefined) return resolve(options.cwd, options.outDir)
+  const { configFile } = options
+  return resolve(
+    dirname(configFile),
+    '.neem',
+    'preview',
+    basename(configFile, extname(configFile)),
+  )
+}
+
 // Start evaluates source config only when asked to, so deployed output starts
 // without it.
 export async function resolveStartOutDir(options: {

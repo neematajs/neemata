@@ -3,8 +3,12 @@ import { parentPort } from 'node:worker_threads'
 
 import type { WatcherCommands, WatcherEvent } from './protocol.ts'
 import { serveRpc } from '../rpc.ts'
+import { inheritSourceMaps } from '../source-maps.ts'
 import { WATCHER_SERIAL_COMMANDS } from './protocol.ts'
 import { WatcherService } from './watcher.ts'
+
+// Before the config loads; see `enableDefaultSourceMaps`.
+inheritSourceMaps()
 
 let service: WatcherService | undefined
 

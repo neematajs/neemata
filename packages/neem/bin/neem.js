@@ -1,6 +1,8 @@
-#!/usr/bin/env -S node --enable-source-maps --expose-gc
-// env -S is required for multi-flag shebangs on Linux. --expose-gc backs the
-// manual gc() nudge in the shared dev watcher.
+#!/usr/bin/env -S node --expose-gc
+// env -S passes the flag on Linux. --expose-gc backs the manual gc() nudge in
+// the shared dev watcher. Source maps are not a flag here: `dev` and
+// `preview` enable them unless the user's own Node flag says otherwise, and
+// `start` keeps Node's default.
 import { runMain } from '@effect/platform-node/NodeRuntime'
 import { runCli } from '@nmtjs/neem/cli'
 import * as Cause from 'effect/Cause'

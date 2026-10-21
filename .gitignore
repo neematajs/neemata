@@ -8,6 +8,7 @@ test.*
 _dev/
 packages/neem/tests/e2e/.tmp/
 packages/effect/tests/.tmp-effect-*/
+packages/vite/.tmp-*/
 packages/_neem_old
 *.sock
 

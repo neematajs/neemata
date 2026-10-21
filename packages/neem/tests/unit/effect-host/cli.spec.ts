@@ -12,6 +12,7 @@ function cli() {
   const actions = {
     build: vi.fn<CommandActions['build']>(async () => {}),
     dev: vi.fn<CommandActions['dev']>(async () => {}),
+    preview: vi.fn<CommandActions['preview']>(async () => {}),
     start: vi.fn<CommandActions['start']>(async () => {}),
   }
   const run = Command.runWith(createMainCommand(actions), {
@@ -72,6 +73,35 @@ describe('Effect CLI', () => {
       })
     },
   )
+
+  it('parses preview like a build with env files and no cache flags', async () => {
+    const { actions, run } = cli()
+    await run(['preview'])
+    expect(actions.preview.mock.calls[0]?.[0]).toEqual({
+      config: 'neem.config.ts',
+      runtime: undefined,
+      outDir: undefined,
+      'env-files': undefined,
+    })
+    await run([
+      'preview',
+      'api',
+      '--config',
+      'custom.ts',
+      '--outDir',
+      'out',
+      '--env-files',
+      '.env',
+    ])
+    expect(actions.preview.mock.calls[1]?.[0]).toEqual({
+      config: 'custom.ts',
+      runtime: 'api',
+      outDir: 'out',
+      'env-files': '.env',
+    })
+    await expect(run(['preview', '--no-cache'])).rejects.toThrow()
+    expect(actions.preview).toHaveBeenCalledTimes(2)
+  })
 
   it('rejects unknown flags before running a build', async () => {
     const { actions, run } = cli()

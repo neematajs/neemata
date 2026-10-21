@@ -1,4 +1,12 @@
-import { access, cp, mkdtemp, rm } from 'node:fs/promises'
+import {
+  access,
+  cp,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+} from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -75,6 +83,20 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
         'dist/runtime/web/worker/app/public/about/index.html',
       ),
     )
+    // The admin app's deployment map settings hold: hidden browser maps,
+    // none for Nitro.
+    const adminApp = resolve(fixtureDir, 'dist/runtime/admin/worker/app')
+    const adminScripts = await listFiles(resolve(adminApp, 'public/_nuxt'))
+    const script = adminScripts.find((file) => file.endsWith('.js'))
+    if (!script) throw new Error('Admin build emitted no JavaScript asset')
+    expect(adminScripts).toContain(`${script}.map`)
+    expect(
+      await readFile(resolve(adminApp, 'public/_nuxt', script), 'utf8'),
+    ).not.toContain('sourceMappingURL')
+    expect(await listMaps(resolve(adminApp, 'server'))).toEqual([])
+    // The web app sets no maps: Nuxt's production default links server maps.
+    const webServer = resolve(fixtureDir, 'dist/runtime/web/worker/app/server')
+    await expectLinkedServerMaps(webServer)
   })
 
   it('serves SSR, prerendered, API, and immutable assets through neem start', async () => {
@@ -128,6 +150,72 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
     )
   }, 90_000)
 
+  it('serves a separately built preview with browser and server maps', async () => {
+    const devBuildFile = resolve(fixtureDir, 'web/.nuxt/tsconfig.server.json')
+    const devBuildWritten = (await stat(devBuildFile)).mtimeMs
+    const neem = spawnWithCapture([neemBin, 'preview'], fixtureDir, env)
+    processes.push(neem)
+    const html = await waitFor(
+      async () => {
+        const response = await fetch(origin)
+        const body = await response.text()
+        return response.status === 200 && body.includes('neem-web-marker')
+          ? body
+          : false
+      },
+      180_000,
+      () => `stdout:\n${neem.stdout()}\nstderr:\n${neem.stderr()}`,
+    )
+
+    await expect((await fetch(`${origin}/api/hello`)).json()).resolves.toEqual({
+      message: 'hello-from-neem-api',
+    })
+    const adminHtml = await (await fetch(`${origin}/admin/`)).text()
+    expect(adminHtml).toContain('neem-admin-marker')
+    // The web app sets no maps, so preview links both sides; the admin app's
+    // deployment settings (hidden browser maps, no Nitro maps) still apply.
+    for (const [page, assets, linked] of [
+      [html, /(?:src|href)="([^"]*\/_nuxt\/[^"]+\.js)"/, true],
+      [adminHtml, /(?:src|href)="([^"]*\/admin\/_nuxt\/[^"]+\.js)"/, false],
+    ] as const) {
+      const asset = page.match(assets)?.[1]
+      if (!asset) throw new Error('Preview HTML referenced no JavaScript asset')
+      const assetUrl = new URL(asset, origin)
+      const source = await (await fetch(assetUrl)).text()
+      if (linked) {
+        expect(source).toMatch(/\/\/# sourceMappingURL=\S+\.js\.map\s*$/)
+      } else expect(source).not.toContain('sourceMappingURL')
+      const map = await fetch(`${assetUrl.href}.map`)
+      expect(map.status).toBe(200)
+      const { sources } = (await map.json()) as { sources: string[] }
+      expect(sources.length).toBeGreaterThan(0)
+    }
+
+    const previewRuntimes = resolve(
+      fixtureDir,
+      '.neem/preview/neem.config/runtime',
+    )
+    await expectLinkedServerMaps(
+      resolve(previewRuntimes, 'web/worker/app/server'),
+    )
+    expect(
+      await listMaps(resolve(previewRuntimes, 'admin/worker/app/server')),
+    ).toEqual([])
+    for (const runtime of ['web', 'admin']) {
+      // Nuxt's intermediates stay with the preview output.
+      await access(
+        resolve(previewRuntimes, runtime, '.nuxt/tsconfig.server.json'),
+      )
+    }
+    expect((await stat(devBuildFile)).mtimeMs).toBe(devBuildWritten)
+    // The deployment build keeps Nuxt's production default: no browser maps.
+    expect(
+      await listMaps(
+        resolve(fixtureDir, 'dist/runtime/web/worker/app/public/_nuxt'),
+      ),
+    ).toEqual([])
+  }, 240_000)
+
   it('proxies both apps and the Vite HMR handshake through neem dev', async () => {
     const neem = spawnWithCapture([neemBin, 'dev'], fixtureDir, env)
     processes.push(neem)
@@ -166,3 +254,18 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
     socket.close()
   }, 120_000)
 })
+
+async function listFiles(dir: string): Promise<string[]> {
+  return await readdir(dir, { recursive: true })
+}
+
+async function expectLinkedServerMaps(serverDir: string): Promise<void> {
+  expect(await readFile(resolve(serverDir, 'index.mjs'), 'utf8')).toMatch(
+    /\/\/# sourceMappingURL=index\.mjs\.map\s*$/,
+  )
+  await access(resolve(serverDir, 'index.mjs.map'))
+}
+
+async function listMaps(dir: string): Promise<string[]> {
+  return (await listFiles(dir)).filter((file) => file.endsWith('.map'))
+}

@@ -3,11 +3,21 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { BuildOptions, OutputBundle, RolldownOutput } from 'rolldown'
+import type {
+  BuildOptions,
+  OutputBundle,
+  RolldownOptions,
+  RolldownOutput,
+} from 'rolldown'
 import { createFuture } from '@nmtjs/common'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { BuildTarget } from '../../src/internal/build/graph.ts'
+import type {
+  NeemBuildConfig,
+  NeemBuildContext,
+  NeemRolldownPlugin,
+} from '../../src/shared/types.ts'
 import {
   compileGraph,
   compileTarget,
@@ -38,8 +48,11 @@ beforeEach(() => {
 
 // On macOS, Rolldown (1.2.11) restarts its FSEvents stream after every rebuild,
 // even when no watched path changed, and a write landing in that gap is never
-// reported. Write until the engine reports so these cases test Neem, not that
-// race.
+// reported. Its poll watcher (1.2.14) has a gap too: `run()` resolves once the
+// files are registered, but each poll thread reads their first state only on
+// its next scan, and a write before that scan becomes the state it compares
+// against. Write until the engine reports so these cases test Neem, not those
+// races.
 async function editUntilReported(
   file: string,
   content: string,
@@ -281,6 +294,80 @@ describe('Neem compiler', () => {
     expect(options.watch).not.toHaveProperty('buildDelay')
   })
 
+  it('gives each plugin the build context before any Rolldown build', async () => {
+    const root = await createTempDir('neem-compiler-')
+    const calls: string[] = []
+    const plugin = (name: string): NeemRolldownPlugin => ({
+      name,
+      configureNeemBuild: ({ command, mode, sourcemap }) =>
+        calls.push(`${name}:${command}:${mode}:${sourcemap}`),
+    })
+    // The planner shares the host's build, so both targets carry the plugins.
+    const graph = createPluginGraph(root, [
+      plugin('shared'),
+      Promise.resolve([plugin('nested'), false]),
+    ])
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      calls.push('build')
+      const input = options.input
+      if (isRecord(input)) {
+        return { output: multiOutput(input) } as unknown as RolldownOutput
+      }
+      const target = graph.targets.find(
+        (target) => target.artifact.entry === input,
+      )
+      return rolldownOutput('index.js', target!)
+    })
+
+    await compileGraph(graph, 'preview')
+    expect(calls.slice(0, 3)).toEqual([
+      'shared:preview:production:true',
+      'nested:preview:production:true',
+      'build',
+    ])
+    expect(calls.filter((call) => call !== 'build')).toHaveLength(2)
+
+    calls.length = 0
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+    await watchGraph(createPluginGraph(root, [plugin('watched')]))
+    expect(calls).toEqual(['watched:dev:development:true'])
+  })
+
+  it('resolves the build context source maps from the config, else the command', async () => {
+    const root = await createTempDir('neem-compiler-')
+    const contexts: NeemBuildContext[] = []
+    const plugin: NeemRolldownPlugin = {
+      name: 'record',
+      configureNeemBuild: (context) => contexts.push(context),
+    }
+    let graph = createPluginGraph(root, [plugin])
+    rolldownMock.build.mockImplementation(async (options: BuildOptions) => {
+      const input = options.input
+      if (isRecord(input)) {
+        return { output: multiOutput(input) } as unknown as RolldownOutput
+      }
+      return rolldownOutput(
+        'index.js',
+        graph.targets.find((target) => target.artifact.entry === input)!,
+      )
+    })
+    rolldownMock.watch.mockImplementation(() => createWatcher())
+
+    // Frameworks keep their production defaults in a regular build.
+    await compileGraph(graph, 'build')
+    graph = createPluginGraph(root, [plugin], { sourcemap: 'hidden' })
+    await compileGraph(graph, 'preview')
+    graph = createPluginGraph(root, [plugin], { sourcemap: false })
+    await watchGraph(graph)
+    expect(
+      contexts.map(({ command, sourcemap }) => [command, sourcemap]),
+    ).toEqual([
+      ['build', undefined],
+      ['preview', 'hidden'],
+      ['dev', false],
+    ])
+  })
+
   it('uses root watch config for build delay and debounce', async () => {
     const root = await createTempDir('neem-compiler-')
     const graph = createCompilerGraph(
@@ -366,11 +453,13 @@ describe('Neem compiler', () => {
           pollInterval: 25,
         })
         await watcher.addPatchClient('api', 'client')
-        // A polling watcher has no event-stream gap, so one write suffices.
-        await writeFile(valueFile, "export const value = 'v2'\n")
-        const result = await raceWithTimeout(settled.promise, 5_000)
-        if (result.timedOut) throw new Error('DevEngine never polled the edit')
-        expect(result.value).toEqual([
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v2'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
           expect.objectContaining({
             update: expect.objectContaining({ type: 'Patch' }),
           }),
@@ -666,6 +755,33 @@ function fileWatcherOptions(options: BuildOptions) {
   const watch = options.watch
   if (!watch) throw new Error('watch options missing')
   return watch.watcher
+}
+
+function createPluginGraph(
+  root: string,
+  plugins: NonNullable<RolldownOptions['plugins']>,
+  build?: NeemBuildConfig,
+) {
+  return createBuildGraph({
+    configFile: resolve(root, 'neem.config.ts'),
+    outDir: resolve(root, 'dist'),
+    config: {
+      build,
+      runtimes: {
+        api: {
+          name: 'api',
+          file: resolve(root, 'api/neem.runtime.ts'),
+          directory: resolve(root, 'api'),
+          planner: './planner.ts',
+          declaration: defineRuntime({
+            name: 'api',
+            host: { entry: './host.ts', build: { rolldown: { plugins } } },
+            planner: './planner.ts',
+          }),
+        },
+      },
+    },
+  })
 }
 
 function rolldownOutput(fileName: string, target: BuildTarget): RolldownOutput {

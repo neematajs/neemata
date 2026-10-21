@@ -2,12 +2,18 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { RolldownPlugin, RolldownPluginOption } from '@nmtjs/neem'
+import type {
+  NeemBuildContext,
+  NeemRolldownPlugin,
+  RolldownPluginOption,
+} from '@nmtjs/neem'
 
 import type { NeemNuxtRoutingKind } from './types.ts'
 import { APP_DIR } from './constants.ts'
 import {
   assertRoutingBase,
+  applyNuxtSourceMaps,
+  nuxtSourceMapProbe,
   importKitFrom,
   normalizeBase,
 } from './nuxt-loader.ts'
@@ -31,7 +37,8 @@ type ResolvedAppInfo = {
  * Rolldown plugin injected into the Nuxt runtime's worker artifact build.
  *
  * Neem compiles the same worker entry with Rolldown's DevEngine in `neem dev`
- * and `rolldown.build` in `neem build`. The DevEngine reports
+ * and `rolldown.build` in `neem build` and `neem preview`; a preview is the
+ * production build with browser and server maps on unless the app sets them. The DevEngine reports
  * `this.meta.watchMode` as false, so the mode signal is its `devMode` input
  * option (or watch mode for a plain `rolldown.watch` build). Instead of
  * shipping both code paths behind runtime flags, the plugin resolves `neem-nuxt:impl` to the dev or prod implementation, so each
@@ -61,8 +68,14 @@ export function neemNuxtArtifactPlugin(
   }
 
   let dev = false
-  const plugin: RolldownPlugin = {
+  let preview = false
+  let sourcemap: NeemBuildContext['sourcemap']
+  const plugin: NeemRolldownPlugin = {
     name: 'neem-nuxt:artifact',
+    configureNeemBuild(context) {
+      preview = context.command === 'preview'
+      sourcemap = context.sourcemap
+    },
     options(input) {
       dev = this.meta.watchMode || input.experimental?.devMode != null
     },
@@ -80,6 +93,7 @@ export function neemNuxtArtifactPlugin(
           root: options.root,
           base: explicitBase,
           routing: options.routing,
+          sourcemap,
         })
       }
       const { base, assetsDir } = await resolveAppInfo()
@@ -102,13 +116,22 @@ export function neemNuxtArtifactPlugin(
       const nuxt = await kit.loadNuxt({
         cwd: options.root,
         dev: false,
+        // Maps are applied between loading and the modules' setup.
+        ready: false,
+        defaults: nuxtSourceMapProbe(sourcemap),
         overrides: {
           telemetry: false,
           nitro: { preset: 'node', output: { dir: appOutDir } },
           ...(explicitBase ? { app: { baseURL: base } } : {}),
+          // Generated intermediates go next to the preview artifact, so a
+          // preview build does not rewrite the `.nuxt` a running `neem dev`
+          // uses.
+          ...(preview ? { buildDir: resolve(output.dir, '..', '.nuxt') } : {}),
         },
       })
       try {
+        applyNuxtSourceMaps(nuxt, sourcemap)
+        await nuxt.ready()
         await kit.buildNuxt(nuxt)
       } finally {
         await nuxt.close().catch(() => {})
@@ -131,6 +154,7 @@ function bakedOptionsModule(options: {
   root?: string
   base?: string
   routing?: NeemNuxtRoutingKind
+  sourcemap?: NeemBuildContext['sourcemap']
   assetsDir?: string
 }): string {
   return `export default ${JSON.stringify(options)}`

@@ -1,4 +1,5 @@
 import type {
+  NeemBuildContext,
   NeemRuntime,
   NeemRuntimeProxyConfig,
   NeemRuntimeWorkerContext,
@@ -34,6 +35,8 @@ export type NeemNuxtBakedOptions = {
   routing?: NeemNuxtRoutingKind
   /** Resolved `app.buildAssetsDir` — the immutable-cache asset prefix. */
   assetsDir?: string
+  /** `NeemBuildContext.sourcemap` for the dev build. */
+  sourcemap?: NeemBuildContext['sourcemap']
 }
 
 export type NeemNuxtWorkerContext = NeemRuntimeWorkerContext<

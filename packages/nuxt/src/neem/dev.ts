@@ -14,6 +14,8 @@ import {
   importH3From,
   importKitFrom,
   normalizeBase,
+  applyNuxtSourceMaps,
+  nuxtSourceMapProbe,
   restoreBase,
   shimWorkerUmask,
 } from '../nuxt-loader.ts'
@@ -61,6 +63,7 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
         cwd: root,
         dev: true,
         ready: false,
+        defaults: nuxtSourceMapProbe(options.sourcemap),
         overrides: {
           telemetry: false,
           ...(options.base ? { app: { baseURL: options.base } } : {}),
@@ -102,6 +105,7 @@ const createNuxtDevRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       instance.options.devServer.port = address.port
       instance.options.devServer.url = url
       instance.options.devServer.https = false
+      applyNuxtSourceMaps(instance, options.sourcemap)
 
       await instance.ready()
 

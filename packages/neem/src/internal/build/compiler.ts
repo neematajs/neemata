@@ -18,10 +18,13 @@ import * as rolldown from 'rolldown'
 import { dev } from 'rolldown/experimental'
 
 import type {
+  NeemBuildCommand,
+  NeemBuildContext,
   NeemBuildWatchConfig,
   NeemChunkGroup,
   NeemChunkingOptions,
   NeemResolvedArtifact,
+  NeemRolldownPlugin,
 } from '../../shared/types.ts'
 import type {
   BuildGraph,
@@ -104,7 +107,11 @@ export type GraphWatcher = {
   close: () => Promise<void>
 }
 
-export async function compileGraph(graph: BuildGraph): Promise<CompiledGraph> {
+export async function compileGraph(
+  graph: BuildGraph,
+  command: Exclude<NeemBuildCommand, 'dev'> = 'build',
+): Promise<CompiledGraph> {
+  await configurePlugins(graph, createBuildContext(graph, command))
   const groups = await Promise.all(
     graph.buildGroups.map((group) => compileBuildGroup(group)),
   )
@@ -154,6 +161,7 @@ export async function watchGraph(
     onUpdateError?: (runtimeName: string, error: Error) => MaybePromise<void>
   } = {},
 ): Promise<GraphWatcher> {
+  await configurePlugins(graph, createBuildContext(graph, 'dev'))
   const compiled = new Map<string, CompiledTarget>()
   const watchConfig = graph.config.build?.watch
   const controllers = new Map<string, PatchController>()
@@ -423,7 +431,12 @@ async function watchWorkerTarget(
         handler(code) {
           // The worker definition owns replacement; edits to its dependencies
           // bubble to this boundary before Neem starts a new generation.
-          return `${code}\nif (import.meta.hot) import.meta.hot.accept(m => globalThis.__neem_accept_worker__?.(m.default))\n`
+          return {
+            code: `${code}\nif (import.meta.hot) import.meta.hot.accept(m => globalThis.__neem_accept_worker__?.(m.default))\n`,
+            // Appending leaves existing locations intact. An omitted map
+            // discards this module's mappings, misattributing worker errors.
+            map: null,
+          }
         },
       },
     },
@@ -710,6 +723,10 @@ function createGroupedRolldownOptions(
   const output: OutputOptions = Object.assign(
     {
       sourcemap: true,
+      // Every isolate caches these infrastructure maps. Keep their locations
+      // without embedding dependency source text in each worker; application
+      // artifacts still include sources, and an explicit root option wins.
+      sourcemapExcludeSources: true,
       minify: false,
       dir: firstTarget.outDir,
       format: 'esm' as const,
@@ -957,6 +974,43 @@ function createNativeAddonPlugin(): rolldown.RolldownPlugin {
         `export default require(${JSON.stringify(runtimePath)})`,
       ].join('\n')
     },
+  }
+}
+
+function createBuildContext(
+  graph: BuildGraph,
+  command: NeemBuildCommand,
+): NeemBuildContext {
+  return {
+    command,
+    mode: command === 'dev' ? 'development' : 'production',
+    sourcemap:
+      graph.config.build?.sourcemap ?? (command === 'build' ? undefined : true),
+  }
+}
+
+// Hands every user plugin the command's context before any build starts, so a
+// pipeline can depend on it from its first hook. Plugin options may nest
+// arrays and promises; Rolldown awaits the same promises again later.
+async function configurePlugins(
+  graph: BuildGraph,
+  context: NeemBuildContext,
+): Promise<void> {
+  const configured = new Set<NeemRolldownPlugin>()
+  const visit = async (option: rolldown.RolldownPluginOption) => {
+    const value = await option
+    if (!value) return
+    if (Array.isArray(value)) {
+      for (const item of value) await visit(item)
+      return
+    }
+    const plugin = value as NeemRolldownPlugin
+    if (configured.has(plugin)) return
+    configured.add(plugin)
+    plugin.configureNeemBuild?.(context)
+  }
+  for (const target of graph.targets) {
+    await visit(target.artifact.rolldown?.plugins)
   }
 }
 

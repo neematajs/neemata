@@ -86,6 +86,12 @@ uses the same manifest shape as `start`, restarts app workers after successful
 config/app rebuilds, reloads plugin hooks after plugin entry rebuilds, and keeps
 existing workers alive on rebuild errors.
 
+`neem preview` builds production artifacts with source maps into
+`.neem/preview/<config name>` (never the config's `outDir`), then serves them as
+`neem start` would. The build runs in a separate process that exits before
+serving, and a failed build never starts earlier output. See
+[Preview](packages/neem/README.md#preview).
+
 Worker edits restart runtimes within their existing threads, with fresh-bundle
 thread restarts when needed; see [Runtime restart](packages/neem/README.md#runtime-restart).
 
