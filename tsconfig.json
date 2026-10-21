@@ -16,6 +16,9 @@
       "path": "./packages/nuxt/tsconfig.json"
     },
     {
+      "path": "./packages/nuxt/tests/tsconfig.json"
+    },
+    {
       "path": "./packages/pubsub/tsconfig.json"
     },
     {

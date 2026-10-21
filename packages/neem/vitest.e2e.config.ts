@@ -6,6 +6,5 @@ export default defineProject({
     fileParallelism: false,
     include: ['tests/e2e/**/*.spec.ts', '../effect/tests/e2e/**/*.spec.ts'],
     maxWorkers: 1,
-    typecheck: { enabled: true, tsconfig: './tsconfig.json' },
   },
 })

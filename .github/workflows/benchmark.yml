@@ -125,11 +125,11 @@ jobs:
         run: pnpm --dir .benchmark/base install --frozen-lockfile
 
       - name: Build candidate
-        run: pnpm exec tsc -b tsconfig.build.json --pretty false
+        run: pnpm run build:ts
 
       - name: Build base
         if: steps.benchmark-base.outputs.available == 'true'
-        run: pnpm --dir .benchmark/base exec tsc -b tsconfig.build.json --pretty false
+        run: pnpm --dir .benchmark/base run build:ts
 
       - name: Run paired benchmarks
         shell: bash

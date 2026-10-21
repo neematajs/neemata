@@ -15,7 +15,7 @@
   },
   "scripts": {
     "test": "vitest run --reporter=agent",
-    "check:type": "tsc -p tsconfig.json --noEmit --pretty false",
+    "check:type": "tsrs -p tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "benchmarks": "node --max-heap-size=5000 ./benchmarks/index.js"
   },
   "repository": {

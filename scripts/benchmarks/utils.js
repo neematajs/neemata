@@ -101,8 +101,8 @@ export async function hashFiles(root, files) {
 
 export async function collectEnvironment(root) {
   const packageJson = await readJson(resolve(root, 'package.json'))
-  const typescriptPackage = await readJson(
-    resolve(root, 'node_modules/typescript/package.json'),
+  const tsrsPackage = await readJson(
+    resolve(root, 'node_modules/tsrs/package.json'),
   ).catch(() => undefined)
 
   return {
@@ -113,7 +113,7 @@ export async function collectEnvironment(root) {
     platform: platform(),
     pnpm: commandVersion('pnpm', root),
     pnpmDeclaration: packageJson.packageManager ?? 'unknown',
-    typescript: typescriptPackage?.version ?? 'unknown',
+    tsrs: tsrsPackage?.version ?? 'unknown',
   }
 }
 

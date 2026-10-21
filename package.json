@@ -6,7 +6,7 @@
   "scripts": {
     "clean-build": "pnpm run --parallel -r clean-build",
     "build": "pnpm run build:ts",
-    "dev": "pnpm run clean-build && pnpm tsc -b tsconfig.build.json --watch",
+    "dev": "pnpm run clean-build && pnpm tsrs -b tsconfig.build.json --watch",
     "clean": "rm -rf dist node_modules && pnpm -r exec rm -rf dist node_modules",
     "test": "pnpm build && vitest --run",
     "test:neem": "pnpm --filter @nmtjs/neem run test",
@@ -17,12 +17,12 @@
     "bench:integration": "vitest bench --run --config vitest.bench.integration.config.ts",
     "bench:paired": "node scripts/benchmarks/paired.js",
     "coverage:paired": "node scripts/coverage/paired.js",
-    "check:type": "pnpm tsc -b tsconfig.json --noEmit --pretty false",
+    "check:type": "pnpm tsrs -b tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "check:lint": "oxlint --quiet .",
     "check:fmt": "oxfmt --check .",
     "check": "pnpm run check:fmt && pnpm run check:lint && pnpm run check:type",
     "fmt": "oxfmt --write .",
-    "build:ts": "pnpm tsc -b tsconfig.build.json --pretty false",
+    "build:ts": "pnpm tsrs -b tsconfig.build.json --pretty false ${CI:+--singleThreaded}",
     "test:prom-client": "pnpm --filter @nmtjs/prom-client run test",
     "test:proxy": "pnpm --filter @nmtjs/proxy run test",
     "version:stack": "node scripts/release.js bump-stack"
@@ -35,7 +35,7 @@
     "oxfmt": "0.56.0",
     "oxlint": "1.71.0",
     "oxlint-tsgolint": "0.23.0",
-    "typescript": "7.0.1-rc",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "vitest": "5.0.2"
   },
   "packageManager": "pnpm@12.8.1"

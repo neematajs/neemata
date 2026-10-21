@@ -106,6 +106,11 @@ vp env exec pnpm test --reporter=agent
 vp env exec pnpm check
 ```
 
+The workspace type-checks and builds with [tsrs](https://github.com/oxc-project/tsrs),
+a Rust port of TypeScript 7, and does not install the `typescript` package. Editors
+set to use the workspace TypeScript version fall back to their bundled one; point
+yours at `tsrs --lsp` to get the same checker as `pnpm check`.
+
 The stack installs `@nmtjs/proxy` from npm at the version pinned in
 `packages/neem/package.json`, so `pnpm build`, `pnpm test` and `pnpm check` need no
 Rust toolchain. `pnpm test:proxy` runs the Rust and proxy integration suites and
