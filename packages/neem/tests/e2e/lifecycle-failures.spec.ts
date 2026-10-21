@@ -125,7 +125,9 @@ describe('Neem runtime lifecycle failures', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS: '200',
+          // The plan before the start shares this timeout: it must outlast a
+          // plan on a slow runner, so that it is the start that times out.
+          NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS: '1000',
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -135,7 +137,7 @@ describe('Neem runtime lifecycle failures', () => {
 
     expect(exit.code).not.toBe(0)
     expect(neem.stderr()).toContain(
-      'Neem host runner request [start] timed out after 200ms',
+      'Neem host runner request [start] timed out after 1000ms',
     )
   }, 60_000)
 
@@ -165,7 +167,9 @@ describe('Neem runtime lifecycle failures', () => {
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS: '200',
+          // The startup plan shares this timeout: it must outlast a plan on a
+          // slow runner yet end the hung stop well before the kill below.
+          NEEM_HOST_RUNNER_REQUEST_TIMEOUT_MS: '1000',
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
@@ -173,7 +177,7 @@ describe('Neem runtime lifecycle failures', () => {
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
     const startedAt = Date.now()
-    const exit = await neem.stop({ killAfterMs: 2_000 })
+    const exit = await neem.stop({ killAfterMs: 4_000 })
 
     // The host stop timed out, so the shutdown failed and must say so.
     expect(exit.signal).toBeNull()
