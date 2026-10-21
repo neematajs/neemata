@@ -2,12 +2,18 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { NeemRolldownPlugin, RolldownPluginOption } from '@nmtjs/neem'
+import type {
+  NeemBuildContext,
+  NeemRolldownPlugin,
+  RolldownPluginOption,
+} from '@nmtjs/neem'
 
 import type { NeemNuxtRoutingKind } from './types.ts'
 import { APP_DIR } from './constants.ts'
 import {
   assertRoutingBase,
+  applyNuxtSourceMaps,
+  nuxtSourceMapProbe,
   importKitFrom,
   normalizeBase,
 } from './nuxt-loader.ts'
@@ -32,7 +38,7 @@ type ResolvedAppInfo = {
  *
  * Neem compiles the same worker entry with Rolldown's DevEngine in `neem dev`
  * and `rolldown.build` in `neem build` and `neem preview`; a preview is the
- * production build with Nuxt's browser and server maps enabled. The DevEngine reports
+ * production build with browser and server maps on unless the app sets them. The DevEngine reports
  * `this.meta.watchMode` as false, so the mode signal is its `devMode` input
  * option (or watch mode for a plain `rolldown.watch` build). Instead of
  * shipping both code paths behind runtime flags, the plugin resolves `neem-nuxt:impl` to the dev or prod implementation, so each
@@ -63,10 +69,12 @@ export function neemNuxtArtifactPlugin(
 
   let dev = false
   let preview = false
+  let sourcemap: NeemBuildContext['sourcemap']
   const plugin: NeemRolldownPlugin = {
     name: 'neem-nuxt:artifact',
     configureNeemBuild(context) {
       preview = context.command === 'preview'
+      sourcemap = context.sourcemap
     },
     options(input) {
       dev = this.meta.watchMode || input.experimental?.devMode != null
@@ -85,6 +93,7 @@ export function neemNuxtArtifactPlugin(
           root: options.root,
           base: explicitBase,
           routing: options.routing,
+          sourcemap,
         })
       }
       const { base, assetsDir } = await resolveAppInfo()
@@ -107,27 +116,22 @@ export function neemNuxtArtifactPlugin(
       const nuxt = await kit.loadNuxt({
         cwd: options.root,
         dev: false,
+        // Maps are applied between loading and the modules' setup.
+        ready: false,
+        defaults: nuxtSourceMapProbe(sourcemap),
         overrides: {
           telemetry: false,
-          nitro: {
-            preset: 'node',
-            output: { dir: appOutDir },
-            // Nitro's Rollup output takes `sourceMap` only as a default under
-            // the app's own `rollupConfig`, so a deployment's output-level
-            // setting is overridden there as well.
-            ...(preview
-              ? {
-                  sourceMap: true,
-                  rollupConfig: { output: { sourcemap: true } },
-                }
-              : {}),
-          },
+          nitro: { preset: 'node', output: { dir: appOutDir } },
           ...(explicitBase ? { app: { baseURL: base } } : {}),
-          ...(preview ? previewOverrides(output.dir) : {}),
+          // Generated intermediates go next to the preview artifact, so a
+          // preview build does not rewrite the `.nuxt` a running `neem dev`
+          // uses.
+          ...(preview ? { buildDir: resolve(output.dir, '..', '.nuxt') } : {}),
         },
       })
-      if (preview) nuxt.hook('vite:extendConfig', linkPreviewSourceMaps)
       try {
+        applyNuxtSourceMaps(nuxt, sourcemap)
+        await nuxt.ready()
         await kit.buildNuxt(nuxt)
       } finally {
         await nuxt.close().catch(() => {})
@@ -146,70 +150,11 @@ export function neemNuxtArtifactPlugin(
   return plugin
 }
 
-/**
- * A preview is for debugging the built app locally, so both sides get linked
- * maps: Nuxt's production default omits browser maps, and deployment configs
- * turn them off or hide them at each level Nuxt reads (`sourcemap`,
- * `nitro.sourceMap`, and Vite's `build.sourcemap`, which wins over both).
- */
-function previewOverrides(artifactDir: string) {
-  const viteMaps = { build: { sourcemap: true } }
-  return {
-    sourcemap: { server: true, client: true },
-    vite: { ...viteMaps, $client: viteMaps, $server: viteMaps },
-    // Generated intermediates go next to the preview artifact, so a preview
-    // build does not rewrite the `.nuxt` a running `neem dev` uses.
-    buildDir: resolve(artifactDir, '..', '.nuxt'),
-  }
-}
-
-type ViteBuildMaps = {
-  sourcemap?: unknown
-  rolldownOptions?: { output?: object | object[] }
-  rollupOptions?: { output?: object | object[] }
-}
-
-type ViteConfigMaps = {
-  build?: ViteBuildMaps
-  environments?: Record<string, { build?: ViteBuildMaps } | undefined>
-}
-
-/**
- * The config overrides cannot remove a Rolldown output-level `sourcemap`:
- * Nuxt merges them with defu, which keeps the app's nested value and
- * concatenates output arrays, and Vite spreads each output entry over its
- * defaults, so that value wins over the forced `build.sourcemap`. Nuxt calls
- * this hook with the merged client and server configs (or, under the Vite
- * environment API, with the shared config and its client/ssr environments)
- * right before building, so the setting is dropped there. An environment's
- * own `build.sourcemap` also wins over the top-level one, so each visited
- * build is forced to linked maps too. The nested objects are shared with the
- * config Vite builds from, so they are edited in place.
- */
-function linkPreviewSourceMaps(config: ViteConfigMaps): void {
-  const builds = [
-    config.build,
-    ...Object.values(config.environments ?? {}).map((env) => env?.build),
-  ]
-  for (const build of builds) {
-    if (!build) continue
-    build.sourcemap = true
-    // Vite 8 aliases the legacy `rollupOptions` to `rolldownOptions`, and
-    // either may be the one it reads.
-    for (const options of [build.rolldownOptions, build.rollupOptions]) {
-      const outputs = options?.output
-      if (!outputs) continue
-      for (const output of Array.isArray(outputs) ? outputs : [outputs]) {
-        delete (output as { sourcemap?: unknown }).sourcemap
-      }
-    }
-  }
-}
-
 function bakedOptionsModule(options: {
   root?: string
   base?: string
   routing?: NeemNuxtRoutingKind
+  sourcemap?: NeemBuildContext['sourcemap']
   assetsDir?: string
 }): string {
   return `export default ${JSON.stringify(options)}`

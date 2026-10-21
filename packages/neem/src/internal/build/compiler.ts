@@ -111,7 +111,7 @@ export async function compileGraph(
   graph: BuildGraph,
   command: Exclude<NeemBuildCommand, 'dev'> = 'build',
 ): Promise<CompiledGraph> {
-  await configurePlugins(graph, { command, mode: 'production' })
+  await configurePlugins(graph, createBuildContext(graph, command))
   const groups = await Promise.all(
     graph.buildGroups.map((group) => compileBuildGroup(group)),
   )
@@ -161,7 +161,7 @@ export async function watchGraph(
     onUpdateError?: (runtimeName: string, error: Error) => MaybePromise<void>
   } = {},
 ): Promise<GraphWatcher> {
-  await configurePlugins(graph, { command: 'dev', mode: 'development' })
+  await configurePlugins(graph, createBuildContext(graph, 'dev'))
   const compiled = new Map<string, CompiledTarget>()
   const watchConfig = graph.config.build?.watch
   const controllers = new Map<string, PatchController>()
@@ -974,6 +974,18 @@ function createNativeAddonPlugin(): rolldown.RolldownPlugin {
         `export default require(${JSON.stringify(runtimePath)})`,
       ].join('\n')
     },
+  }
+}
+
+function createBuildContext(
+  graph: BuildGraph,
+  command: NeemBuildCommand,
+): NeemBuildContext {
+  return {
+    command,
+    mode: command === 'dev' ? 'development' : 'production',
+    sourcemap:
+      graph.config.build?.sourcemap ?? (command === 'build' ? undefined : true),
   }
 }
 

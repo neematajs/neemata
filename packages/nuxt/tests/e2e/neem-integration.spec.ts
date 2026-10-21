@@ -94,12 +94,9 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
       await readFile(resolve(adminApp, 'public/_nuxt', script), 'utf8'),
     ).not.toContain('sourceMappingURL')
     expect(await listMaps(resolve(adminApp, 'server'))).toEqual([])
-    // The web app's Nitro output keeps its maps unlinked.
+    // The web app sets no maps: Nuxt's production default links server maps.
     const webServer = resolve(fixtureDir, 'dist/runtime/web/worker/app/server')
-    await access(resolve(webServer, 'index.mjs.map'))
-    expect(
-      await readFile(resolve(webServer, 'index.mjs'), 'utf8'),
-    ).not.toContain('sourceMappingURL')
+    await expectLinkedServerMaps(webServer)
   })
 
   it('serves SSR, prerendered, API, and immutable assets through neem start', async () => {
@@ -175,18 +172,19 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
     })
     const adminHtml = await (await fetch(`${origin}/admin/`)).text()
     expect(adminHtml).toContain('neem-admin-marker')
-    // The admin app hides browser maps and disables Nitro maps for
-    // deployment; preview links them anyway.
-    for (const [page, assets] of [
-      [html, /(?:src|href)="([^"]*\/_nuxt\/[^"]+\.js)"/],
-      [adminHtml, /(?:src|href)="([^"]*\/admin\/_nuxt\/[^"]+\.js)"/],
+    // The web app sets no maps, so preview links both sides; the admin app's
+    // deployment settings (hidden browser maps, no Nitro maps) still apply.
+    for (const [page, assets, linked] of [
+      [html, /(?:src|href)="([^"]*\/_nuxt\/[^"]+\.js)"/, true],
+      [adminHtml, /(?:src|href)="([^"]*\/admin\/_nuxt\/[^"]+\.js)"/, false],
     ] as const) {
       const asset = page.match(assets)?.[1]
       if (!asset) throw new Error('Preview HTML referenced no JavaScript asset')
       const assetUrl = new URL(asset, origin)
-      expect(await (await fetch(assetUrl)).text()).toMatch(
-        /\/\/# sourceMappingURL=\S+\.js\.map\s*$/,
-      )
+      const source = await (await fetch(assetUrl)).text()
+      if (linked) {
+        expect(source).toMatch(/\/\/# sourceMappingURL=\S+\.js\.map\s*$/)
+      } else expect(source).not.toContain('sourceMappingURL')
       const map = await fetch(`${assetUrl.href}.map`)
       expect(map.status).toBe(200)
       const { sources } = (await map.json()) as { sources: string[] }
@@ -197,13 +195,13 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
       fixtureDir,
       '.neem/preview/neem.config/runtime',
     )
+    await expectLinkedServerMaps(
+      resolve(previewRuntimes, 'web/worker/app/server'),
+    )
+    expect(
+      await listMaps(resolve(previewRuntimes, 'admin/worker/app/server')),
+    ).toEqual([])
     for (const runtime of ['web', 'admin']) {
-      // Linked whether the app's Nitro output disabled or hid its maps.
-      const server = resolve(previewRuntimes, runtime, 'worker/app/server')
-      expect(await readFile(resolve(server, 'index.mjs'), 'utf8')).toMatch(
-        /\/\/# sourceMappingURL=index\.mjs\.map\s*$/,
-      )
-      await access(resolve(server, 'index.mjs.map'))
       // Nuxt's intermediates stay with the preview output.
       await access(
         resolve(previewRuntimes, runtime, '.nuxt/tsconfig.server.json'),
@@ -259,6 +257,13 @@ describe('Nuxt runtime through Neem CLI and proxy', () => {
 
 async function listFiles(dir: string): Promise<string[]> {
   return await readdir(dir, { recursive: true })
+}
+
+async function expectLinkedServerMaps(serverDir: string): Promise<void> {
+  expect(await readFile(resolve(serverDir, 'index.mjs'), 'utf8')).toMatch(
+    /\/\/# sourceMappingURL=index\.mjs\.map\s*$/,
+  )
+  await access(resolve(serverDir, 'index.mjs.map'))
 }
 
 async function listMaps(dir: string): Promise<string[]> {

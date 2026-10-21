@@ -22,7 +22,7 @@ import { WorkerExit } from '../worker-exit.ts'
 import { importPatch } from './patch-import.ts'
 import { WorkerRuntime } from './runtime.ts'
 
-// Before user code loads; see `enableSourceMaps`.
+// Before user code loads; see `enableDefaultSourceMaps`.
 inheritSourceMaps()
 
 const LABEL = 'Neem runtime'

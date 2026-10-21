@@ -3,8 +3,6 @@ export default defineNuxtConfig({
   devtools: { enabled: false },
   // Polling keeps the real watcher behavior available under restricted test sandboxes.
   watchers: { chokidar: { usePolling: true, interval: 100 } },
-  // Unlinked server maps for deployment; preview links them.
-  nitro: { rollupConfig: { output: { sourcemap: 'hidden' } } },
   vite: { server: { watch: { usePolling: true, interval: 100 } } },
   routeRules: { '/about': { prerender: true } },
 })

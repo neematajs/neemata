@@ -5,6 +5,12 @@ import { extname, join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { fileURLToPath } from 'node:url'
 
+import {
+  sourceMapsFlag,
+  splitNodeOptions,
+  unquoteNodeOption,
+} from '../source-maps.ts'
+
 export type PreviewBuildRequest = {
   config: string
   outDir: string
@@ -50,11 +56,13 @@ export async function runPreviewBuild(
       import.meta.url,
     ),
   )
-  // Inherited flags keep loaders and conditions for config evaluation; the
-  // trailing source-map flag wins over an inherited `--no-enable-source-maps`
-  // so build errors point at sources.
+  // Inherited flags keep loaders and conditions for config evaluation, and
+  // the user's own source-map flag; without one, build errors point at
+  // sources as in the rest of preview.
   const execArgv = withoutInspectorFlags(process.execArgv)
-  if (!process.versions.bun) execArgv.push('--enable-source-maps')
+  if (!process.versions.bun && sourceMapsFlag() === undefined) {
+    execArgv.push('--enable-source-maps')
+  }
   const nodeOptions = process.env.NODE_OPTIONS
   const childNodeOptions =
     nodeOptions && withoutInspectorNodeOptions(nodeOptions)
@@ -238,11 +246,7 @@ export function withoutInspectorFlags(
  * kept options are passed on verbatim.
  */
 export function withoutInspectorNodeOptions(value: string): string {
-  const options = value.match(/(?:[^\s"]+|"(?:\\.|[^"\\])*")+/g) ?? []
-  const kept = withoutInspectorFlags(options, (option) =>
-    option.replace(/"((?:\\.|[^"\\])*)"/g, (_, quoted: string) =>
-      quoted.replace(/\\(.)/g, '$1'),
-    ),
-  )
+  const options = splitNodeOptions(value)
+  const kept = withoutInspectorFlags(options, unquoteNodeOption)
   return kept.length === options.length ? value : kept.join(' ')
 }

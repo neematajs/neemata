@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { NeemRolldownPlugin, RolldownPluginOption } from '@nmtjs/neem'
+import type {
+  NeemBuildContext,
+  NeemRolldownPlugin,
+  RolldownPluginOption,
+} from '@nmtjs/neem'
 import type * as Vite from 'vite'
 
 import type { NeemViteRoutingKind } from './types.ts'
@@ -29,7 +33,7 @@ export type NeemViteArtifactPluginOptions = {
  *
  * Neem compiles the same worker entry with Rolldown's DevEngine in `neem dev`
  * and `rolldown.build` in `neem build` and `neem preview`; a preview is the
- * production build with the app's browser maps enabled. The DevEngine reports
+ * production build with browser maps on unless the app sets them. The DevEngine reports
  * `this.meta.watchMode` as false, so the mode signal is its `devMode` input
  * option (or watch mode for a plain `rolldown.watch` build). Instead of
  * shipping both code paths behind runtime flags, the plugin resolves `neem-vite:impl` to the dev or prod implementation, so each
@@ -54,11 +58,11 @@ export function neemViteArtifactPlugin(
   }
 
   let dev = false
-  let preview = false
+  let sourcemap: NeemBuildContext['sourcemap']
   const plugin: NeemRolldownPlugin = {
     name: 'neem-vite:artifact',
     configureNeemBuild(context) {
-      preview = context.command === 'preview'
+      sourcemap = context.sourcemap
     },
     options(input) {
       dev = this.meta.watchMode || input.experimental?.devMode != null
@@ -94,9 +98,7 @@ export function neemViteArtifactPlugin(
       for (const warning of loaded.warnings) this.warn(warning)
 
       const appOutDir = resolve(output.dir, APP_DIR)
-      const config = preview
-        ? withPreviewSourceMaps(loaded.config)
-        : loaded.config
+      const config = withDefaultSourceMaps(loaded.config, sourcemap)
       await vite.build({
         ...config,
         build: {
@@ -123,58 +125,19 @@ export function neemViteArtifactPlugin(
 }
 
 /**
- * A preview is for debugging the built app locally: linked browser maps even
- * when the app config turns them off or hides them. `build.sourcemap` alone is
- * not enough, because the client environment's build options take precedence
- * over it and Vite spreads each Rolldown output entry over its own defaults,
- * so an output-level `sourcemap` wins too. Only the config the app wrote is
- * covered; plugins that set maps later in Vite's config hooks are not.
+ * Neem's map setting for the command (see `NeemBuildContext.sourcemap`)
+ * applies only where the app sets none: an app `build.sourcemap` wins, and
+ * Vite's own precedence lets a client environment's `build.sourcemap` or a
+ * Rolldown output-level `sourcemap` win over it too.
  */
-function withPreviewSourceMaps(config: Vite.InlineConfig): Vite.InlineConfig {
-  const previewConfig = { ...config, build: withLinkedSourceMaps(config.build) }
-  const client = config.environments?.client
-  if (client?.build) {
-    previewConfig.environments = {
-      ...config.environments,
-      client: { ...client, build: withLinkedSourceMaps(client.build) },
-    }
+function withDefaultSourceMaps(
+  config: Vite.InlineConfig,
+  sourcemap: NeemBuildContext['sourcemap'],
+): Vite.InlineConfig {
+  if (sourcemap === undefined || config.build?.sourcemap !== undefined) {
+    return config
   }
-  return previewConfig
-}
-
-function withLinkedSourceMaps(
-  build: Vite.BuildEnvironmentOptions = {},
-): Vite.BuildEnvironmentOptions {
-  // Vite 8 aliases the legacy `rollupOptions` to `rolldownOptions`, and
-  // either may be the one it reads, so both are cleared of output maps.
-  const { rolldownOptions, rollupOptions } = build
-  return {
-    ...build,
-    sourcemap: true,
-    ...(rolldownOptions && {
-      rolldownOptions: withoutOutputSourceMaps(rolldownOptions),
-    }),
-    ...(rollupOptions && {
-      rollupOptions: withoutOutputSourceMaps(rollupOptions),
-    }),
-  }
-}
-
-// Dropping the output-level setting (rather than forcing it to true) lets the
-// forced `build.sourcemap` apply and avoids Vite's unsupported-option warning.
-function withoutOutputSourceMaps<
-  T extends NonNullable<Vite.BuildEnvironmentOptions['rolldownOptions']>,
->(options: T): T {
-  const { output } = options
-  if (!output) return options
-  const strip = ({
-    sourcemap: _sourcemap,
-    ...rest
-  }: Vite.Rolldown.OutputOptions) => rest
-  return {
-    ...options,
-    output: Array.isArray(output) ? output.map(strip) : strip(output),
-  }
+  return { ...config, build: { ...config.build, sourcemap } }
 }
 
 function bakedOptionsModule(options: {

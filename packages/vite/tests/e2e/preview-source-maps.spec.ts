@@ -14,8 +14,8 @@ import { afterAll, beforeAll, expect, it } from 'vitest'
 import { neemViteArtifactPlugin } from '../../src/plugin.ts'
 
 // Real Vite builds through the artifact plugin's hooks, without the Neem CLI:
-// `preview.spec.ts` covers how the CLI reaches the plugin, this covers app
-// config shapes that set maps somewhere other than `build.sourcemap`.
+// `preview.spec.ts` covers how the CLI reaches the plugin, this covers where
+// app config shapes and Neem's setting meet.
 type ArtifactHooks = {
   configureNeemBuild(context: NeemBuildContext): void
   writeBundle(
@@ -24,53 +24,42 @@ type ArtifactHooks = {
   ): Promise<void>
 }
 
-// Each config enables maps at the top level and opts out at a level Vite
-// reads with higher precedence, so a regular build proves the opt-out is
-// honoured and a preview proves it is overridden.
-const cases = [
+type Maps = 'none' | 'hidden' | 'linked'
+
+// A regular build gets no Neem setting (Vite's default applies), a preview
+// gets maps on: either way an app setting at any level Vite reads wins.
+const cases: readonly {
+  name: string
+  config: object
+  build: Maps
+  preview: Maps
+}[] = [
+  { name: 'no setting', config: {}, build: 'none', preview: 'linked' },
+  {
+    name: 'top-level build',
+    config: { build: { sourcemap: 'hidden' } },
+    build: 'hidden',
+    preview: 'hidden',
+  },
   {
     name: 'client environment',
-    config: {
-      build: { sourcemap: true },
-      environments: { client: { build: { sourcemap: false } } },
-    },
-    regular: 'none',
+    config: { environments: { client: { build: { sourcemap: false } } } },
+    build: 'none',
+    preview: 'none',
   },
   {
-    name: 'client environment output',
-    config: {
-      environments: {
-        client: {
-          build: {
-            sourcemap: true,
-            rolldownOptions: { output: { sourcemap: false } },
-          },
-        },
-      },
-    },
-    regular: 'none',
+    name: 'rolldown output',
+    config: { build: { rolldownOptions: { output: { sourcemap: 'hidden' } } } },
+    build: 'hidden',
+    preview: 'hidden',
   },
   {
-    name: 'rolldown output array',
-    config: {
-      build: {
-        sourcemap: true,
-        rolldownOptions: { output: [{ sourcemap: false }] },
-      },
-    },
-    regular: 'none',
+    name: 'legacy rollup output array',
+    config: { build: { rollupOptions: { output: [{ sourcemap: false }] } } },
+    build: 'none',
+    preview: 'none',
   },
-  {
-    name: 'legacy rollup output',
-    config: {
-      build: {
-        sourcemap: true,
-        rollupOptions: { output: { sourcemap: 'hidden' } },
-      },
-    },
-    regular: 'hidden',
-  },
-] as const
+]
 
 let tmpDir = ''
 
@@ -84,46 +73,64 @@ afterAll(async () => {
 })
 
 it.each(cases)(
-  'regular build keeps and preview overrides maps set through $name',
-  async ({ name, config, regular }) => {
-    const root = resolve(tmpDir, name.replaceAll(' ', '-'))
-    await mkdir(resolve(root, 'src'), { recursive: true })
-    await writeFile(
-      resolve(root, 'index.html'),
-      '<div id="app"></div><script type="module" src="/src/main.ts"></script>',
-    )
-    await writeFile(
-      resolve(root, 'src/main.ts'),
-      'document.querySelector("#app")!.textContent = "maps"',
-    )
-    await writeFile(
-      resolve(root, 'vite.config.ts'),
-      `export default ${JSON.stringify(config)}`,
-    )
-
-    const built = await build(root, 'build')
-    expect(built.linked).toBe(false)
-    expect(built.maps).toEqual(
-      regular === 'hidden' ? [`${built.script}.map`] : [],
-    )
-
-    const previewed = await build(root, 'preview')
-    expect(previewed.linked).toBe(true)
-    expect(previewed.maps).toEqual([`${previewed.script}.map`])
-    const map = JSON.parse(
-      await readFile(resolve(previewed.assets, previewed.maps[0]!), 'utf8'),
-    ) as { sources: string[] }
-    expect(map.sources).toEqual(
-      expect.arrayContaining([expect.stringMatching(/src\/main\.ts$/)]),
-    )
+  'app maps set through $name: build $build, preview $preview',
+  async ({ name, config, build: built, preview }) => {
+    const root = await createApp(name, config)
+    expect(await buildMaps(root, 'build', undefined)).toBe(built)
+    expect(await buildMaps(root, 'preview', true)).toBe(preview)
   },
   60_000,
 )
 
-async function build(root: string, command: NeemBuildContext['command']) {
+it("follows Neem's explicit setting where the app sets none", async () => {
+  const root = await createApp('neem setting', {})
+  expect(await buildMaps(root, 'preview', false)).toBe('none')
+  expect(await buildMaps(root, 'build', 'hidden')).toBe('hidden')
+}, 60_000)
+
+async function createApp(name: string, config: object): Promise<string> {
+  const root = resolve(tmpDir, name.replaceAll(' ', '-'))
+  await mkdir(resolve(root, 'src'), { recursive: true })
+  await writeFile(
+    resolve(root, 'index.html'),
+    '<div id="app"></div><script type="module" src="/src/main.ts"></script>',
+  )
+  await writeFile(
+    resolve(root, 'src/main.ts'),
+    'document.querySelector("#app")!.textContent = "maps"',
+  )
+  await writeFile(
+    resolve(root, 'vite.config.ts'),
+    `export default ${JSON.stringify(config)}`,
+  )
+  return root
+}
+
+async function buildMaps(
+  root: string,
+  command: NeemBuildContext['command'],
+  sourcemap: NeemBuildContext['sourcemap'],
+): Promise<Maps> {
+  const { assets, script, maps, linked } = await build(root, command, sourcemap)
+  if (maps.length === 0) return 'none'
+  expect(maps).toEqual([`${script}.map`])
+  const map = JSON.parse(await readFile(resolve(assets, maps[0]!), 'utf8')) as {
+    sources: string[]
+  }
+  expect(map.sources).toEqual(
+    expect.arrayContaining([expect.stringMatching(/src\/main\.ts$/)]),
+  )
+  return linked ? 'linked' : 'hidden'
+}
+
+async function build(
+  root: string,
+  command: NeemBuildContext['command'],
+  sourcemap: NeemBuildContext['sourcemap'],
+) {
   const plugin = neemViteArtifactPlugin({ root }) as unknown as ArtifactHooks
-  plugin.configureNeemBuild({ command, mode: 'production' })
-  const dir = resolve(root, `out-${command}`)
+  plugin.configureNeemBuild({ command, mode: 'production', sourcemap })
+  const dir = resolve(root, `out-${command}-${String(sourcemap)}`)
   await plugin.writeBundle.call({ warn: () => {} }, { dir })
 
   const assets = resolve(dir, 'app/assets')

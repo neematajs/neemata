@@ -6,7 +6,7 @@ import * as Effect from 'effect/Effect'
 import type { NeemTestProbe } from '../test-probe.ts'
 import { loadRuntimeSnapshot, runHostUntilClosed } from '../host/bootstrap.ts'
 import { MANIFEST_FILE } from '../manifest/manifest.ts'
-import { enableSourceMaps } from '../source-maps.ts'
+import { enableDefaultSourceMaps } from '../source-maps.ts'
 import { createNeemTestProbe } from '../test-probe.ts'
 import { serializeError } from '../utils.ts'
 import {
@@ -112,9 +112,9 @@ export async function runPreviewCommand(
     )
     probe?.emit('cli:preview:build:closed', { buildPid, built })
     if (!built) return
-    // Mapped stacks are what a preview is for, whatever flags Node started
-    // with; a programmatic caller gets its own setting back afterwards.
-    restoreSourceMaps = enableSourceMaps()
+    // After the build: this process only serves. A programmatic caller gets
+    // its own setting back afterwards.
+    restoreSourceMaps = enableDefaultSourceMaps()
     await serveBuiltOutput({
       outDir,
       runtimes,
@@ -174,6 +174,8 @@ export async function runDevCommand(
   const cwd = process.cwd()
   const configFile = resolve(cwd, args.config)
   const controller = createCliAbortController(signal)
+  // Before the session starts its workers; restored like preview's.
+  const restoreSourceMaps = enableDefaultSourceMaps()
   const session = new DevSession({
     configFile,
     outDir: resolveDevOutDir({ cwd, configFile, outDir: args.outDir }),
@@ -191,10 +193,14 @@ export async function runDevCommand(
     throw error
   } finally {
     controller.dispose()
-    // The first error wins: a stop failure already rejected `closed`, and
-    // after another failure it must not replace that one.
-    if (failed) await session.stop().catch(() => undefined)
-    else await session.stop()
+    try {
+      // The first error wins: a stop failure already rejected `closed`, and
+      // after another failure it must not replace that one.
+      if (failed) await session.stop().catch(() => undefined)
+      else await session.stop()
+    } finally {
+      restoreSourceMaps()
+    }
   }
 }
 

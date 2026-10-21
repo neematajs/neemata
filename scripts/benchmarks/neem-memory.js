@@ -59,11 +59,12 @@ const temporary = await mkdtemp(resolve(tmpdir(), 'neem-memory-'))
 const results = []
 
 async function launch(runtime, entry, args, count) {
-  // Match the executable's shebang, including source maps and the existing
-  // watcher's GC policy. The harness itself never forces a collection.
+  // Match the executable's shebang, including the existing watcher's GC
+  // policy, and leave source maps to each command's default. The harness
+  // itself never forces a collection.
   const child = spawn(
     runtime,
-    ['--enable-source-maps', '--expose-gc', '--import', probe, entry, ...args],
+    ['--expose-gc', '--import', probe, entry, ...args],
     {
       env: {
         ...process.env,

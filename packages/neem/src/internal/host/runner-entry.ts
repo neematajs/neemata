@@ -31,7 +31,7 @@ import { inheritSourceMaps } from '../source-maps.ts'
 import { importDefault } from '../utils.ts'
 import { WorkerExit } from '../worker-exit.ts'
 
-// Before user code loads; see `enableSourceMaps`.
+// Before user code loads; see `enableDefaultSourceMaps`.
 inheritSourceMaps()
 
 const LABEL = 'Neem host'

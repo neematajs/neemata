@@ -94,6 +94,10 @@ export type NeemLoggerInput = NeemLoggerOptions | string | URL
 export type NeemEnv = Record<string, string>
 
 export type NeemBuildConfig = {
+  /**
+   * Maps for Neem's bundles, on by default, and for framework apps whose own
+   * config sets none (see `NeemBuildContext.sourcemap`).
+   */
   sourcemap?: OutputOptions['sourcemap']
   /** Defaults to include for application artifacts, exclude for Neem infrastructure. */
   sourcemapSources?: 'include' | 'exclude'
@@ -130,6 +134,13 @@ export type NeemBuildContext = {
   command: NeemBuildCommand
   /** Mode the artifacts run in: `development` only for `dev`. */
   mode: NeemMode
+  /**
+   * Source maps for output a pipeline builds itself: the config's explicit
+   * `build.sourcemap`, else `true` for `dev` and `preview`, and `undefined`
+   * for `build`, where the framework's own production default applies. A
+   * pipeline uses it only where the app's own config sets no maps.
+   */
+  sourcemap: NeemBuildConfig['sourcemap']
 }
 
 /**

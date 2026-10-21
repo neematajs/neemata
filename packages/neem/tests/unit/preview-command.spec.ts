@@ -28,6 +28,7 @@ describe.skipIf(process.versions.bun)(
     })
 
     afterEach(() => {
+      vi.unstubAllEnvs()
       vi.clearAllMocks()
       setEnvironmentData(KEY, undefined)
       process.setSourceMapsEnabled(initial)
@@ -69,6 +70,17 @@ describe.skipIf(process.versions.bun)(
       await running
       expect(process.sourceMapsEnabled).toBe(false)
       expect(getEnvironmentData(KEY)).toBeUndefined()
+    })
+
+    it('stays off when the user turned source maps off', async () => {
+      vi.stubEnv('NODE_OPTIONS', '--no-enable-source-maps')
+      hostMocks.runHostUntilClosed.mockImplementation(async () => {
+        expect(process.sourceMapsEnabled).toBe(false)
+        expect(getEnvironmentData(KEY)).toBeUndefined()
+      })
+
+      await runPreviewCommand({ config: 'neem.config.ts' })
+      expect(hostMocks.runHostUntilClosed).toHaveBeenCalledOnce()
     })
   },
 )

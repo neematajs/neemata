@@ -4,6 +4,8 @@ import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { NeemBuildContext } from '@nmtjs/neem'
+
 import type { NeemNuxtRoutingKind } from './types.ts'
 
 /**
@@ -21,7 +23,11 @@ export type NuxtInstance = {
       url?: string
       https?: unknown
     }
-    vite?: { server?: Record<string, unknown> }
+    dev: boolean
+    vite?: { server?: Record<string, unknown> } & NuxtMapOptions['vite']
+    nitro?: NuxtMapOptions['nitro']
+    // `string` covers `hidden` and the probe's marker before it is replaced.
+    sourcemap: Record<'client' | 'server', boolean | string>
   }
   ready: () => Promise<void>
   close: () => Promise<void>
@@ -48,6 +54,8 @@ export type NuxtKitModule = {
     cwd: string
     dev?: boolean
     ready?: boolean
+    /** Lowest-priority config, below every source Nuxt merges (c12). */
+    defaults?: Record<string, unknown>
     overrides?: Record<string, unknown>
   }) => Promise<NuxtInstance>
   buildNuxt: (nuxt: NuxtInstance) => Promise<unknown>
@@ -265,4 +273,96 @@ export function restoreBase(req: { url?: string }, base: string): void {
   if (url !== prefix && !url.startsWith(base)) {
     req.url = prefix + url
   }
+}
+
+type NuxtMapSide = 'client' | 'server'
+type OutputMaps = { sourcemap?: unknown } | readonly { sourcemap?: unknown }[]
+type ViteBuildMaps = {
+  sourcemap?: unknown
+  rolldownOptions?: { output?: OutputMaps }
+  rollupOptions?: { output?: OutputMaps }
+}
+type NuxtMapOptions = {
+  vite?: {
+    build?: ViteBuildMaps
+    $client?: { build?: ViteBuildMaps }
+    $server?: { build?: ViteBuildMaps }
+    // Under Nuxt's `experimental.viteEnvironmentApi`.
+    environments?: Partial<Record<'client' | 'ssr', { build?: ViteBuildMaps }>>
+  }
+  nitro?: { sourceMap?: unknown; rollupConfig?: { output?: OutputMaps } }
+}
+
+// Marks a side no config source sets. It never reaches Nuxt's modules:
+// `applyNuxtSourceMaps` replaces it before `ready()`.
+const UNSET = 'neem:unset'
+
+/**
+ * Config defaults to load Nuxt with when Neem has a map setting for the
+ * command (see `NeemBuildContext.sourcemap`). As the lowest-priority config,
+ * the marker survives only on a side that no source Nuxt merges sets: the
+ * app, its layers, `.nuxtrc` files, overrides.
+ */
+export function nuxtSourceMapProbe(
+  sourcemap: NeemBuildContext['sourcemap'],
+): { sourcemap: Record<NuxtMapSide, string> } | undefined {
+  if (sourcemap === undefined) return undefined
+  return { sourcemap: { client: UNSET, server: UNSET } }
+}
+
+/**
+ * Applies Neem's map setting to each side, browser (`client`) and Nitro
+ * (`server`), that the app leaves unset, after loading Nuxt with
+ * `nuxtSourceMapProbe` and before `ready()`: modules and builders derive
+ * `nitro.sourceMap` and Vite's `build.sourcemap` from it later.
+ *
+ * Turning a side on still lets the app's own Nitro or Vite setting refine it.
+ * Turning one off would override those, so a side the app sets maps for at
+ * any of those levels keeps Nuxt's default.
+ */
+export function applyNuxtSourceMaps(
+  nuxt: NuxtInstance,
+  sourcemap: NeemBuildContext['sourcemap'],
+): void {
+  if (sourcemap === undefined) return
+  const options = nuxt.options
+  // Nuxt has no inline maps; linked ones serve the same debugging.
+  const value = sourcemap === 'inline' ? true : sourcemap
+  // Nuxt's own defaults for a side its config leaves unset.
+  const fallback = { client: options.dev, server: true }
+  for (const side of ['client', 'server'] as const) {
+    if (options.sourcemap[side] !== UNSET) continue
+    const keepDefault = !value && setsLowerLevel(options, side)
+    options.sourcemap[side] = keepDefault ? fallback[side] : value
+  }
+}
+
+function setsLowerLevel(config: NuxtMapOptions, side: NuxtMapSide): boolean {
+  const vite = config.vite
+  const sideBuilds =
+    side === 'client'
+      ? [vite?.$client?.build, vite?.environments?.client?.build]
+      : [vite?.$server?.build, vite?.environments?.ssr?.build]
+  if ([vite?.build, ...sideBuilds].some(setsViteBuildMaps)) return true
+  const nitro = config.nitro
+  return (
+    side === 'server' &&
+    (nitro?.sourceMap !== undefined ||
+      setsOutputMaps(nitro?.rollupConfig?.output))
+  )
+}
+
+function setsViteBuildMaps(build: ViteBuildMaps | undefined): boolean {
+  return (
+    build?.sourcemap !== undefined ||
+    setsOutputMaps(build?.rolldownOptions?.output) ||
+    setsOutputMaps(build?.rollupOptions?.output)
+  )
+}
+
+function setsOutputMaps(output: OutputMaps | undefined): boolean {
+  const outputs = Array.isArray(output) ? output : output ? [output] : []
+  return outputs.some(
+    (entry: { sourcemap?: unknown }) => entry.sourcemap !== undefined,
+  )
 }

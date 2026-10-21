@@ -1,17 +1,21 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { cp, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import type { NeemBuildContext } from '@nmtjs/neem'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import type { NuxtInstance } from '../../src/nuxt-loader.ts'
 import {
+  applyNuxtSourceMaps,
   assertRoutingBase,
   importConsolaFrom,
   importH3From,
   importKitFrom,
   normalizeBase,
+  nuxtSourceMapProbe,
   restoreBase,
 } from '../../src/nuxt-loader.ts'
 
@@ -171,4 +175,85 @@ if (typeof kit.loadNuxt !== 'function') process.exitCode = 1`,
       consola.setReporters(original)
     }
   })
+})
+
+describe('applyNuxtSourceMaps', () => {
+  const unset = nuxtSourceMapProbe(true)!.sourcemap.client
+  // Resolved options after loading with the probe: `unset` marks a side no
+  // config source sets.
+  const apply = (
+    sourcemap: NeemBuildContext['sourcemap'],
+    resolved: object = {},
+    dev = false,
+  ) => {
+    const nuxt = {
+      options: {
+        dev,
+        sourcemap: { client: unset, server: unset },
+        ...resolved,
+      },
+    } as unknown as NuxtInstance
+    applyNuxtSourceMaps(nuxt, sourcemap)
+    return nuxt.options.sourcemap
+  }
+
+  it("applies Neem's setting to the sides the app leaves unset", () => {
+    expect(apply(true)).toEqual({ client: true, server: true })
+    expect(apply(false)).toEqual({ client: false, server: false })
+    expect(apply('inline')).toEqual({ client: true, server: true })
+    expect(
+      apply(true, { sourcemap: { client: 'hidden', server: unset } }),
+    ).toEqual({ client: 'hidden', server: true })
+    expect(nuxtSourceMapProbe(undefined)).toBeUndefined()
+  })
+
+  it("keeps Nuxt's default for a side whose Vite or Nitro maps the app sets", () => {
+    for (const resolved of [
+      { vite: { $server: { build: { sourcemap: true } } } },
+      { vite: { environments: { ssr: { build: { sourcemap: true } } } } },
+      { nitro: { sourceMap: true } },
+      { nitro: { rollupConfig: { output: { sourcemap: 'hidden' } } } },
+    ]) {
+      expect(apply(false, resolved)).toEqual({ client: false, server: true })
+    }
+    expect(
+      apply(
+        false,
+        {
+          vite: {
+            build: { rolldownOptions: { output: [{ sourcemap: true }] } },
+          },
+        },
+        true,
+      ),
+    ).toEqual({ client: true, server: true })
+    // Turning a side on leaves those settings to refine it.
+    expect(apply(true, { nitro: { sourceMap: false } })).toEqual({
+      client: true,
+      server: true,
+    })
+  })
+
+  it('sees every config source Nuxt merges, including .nuxtrc', async () => {
+    // Inside the package, so the app resolves nuxt from here.
+    const root = await mkdtemp(resolve(import.meta.dirname, '../../.tmp-maps-'))
+    tempDirs.push(root)
+    await cp(fixtureRoot, root, { recursive: true })
+    await writeFile(resolve(root, '.nuxtrc'), 'sourcemap.client=true\n')
+    const kit = await importKitFrom(root)
+    const nuxt = await kit.loadNuxt({
+      cwd: root,
+      dev: false,
+      ready: false,
+      defaults: nuxtSourceMapProbe(false),
+      overrides: { telemetry: false },
+    })
+    try {
+      // The rc file's side wins; Neem's setting fills the other.
+      applyNuxtSourceMaps(nuxt, false)
+      expect(nuxt.options.sourcemap).toEqual({ client: true, server: false })
+    } finally {
+      await nuxt.close()
+    }
+  }, 60_000)
 })

@@ -21,13 +21,6 @@ const bin = resolve(import.meta.dirname, '../../bin/neem.js')
 it('builds in an exited child process, then serves its own output in production mode', async () => {
   const fixture = await createNeemFixture()
   const configDir = dirname(fixture.configFile)
-  // Preview forces maps that a deployment config turned off.
-  await updateFileAtomically(fixture.configFile, (source) =>
-    source.replace(
-      'defineConfig({',
-      'defineConfig({ build: { sourcemap: false },',
-    ),
-  )
   // A custom pipeline records the context Neem hands its plugins.
   await updateFileAtomically(resolve(configDir, 'api.runtime.ts'), (source) =>
     source.replace(
@@ -47,7 +40,7 @@ function context() {
   let command = 'none'
   return {
     name: 'record-context',
-    configureNeemBuild: (ctx) => { command = ctx.command + ':' + ctx.mode },
+    configureNeemBuild: (ctx) => { command = ctx.command + ':' + ctx.mode + ':' + ctx.sourcemap },
     writeBundle: (output) => writeFileSync(join(output.dir, 'context.txt'), command),
   }
 }
@@ -104,7 +97,7 @@ runStdinReader(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['in
   await access(`${workerFile}.map`)
   await expect(
     readFile(resolve(dirname(workerFile), 'context.txt'), 'utf8'),
-  ).resolves.toBe('preview:production')
+  ).resolves.toBe('preview:production:true')
   const created = (await readRuntimeEvents(fixture.eventsFile)).filter(
     (event) => event.event === 'create',
   )
@@ -228,15 +221,18 @@ describe.skipIf(process.platform === 'win32')(
   },
 )
 
-// A plain `node` launch has no shebang flags, and preview enables maps even
-// against an explicit opt-out (Bun has no such flag).
+// Preview maps stacks by default, also under a plain `node` launch; the
+// user's own opt-out wins (Bun has no such flag).
 it.each(
   process.versions.bun
-    ? [{ flags: [] }]
-    : [{ flags: [] }, { flags: ['--no-enable-source-maps'] }],
+    ? [{ flags: [], mapped: true }]
+    : [
+        { flags: [], mapped: true },
+        { flags: ['--no-enable-source-maps'], mapped: false },
+      ],
 )(
-  'serves preview stack traces through source maps (node flags: $flags)',
-  async ({ flags }: { flags: string[] }) => {
+  'serves preview stack traces through source maps unless opted out (node flags: $flags)',
+  async ({ flags, mapped }: { flags: string[]; mapped: boolean }) => {
     const fixture = await createNeemFixture({ config: 'start-failure-cleanup' })
     const logFile = resolve(fixture.dir, 'errors.jsonl')
     const neem = spawnNode(
@@ -255,13 +251,17 @@ it.each(
     const logs = await readFile(logFile, 'utf8')
     expect(logs).toContain('partial startup failure')
     // Bun 1.4.3 reports generated locations for these external maps.
-    if (!process.versions.bun) {
-      expect(logs).toMatch(/partial\.worker\.ts:\d+:\d+/)
-      expect(logs).not.toMatch(/partial\.worker-[^\s"]+\.js:\d+:\d+/)
-    }
+    if (!process.versions.bun) expectMappedStacks(logs, mapped)
   },
   60_000,
 )
+
+function expectMappedStacks(logs: string, mapped: boolean): void {
+  const source = /partial\.worker\.ts:\d+:\d+/
+  const generated = /partial\.worker-[^\s"]+\.js:\d+:\d+/
+  expect(logs).toMatch(mapped ? source : generated)
+  expect(logs).not.toMatch(mapped ? generated : source)
+}
 
 /**
  * Config prelude standing in for a helper process a framework builder

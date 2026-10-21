@@ -29,13 +29,12 @@ export default defineConfig({
 })
 `,
   )
-  // A deployment config that keeps maps away from browsers.
+  // No map setting: Vite's default (none) for a build, maps for a preview.
   await writeFile(
     resolve(appDir, 'vite.config.ts'),
     `import { defineConfig } from 'vite'
 export default defineConfig({
   define: { __CONFIG_TAG__: '"tag"' },
-  build: { sourcemap: 'hidden' },
 })
 `,
   )
@@ -49,16 +48,15 @@ afterAll(async () => {
   if (appDir) await rm(appDir, { recursive: true, force: true })
 })
 
-it('keeps the app source-map setting in a regular build', async () => {
+it("keeps Vite's default of no browser maps in a regular build", async () => {
   const build = run(['build'])
   expect(await exited(build.child), build.output()).toBe(0)
   const assets = resolve(appDir, 'dist/runtime/web/worker/app/assets')
   const script = await findScript(assets)
-  // `hidden` writes maps without linking them.
   expect(await readFile(resolve(assets, script), 'utf8')).not.toContain(
     'sourceMappingURL',
   )
-  expect(await readdir(assets)).toContain(`${script}.map`)
+  expect(await readdir(assets)).not.toContain(`${script}.map`)
 }, 120_000)
 
 it('serves a preview whose browser bundle links its source map', async () => {

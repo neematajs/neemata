@@ -63,15 +63,7 @@ export async function buildNeem(
   const graph = createBuildGraph({
     configFile,
     outDir,
-    // Preview exists to inspect production behavior with mapped stacks, so
-    // a config that disables or hides maps for deployment does not apply.
-    config:
-      command === 'preview'
-        ? {
-            ...resolvedConfig,
-            build: { ...resolvedConfig.build, sourcemap: true },
-          }
-        : resolvedConfig,
+    config: resolvedConfig,
     runtimes: options.runtimes,
   })
 

@@ -48,8 +48,9 @@ It measures production builds, `neem start`, the generated standalone `start.js`
 and `neem dev`. Runtime cases use 1 and 8 real HTTP workers with normal logging,
 10,000 warmup requests, and 50,000 measured requests at concurrency 16. Production
 builds run separately from server measurements. Each case runs in a fresh process.
-The Node flags match Neem's executable (`--enable-source-maps --expose-gc`); the
-harness does not force GC or tune heap limits, allocators, or compiler parallelism.
+The Node flags match Neem's executable (`--expose-gc`), so source maps follow each
+command's default: on for `dev`, off for `start` and `start.js`. The harness does
+not force GC or tune heap limits, allocators, or compiler parallelism.
 Compile caching is disabled for reproducibility.
 
 For adjacent before/after pairs with alternating order, build both revisions under

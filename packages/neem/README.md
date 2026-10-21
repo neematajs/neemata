@@ -60,8 +60,8 @@ loaded before the build so config evaluation and runtime workers both see them.
 - Output defaults to `.neem/preview/<config name>` next to the config, apart from
   deployment (`outDir`) and development (`.neem/<config name>`) output.
   `--out-dir` overrides it under the same safety checks as `build`.
-- Source maps are forced on (`build.sourcemap: true`); other build settings,
-  including `sourcemapSources` and `minify`, apply as configured.
+- Build settings apply as configured, including `build.sourcemap`; see
+  [Source maps](#source-maps-and-memory) for the defaults.
 - The build, including framework builders, runs in a child process with this
   process's runtime flags, minus inspector options (also removed from
   `NODE_OPTIONS`). Rolldown keeps native threads and memory after a build, so
@@ -80,13 +80,6 @@ loaded before the build so config evaluation and runtime workers both see them.
   SIGINT/SIGTERM during the build stops the build and exits without serving;
   while serving, they stop the server like `neem start`.
 
-On Node, preview enables source maps for the serving process and its runtime
-workers, also under a plain `node` launch or `--no-enable-source-maps`; the
-build process gets `--enable-source-maps`. A programmatic caller of the command
-gets its previous setting back when it returns. Only modules loaded after that
-point are mapped; workers that application code starts itself follow Node's
-flags. See [Source maps and memory](#source-maps-and-memory) for Bun.
-
 ### Build context for custom pipelines
 
 A runtime or plugin whose Rolldown plugin builds beyond the bundle (for
@@ -96,18 +89,23 @@ receive the command before Neem starts any build:
 ```ts
 import type { NeemRolldownPlugin } from '@nmtjs/neem'
 
-let preview = false
+let sourcemap: boolean | 'inline' | 'hidden' | undefined
 const plugin: NeemRolldownPlugin = {
   name: 'my-framework',
-  configureNeemBuild({ command, mode }) {
+  configureNeemBuild(context) {
     // command: 'build' | 'preview' | 'dev'; mode: 'production' | 'development'
-    preview = command === 'preview'
+    sourcemap = context.sourcemap
   },
   async writeBundle(output) {
-    // Build the framework into output.dir, with browser maps when `preview`.
+    // Build the framework into output.dir, using `sourcemap` only where the
+    // app's own config sets no maps.
   },
 }
 ```
+
+`sourcemap` is the config's explicit `build.sourcemap`, else `true` for `dev`
+and `preview`, and `undefined` for `build`, where the framework keeps its own
+production default.
 
 `preview` runs in production mode like `build`: artifacts, planners, and
 workers see `mode: 'production'`, so only pipelines that opt in can tell them
@@ -115,9 +113,23 @@ apart. Each artifact's own output directory is Rolldown's `output.dir`.
 
 ## Source maps and memory
 
-Neem generates source maps for both application and host infrastructure. The CLI
-enables Node's source-map support; use `node --enable-source-maps dist/start.js`
-to enable it for a standalone production launch too.
+Neem generates source maps for both application and host infrastructure, in
+every command. Framework apps (`@nmtjs/vite`, `@nmtjs/nuxt`) get maps by
+default in `dev` and `preview`; their own map settings win, at any level the
+framework reads, and in `build` they keep the framework's production default.
+An explicit `build.sourcemap` applies to Neem's bundles and is the default for
+framework apps that set none.
+
+Node's source-map support, which maps stack traces and costs memory, is on by
+default for `dev` and `preview` and off for `start`, including a standalone
+`node dist/start.js`. A Node flag overrides the default for any command:
+`--enable-source-maps` or `--no-enable-source-maps`, on the command line or in
+`NODE_OPTIONS` (the command line wins). For example,
+`NODE_OPTIONS=--enable-source-maps neem start`. Preview's build process gets the
+same setting. A programmatic caller of `dev` or `preview` gets its previous
+setting back when the command returns. Only modules loaded after the command
+starts are mapped; workers that application code starts itself follow Node's
+flags.
 
 Bun 1.4.3 reports generated locations in the tested error stacks for these external
 Rolldown maps; mapped-stack guarantees below apply to Node.
