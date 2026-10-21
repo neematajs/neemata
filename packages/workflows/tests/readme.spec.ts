@@ -9,6 +9,7 @@ import * as Layer from 'effect/Layer'
 import * as Schema from 'effect/Schema'
 import * as SqlClient from 'effect/sql/SqlClient'
 import * as Stream from 'effect/Stream'
+import * as TestClock from 'effect/testing/TestClock'
 
 import type {
   CleanupTimeout,
@@ -335,6 +336,55 @@ const Document = durable(
 )
 // #endregion
 
+// #region inputs
+const Publish = task({
+  name: 'docs.publish',
+  revision: 'v1',
+  pool: 'docs',
+  input: Schema.String,
+  output: Schema.Void,
+  handler: () => Effect.void,
+})
+
+const Review = durable(
+  {
+    name: 'docs.review',
+    revision: 'v1',
+    pool: 'docs',
+    input: Schema.Struct({
+      id: Schema.String,
+      sections: Schema.Array(Schema.String),
+    }),
+    output: Schema.Array(Schema.String),
+    tasks: [Publish],
+    inputs: { verdict: Schema.Struct({ approved: Schema.Boolean }) },
+    unique: { key: ({ id }) => ['review', id], behavior: 'join' },
+  },
+  ({ sections }, d) =>
+    Effect.forEach(sections, (section) =>
+      Effect.gen(function* () {
+        // Opened together: a verdict sent as soon as the section is out
+        // finds the wait there, and one sent earlier is kept for it.
+        const [, verdict] = yield* Effect.all(
+          [
+            d.task(`publish:${section}`, Publish, section),
+            d.input('verdict', section, { timeout: '7d' }),
+          ],
+          { concurrency: 'unbounded' },
+        )
+        if (verdict._tag === 'TimedOut') return `${section}: expired`
+        return `${section}: ${verdict.value.approved ? 'approved' : 'rejected'}`
+      }),
+    ),
+)
+
+/** Sent with the reviewer's own writes, or not at all. */
+const decide = (id: string, section: string, approved: boolean) =>
+  Client.send(Review, { unique: ['review', id] }, 'verdict', section, {
+    approved,
+  })
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -365,6 +415,31 @@ describe('the durable workflow example', () => {
         expect(decodeRun(Document, done).output).toEqual([
           'draft intro',
           'draft body',
+        ])
+      }),
+    )
+  })
+})
+
+describe('the durable inputs example', () => {
+  it.effect('waits for verdicts sent by key, and for their deadline', () => {
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Review, {
+          id: 'r-1',
+          sections: ['intro', 'body'],
+        })
+        // Sent before the run has published anything: kept for it.
+        yield* decide('r-1', 'intro', true)
+        yield* serve(Review)
+        // Nobody decides on the body: its week passes at once.
+        yield* TestClock.adjust('8 days')
+        yield* serve(Review)
+        const done = (yield* Client.get(run.id))!.run
+        expect(decodeRun(Review, done).output).toEqual([
+          'intro: approved',
+          'body: expired',
         ])
       }),
     )

@@ -165,7 +165,15 @@ conflict as any pass is, and needs no lease of its own: a send or a child's
 end that lands during a pass voids it. Each operation is a node, kept with
 what it was opened with (`StoredNode.operation`), and the work of a task or
 workflow node is a child run, as a step's is. Its runs are workflow runs to
-everything outside the pass. A program also carries the description of its definition
+everything outside the pass.
+
+An input sent to a durable run is a plan too (`src/plan/send.ts`): it writes
+the input's node, completed with the value, in the sender's commit. Sent
+before the body comes to it, the node waits there to be read; sent while the
+body waits on it, the node it waits on is completed and the run woken. Its
+deadline is the node's `until`, compared with the time the send is planned
+at, as every plan reads time, so a value and the time running out are
+ordered by what was stored, not by when a pass runs. A program also carries the description of its definition
 (`src/graph/`): the graph, its hash, its labels, and for a revision its
 manifest. The engine saves and compares these as text and never reads into
 them.

@@ -59,3 +59,19 @@ export const Review = durable(
       return notes
     }),
 )
+
+/** A durable workflow that waits for one decision sent from outside it. */
+export const Approval = durable(
+  {
+    name: 'durable.approval',
+    revision: 'v1',
+    pool: 'default',
+    input: Schema.String,
+    output: Schema.String,
+    inputs: { decision: Schema.Boolean },
+  },
+  (subject, d) =>
+    Effect.map(d.input('decision', subject), (approved) =>
+      approved ? `${subject} approved` : `${subject} rejected`,
+    ),
+)

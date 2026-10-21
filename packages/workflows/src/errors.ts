@@ -215,3 +215,26 @@ export class OperationFailed extends Data.TaggedError('OperationFailed')<{
     return `Durable operation [${this.operation}] failed: ${this.error.message}`
   }
 }
+
+/**
+ * Why an input sent to a durable run was not taken:
+ *
+ * - `missing`: no run has the id, or holds the key;
+ * - `other`: the run is of another workflow or revision than the input's;
+ * - `ended`: the run has ended or is being cancelled;
+ * - `received`: the input already has another value, the first sent;
+ * - `closed`: the run stopped waiting for it when its time came.
+ */
+export class InputRefused extends Data.TaggedError('InputRefused')<{
+  readonly reason: 'missing' | 'other' | 'ended' | 'received' | 'closed'
+  /** The input's node name in the run: its family and key. */
+  readonly input: string
+  readonly runId?: string
+  /** For `other`: what the run is a run of. */
+  readonly found?: Runnable
+}> {
+  override get message() {
+    const run = this.runId === undefined ? '' : ` of run [${this.runId}]`
+    return `Input [${this.input}]${run} was refused: ${this.reason}`
+  }
+}

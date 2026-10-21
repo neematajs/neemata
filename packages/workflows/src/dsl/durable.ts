@@ -16,12 +16,15 @@ import type {
   Replay,
   ReplayOutcome,
 } from '../program.ts'
+import type { NodeWithoutInput } from '../store.ts'
+import type { Boundary, EffectSchema } from './codec.ts'
 import type { Declared, InputOf, Options, OutputOf } from './declaration.ts'
 import type { AnyTask } from './task.ts'
 import type { ServedWorkflow } from './workflow.ts'
 import { OperationFailed } from '../errors.ts'
 import { describe } from '../graph/revision.ts'
 import { parseDurationMs, storedError } from '../model.ts'
+import { ENGINE, inputName } from '../plan/send.ts'
 import { boundary } from './codec.ts'
 import { assertRevision, route } from './declaration.ts'
 
@@ -53,13 +56,27 @@ export type Closed = ServedWorkflow & {
   readonly tasks: readonly AnyTask[]
 }
 
+/** The inputs a durable workflow takes from outside: a schema per family. */
+export type InputSchemas = Readonly<Record<string, EffectSchema<any>>>
+
+type SchemaType<S> = S extends EffectSchema<infer A> ? A : never
+
+/** What a wait for an input with a timeout came to. */
+export type InputOutcome<A> =
+  | { readonly _tag: 'Received'; readonly value: A }
+  | { readonly _tag: 'TimedOut' }
+
 /**
  * What a body calls to have something done durably. Each call is an
  * operation the run keeps under its name, and a replay that comes to the
  * name again gets what is kept: a name stands for one operation for the
  * whole run, so one in a loop takes the loop's position in it.
  */
-export type Operations<T extends AnyTask, W extends Closed> = {
+export type Operations<
+  T extends AnyTask,
+  W extends Closed,
+  I extends InputSchemas = {},
+> = {
   /** Starts a run of a task the declaration uses, and has its output. */
   readonly task: <D extends T>(
     name: string,
@@ -90,6 +107,24 @@ export type Operations<T extends AnyTask, W extends Closed> = {
    * same in every replay after. The body has no clock of its own.
    */
   readonly now: (name: string) => Effect.Effect<number, never, Durable>
+  /**
+   * Waits for an input sent from outside the run with `Client.send`, under
+   * the name `family:key`. A value sent before the run comes here is kept
+   * for it; the first value sent is the input's. With a timeout, the wait
+   * ends at that time from when the run first comes here, and a value sent
+   * after it is refused.
+   */
+  readonly input: {
+    <F extends keyof I & string>(
+      family: F,
+      key: string,
+    ): Effect.Effect<SchemaType<I[F]>, never, Durable>
+    <F extends keyof I & string>(
+      family: F,
+      key: string,
+      options: { readonly timeout: DurationString },
+    ): Effect.Effect<InputOutcome<SchemaType<I[F]>>, never, Durable>
+  }
 }
 
 /** A durable workflow declared once: its body, and what it may start. */
@@ -100,9 +135,12 @@ export type DurableWorkflow<
   T extends AnyTask = never,
   W extends Closed = never,
   Pool extends string = string,
+  I extends InputSchemas = {},
 > = Declared<'workflow', Name, Input, Output, never, DurableProgram, Pool> & {
   readonly revision: string
   readonly mode: 'durable'
+  /** How a sender crosses to stored values, per input family. */
+  readonly inputs: { readonly [F in keyof I]: Boundary<SchemaType<I[F]>> }
   /** A durable workflow has no steps of its own declared. */
   readonly steps: readonly []
   /** What its body may start, as declared. */
@@ -124,7 +162,8 @@ export type AnyDurableWorkflow = DurableWorkflow<
   any,
   AnyTask,
   Closed,
-  string
+  string,
+  InputSchemas
 >
 
 export type DurableOptions<
@@ -134,6 +173,7 @@ export type DurableOptions<
   T extends AnyTask,
   W extends Closed,
   Pool extends string,
+  I extends InputSchemas = {},
 > = Options<Name, Input, Output, Pool> & {
   /**
    * Required: a run replays its body for days, and is pinned to the code it
@@ -145,6 +185,8 @@ export type DurableOptions<
   readonly tasks?: readonly T[]
   /** The workflows the body may start, each with a revision of its own. */
   readonly workflows?: readonly W[]
+  /** The inputs the body waits for, sent from outside the run, by family. */
+  readonly inputs?: I
 }
 
 /**
@@ -166,14 +208,15 @@ export function durable<
   T extends AnyTask = never,
   W extends Closed = never,
   Pool extends string = string,
+  const I extends InputSchemas = {},
 >(
-  options: DurableOptions<Name, Input, Output, T, W, Pool>,
+  options: DurableOptions<Name, Input, Output, T, W, Pool, I>,
   // The schemas alone decide Input and Output, never the body.
   body: (
     input: NoInfer<Input>,
-    d: Operations<T, W>,
+    d: Operations<T, W, I>,
   ) => Effect.Effect<NoInfer<Output>, unknown, Durable>,
-): DurableWorkflow<Name, Input, Output, T, W, Pool> {
+): DurableWorkflow<Name, Input, Output, T, W, Pool, I> {
   assertRevision('workflow', options)
   const { name, revision } = options
   if (revision === undefined) {
@@ -184,6 +227,7 @@ export function durable<
     output: to,
     tasks: usedTasks = [],
     workflows: usedWorkflows = [],
+    inputs: schemas = {} as I,
     ...declared
   } = options
   const uses: readonly (T | W)[] = [...usedTasks, ...usedWorkflows]
@@ -207,7 +251,29 @@ export function durable<
 
   const input = boundary(from, `workflow input [${name}]`)
   const output = boundary(to, `workflow output [${name}]`)
-  const operations = operationsOf<T, W>(name, uses)
+  // Null prototype, so no family is mistaken for an inherited member.
+  const inputs = Object.create(null) as DurableWorkflow<
+    Name,
+    Input,
+    Output,
+    T,
+    W,
+    Pool,
+    I
+  >['inputs']
+  for (const family of Object.keys(schemas)) {
+    if (!familyPattern.test(family)) {
+      throw new Error(
+        `Durable workflow [${name}] has an invalid input family [${family}]`,
+      )
+    }
+    ;(inputs as Record<string, unknown>)[family] = boundary(
+      schemas[family]!,
+      `input [${name}.${family}]`,
+    )
+  }
+  Object.freeze(inputs)
+  const operations = operationsOf<T, W, I>(name, uses, inputs)
   const program: DurableProgram = Object.freeze({
     kind: 'workflow',
     mode: 'durable',
@@ -225,6 +291,7 @@ export function durable<
       steps: [],
       mode: 'durable',
       uses,
+      inputs,
     }),
   })
 
@@ -235,7 +302,8 @@ export function durable<
     Output,
     T,
     W,
-    Pool
+    Pool,
+    I
   >['workflows'][number][] = []
   const tasks: (T | W['tasks'][number])[] = []
   const programs: Program[] = []
@@ -248,6 +316,7 @@ export function durable<
     output,
     steps: [] as const,
     uses,
+    inputs,
     program,
     workflows,
     tasks,
@@ -281,12 +350,26 @@ const assertName = (workflow: string, name: unknown) => {
       `Durable workflow [${workflow}] has an operation without a name`,
     )
   }
+  if (name.startsWith(ENGINE)) {
+    throw new Error(
+      `Durable workflow [${workflow}] names operation [${name}] with [${ENGINE}], which starts the names of the engine's own nodes`,
+    )
+  }
 }
 
-function operationsOf<T extends AnyTask, W extends Closed>(
+// Inputs are named `@family:key`, so a family holds no colon.
+const familyPattern = /^[a-zA-Z_$][a-zA-Z0-9_$-]*$/
+
+function operationsOf<
+  T extends AnyTask,
+  W extends Closed,
+  I extends InputSchemas,
+>(
   workflow: string,
   uses: readonly Target[],
-): Operations<T, W> {
+  inputs: object,
+): Operations<T, W, I> {
+  const boundaries = inputs as Readonly<Record<string, Boundary<unknown>>>
   const assertUsed = (target: Target) => {
     if (uses.includes(target)) return
     throw new Error(
@@ -356,6 +439,53 @@ function operationsOf<T extends AnyTask, W extends Closed>(
           ),
         )
       }),
+    input: ((
+      family: string,
+      key: string,
+      options?: {
+        readonly timeout: DurationString
+      },
+    ) =>
+      Effect.suspend(() => {
+        const schema = Object.hasOwn(boundaries, family)
+          ? boundaries[family]
+          : undefined
+        if (!schema) {
+          throw new Error(
+            `Durable workflow [${workflow}] waits for input [${family}], which it does not declare`,
+          )
+        }
+        if (typeof key !== 'string') {
+          throw new Error(
+            `Durable input [${workflow}.${family}] needs a string key`,
+          )
+        }
+        const timeoutMs =
+          options === undefined ? undefined : parseDurationMs(options.timeout)
+        if (options !== undefined && timeoutMs === undefined) {
+          throw new Error(
+            `Durable input [${workflow}.${family}] has an invalid timeout [${options.timeout}]`,
+          )
+        }
+        const operation: Operation = {
+          name: inputName(family, key),
+          kind: 'input',
+          family,
+          key,
+          ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        }
+        return Effect.orDie(
+          operate(operation, (output, node) =>
+            Effect.sync(() => {
+              if (node.operation?.timedOut) return { _tag: 'TimedOut' as const }
+              const value = schema.decode(output)
+              return options === undefined
+                ? value
+                : { _tag: 'Received' as const, value }
+            }),
+          ),
+        )
+      })) as Operations<T, W, I>['input'],
   }
 }
 
@@ -366,12 +496,12 @@ function operationsOf<T extends AnyTask, W extends Closed>(
  */
 function operate<A>(
   operation: Operation,
-  read: (output: unknown) => Effect.Effect<A>,
+  read: (output: unknown, node: NodeWithoutInput) => Effect.Effect<A>,
 ): Effect.Effect<A, OperationFailed, Durable> {
   return Effect.flatMap(Durable, (replaying) => {
     replaying.reached(operation)
     const node = replaying.history.node(operation.name)
-    if (node?.status === 'completed') return read(node.output)
+    if (node?.status === 'completed') return read(node.output, node)
     if (node?.status === 'failed') {
       return Effect.fail(
         new OperationFailed({

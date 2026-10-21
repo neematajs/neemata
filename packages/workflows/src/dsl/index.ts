@@ -6,6 +6,8 @@ export type {
   Closed,
   DurableOptions,
   DurableWorkflow,
+  InputOutcome,
+  InputSchemas,
   Operations,
 } from './durable.ts'
 export type {

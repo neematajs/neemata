@@ -22,6 +22,8 @@ export type {
   DurableOptions,
   DurableWorkflow,
   EffectSchema,
+  InputOutcome,
+  InputSchemas,
   Handler,
   InputOf,
   MapCall,
@@ -52,6 +54,7 @@ export {
   remove,
   requeue,
   retry,
+  send,
   setScheduleEnabled,
   settle,
   start,
@@ -62,6 +65,7 @@ export {
   CleanupTimeout,
   DefinitionConflict,
   IdempotencyConflict,
+  InputRefused,
   OperationFailed,
   RunBusy,
   RunConflict,
@@ -130,6 +134,7 @@ export type { Begun, Unroutable } from './plan/begin.ts'
 export type { PassResult } from './plan/pass.ts'
 export type { Retention } from './plan/remove.ts'
 export type { RetryError } from './plan/retry.ts'
+export type { HeldKey, Receipt, Recipient, SendInput } from './plan/send.ts'
 export type { Cadence, Fired, ScheduleEntry } from './plan/schedule.ts'
 export type { StartError, Started, StartInput } from './plan/start.ts'
 export { registry } from './program.ts'

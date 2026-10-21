@@ -23,7 +23,7 @@ import {
   Screen,
   Ship,
 } from './fixtures/fulfillment.ts'
-import { Review } from './fixtures/review.ts'
+import { Approval, Review } from './fixtures/review.ts'
 import { client, provided, SERVERS } from './redis-support.ts'
 
 /**
@@ -33,7 +33,14 @@ import { client, provided, SERVERS } from './redis-support.ts'
  */
 
 const served = {
-  workflows: [Billing, ManualBilling, Fulfillment, Ship, ...Review.workflows],
+  workflows: [
+    Billing,
+    ManualBilling,
+    Fulfillment,
+    Ship,
+    ...Review.workflows,
+    ...Approval.workflows,
+  ],
   tasks: [
     ...Review.tasks,
     CreateInvoice,
@@ -125,6 +132,26 @@ function engine(it: {
         output: { order: 'o-2', invoice: 'inv-o-2', paidBy: 'card' },
       })
       expect(handlers.charged).toEqual(['inv-o-2'])
+    }),
+  )
+
+  test(
+    'takes an input sent to a durable run, kept until it comes to it',
+    Effect.gen(function* () {
+      const run = yield* Client.start(Approval, 'invoice')
+      const receipt = yield* Client.send(
+        Approval,
+        run.id,
+        'decision',
+        'invoice',
+        true,
+      )
+      expect(receipt.duplicate).toBe(false)
+      yield* work({ pollMs: 50 })
+      expect(yield* ended(run.id)).toMatchObject({
+        status: 'completed',
+        output: 'invoice approved',
+      })
     }),
   )
 
