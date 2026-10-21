@@ -563,7 +563,9 @@ describe('the worker example', () => {
   )
 })
 
-describe('the PostgreSQL example', () => {
+// Each test starts a database of its own and installs the schema in it:
+// seconds on a slow runner, past the default timeout.
+describe('the PostgreSQL example', { timeout: 30_000 }, () => {
   // #region postgres-layer
   // PGlite: PostgreSQL in the process, for tests and local development.
   const database = Layer.orDie(PgliteClient.layer())

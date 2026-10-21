@@ -43,6 +43,8 @@ import {
 } from './postgres-support.ts'
 
 const database = Layer.orDie(PgliteClient.layer())
+/** For suites whose tests each start a database: seconds on a slow runner. */
+const slow = { timeout: 30_000 }
 const options = { excludeTestServices: true, timeout: '60 seconds' } as const
 
 const commit = <A>(mutation: Mutation, result: A): Planned<A> => ({
@@ -133,7 +135,7 @@ const floored = (table: string, column: string) =>
 
 // Each test starts a database of its own and installs or migrates a whole
 // schema in it: seconds on a slow runner, past the default timeout.
-describe('the schema', { timeout: 30_000 }, () => {
+describe('the schema', slow, () => {
   const tables = [...Object.keys(Postgres.COLUMNS), 'workflow_schema_version']
   const listed = tables.map((table) => `'${table}'`).join(', ')
 
@@ -811,7 +813,7 @@ describe('the schema', { timeout: 30_000 }, () => {
   )
 })
 
-describe('the search indexes of the Drizzle schema', () => {
+describe('the search indexes of the Drizzle schema', slow, () => {
   const declared = (options?: Parameters<typeof createSchema>[0]) =>
     getTableConfig(createSchema(options).tables.runs).indexes.map(
       ({ config }) => config,
@@ -2222,7 +2224,7 @@ describe.skipIf(!POSTGRES_URL)('the adapter on PostgreSQL', () => {
   layer(postgres(POSTGRES_URL!), options)(adapter(true))
 })
 
-describe('hints', () => {
+describe('hints', slow, () => {
   const served = {
     workflows: [Billing, ManualBilling],
     tasks: [CreateInvoice, RequestApproval, RecordPayment],
