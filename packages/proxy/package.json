@@ -20,7 +20,7 @@
     "build:debug": "napi build --platform --js index.js --output-dir dist -- --locked",
     "build:artifact": "napi build --release --platform --js index.js --output-dir dist",
     "check:rust": "cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
-    "check:type": "tsc -p tsconfig.json --noEmit --pretty false",
+    "check:type": "tsrs -p tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "test:rust": "cargo test --locked",
     "test": "pnpm run test:rust && pnpm run build:debug && pnpm run check:type && vitest run --reporter=agent"
   },

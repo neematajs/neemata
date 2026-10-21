@@ -43,3 +43,12 @@ minimumReleaseAgeExclude:
   - '@rolldown/binding-win32-arm64-msvc@1.2.14'
   - '@rolldown/binding-win32-x64-msvc@1.2.14'
   - '@oxc-project/types@0.154.0'
+  # tsrs 0.18.0-ts7.1.0-dev.20260929 (published 2026-10-19) is admitted early, with its exact platform
+  # binaries; later releases still wait out the policy. These entries are
+  # redundant from 2026-10-22 and can be removed.
+  - tsrs@0.18.0-ts7.1.0-dev.20260929
+  - '@tsrs/darwin-arm64@0.18.0-ts7.1.0-dev.20260929'
+  - '@tsrs/linux-arm64-gnu@0.18.0-ts7.1.0-dev.20260929'
+  - '@tsrs/linux-arm64-musl@0.18.0-ts7.1.0-dev.20260929'
+  - '@tsrs/linux-x64-gnu@0.18.0-ts7.1.0-dev.20260929'
+  - '@tsrs/linux-x64-musl@0.18.0-ts7.1.0-dev.20260929'

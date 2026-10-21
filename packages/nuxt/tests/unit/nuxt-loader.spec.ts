@@ -104,7 +104,7 @@ try {
       const source = pathToFileURL(
         resolve(import.meta.dirname, '../../src/nuxt-loader.ts'),
       ).href
-      const env = {
+      const env: NodeJS.ProcessEnv = {
         ...process.env,
         NODE_PATH: resolve(import.meta.dirname, '../../node_modules'),
       }

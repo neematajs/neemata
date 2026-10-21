@@ -7,6 +7,5 @@ export default defineProject({
     hookTimeout: 45_000,
     include: ['tests/e2e/**/*.spec.ts'],
     maxWorkers: 1,
-    typecheck: { enabled: true, tsconfig: './tests/tsconfig.json' },
   },
 })

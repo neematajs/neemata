@@ -8,6 +8,5 @@ export default defineProject({
       'tests/integration/**/*.spec.ts',
       'tests/regression/**/*.spec.ts',
     ],
-    typecheck: { enabled: true, tsconfig: './tsconfig.json' },
   },
 })

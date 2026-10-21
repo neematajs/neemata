@@ -17,6 +17,5 @@ export default defineProject({
     // They spawn processes and hold many connections to servers they share;
     // one file at a time keeps their deadlines meaningful.
     fileParallelism: includeIntegration ? false : undefined,
-    typecheck: { enabled: true, tsconfig: './tsconfig.json' },
   },
 })

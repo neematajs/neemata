@@ -121,11 +121,11 @@ jobs:
         run: pnpm --dir .coverage/base install --frozen-lockfile
 
       - name: Build candidate
-        run: pnpm exec tsc -b tsconfig.build.json --pretty false
+        run: pnpm run build:ts
 
       - name: Build base
         if: steps.coverage-base.outputs.available == 'true'
-        run: pnpm --dir .coverage/base exec tsc -b tsconfig.build.json --pretty false
+        run: pnpm --dir .coverage/base run build:ts
 
       - name: Collect paired coverage
         shell: bash

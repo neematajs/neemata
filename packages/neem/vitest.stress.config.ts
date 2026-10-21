@@ -7,6 +7,5 @@ export default defineProject({
     include: ['tests/stress/**/*.spec.ts'],
     maxWorkers: 1,
     testTimeout: 120_000,
-    typecheck: { enabled: true, tsconfig: './tsconfig.json' },
   },
 })

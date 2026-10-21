@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "neem build --config neem.config.ts --outDir dist",
-    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
+    "typecheck": "tsgo -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
     "@nmtjs/neem": "file:../packages/neem",

@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net'
 import { createServer } from 'node:http'
 
 import type { Logger } from 'pino'
+import { prometheusContentType } from '@nmtjs/prom-client'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -16,7 +17,10 @@ describe('createMetricsServer', () => {
     const metrics = createMetricsServer({
       logger,
       config: { host: '127.0.0.1', port: 0, path: '/custom-metrics' },
-      registry: { contentType: 'text/plain', metrics: () => 'test_metric 2\n' },
+      registry: {
+        contentType: prometheusContentType,
+        metrics: () => 'test_metric 2\n',
+      },
     })
 
     try {
@@ -42,7 +46,7 @@ describe('createMetricsServer', () => {
       logger,
       config: { host: '127.0.0.1', port: 0 },
       registry: {
-        contentType: 'text/plain',
+        contentType: prometheusContentType,
         metrics: () => {
           throw new Error('collector failed')
         },
@@ -90,7 +94,10 @@ describe('createMetricsServer', () => {
           interval: 60_000,
         },
       },
-      registry: { contentType: 'text/plain', metrics: () => 'test_metric 1\n' },
+      registry: {
+        contentType: prometheusContentType,
+        metrics: () => 'test_metric 1\n',
+      },
     })
 
     try {
