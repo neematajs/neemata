@@ -22,6 +22,7 @@ import {
   spawnNeem,
   spawnNode,
   waitFor,
+  waitForPatchClients,
 } from '../../neem/tests/e2e/support/e2e.ts'
 import { createTempDir } from '../../neem/tests/support/temp.ts'
 import { Greeting } from './fixtures/neem/app.ts'
@@ -218,12 +219,26 @@ it('replaces the workers of an edited worker in development, stopping the old on
     30_000,
     () => output(neem),
   )
+  // An edit before every thread registered restarts the runtime instead.
+  await waitForPatchClients(neem, { threads: threads.length })
 
   await editWorkerFile(
     neem,
     resolve(fixture.fixtureDir, 'workflows.worker.ts'),
     (source) => source.replace('generation-1', 'generation-2'),
   )
+  // Each thread answers the patch once it released the old generation and
+  // acquired the new one. The heavy threads can complete their runs before
+  // another thread acquires, so their runs alone do not show the replacement.
+  const outcome = await neem.waitForEvent(
+    (event) =>
+      event.event === 'runtime:patch-applied' ||
+      event.event === 'runtime:patch-fallback',
+    30_000,
+  )
+  expect(outcome, output(neem)).toMatchObject({
+    event: 'runtime:patch-applied',
+  })
 
   const events = await waitFor(
     async () => {

@@ -44,8 +44,11 @@ beforeEach(() => {
 
 // On macOS, Rolldown (1.2.11) restarts its FSEvents stream after every rebuild,
 // even when no watched path changed, and a write landing in that gap is never
-// reported. Write until the engine reports so these cases test Neem, not that
-// race.
+// reported. Its poll watcher (1.2.14) has a gap too: `run()` resolves once the
+// files are registered, but each poll thread reads their first state only on
+// its next scan, and a write before that scan becomes the state it compares
+// against. Write until the engine reports so these cases test Neem, not those
+// races.
 async function editUntilReported(
   file: string,
   content: string,
@@ -411,11 +414,13 @@ describe('Neem compiler', () => {
           pollInterval: 25,
         })
         await watcher.addPatchClient('api', 'client')
-        // A polling watcher has no event-stream gap, so one write suffices.
-        await writeFile(valueFile, "export const value = 'v2'\n")
-        const result = await raceWithTimeout(settled.promise, 5_000)
-        if (result.timedOut) throw new Error('DevEngine never polled the edit')
-        expect(result.value).toEqual([
+        expect(
+          await editUntilReported(
+            valueFile,
+            "export const value = 'v2'\n",
+            () => settled.promise,
+          ),
+        ).toEqual([
           expect.objectContaining({
             update: expect.objectContaining({ type: 'Patch' }),
           }),
