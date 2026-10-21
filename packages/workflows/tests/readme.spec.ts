@@ -29,6 +29,7 @@ import {
   workflow,
 } from '../src/index.ts'
 import {
+  durableView,
   nodeUnits,
   renderWorkflowGraph,
   serializeWorkflowCatalog,
@@ -391,6 +392,31 @@ const unblock = (runId: string, version: number) =>
   Client.resume(runId, { expectedVersion: version })
 // #endregion
 
+// #region durable-view
+// Server: the run, its definition, and the runs its operations started.
+const durableInspection = (runId: string) =>
+  Client.inspect(runId, { children: true })
+
+// Browser: what the run did, waits for, and which run to resume.
+const show = (inspection: RunInspection) => {
+  const view = durableView(inspection)
+  if (!view) return undefined
+  return {
+    waitingFor: view.operations.flatMap((operation) =>
+      operation.kind === 'input' && operation.state === 'waiting'
+        ? [`${operation.family} ${operation.key}`]
+        : [],
+    ),
+    // `Client.resume(runId)` for the run itself...
+    resumeRun: view.blockers.some(({ kind }) => kind !== 'child'),
+    // ...and `Client.resume(childRunId)` for each child blocked in its place.
+    resumeChildren: view.blockers.flatMap((blocker) =>
+      blocker.kind === 'child' ? [blocker.childRunId] : [],
+    ),
+  }
+}
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -460,6 +486,27 @@ describe('the resume example', () => {
         const run = yield* Client.start(Review, { id: 'r-2', sections: [] })
         const refused = yield* Effect.flip(unblock(run.id, run.version))
         expect(refused._tag).toBe('RunNotBlocked')
+      }),
+    )
+  })
+})
+
+describe('the durable view example', () => {
+  it.effect('shows what a durable run waits for', () => {
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Review, {
+          id: 'r-3',
+          sections: ['intro'],
+        })
+        yield* serve(Review)
+        const inspection = yield* durableInspection(run.id)
+        expect(show(inspection!)).toEqual({
+          waitingFor: ['verdict intro'],
+          resumeRun: false,
+          resumeChildren: [],
+        })
       }),
     )
   })

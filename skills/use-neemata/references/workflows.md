@@ -23,7 +23,8 @@ Use package subpaths, not an umbrella `nmtjs` import:
   `/postgres/drizzle`: `createSchema`. See [PostgreSQL](postgres.md).
 - `@nmtjs/workflows/redis`: `layer({ prefix?, maxDeliveries? })`.
 - `@nmtjs/workflows/inspector`: browser-safe graph/catalog serialization,
-  `nodeUnits`, `parseChildKey`, `isTerminal` and record types.
+  `nodeUnits`, `durableView`, `parseChildKey`, `isTerminal` and record
+  types.
 - `@nmtjs/workflows/neem`: `createWorkflowsRuntime`, `defineWorkflowsPlanner`;
   `@nmtjs/workflows/neem/worker`: `defineWorkflowsWorker`.
 
@@ -386,7 +387,9 @@ value)`: an input for a durable run, see [Inputs](#inputs). Fails with
 - Reads: `get` (`{ run, nodes, children, attempts }` with payloads),
   `getDetail` (payload-free, with `childRuns`), `getNode`, `getFamily`,
   `list` / `listSummaries` (`{ runs, nextCursor? }`, newest first),
-  `inspect` (`{ detail, definition }`), `getDefinition({ kind, name,
+  `inspect` (`{ detail, definition }`); `getDetail` and `inspect` take
+  `{ children: true }` to add `childDetails` (one level, with attempts),
+  `getDefinition({ kind, name,
 revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
   `status`, `parentRunId` (`null` = roots), `rootRunId`, `tags`, `input`
   (JSON containment), `createdBefore`, `activeBefore`, `limit` (100),
@@ -405,9 +408,8 @@ revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
 - `schedules.list()`, `schedules.trigger(name)`,
   `schedules.setEnabled(name, on)`; the last two fail with `UnknownSchedule`.
 
-Run statuses: `queued`, `running`, `waiting`, `blocked` (durable runs
-only), `cancelling`, then
-`completed`, `failed` or `cancelled`.
+Run statuses: `queued`, `running`, `waiting`, `blocked` (durable runs only),
+`cancelling`, then `completed`, `failed` or `cancelled`.
 
 ## Workers
 
@@ -520,6 +522,26 @@ presentation)` and `nodeUnits(detail, nodeName)` join a step's children,
 attempts and child runs. Child keys are `$self`, `case:<key>`,
 `member:<key>` and `item:<index>`. When `definition.source` is `'observed'`,
 no trustworthy graph exists for the run; do not fill one in from current code.
+
+A durable run has no graph: serve `Client.inspect(runId, { children: true })`
+and build its view in the browser with `durableView(inspection)`
+(`undefined` for a static run):
+
+- `operations`, in the order the run admitted them (an input sent early comes
+  before the work it answers): task/workflow with `target`, `childRun`,
+  `attempts`, `limits`, `blocked`; `sleep` with `until`; `now`; `input` with
+  `family`, `key`, `until`, `receivedAt`, `readAt` and `state`: `waiting`,
+  `buffered` (stored, not yet read), `received` (the body read it),
+  `timedOut` or `cancelled`.
+- `blockers` with advisory `actions`: `operation` (`resume`, `cancel`),
+  `mismatch` (`resume` once matching code is deployed), `child` (resume the
+  child by `childRunId`). `operation` and `mismatch` show only while the run
+  is `blocked`; `child` shows while the parent is active, which may be
+  `waiting` on that child. A cancelled or ended run shows none.
+- Labels, journey order and progress are the app's, keyed by operation name;
+  `readAt` says the body read an input, not that its effects committed.
+- Re-read on `Client.watch(runId, { wake: true })` changes and periodically:
+  hints are best-effort.
 
 ## Neem integration
 

@@ -376,6 +376,19 @@ export type RunDetail = {
   readonly children: readonly Omit<StoredChild, 'item' | 'input' | 'output'>[]
   readonly attempts: readonly Omit<StoredAttempt, 'input' | 'output'>[]
   readonly childRuns: readonly RunSummary[]
+  /**
+   * The detail of each run it started, by id, when asked for with
+   * `children`: one level, as each holds its own `childRuns` to go deeper.
+   */
+  readonly childDetails?: Readonly<Record<string, RunDetail>>
+}
+
+export type DetailOptions = {
+  /**
+   * Reads the runs the run started whole too, a task run's attempts among
+   * them: what a view of a durable run shows of each operation's work.
+   */
+  readonly children?: boolean
 }
 
 /**
@@ -462,6 +475,38 @@ function detailOf(
   }
 }
 
+/**
+ * A detail with the details of the runs its run started, when asked for. All
+ * of them, and the heads their own details name, are asked for at once,
+ * before any is made: a plan that asks is planned again, once per ask.
+ */
+function withChildren(
+  draft: Draft,
+  records: RunRecords,
+  detail: RunDetail,
+  children: boolean,
+): RunDetail {
+  if (!children) return detail
+  const ids = records.children.flatMap(({ childRunId }) =>
+    childRunId === undefined ? [] : [childRunId],
+  )
+  draft.require({ runs: ids })
+  const found = ids.flatMap((id) => {
+    const child = draft.records(id)
+    return child ? [child] : []
+  })
+  draft.require({
+    heads: found.flatMap(({ children: under }) =>
+      under.flatMap(({ childRunId }) =>
+        childRunId === undefined ? [] : [childRunId],
+      ),
+    ),
+  })
+  const childDetails: Record<string, RunDetail> = Object.create(null)
+  for (const child of found) childDetails[child.run.id] = detailOf(draft, child)
+  return { ...detail, childDetails }
+}
+
 /** A stored graph is trusted only when it still hashes to the key it is under. */
 function verified(graphHash: string, stored: unknown) {
   try {
@@ -507,6 +552,7 @@ function definitionOf(
  */
 export const inspect = (
   runId: string,
+  { children = false }: DetailOptions = {},
 ): Effect.Effect<RunInspection | undefined, StorageError, Store> =>
   Effect.flatMap(Store, (store) =>
     store.transact(
@@ -523,10 +569,15 @@ export const inspect = (
             ? undefined
             : revisionKey({ kind, name, revision })
         return {
-          detail: detailOf(
+          detail: withChildren(
             draft,
             records,
-            [graph, manifest].filter((key) => key !== undefined),
+            detailOf(
+              draft,
+              records,
+              [graph, manifest].filter((key) => key !== undefined),
+            ),
+            children,
           ),
           definition: definitionOf(
             run,
@@ -797,13 +848,15 @@ export const list = (
  */
 export const getDetail = (
   runId: string,
+  { children = false }: DetailOptions = {},
 ): Effect.Effect<RunDetail | undefined, StorageError, Store> =>
   Effect.flatMap(Store, (store) =>
     store.transact(
       { runs: [runId] },
       planning((draft): RunDetail | undefined => {
         const records = draft.records(runId)
-        return records && detailOf(draft, records)
+        if (!records) return undefined
+        return withChildren(draft, records, detailOf(draft, records), children)
       }),
     ),
   ).pipe(claimless)

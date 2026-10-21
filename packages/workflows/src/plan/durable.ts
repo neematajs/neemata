@@ -73,6 +73,7 @@ export function advanceDurable(
     // run waits for code that replays it as it was, and for a resume.
     const mismatch = diverged(draft, run, operations)
     if (mismatch) return block(draft, run, mismatch)
+    markRead(draft, run, operations)
     if (outcome._tag !== 'Suspended') return conclude(draft, run, outcome)
     blocked = replayed.blocked
 
@@ -130,6 +131,29 @@ export function advanceDurable(
   const head = draft.head(run.id)!
   if (head.status !== status || blocking) draft.updateRun(head, { status })
   return []
+}
+
+/**
+ * Notes when the body first read each input it came to with a value: until
+ * then a value sent is only kept for it. Once per input, ever.
+ */
+function markRead(
+  draft: Draft,
+  run: StoredRun,
+  operations: readonly Operation[],
+) {
+  for (const { kind, name } of operations) {
+    if (kind !== 'input') continue
+    const read = draft.nodeRead(run.id, name)?.record
+    if (read?.status !== 'completed' || read.operation?.readAt !== undefined) {
+      continue
+    }
+    if (read.operation?.timedOut) continue
+    const node = draft.node(run.id, name)!
+    draft.updateNode(node, {
+      operation: { ...node.operation!, readAt: draft.now },
+    })
+  }
 }
 
 /** The name of the error a run blocked for a replay mismatch holds. */

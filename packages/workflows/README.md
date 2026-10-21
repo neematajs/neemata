@@ -1571,6 +1571,53 @@ The inspector entry also exports the record types (`RunDetail`,
 browser receives. Hashing (`hashStructure`, `describeDefinition`) needs
 `node:crypto` and is in the main entry.
 
+### A durable run
+
+A durable run has no graph to draw: its operations are known as it comes to
+them. `durableView` turns its inspection, read with `children` for each
+operation's work and attempts, into what a screen or an operator shows: the
+operations in the order the run took them, and what blocks it with the
+actions that may unblock it.
+
+```ts
+import { durableView } from '@nmtjs/workflows/inspector'
+
+// Server: the run, its definition, and the runs its operations started.
+const durableInspection = (runId: string) =>
+  Client.inspect(runId, { children: true })
+
+// Browser: what the run did, waits for, and which run to resume.
+const show = (inspection: RunInspection) => {
+  const view = durableView(inspection)
+  if (!view) return undefined
+  return {
+    waitingFor: view.operations.flatMap((operation) =>
+      operation.kind === 'input' && operation.state === 'waiting'
+        ? [`${operation.family} ${operation.key}`]
+        : [],
+    ),
+    // `Client.resume(runId)` for the run itself...
+    resumeRun: view.blockers.some(({ kind }) => kind !== 'child'),
+    // ...and `Client.resume(childRunId)` for each child blocked in its place.
+    resumeChildren: view.blockers.flatMap((blocker) =>
+      blocker.kind === 'child' ? [blocker.childRunId] : [],
+    ),
+  }
+}
+```
+
+An input is `waiting` while the run waits for it, `buffered` while a value
+sent before the run came to it is kept, `received` once the run read it,
+`timedOut` when its wait ended with no value. A blocker is an operation whose
+work failed (`resume`), a replay that no longer matches (`resume` once code
+that matches is deployed), or a child run blocked itself, which is resumed
+in its place. `status: ['blocked']` finds blocked runs in `Client.list`, a
+family's with `rootRunId`. A run's status changes less often than what is
+shown of it, an input received or an operation blocked: `Client.watch(runId,
+{ wake: true })` also gives a `change` on hints that its family changed,
+which is when to read the view again. Hints are best-effort, so a screen
+that must not go stale also reads it again now and then.
+
 ## Stores
 
 A store is a `Layer` that provides `Store`. The client and the workers of one
