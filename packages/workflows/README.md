@@ -561,7 +561,7 @@ const Document = durable(
 
 | Operation                           | What the run keeps under the name                                    |
 | ----------------------------------- | -------------------------------------------------------------------- |
-| `d.task(name, Task, input, opts?)`  | a run of the task, as a step's; its output, or `OperationFailed`     |
+| `d.task(name, Task, input, opts?)`  | a run of the task, as a step's; its output, or it blocks or fails    |
 | `d.workflow(name, Workflow, input)` | a child run of the workflow, static or durable                       |
 | `d.sleep(name, duration)`           | a wait that ends `duration` after the run first came to it           |
 | `d.now(name)`                       | the time the run first came to it, the same in every replay after it |
@@ -569,9 +569,11 @@ const Document = durable(
 
 Concurrent branches are Effect's: `Effect.all` and `Effect.forEach` with a
 `concurrency` open every operation they come to in one pass, and a bounded
-`concurrency` bounds how many are open at once. A failed operation fails with
-`OperationFailed`, which the body may catch and go on from; uncaught, it fails
-the run. A body that ends while operations it let go of are still open, a
+`concurrency` bounds how many are open at once. An operation whose work
+failed, its retries spent, **blocks** the run by default (see
+[Blocking and resuming](#blocking-and-resuming)); with `onFailure: 'fail'` it
+fails with `OperationFailed`, which the body may catch and go on from. A body
+that ends while operations it let go of are still open, a
 branch `Effect.all` abandoned when another failed, ends the run once they have
 been stopped: until then the run keeps its unique key, as a cancelled one
 does.
@@ -580,13 +582,13 @@ What a replay requires:
 
 - **One name, one operation.** A name stands for one operation for the whole
   run: in a loop it takes the loop's position, as `draft:${section.id}` does.
-  A name asked for twice in one replay fails the run with `ReplayMismatch`.
+  A name asked for twice in one replay blocks the run with `ReplayMismatch`.
   The application chooses names, and they must stay the same for as long as
   runs of the revision are in flight: build them from ids the run holds,
   never from a timestamp, a random value or a list position that may move.
 - **The same operation every time.** Each node keeps what it was opened with,
   its kind, target and input, and a replay that asks for something else
-  under its name fails the run with `ReplayMismatch`: what a node holds is
+  under its name blocks the run with `ReplayMismatch`: what a node holds is
   never changed to fit other code. Only what a replay reaches is compared:
   a call the code no longer makes leaves its node unused, unnoticed.
 - **A pure, synchronous body.** It may require nothing but `Durable`, so a
@@ -687,12 +689,59 @@ have: names starting with `@` are the engine's, so whatever key a sender
 picks, it never lands on an operation. Authorizing a sender and validating
 more than the schema does are the application's, before it sends.
 
+#### Blocking and resuming
+
+A run that waits days for people should not end because one call to a
+provider failed. An operation whose work failed, its retries spent, blocks
+the run instead: the body is never shown the failure, the run's status is
+`blocked`, and its other branches go on. An operator, or the application on
+someone's behalf, resumes it once the cause is fixed:
+
+```ts
+// The run as the operator saw it: a resume decided on an older view is refused.
+const unblock = (runId: string, version: number) =>
+  Client.resume(runId, { expectedVersion: version })
+```
+
+| `onFailure` | When the work fails, its retries spent                               |
+| ----------- | -------------------------------------------------------------------- |
+| `block`     | the run blocks; `Client.resume` runs the same work again             |
+| `fail`      | the operation fails with `OperationFailed`, which the body may catch |
+
+`onFailure` is the declaration's, `block` when omitted, and an operation's
+own option overrides it. Set `fail` wherever the body handles a failure
+itself, a fallback to another provider say: a blocking operation never
+reaches the body's `catch`. A durable child's failure is one its body
+decided on, so `d.workflow` on a durable child always fails and may not
+block.
+
+- **Resuming** runs the failed work again as the same run: its completed
+  work kept, a fresh retry budget, the limits the operation gave it, and the
+  same `attempt.idempotencyKey` for its handlers. `blockers` names the
+  operations to resume, all of them when omitted.
+- **A replay mismatch blocks too**, with `ReplayMismatch` as the run's
+  error: nothing is opened until a resume replays it with the code deployed
+  then, and it blocks again if that still does not match. Deploy code that
+  replays the run as it was, under the same revision, then resume.
+- **While blocked** the run keeps its unique key, takes inputs, and can be
+  cancelled; a run timeout goes on counting, and `resume` resets none of it.
+  `expectedVersion` covers what blocks the run, as every change to it writes
+  the run; it does not cover every change in the runs under it.
+- **Refused:** `RunNotBlocked`, `StaleRunVersion`, `BlockerNotResumable`
+  for an operation that does not block the run, and `RunBusy` while anything
+  under the work to reopen is still ending: a run failed by its timeout ends
+  before its handlers have, and the work must not run twice.
+- **What blocks is what the body waits on.** An operation it let go of, the
+  loser of a race say, no longer blocks the run.
+
+A blocked run is not failed, so `Client.retry` has nothing to do with it; a
+durable run that did fail is not retried in place either, as its body may
+have decided from what failed: `Client.retry` refuses it with
+`RunNotRetryable`, and `Client.restart` starts it again.
+
 Each pass replays every operation the run has done, so a run is meant for
 tens or hundreds of them; a list of thousands is a map in a static workflow,
-or a child workflow per item. A durable run is not retried in place: its body
-may have decided from a failure, which reopening it would contradict, so
-`Client.retry` refuses it with `RunNotRetryable` and `Client.restart` starts
-it again.
+or a child workflow per item.
 
 ### Handlers
 

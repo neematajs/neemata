@@ -385,6 +385,12 @@ const decide = (id: string, section: string, approved: boolean) =>
   })
 // #endregion
 
+// #region resume
+// The run as the operator saw it: a resume decided on an older view is refused.
+const unblock = (runId: string, version: number) =>
+  Client.resume(runId, { expectedVersion: version })
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -441,6 +447,19 @@ describe('the durable inputs example', () => {
           'intro: approved',
           'body: expired',
         ])
+      }),
+    )
+  })
+})
+
+describe('the resume example', () => {
+  it.effect('refuses a resume of a run that is not blocked', () => {
+    const { provide } = deployment()
+    return provide(
+      Effect.gen(function* () {
+        const run = yield* Client.start(Review, { id: 'r-2', sections: [] })
+        const refused = yield* Effect.flip(unblock(run.id, run.version))
+        expect(refused._tag).toBe('RunNotBlocked')
       }),
     )
   })

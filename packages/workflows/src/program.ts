@@ -233,6 +233,11 @@ export type ReplayOutcome =
 export type Replayed = {
   readonly outcome: ReplayOutcome
   /**
+   * The operations whose work failed and that the body waits on instead of
+   * being shown the failure: they block the run until resumed.
+   */
+  readonly blocked: readonly string[]
+  /**
    * Every operation the body came to, in the order it came to them: those
    * it has a node for are checked against the node, the others are opened.
    */

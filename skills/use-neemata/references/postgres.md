@@ -113,7 +113,8 @@ The schema is generation **7**. The application owns production migrations.
   a schema.
 
 Generation 7 adds what durable workflows store: the node kinds `sleep`,
-`now` and `input`, and `workflow_nodes.operation`. It only adds, so it takes
+`now` and `input`, `workflow_nodes.operation`, and the run status
+`blocked`. It only adds, so it takes
 no time that grows with history. Stop the older workers, then run
 `Postgres.migrateFrom6` (in process) or `MIGRATION_FROM_6_SQL` in one
 transaction.

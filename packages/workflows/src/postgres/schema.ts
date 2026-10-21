@@ -55,7 +55,8 @@ export const INSTALL: readonly string[] = [
   )`,
   `CREATE TYPE workflow_node_child_kind AS ENUM ('activity', 'task', 'workflow')`,
   `CREATE TYPE workflow_run_status AS ENUM (
-    'queued', 'running', 'waiting', 'cancelling', 'cancelled', 'failed', 'completed'
+    'queued', 'running', 'waiting', 'cancelling', 'cancelled', 'failed', 'completed',
+    'blocked'
   )`,
   `CREATE TYPE workflow_node_status AS ENUM (
     'pending', 'running', 'waiting', 'cancelling', 'cancelled', 'failed', 'completed'
@@ -483,13 +484,15 @@ const AFTER_KEYS: readonly string[] = [
 
 /**
  * Generation 6 to 7: the nodes of durable workflows, which run nothing of
- * their own, and what a durable workflow's body asked each of its nodes to
- * be. Adds only: generation 6 runs read as they did.
+ * their own, what a durable workflow's body asked each of its nodes to be,
+ * and the status of a durable run blocked until resumed. Adds only:
+ * generation 6 runs read as they did.
  */
 const TO_7: readonly string[] = [
   `ALTER TYPE workflow_node_kind ADD VALUE 'sleep'`,
   `ALTER TYPE workflow_node_kind ADD VALUE 'now'`,
   `ALTER TYPE workflow_node_kind ADD VALUE 'input'`,
+  `ALTER TYPE workflow_run_status ADD VALUE 'blocked'`,
   `ALTER TABLE workflow_nodes ADD COLUMN operation jsonb`,
 ]
 

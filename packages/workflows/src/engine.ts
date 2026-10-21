@@ -4,6 +4,7 @@ import type { StaleClaim, StorageError } from './errors.ts'
 import type { AttemptCommand, ContinueRun, StoredRun } from './model.ts'
 import type { Outcome } from './plan/attempt.ts'
 import type { Retention } from './plan/remove.ts'
+import type { ResumeOptions } from './plan/resume.ts'
 import type { ScheduleEntry } from './plan/schedule.ts'
 import type { SendInput } from './plan/send.ts'
 import type { StartInput } from './plan/start.ts'
@@ -15,6 +16,7 @@ import { planCancel, planDrain } from './plan/cancel.ts'
 import { passScope, planPass } from './plan/pass.ts'
 import { planReap, planRequeue } from './plan/reap.ts'
 import { planDelete, planPrune } from './plan/remove.ts'
+import { planResume } from './plan/resume.ts'
 import { planRetry } from './plan/retry.ts'
 import {
   planFire,
@@ -122,6 +124,15 @@ export const cancel = (runId: string) =>
 export const retry = (runId: string, expectedVersion?: number) =>
   Effect.flatMap(Store, (store) =>
     store.transact({ runs: [runId] }, planRetry(runId, expectedVersion)),
+  )
+
+/**
+ * Unblocks a blocked durable run: reopens the failed work of the operations
+ * it names, all of them when it names none, and replays it again.
+ */
+export const resume = (runId: string, options?: ResumeOptions) =>
+  Effect.flatMap(Store, (store) =>
+    store.transact({ runs: [runId] }, planResume(runId, options)),
   )
 
 /** Drains the task runs a run failed from outside left waiting; whether any. */

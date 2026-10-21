@@ -199,17 +199,18 @@ export const Document = durable(
 )
 ```
 
-| Operation                                              | Gives                                                    |
-| ------------------------------------------------------ | -------------------------------------------------------- |
-| `d.task(name, Task, input, { retry?, timeout? })`      | the task's output, or `OperationFailed`                  |
-| `d.workflow(name, Workflow, input, { cancellation? })` | a static or durable child's output                       |
-| `d.sleep(name, '1h')`                                  | `void`, the duration after first reaching it             |
-| `d.now(name)`                                          | Unix ms when first reached, the same on every replay     |
-| `d.input(family, key)`                                 | the value sent with `Client.send`, however long it takes |
-| `d.input(family, key, { timeout: '7d' })`              | `{ _tag: 'Received', value }` or `{ _tag: 'TimedOut' }`  |
+| Operation                                                          | Gives                                                                 |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------- |
+| `d.task(name, Task, input, { retry?, timeout?, onFailure? })`      | the task's output; on failure it blocks the run, or `OperationFailed` |
+| `d.workflow(name, Workflow, input, { cancellation?, onFailure? })` | a static or durable child's output                                    |
+| `d.sleep(name, '1h')`                                              | `void`, the duration after first reaching it                          |
+| `d.now(name)`                                                      | Unix ms when first reached, the same on every replay                  |
+| `d.input(family, key)`                                             | the value sent with `Client.send`, however long it takes              |
+| `d.input(family, key, { timeout: '7d' })`                          | `{ _tag: 'Received', value }` or `{ _tag: 'TimedOut' }`               |
 
 Options are `workflow`'s plus `revision` (required), `tasks`, `workflows` and
-`inputs` (`{ family: Schema }`): every target must be versioned and declared
+`inputs` (`{ family: Schema }`) and `onFailure` (`'block'` by default): every
+target must be versioned and declared
 once, at one revision; a family is an identifier (`[a-zA-Z_$][\w$-]*`). Serve
 `Document.workflows` / `Document.tasks` as for any workflow.
 
@@ -223,8 +224,10 @@ The app chooses each operation's name, and **the name is its identity**.
 - After the body stops and before anything is written, every operation the
   replay reached is compared with the node under its name: kind, target
   (name and revision) and encoded input. A difference, or a name reached
-  twice in one replay, is `ReplayMismatch`, and the replay is discarded. A
-  stored node is never changed to fit the code.
+  twice in one replay, is `ReplayMismatch`: the replay is discarded and the
+  run is `blocked` until code that replays it as stored is deployed under
+  that revision and the run is resumed. A stored node is never changed to
+  fit the code.
 - Names are unique within a run (not across runs) and **stable for as long as
   runs of the revision are in flight, across deploys**. Build them from
   stable ids the run already holds, its input or earlier outputs:
@@ -248,8 +251,10 @@ The app chooses each operation's name, and **the name is its identity**.
 - `Effect.all` / `Effect.forEach` with `concurrency` open several operations
   in one pass. A run whose body ended with abandoned operations still open
   ends once they are stopped.
-- A failed operation fails with `OperationFailed` (`operation`, `error`),
-  which the body may catch; uncaught, it fails the run.
+- An operation whose work failed, retries spent, blocks the run by default;
+  with `onFailure: 'fail'` it fails with `OperationFailed` (`operation`,
+  `error`), which the body may catch; uncaught, that fails the run. See
+  [Blocking and resuming](#blocking-and-resuming).
 - Each pass replays everything the run has done: plan for tens or hundreds of
   operations per run, not thousands.
 - `Client.retry` refuses a failed durable run (`RunNotRetryable`), since its
@@ -288,6 +293,38 @@ const decide = (id: string, section: string, approved: boolean) =>
   revision's schema, so schemas must be pure.
 - Authorization and validation beyond the schema are the app's, before it
   sends.
+
+### Blocking and resuming
+
+A run that waits days for people should not end because one provider call
+failed. Under `onFailure: 'block'` (the default; per operation or on the
+declaration) work that failed with its retries spent blocks the run instead:
+the body never sees the failure, other branches go on, and the run's status
+is `blocked` until someone resumes it.
+
+```ts
+// After fixing the cause. A resume decided on an older view is refused.
+yield * Client.resume(runId, { expectedVersion: run.version })
+yield * Client.resume(runId, { blockers: ['publish:intro'] }) // only these
+```
+
+- Use `onFailure: 'fail'` where the body handles a failure itself (a
+  fallback provider): a blocking operation never reaches its `catch`. A
+  durable child's failure is one its body decided, so `d.workflow` on a
+  durable child always fails and may not block.
+- Resume reruns the same work as the same run: completed work kept, a fresh
+  retry budget, the operation's own limits, the same
+  `attempt.idempotencyKey`. A mismatch-blocked run is replayed by the code
+  deployed now and blocks again if it still does not match.
+- A blocked child run is resumed by its own id, not through its parent.
+- While blocked the run keeps its unique key, takes inputs and can be
+  cancelled; its run timeout keeps counting and resume resets none of it.
+- Refused: `RunNotBlocked`, `StaleRunVersion`, `BlockerNotResumable` (an
+  operation that does not block it), `RunBusy` while anything under the work
+  is still ending, so it never runs twice.
+- What blocks is what the body waits on: an operation it let go of (a lost
+  race) no longer blocks.
+- Find blocked runs with `Client.list({ status: ['blocked'], rootRunId? })`.
 
 ## Client
 
@@ -331,6 +368,8 @@ Other calls:
 - `send(Durable | [revisions], runId | { unique, scope? }, family, key,
 value)`: an input for a durable run, see [Inputs](#inputs). Fails with
   `InputRefused` (`reason`, `input`, `runId?`, `found?`).
+- `resume(runId, { expectedVersion?, blockers? })`: unblocks a blocked
+  durable run, see [Blocking and resuming](#blocking-and-resuming).
 
 - `cancel(runId)`: the run or `undefined`. A task run is cancelled at once; a
   workflow run becomes `cancelling` until its next coordination pass cancels
@@ -366,7 +405,8 @@ revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
 - `schedules.list()`, `schedules.trigger(name)`,
   `schedules.setEnabled(name, on)`; the last two fail with `UnknownSchedule`.
 
-Run statuses: `queued`, `running`, `waiting`, `cancelling`, then
+Run statuses: `queued`, `running`, `waiting`, `blocked` (durable runs
+only), `cancelling`, then
 `completed`, `failed` or `cancelled`.
 
 ## Workers

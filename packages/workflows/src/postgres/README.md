@@ -297,7 +297,8 @@ one, so a lane costs a claim what it has in flight.
 ## Migrating from generation 6
 
 Generation 7 adds what durable workflows store: the node kinds `sleep`, `now`
-and `input`, and the `operation` column of `workflow_nodes`. It only adds, so
+and `input`, the `operation` column of `workflow_nodes`, and the run status
+`blocked`. It only adds, so
 it takes no time that grows with the history, and what generation 6 stored
 reads as it did. `MIGRATION_FROM_6` is the migration, one statement per entry,
 to run in one transaction; `MIGRATION_FROM_6_SQL` is the same as a script, and

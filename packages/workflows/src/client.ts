@@ -32,6 +32,7 @@ import type {
   Timestamp,
 } from './model.ts'
 import type { Draft } from './plan/draft.ts'
+import type { ResumeError, ResumeOptions } from './plan/resume.ts'
 import type { RetryError } from './plan/retry.ts'
 import type { HeldKey, Receipt } from './plan/send.ts'
 import type { StartError, StartInput } from './plan/start.ts'
@@ -288,6 +289,72 @@ export const send = <const Ds extends Revisions, F extends SharedFamilies<Ds>>(
   }).pipe(claimless)
 
 /**
+ * Unblocks a blocked durable run, in one commit. Each operation named, all
+ * that block it when none is, has its failed work run again as the same
+ * run: its completed work kept, a fresh retry budget, the same idempotency
+ * keys for its handlers. A run blocked because its replay no longer matched
+ * is replayed again by the code deployed now, and blocks again if that still
+ * does not match. Nothing of the run's own lifetime is reset.
+ *
+ * Refused with `RunNotBlocked` when the run is not blocked, `StaleRunVersion`
+ * when `expectedVersion` is not its version, and `BlockerNotResumable` for an
+ * operation that does not block it; nothing is reopened then.
+ */
+export const resume = (
+  runId: string,
+  options: ResumeOptions = {},
+): Effect.Effect<StoredRun, ResumeError | RunBusy | StorageError, Store> =>
+  Effect.gen(function* () {
+    const store = yield* Store
+    const records = yield* get(runId)
+    if (!records) return yield* Effect.fail(new RunNotFound({ runId }))
+    // What is found below is found for the run as it was read here: the
+    // commit refuses a run that changed since.
+    const expectedVersion = options.expectedVersion ?? records.run.version
+
+    // Work reopened beside a handler of the same work still ending would run
+    // twice: a run failed from outside, by its timeout, ends before its
+    // handlers have. So nothing under the work may be active or claimed.
+    // Read without a guard, which is sound: what failed starts again only
+    // through a resume, and the commit refuses a run resumed since.
+    const named = options.blockers
+    const roots = records.nodes.flatMap(({ name, operation }) => {
+      if (!operation?.blocked) return []
+      if (named !== undefined && !named.includes(name)) return []
+      const child = records.children.find(({ nodeName }) => nodeName === name)
+      return child?.childRunId === undefined ? [] : [child.childRunId]
+    })
+    for (const root of roots) {
+      const under: string[] = [root]
+      for (let at = 0; at < under.length; at++) {
+        let after: string | undefined
+        do {
+          const page = yield* store.runs({
+            filter: { parentRunId: under[at]! },
+            limit: FAMILY_PAGE,
+            ...(after === undefined ? {} : { after }),
+          })
+          for (const { id, status } of page.items) {
+            if (!isTerminal(status)) {
+              return yield* Effect.fail(new RunBusy({ runId, busyRunId: id }))
+            }
+            under.push(id)
+          }
+          after = page.next
+        } while (after !== undefined)
+      }
+      const [held] = yield* store.claimed(under)
+      if (held !== undefined) {
+        return yield* Effect.fail(new RunBusy({ runId, busyRunId: held }))
+      }
+    }
+
+    return yield* claimless(
+      Engine.resume(runId, { ...options, expectedVersion }),
+    )
+  })
+
+/**
  * A run with its nodes, children and attempts, as stored, in the same order
  * on every store: nodes by name; children by node, a map's items by index and
  * any other by key; attempts by child, in the order they were made.
@@ -531,6 +598,7 @@ const ACTIVE: readonly RunStatus[] = [
   'queued',
   'running',
   'waiting',
+  'blocked',
   'cancelling',
 ]
 

@@ -22,6 +22,13 @@ export type RunStatus =
   | 'queued'
   | 'running'
   | 'waiting'
+  /**
+   * A durable run with something only an operator can unblock: work that
+   * failed under `onFailure: 'block'`, or a replay that no longer matches
+   * what the run stored. Its other branches go on; it ends only once
+   * resumed or cancelled.
+   */
+  | 'blocked'
   | 'cancelling'
   | 'cancelled'
   | 'failed'
@@ -161,6 +168,20 @@ export type StoredOperation = {
   readonly receivedAt?: Timestamp
   /** An `input` node whose wait ended with no value: its `until` came first. */
   readonly timedOut?: true
+  /**
+   * A `task` or `workflow` node whose work failed under `onFailure: 'block'`:
+   * the body was never shown the failure, and `Client.resume` runs the work
+   * again.
+   */
+  readonly blocked?: true
+  /**
+   * What the operation overrode of its task's limits, so the work can be
+   * run again from what is stored, without the body's code.
+   */
+  readonly limits?: {
+    readonly retry?: RetryPolicy
+    readonly timeout?: DurationString
+  }
 }
 
 /**
