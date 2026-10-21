@@ -69,8 +69,13 @@ loaded before the build so config evaluation and runtime workers both see them.
   which never loads the compiler.
 - On POSIX the build process leads its own process group. Helpers it starts
   in that group are stopped once it exits, after success too, and on
-  cancellation: SIGTERM, then SIGKILL after 5 seconds. A helper that moves to
-  its own process group or session is outside this cleanup.
+  cancellation: SIGTERM, then SIGKILL after 5 seconds. If the CLI dies without
+  cleaning up (SIGKILL, SIGHUP, a crash) while the build process still runs,
+  that process notices through an IPC channel and kills its own group. A
+  helper that moves to its own process group or session is outside this
+  cleanup. On Windows only the build process stops itself.
+- The build process gets no stdin: reading it, or a helper reading it inherited,
+  ends at once.
 - A failed build exits unsuccessfully without serving earlier output.
   SIGINT/SIGTERM during the build stops the build and exits without serving;
   while serving, they stop the server like `neem start`.

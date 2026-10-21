@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { access, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
-import { expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
 import type { NeemProbeEvent } from './support/e2e.ts'
 import {
@@ -12,6 +12,7 @@ import {
   spawnNeem,
   spawnNode,
   updateFileAtomically,
+  waitFor,
   writeProductionImportGuard,
 } from './support/e2e.ts'
 
@@ -57,6 +58,12 @@ function context() {
     fixture.configFile,
     (source) => startBuildHelper(helperPidFile) + source,
   )
+  // A builder's helper that reads its inherited stdin to the end finishes
+  // instead of holding the build.
+  const readStdin = `import { execFileSync as runStdinReader } from 'node:child_process'
+runStdinReader(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['inherit', 'ignore', 'inherit'], timeout: 10_000 })
+`
+  await updateFileAtomically(fixture.configFile, (source) => readStdin + source)
   const guard = resolve(fixture.fixtureDir, 'production-import-guard.mjs')
   await writeProductionImportGuard(guard)
 
@@ -155,6 +162,47 @@ it('stops the build process tree and exits without serving when interrupted duri
   ).toBe(false)
   expect(hasEvent(neem.events(), 'runtime:ready')).toBe(false)
 }, 60_000)
+
+// Neither signal lets the preview process clean up, and the build's own
+// session keeps a terminal hangup from reaching it. On Windows the build stops
+// without its helpers, which have no process group to stop them by.
+describe.skipIf(process.platform === 'win32')(
+  'when the preview process dies during the build',
+  () => {
+    it.each(['SIGKILL', 'SIGHUP'] as const)(
+      'stops the build process tree (%s)',
+      async (signal) => {
+        const fixture = await createNeemFixture()
+        const helperPidFile = resolve(fixture.dir, 'helper.pid')
+        await updateFileAtomically(
+          fixture.configFile,
+          (source) =>
+            `${startBuildHelper(helperPidFile)}await new Promise((resolve) => setTimeout(resolve, 60_000))\n${source}`,
+        )
+
+        const neem = spawnNeem(['preview', '--config', fixture.configFile])
+        const started = await neem.waitForEvent(
+          (event) => event.event === 'cli:preview:build:start',
+          30_000,
+        )
+        const buildPid = started.buildPid as number
+        // Nothing else stops an orphaned build when this test fails; the
+        // helper is a member of the build's group.
+        onTestFinished(() => {
+          try {
+            process.kill(-buildPid, 'SIGKILL')
+          } catch {}
+        })
+        const helperPid = await waitForPid(helperPidFile)
+
+        neem.child.kill(signal)
+        expect(await neem.waitForExit()).toEqual({ code: null, signal })
+        await waitFor(() => !isAlive(buildPid) && !isAlive(helperPid), 10_000)
+      },
+      60_000,
+    )
+  },
+)
 
 // A plain `node` launch has no shebang flags, and preview enables maps even
 // against an explicit opt-out (Bun has no such flag).

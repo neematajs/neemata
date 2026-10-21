@@ -62,7 +62,10 @@ export async function runPreviewBuild(
     process.execPath,
     [...execArgv, entry, JSON.stringify(request)],
     {
-      stdio: ['ignore', 'inherit', 'inherit'],
+      // The IPC channel carries no messages: a running build stops itself
+      // and its group once it disconnects, however this process died. Stdin
+      // stays ignored, so builders and helpers reading it see its end.
+      stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
       env:
         childNodeOptions === nodeOptions
           ? undefined
