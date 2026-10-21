@@ -24,11 +24,15 @@ export function deployment(options?: InMemory.InMemoryOptions) {
 
 /**
  * Runs workers while the clock moves `ms`, then stops them and waits. Hours
- * of a durable sleep move a minute at a time: each adjust still wakes every
- * poll in order, and a step a second costs seconds on slow runners.
+ * of a durable sleep move a minute at a time, and the workers poll every ten
+ * seconds: each adjust still wakes every poll in order, and a step or a poll
+ * a second costs seconds on slow runners. The timers of these tests have a
+ * minute or more of room for a later poll.
  */
 const during = <R>(
-  workers: readonly Effect.Effect<
+  workers: (
+    pollMs: number,
+  ) => readonly Effect.Effect<
     never,
     CleanupTimeout | DefinitionConflict | StorageError,
     R
@@ -37,7 +41,8 @@ const during = <R>(
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
-      for (const worker of workers) yield* Effect.forkScoped(worker)
+      const pollMs = ms >= LONG ? 10_000 : POLL
+      for (const worker of workers(pollMs)) yield* Effect.forkScoped(worker)
       yield* idle
       yield* elapse(ms, ms >= LONG ? 60_000 : 1_000)
     }),
@@ -45,13 +50,17 @@ const during = <R>(
 
 /** A coordinator of the workflows alone: nothing runs their handlers. */
 export const coordinate = (workflows: readonly ServedWorkflow[], ms = 0) =>
-  during([Worker.coordinator({ workflows, pollMs: POLL })], ms)
+  during((pollMs) => [Worker.coordinator({ workflows, pollMs })], ms)
 
 /** An execution worker alone: nothing advances the runs. */
 export const execute = <W extends ServedWorkflow, T extends AnyTask>(
   served: Worker.Served<W, T>,
   ms = 0,
-) => during([Worker.execution({ ...served, pollMs: POLL, concurrency: 8 })], ms)
+) =>
+  during(
+    (pollMs) => [Worker.execution({ ...served, pollMs, concurrency: 8 })],
+    ms,
+  )
 
 /**
  * Both worker roles for what is served, long enough for any run of these
@@ -62,9 +71,9 @@ export const serve = <W extends ServedWorkflow, T extends AnyTask>(
   ms = 20_000,
 ) =>
   during(
-    [
-      Worker.coordinator({ workflows: served.workflows ?? [], pollMs: POLL }),
-      Worker.execution({ ...served, pollMs: POLL, concurrency: 8 }),
+    (pollMs) => [
+      Worker.coordinator({ workflows: served.workflows ?? [], pollMs }),
+      Worker.execution({ ...served, pollMs, concurrency: 8 }),
     ],
     ms,
   )
