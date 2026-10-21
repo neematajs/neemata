@@ -210,7 +210,12 @@ function signalGroup(pgid: number, signal: NodeJS.Signals | 0): boolean {
     process.kill(-pgid, signal)
     return true
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ESRCH') return false
+    // macOS refuses to signal a group whose members are all zombies, until
+    // launchd reaps them. The group still exists: the callers keep polling,
+    // and fail if it outlasts their grace periods.
+    if (code === 'EPERM' && process.platform === 'darwin') return true
     throw error
   }
 }
