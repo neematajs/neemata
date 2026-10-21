@@ -7,7 +7,7 @@ export default defineNuxtConfig({
   // must still link maps, a regular build must keep these. The Rolldown
   // output setting takes precedence over `build.sourcemap` in Vite.
   sourcemap: { client: true },
-  nitro: { sourceMap: false },
+  nitro: { sourceMap: false, rollupConfig: { output: { sourcemap: false } } },
   vite: {
     build: {
       sourcemap: 'hidden',

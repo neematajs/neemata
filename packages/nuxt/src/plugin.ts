@@ -112,7 +112,15 @@ export function neemNuxtArtifactPlugin(
           nitro: {
             preset: 'node',
             output: { dir: appOutDir },
-            ...(preview ? { sourceMap: true } : {}),
+            // Nitro's Rollup output takes `sourceMap` only as a default under
+            // the app's own `rollupConfig`, so a deployment's output-level
+            // setting is overridden there as well.
+            ...(preview
+              ? {
+                  sourceMap: true,
+                  rollupConfig: { output: { sourcemap: true } },
+                }
+              : {}),
           },
           ...(explicitBase ? { app: { baseURL: base } } : {}),
           ...(preview ? previewOverrides(output.dir) : {}),

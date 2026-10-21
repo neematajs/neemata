@@ -131,6 +131,30 @@ it('does not serve earlier output when the preview build fails', async () => {
   expect(hasEvent(neem.events(), 'cli:start:start')).toBe(false)
 }, 60_000)
 
+it('stops a helper left by a failed build and reports the whole build error', async () => {
+  const fixture = await createNeemFixture()
+  const helperPidFile = resolve(fixture.dir, 'helper.pid')
+  // Several pipe buffers of diagnostics: the build process must not exit
+  // before its output is written. A framework logger that takes over the
+  // console writes the build error to the stream, as Nuxt's does.
+  const marker = 'end-of-build-diagnostic'
+  await updateFileAtomically(
+    fixture.configFile,
+    (source) =>
+      `${startBuildHelper(helperPidFile)}console.error = (error) => process.stderr.write(String(error?.stack ?? error))
+throw new Error('x'.repeat(512 * 1024) + ${JSON.stringify(marker)})\n${source}`,
+  )
+
+  const neem = spawnNeem(['preview', '--config', fixture.configFile])
+  const exit = await neem.waitForExit()
+
+  expect(exit.code).not.toBe(0)
+  expect(neem.stderr()).toContain(marker)
+  expect(neem.stderr()).toContain('Neem preview build failed')
+  expect(isAlive(await waitForPid(helperPidFile))).toBe(false)
+  expect(hasEvent(neem.events(), 'runtime:ready')).toBe(false)
+}, 60_000)
+
 it('stops the build process tree and exits without serving when interrupted during the build', async () => {
   const fixture = await createNeemFixture()
   const helperPidFile = resolve(fixture.dir, 'helper.pid')
