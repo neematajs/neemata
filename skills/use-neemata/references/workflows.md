@@ -15,7 +15,7 @@ The package README is the full guide; its examples run in
 
 Use package subpaths, not an umbrella `nmtjs` import:
 
-- `@nmtjs/workflows`: `task`, `workflow`, `schedule`, `decodeRun`, the
+- `@nmtjs/workflows`: `task`, `workflow`, `durable`, `schedule`, `decodeRun`, the
   `Client`, `Worker` and `InMemory` modules, the `Store` service, tagged
   errors, record types and `InputOf` / `OutputOf` / `Services`.
 - `@nmtjs/workflows/postgres`: `layer`, `install`, `verify`, `migrateFrom4`;
@@ -161,6 +161,94 @@ not a positive integer, a versioned workflow using unversioned targets.
 
 `Prepare.workflows` is the workflow with every child workflow it can start;
 `Prepare.tasks` every task they can start. Workers take those lists.
+
+## Durable workflows
+
+`durable(options, body)` declares a workflow whose steps are decided as a run
+goes. The body is ordinary Effect code, with loops, `if` and `Effect.all` on
+real values, that the coordinator **replays from the start on every pass**
+against the run's stored operations. Use it when what happens next depends on
+earlier results; use `workflow` for a fixed graph or a map of thousands.
+
+```ts
+import { durable } from '@nmtjs/workflows'
+
+export const Document = durable(
+  {
+    name: 'docs.document',
+    revision: 'v1', // required
+    pool: 'docs',
+    input: Schema.Struct({ sections: Schema.Array(Section) }),
+    output: Schema.Array(Schema.String),
+    tasks: [DraftSection], // everything the body may start, each versioned
+  },
+  ({ sections }, d) =>
+    Effect.gen(function* () {
+      const drafts: string[] = []
+      for (const section of sections) {
+        const draft = yield* d.task(
+          `draft:${section.id}`,
+          DraftSection,
+          section,
+        )
+        drafts.push(draft.text)
+        if (!draft.ok) yield* d.sleep(`cool-off:${section.id}`, '1h')
+      }
+      return drafts
+    }),
+)
+```
+
+| Operation                                              | Gives                                                |
+| ------------------------------------------------------ | ---------------------------------------------------- |
+| `d.task(name, Task, input, { retry?, timeout? })`      | the task's output, or `OperationFailed`              |
+| `d.workflow(name, Workflow, input, { cancellation? })` | a static or durable child's output                   |
+| `d.sleep(name, '1h')`                                  | `void`, the duration after first reaching it         |
+| `d.now(name)`                                          | Unix ms when first reached, the same on every replay |
+
+Options are `workflow`'s plus `revision` (required), `tasks` and `workflows`:
+every target must be versioned and declared once, at one revision. Serve
+`Document.workflows` / `Document.tasks` as for any workflow.
+
+### Operation names
+
+The app chooses each operation's name, and **the name is its identity**.
+
+- A replay finds a stored operation by name alone: done, it returns the
+  stored output at once (the work never runs again); still open, that branch
+  suspends; a new name opens a node.
+- After the body stops and before anything is written, every operation the
+  replay reached is compared with the node under its name: kind, target
+  (name and revision) and encoded input. A difference, or a name reached
+  twice in one replay, is `ReplayMismatch`, and the replay is discarded. A
+  stored node is never changed to fit the code.
+- Names are unique within a run (not across runs) and **stable for as long as
+  runs of the revision are in flight, across deploys**. Build them from
+  stable ids the run already holds, its input or earlier outputs:
+  `` `draft:${section.id}` ``. Never from a changing list's index, a
+  timestamp, a random value or anything read outside `d.*`. Use a literal for
+  a one-off (`'approve'`) and put the round in a repeated one
+  (`` `review:${id}:round-${n}` ``, with `n` counted from stored results).
+- Only operations the replay reaches are compared: a call the code no longer
+  makes leaves its node unused, unnoticed. Renaming, removing or changing an
+  operation that runs in flight have stored is a **new revision**, served
+  beside the old one until its runs end.
+
+### Replay rules
+
+- The body may require only `Durable` (a handler's service is a type error)
+  and must be pure and synchronous: no clock (use `d.now`), no random, no
+  I/O; side effects go in tasks. Waiting on anything but `d.*`, a promise or
+  `Effect.sleep`, fails the run.
+- `Effect.all` / `Effect.forEach` with `concurrency` open several operations
+  in one pass. A run whose body ended with abandoned operations still open
+  ends once they are stopped.
+- A failed operation fails with `OperationFailed` (`operation`, `error`),
+  which the body may catch; uncaught, it fails the run.
+- Each pass replays everything the run has done: plan for tens or hundreds of
+  operations per run, not thousands.
+- `Client.retry` refuses a failed durable run (`RunNotRetryable`), since its
+  body may have decided from the failure; use `Client.restart`.
 
 ## Client
 
@@ -415,6 +503,6 @@ export default defineWorkflowsWorker({
 carry over: follow the README's "Upgrading from the Promise engine" tables.
 Runs in flight are never converted: drain and stop the old engine first.
 PostgreSQL then migrates schema generation 4, which `0.18.0-alpha.4`
-installs, to 6 (`Postgres.migrateFrom4` or `MIGRATION_FROM_4_SQL`, which
+installs, to 7 (`Postgres.migrateFrom4` or `MIGRATION_FROM_4_SQL`, which
 refuse while runs or commands are in flight; old runs stay unversioned);
 Redis starts empty.

@@ -11,10 +11,12 @@ import {
   RunConflict,
   RunNotFailed,
   RunNotFound,
+  RunNotRetryable,
   RunNotRoot,
   StaleRunVersion,
 } from '../errors.ts'
 import { continueRun, SELF, TASK } from '../model.ts'
+import { durableGraph, graphKey } from './definitions.ts'
 import { planning, Refused } from './draft.ts'
 import { uniqueKey } from './keys.ts'
 
@@ -22,6 +24,7 @@ export type RetryError =
   | RunConflict
   | RunNotFailed
   | RunNotFound
+  | RunNotRetryable
   | RunNotRoot
   | StaleRunVersion
 
@@ -164,6 +167,17 @@ export function planRetry(
     const run = draft.records(runId)?.run
     const refusal = unretryable(runId, run, expectedVersion)
     if (refusal) return new Refused(refusal)
+    // A durable run is known by its saved graph, whether or not its body
+    // came to any operation; by its nodes, which carry what the body asked
+    // of them, when it has none saved.
+    const { graphHash } = run!
+    if (
+      (graphHash !== undefined &&
+        durableGraph(draft.definition(graphKey(graphHash)))) ||
+      draft.nodes(runId).some(({ operation }) => operation !== undefined)
+    ) {
+      return new Refused(new RunNotRetryable({ runId }))
+    }
 
     const { unique } = run!
     if (unique) {

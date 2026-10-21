@@ -120,9 +120,11 @@ export function verify({
     }
   }
   complete(
-    workflows.flatMap(({ steps }) =>
-      steps.flatMap((step) => stepTargets(step).map(({ target }) => target)),
-    ),
+    workflows.flatMap(({ steps, uses = [] }): Declaration[] => [
+      ...steps.flatMap((step) => stepTargets(step).map(({ target }) => target)),
+      // A durable workflow may start any of these, as its runs come to it.
+      ...uses,
+    ]),
     'registered workflows',
   )
   complete(

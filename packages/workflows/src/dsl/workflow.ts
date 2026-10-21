@@ -2,6 +2,7 @@ import * as Schema from 'effect/Schema'
 
 import type { Route } from '../model.ts'
 import type {
+  AnyWorkflowProgram,
   Compute,
   Outputs,
   Program,
@@ -40,9 +41,14 @@ export type ServedWorkflow<
   Output = any,
   R = any,
   Pool extends string = string,
-> = Declared<'workflow', Name, Input, Output, R, WorkflowProgram, Pool> & {
-  /** In the order they were yielded, which is the order they run in. */
+> = Declared<'workflow', Name, Input, Output, R, AnyWorkflowProgram, Pool> & {
+  /**
+   * In the order they were yielded, which is the order they run in. Empty
+   * for a durable workflow, whose body decides its steps as a run goes.
+   */
   readonly steps: readonly Placed[]
+  /** What a durable workflow's body may start; absent for a static one. */
+  readonly uses?: readonly (AnyTask | ServedWorkflow)[]
 }
 
 /** A workflow declared once, with everything a worker must serve to run it. */
@@ -55,6 +61,7 @@ export type Workflow<
   R = never,
   Pool extends string = string,
 > = ServedWorkflow<Name, Input, Output, R, Pool> & {
+  readonly program: WorkflowProgram
   /** This workflow and every child workflow it can start, each once. */
   readonly workflows: readonly (
     | ServedWorkflow<Name, Input, Output, R, Pool>

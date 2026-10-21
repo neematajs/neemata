@@ -12,6 +12,12 @@ type Revision = Required<Runnable>
 
 export const graphKey = (graphHash: string) => `${GRAPH}${graphHash}`
 
+/** Whether a saved graph is a durable workflow's: one with a body, no steps. */
+export const durableGraph = (graph: unknown): boolean =>
+  typeof graph === 'object' &&
+  graph !== null &&
+  (graph as { readonly mode?: unknown }).mode === 'durable'
+
 /**
  * A JSON tuple, so no name or revision can be chosen to collide with another
  * triple the way a delimiter could.

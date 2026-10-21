@@ -6,7 +6,7 @@ import type { Outcome } from './plan/attempt.ts'
 import type { Retention } from './plan/remove.ts'
 import type { ScheduleEntry } from './plan/schedule.ts'
 import type { StartInput } from './plan/start.ts'
-import type { Registry, WorkflowProgram } from './program.ts'
+import type { AnyWorkflowProgram, Registry } from './program.ts'
 import type { Claim, DeadCommand } from './store.ts'
 import { planSettle, settleScope } from './plan/attempt.ts'
 import { beginScope, planBegin } from './plan/begin.ts'
@@ -129,7 +129,7 @@ export const reap = (dead: DeadCommand) =>
   ).pipe(Effect.flatMap(drained))
 
 /** Fails a run of the program that is past its timeout; `false` otherwise. */
-export const timeout = (program: WorkflowProgram, runId: string) =>
+export const timeout = (program: AnyWorkflowProgram, runId: string) =>
   Effect.flatMap(Store, (store) =>
     store.transact(timeoutScope(program, runId), planTimeout(program, runId)),
   ).pipe(Effect.flatMap(drained))

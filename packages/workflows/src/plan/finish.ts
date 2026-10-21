@@ -145,6 +145,16 @@ function stop(
 }
 
 /**
+ * Stops what a run still has in flight without ending it: how a durable run
+ * whose body has its outcome lets go of the branches it no longer waits for,
+ * keeping its unique key until they have ended. `ended` when nothing is left;
+ * `tasks` are the task runs it cancelled that wait for their handlers.
+ */
+export function stopWork(draft: Draft, run: StoredRun) {
+  return stop(draft, run, { waits: true })
+}
+
+/**
  * Cancels everything the run still has in flight, and ends it once all of it
  * has ended: until then it stays `cancelling`, and keeps its unique key, so a
  * run that reads `cancelled` has no child run still going but those it

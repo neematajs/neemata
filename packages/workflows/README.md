@@ -509,6 +509,103 @@ TypeScript cannot reject this, and it would describe a different graph per
 build, not a decision per run. A decision that depends on a run's values is a
 `w.branch`.
 
+### Durable workflows
+
+`durable(options, body)` declares a workflow whose steps are decided as a run
+goes: the body is ordinary Effect code, with loops and `if` on real values,
+that the coordinator **replays** from the start in every pass, against what
+the run has stored. What persists is its **operations**, each under a name: a
+replay that comes to one done gets its output at once, and one that comes to
+one not done waits there, the run waiting without a worker held.
+
+```ts
+const Section = Schema.Struct({ id: Schema.String, hard: Schema.Boolean })
+
+const DraftSection = task({
+  name: 'docs.draft',
+  revision: 'v1',
+  pool: 'docs',
+  input: Section,
+  output: Schema.Struct({ text: Schema.String, ok: Schema.Boolean }),
+  handler: ({ id, hard }) => Effect.succeed({ text: `draft ${id}`, ok: !hard }),
+})
+
+const Document = durable(
+  {
+    name: 'docs.document',
+    revision: 'v1',
+    pool: 'docs',
+    input: Schema.Struct({ sections: Schema.Array(Section) }),
+    output: Schema.Array(Schema.String),
+    // Everything the body may start, each with a revision of its own.
+    tasks: [DraftSection],
+  },
+  ({ sections }, d) =>
+    Effect.gen(function* () {
+      const drafts: string[] = []
+      // Steps from the run's input, one operation name per occurrence.
+      for (const section of sections) {
+        const draft = yield* d.task(
+          `draft:${section.id}`,
+          DraftSection,
+          section,
+        )
+        drafts.push(draft.text)
+        // A decision on a real value: nothing like it is declared beforehand.
+        if (!draft.ok) yield* d.sleep(`cool-off:${section.id}`, '1h')
+      }
+      return drafts
+    }),
+)
+```
+
+| Operation                           | What the run keeps under the name                                    |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `d.task(name, Task, input, opts?)`  | a run of the task, as a step's; its output, or `OperationFailed`     |
+| `d.workflow(name, Workflow, input)` | a child run of the workflow, static or durable                       |
+| `d.sleep(name, duration)`           | a wait that ends `duration` after the run first came to it           |
+| `d.now(name)`                       | the time the run first came to it, the same in every replay after it |
+
+Concurrent branches are Effect's: `Effect.all` and `Effect.forEach` with a
+`concurrency` open every operation they come to in one pass, and a bounded
+`concurrency` bounds how many are open at once. A failed operation fails with
+`OperationFailed`, which the body may catch and go on from; uncaught, it fails
+the run. A body that ends while operations it let go of are still open, a
+branch `Effect.all` abandoned when another failed, ends the run once they have
+been stopped: until then the run keeps its unique key, as a cancelled one
+does.
+
+What a replay requires:
+
+- **One name, one operation.** A name stands for one operation for the whole
+  run: in a loop it takes the loop's position, as `draft:${section.id}` does.
+  A name asked for twice in one replay fails the run with `ReplayMismatch`.
+  The application chooses names, and they must stay the same for as long as
+  runs of the revision are in flight: build them from ids the run holds,
+  never from a timestamp, a random value or a list position that may move.
+- **The same operation every time.** Each node keeps what it was opened with,
+  its kind, target and input, and a replay that asks for something else
+  under its name fails the run with `ReplayMismatch`: what a node holds is
+  never changed to fit other code. Only what a replay reaches is compared:
+  a call the code no longer makes leaves its node unused, unnoticed.
+- **A pure, synchronous body.** It may require nothing but `Durable`, so a
+  handler's service is a type error. It must not read the clock or draw
+  random numbers, which types cannot refuse: use `d.now`, and a task for
+  anything with effects. A body that waits on anything but its operations,
+  a promise or `Effect.sleep`, fails the run.
+- **A revision.** A run replays its body for as long as it lives, pinned to
+  the code it started with, and everything it starts is pinned with it. A fix
+  that keeps what runs in flight have stored ships under the same revision;
+  anything else is a new one, served beside the old until its runs have
+  ended.
+
+Each pass replays every operation the run has done, so a run is meant for
+tens or hundreds of them; a list of thousands is a map in a static workflow,
+or a child workflow per item. A durable run is not retried in place: its body
+may have decided from a failure, which reopening it would contradict, so
+`Client.retry` refuses it with `RunNotRetryable` and `Client.restart` starts
+it again.
+
 ### Handlers
 
 A task or activity handler is `(input, attempt) => Effect<Output, unknown, R>`.
@@ -783,7 +880,7 @@ Two ways to run failed work again:
 |         | `Client.retry(runId, options?)`          | `Client.restart(runId, options)`                       |
 | ------- | ---------------------------------------- | ------------------------------------------------------ |
 | Run     | the same run, reopened in place          | a new root run                                         |
-| Accepts | a `failed` root run                      | a root run that has ended, in any status               |
+| Accepts | a `failed` root run, not a durable one   | a root run that has ended, in any status               |
 | Runs    | only what failed; completed work is kept | everything, from the stored input                      |
 | Keeps   | id, input, tags, keys, attempt history   | the stored tags and unique constraint, unless replaced |
 | Needs   | nothing but the store                    | `definitions`: what the run may be a run of            |
@@ -1391,7 +1488,9 @@ The schema is the application's to migrate.
 (`createSchema()`), `Postgres.install` creates it on an empty database for
 tests, and `Postgres.verify` dies at startup unless the installed schema is
 the one the adapter needs. Engine calls take part in the caller's
-transaction, as [shown above](#starting-a-run).
+transaction, as [shown above](#starting-a-run). This release's schema is
+generation 7: a database at 6 moves to it with `Postgres.migrateFrom6`, which
+only adds, once the older release's workers are stopped.
 
 Options (`maxDeliveries`, `channel`, `answerTimeoutMs`), how commits are
 guarded, the tables and the migration:
@@ -1502,13 +1601,14 @@ only through a durable store. Details, logging and stopping:
 
 **What is not supported**
 
-- Steps decided at run time: loops whose count depends on a run, `if` on a
-  run's values, recovering from a failed step in the workflow. Use `branch`
-  and maps; a failed step fails the run.
+- In a static workflow, steps decided at run time: loops whose count depends
+  on a run, `if` on a run's values, recovering from a failed step. Use
+  `branch` and maps, or a [durable workflow](#durable-workflows).
 - Branches, parallels or maps nested in one another, a map over activities,
   a member reading another member, cancelling siblings when one fails.
-- Waiting inside a workflow for a signal, an event or a timer. A run can be
-  delayed as a whole with `startAt`.
+- Waiting inside a workflow for a signal or an event. A durable workflow
+  waits for a timer with `d.sleep`; a run can be delayed as a whole with
+  `startAt`.
 - Limits across a deployment: `concurrency` is per worker, a map's per step.
 - Moving a run to another revision.
 - Schemas other than `effect/Schema`, and handlers that are not Effects.
@@ -1646,7 +1746,7 @@ case:
 2. Stop every process of the old engine.
 3. Upgrade the storage as below, then start the new engine.
 
-**PostgreSQL: generation 4 to 6.** `0.18.0-alpha.4` installs schema
+**PostgreSQL: generation 4 to 7.** `0.18.0-alpha.4` installs schema
 generation 4; a database at an earlier generation applies that release's
 upgrades to 4 first. The migration keeps history, identity keys and
 schedules in place, all unversioned, and rebuilds the command queue. It

@@ -1,6 +1,11 @@
 import * as Data from 'effect/Data'
 
-import type { RunKind, RunStatus, RunUniqueScope } from './model.ts'
+import type {
+  RunKind,
+  RunStatus,
+  RunUniqueScope,
+  StoredError,
+} from './model.ts'
 
 /**
  * The command claim a mutation acknowledges is no longer held: another
@@ -178,5 +183,35 @@ export class CleanupTimeout extends Data.TaggedError('CleanupTimeout')<{
 }> {
   override get message() {
     return `Workflow cleanup exceeded ${this.timeoutMs}ms; worker recycling required`
+  }
+}
+
+/**
+ * A retry asked of a durable workflow run whose body already decided from
+ * what its operations came to: a failure it saw may have sent it down a
+ * branch, which reopening that failure would contradict. Such a run is
+ * started again with `restart`.
+ */
+export class RunNotRetryable extends Data.TaggedError('RunNotRetryable')<{
+  readonly runId: string
+}> {
+  override get message() {
+    return `Workflow run [${this.runId}] is durable and cannot be retried in place: restart it`
+  }
+}
+
+/**
+ * A durable workflow's operation ended without its output: the task or child
+ * workflow run it started failed, its last attempt included. Its body may
+ * catch it and go on; uncaught, it fails the run. The error is as stored,
+ * the name and message of what failed, not the value it failed with.
+ */
+export class OperationFailed extends Data.TaggedError('OperationFailed')<{
+  /** The operation's name in the body. */
+  readonly operation: string
+  readonly error: StoredError
+}> {
+  override get message() {
+    return `Durable operation [${this.operation}] failed: ${this.error.message}`
   }
 }

@@ -291,7 +291,7 @@ describe('the schema', slow, () => {
       expect(
         yield* failure('UPDATE workflow_schema_version SET version = 5'),
       ).toContain(
-        'Unsupported workflow schema generation [5], expected [6]: apply the schema upgrades',
+        'Unsupported workflow schema generation [5], expected [7]: apply the schema upgrades',
       )
       expect(yield* failure('DELETE FROM workflow_schema_version')).toContain(
         'Missing workflow schema version',
@@ -308,6 +308,35 @@ describe('the schema', slow, () => {
 
       const migrated = yield* catalog
       expect(migrated).toEqual(expected)
+    }).pipe(Effect.provide(database)),
+  )
+
+  it.live('migrating generation 6 gives the schema an install gives', () =>
+    Effect.gen(function* () {
+      const expected = yield* installed
+      yield* generation4
+      // Generation 6 as the release before this one installed it: the
+      // migration from 4 without the steps from 6 that end it.
+      const to6 = Postgres.MIGRATION_FROM_4.slice(
+        0,
+        -Postgres.MIGRATION_FROM_6.length,
+      )
+      const { pglite } = yield* PgliteClient.PgliteClient
+      yield* Effect.promise(() =>
+        pglite.exec(
+          `BEGIN; ${to6.join(';\n')}; UPDATE workflow_schema_version SET version = 6; COMMIT;`,
+        ),
+      )
+      yield* Postgres.migrateFrom6
+      yield* Postgres.verify
+      expect(yield* catalog).toEqual(expected)
+
+      // What generation 6 stored reads as it did.
+      const store = yield* Postgres.make()
+      const loaded = yield* store.load(RUN)
+      expect(loaded?.nodes.every((node) => node.operation === undefined)).toBe(
+        true,
+      )
     }).pipe(Effect.provide(database)),
   )
 

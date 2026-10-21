@@ -35,6 +35,7 @@ import {
   Screen,
   Ship,
 } from './fixtures/fulfillment.ts'
+import { Review } from './fixtures/review.ts'
 import { pglite, postgres, POSTGRES_URL, provided } from './postgres-support.ts'
 
 /**
@@ -44,8 +45,9 @@ import { pglite, postgres, POSTGRES_URL, provided } from './postgres-support.ts'
  */
 
 const served = {
-  workflows: [Billing, ManualBilling, Fulfillment, Ship],
+  workflows: [Billing, ManualBilling, Fulfillment, Ship, ...Review.workflows],
   tasks: [
+    ...Review.tasks,
     CreateInvoice,
     ChargeCard,
     RequestApproval,
@@ -156,6 +158,29 @@ function engine(real: boolean) {
           output: { order: 'o-2', invoice: 'inv-o-2', paidBy: 'card' },
         })
         expect(handlers.charged).toEqual(['inv-o-2'])
+      }),
+    )
+
+    test(
+      'runs a durable workflow: steps from its input, a task and a child workflow',
+      Effect.gen(function* () {
+        yield* work({ pollMs: 50 })
+        const run = yield* Client.start(Review, {
+          steps: [
+            { id: 'a', hard: false },
+            { id: 'b', hard: true },
+          ],
+        })
+        expect(yield* ended(run.id)).toMatchObject({
+          status: 'completed',
+          output: ['draft a', 'draft b', 'fixed b'],
+        })
+        const { nodes } = (yield* Client.get(run.id))!
+        expect(
+          nodes
+            .toSorted((a, b) => a.operation!.ordinal - b.operation!.ordinal)
+            .map(({ name }) => name),
+        ).toEqual(['draft:a', 'draft:b', 'fix:b'])
       }),
     )
 

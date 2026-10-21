@@ -52,6 +52,14 @@ export type NodeKind =
   | 'parallel'
   | 'mapTask'
   | 'mapWorkflow'
+  | WaitKind
+
+/**
+ * The nodes of a durable workflow that run nothing and have no children:
+ * a durable sleep, an observation of the time, and a wait for an input sent
+ * from outside the run.
+ */
+export type WaitKind = 'sleep' | 'now' | 'input'
 
 export type RunUniqueScope = 'active' | 'all'
 export type RunUniqueBehavior = 'reject' | 'join'
@@ -125,9 +133,25 @@ export type StoredNode = {
   readonly error?: StoredError
   /** A branch's choice, made once: a later pass never selects again. */
   readonly selectedCase?: string
+  /** What a durable workflow's body asked the node to be; absent otherwise. */
+  readonly operation?: StoredOperation
   readonly version: number
   readonly createdAt: Timestamp
   readonly updatedAt: Timestamp
+}
+
+/**
+ * A node of a durable workflow, as its body first asked for it. Every later
+ * pass replays the body and must ask for the same: what the node was opened
+ * with is never changed to fit code that asks otherwise.
+ */
+export type StoredOperation = {
+  /** The order the run admitted its nodes in, from 0. */
+  readonly ordinal: number
+  /** The task or workflow a `task` or `workflow` node starts a run of. */
+  readonly target?: Route
+  /** When a `sleep` ends, as an instant: replaying never moves it. */
+  readonly until?: Timestamp
 }
 
 /**

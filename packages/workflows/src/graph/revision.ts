@@ -15,6 +15,7 @@ import {
   canonicalJson,
   captureGraphPresentation,
   projectStructure,
+  USES,
 } from './structure.ts'
 
 /** Lowercase hex SHA-256 of the structure's canonical JSON. */
@@ -74,6 +75,18 @@ export function describeDefinition(
   if (revision === undefined) return base
 
   const steps = definition.kind === 'task' ? [] : definition.steps
+  const uses = definition.kind === 'task' ? [] : (definition.uses ?? [])
+  const used = uses.map(
+    (target): RevisionBinding => ({
+      nodeName: USES,
+      target: {
+        kind: target.kind,
+        name: target.name,
+        // `durable(...)` refuses a target without a revision.
+        revision: target.revision!,
+      },
+    }),
+  )
   const bindings = steps.flatMap((step) =>
     stepTargets(step).map(
       ({ caseKey, target }): RevisionBinding => ({
@@ -88,7 +101,24 @@ export function describeDefinition(
       }),
     ),
   )
-  return { ...base, manifest: { kind, name, revision, graphHash, bindings } }
+  return {
+    ...base,
+    manifest: {
+      kind,
+      name,
+      revision,
+      graphHash,
+      bindings: [...bindings, ...used],
+    },
+  }
+}
+
+/** What a declaration a durable workflow uses describes itself as, if anything. */
+function described(target: unknown) {
+  const program = (
+    target as { readonly program?: { readonly definition?: Described } }
+  ).program
+  return program?.definition
 }
 
 function deepFreeze<A>(value: A): A {
@@ -129,6 +159,9 @@ export function describe(definition: Definition): Described {
         // A target's records are its own closure already.
         target.program.definition?.records.forEach(add)
       }
+    }
+    for (const target of definition.uses ?? []) {
+      described(target)?.records.forEach(add)
     }
   }
   if (manifest) add({ key: revisionKey(manifest), value: manifest })

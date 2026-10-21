@@ -1,7 +1,16 @@
 export * as Client from './client.ts'
-export { decodeRun, Run, schedule, task, workflow } from './dsl/index.ts'
+export {
+  decodeRun,
+  Durable,
+  durable,
+  Run,
+  schedule,
+  task,
+  workflow,
+} from './dsl/index.ts'
 export type {
   ActivityCall,
+  AnyDurableWorkflow,
   AnySchedule,
   AnyTask,
   AnyWorkflow,
@@ -10,11 +19,14 @@ export type {
   CaseBuilder,
   CasePlan,
   DecodedRun,
+  DurableOptions,
+  DurableWorkflow,
   EffectSchema,
   Handler,
   InputOf,
   MapCall,
   MapOutput,
+  Operations,
   OutputOf,
   // The store's `Plan` is exported below under its own name.
   Plan as StepPlan,
@@ -50,10 +62,12 @@ export {
   CleanupTimeout,
   DefinitionConflict,
   IdempotencyConflict,
+  OperationFailed,
   RunBusy,
   RunConflict,
   RunNotFailed,
   RunNotFound,
+  RunNotRetryable,
   RunNotRoot,
   RunNotTerminal,
   StaleClaim,

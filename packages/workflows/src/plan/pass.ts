@@ -22,6 +22,7 @@ import type {
 } from '../store.ts'
 import type { Unroutable } from './begin.ts'
 import type { Draft } from './draft.ts'
+import { DefinitionConflict } from '../errors.ts'
 import {
   caseKey,
   continueRun,
@@ -32,14 +33,18 @@ import {
   STATUSES,
   storedError,
 } from '../model.ts'
+import { isDurable } from '../program.ts'
 import {
   conflicting,
   described,
   drift,
+  durableGraph,
+  graphKey,
   revisionKey,
   save,
 } from './definitions.ts'
 import { planning, Unwritten } from './draft.ts'
+import { advanceDurable, durableScope } from './durable.ts'
 import { cancelRun, draining, finishRun, wakeParent } from './finish.ts'
 import { canonical } from './keys.ts'
 import { reattempt, reopenRun, reopenWork } from './retry.ts'
@@ -72,6 +77,8 @@ const windowOf = (step: MapStep): MapRead['pendingLimit'] =>
  * a pass that starts children from being planned twice.
  */
 export function passScope(registry: Registry, command: ContinueRun): ReadScope {
+  const program = registry.workflow(command)
+  if (program && isDurable(program)) return durableScope(program, command)
   const { runId, name, revision } = command
   const keys = new Set<string>()
   if (revision !== undefined) {
@@ -81,7 +88,7 @@ export function passScope(registry: Registry, command: ContinueRun): ReadScope {
   // Code that starts no runs has no child a run stands for, unless code
   // deployed before it did: a pass asks for the runs of any it finds.
   let linked = false
-  for (const step of registry.workflow(command)?.steps ?? []) {
+  for (const step of program?.steps ?? []) {
     if (step.kind === 'map') {
       maps.push({ nodeName: step.name, pendingLimit: windowOf(step) })
     }
@@ -120,6 +127,8 @@ export function planPass(
       return { _tag: 'Unroutable' }
     }
 
+    // Task runs a durable run's body let go of, waiting for their handlers.
+    let stopped: readonly StoredRun[] = []
     if (run.status === 'cancelling') {
       cancelRun(draft, run)
     } else if (isTerminal(run.status)) {
@@ -137,11 +146,12 @@ export function planPass(
       // A new run owns nothing yet, so this finds work only in a run that a
       // retry made queued again.
       if (run.status === 'queued') reopenWork(draft, run)
-      advance(draft, program, run)
+      if (isDurable(program)) stopped = advanceDurable(draft, program, run)
+      else advance(draft, program, run)
     }
 
     draft.ack(claim)
-    const waiting = draining(draft, draft.head(run.id)!)
+    const waiting = [...draining(draft, draft.head(run.id)!), ...stopped]
     return waiting.length > 0
       ? { _tag: 'Advanced', draining: waiting }
       : { _tag: 'Advanced' }
@@ -330,7 +340,7 @@ function reference(target: Target) {
 }
 
 /** The place of one child: its key, and what it runs on which input. */
-type Slot = {
+export type Slot = {
   readonly childKey: string
   readonly target: Target
   /** Computed when the child starts. */
@@ -600,7 +610,7 @@ function finishMap(
 }
 
 /** Settles a child from the run it stands for, once that run has ended. */
-function observe(draft: Draft, child: StoredChild): StoredChild {
+export function observe(draft: Draft, child: StoredChild): StoredChild {
   const { childRunId } = child
   if (isTerminal(child.status) || childRunId === undefined) return child
 
@@ -649,12 +659,18 @@ function resume(draft: Draft, child: StoredChild, target: Target): boolean {
  * Starts the work of a slot. An input that cannot be computed fails the child
  * instead, and nothing is in flight for it: the answer says which.
  */
-function start(
+export function start(
   draft: Draft,
   run: StoredRun,
   node: NodeWithoutInput,
   { childKey, target, input: compute }: Slot,
   pending: StoredChild | undefined,
+  /**
+   * Whether the parent replays a body. Only such a parent may start a run
+   * of a durable workflow: a static one retries what failed under it by
+   * reopening it, which a durable run refuses.
+   */
+  durableParent = false,
 ): boolean {
   const { id: runId, name, revision } = run
   const child = { runId, nodeName: node.name, childKey }
@@ -711,6 +727,17 @@ function start(
 
   const route = reference(target)!
   const records = route.definition?.records ?? []
+  if (!durableParent && route.definition !== undefined) {
+    const graph = graphKey(route.definition.graphHash)
+    if (durableGraph(records.find(({ key }) => key === graph)?.value)) {
+      throw new Unwritten<PassResult>({
+        _tag: 'Unroutable',
+        error: new DefinitionConflict({
+          message: `Workflow run [${runId}] starts durable workflow [${route.name}] from a static step: only a durable workflow may`,
+        }),
+      })
+    }
+  }
   // The child's revision is saved as another graph or with other bindings
   // than the code here holds: the pass writes nothing, this run included.
   const error = conflicting(draft, records)

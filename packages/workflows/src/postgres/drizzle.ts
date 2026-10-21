@@ -51,6 +51,9 @@ export function createSchema(options: CreateSchemaOptions = {}) {
       'parallel',
       'mapTask',
       'mapWorkflow',
+      'sleep',
+      'now',
+      'input',
     ]),
     nodeChildKind: pgEnum('workflow_node_child_kind', [
       'activity',
@@ -112,6 +115,7 @@ export function createSchema(options: CreateSchemaOptions = {}) {
       output: jsonb('output'),
       error: jsonb('error'),
       selectedCase: text('selected_case'),
+      operation: jsonb('operation'),
       version: integer('version').notNull(),
       createdAt: at('created_at').notNull(),
       updatedAt: at('updated_at').notNull(),

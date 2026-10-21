@@ -5,8 +5,11 @@ export {
   INSTALL,
   install,
   migrateFrom4,
+  migrateFrom6,
   MIGRATION_FROM_4,
   MIGRATION_FROM_4_SQL,
+  MIGRATION_FROM_6,
+  MIGRATION_FROM_6_SQL,
   SCHEMA_VERSION,
   verify,
 } from './schema.ts'
