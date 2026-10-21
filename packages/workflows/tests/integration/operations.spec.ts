@@ -199,7 +199,15 @@ for (const target of targets) {
           })
           yield* reached(child!.childRunId!, 'completed')
           slow = false
-          yield* Client.retry(run.id)
+          // The child's end goes to its parent as a command, and a retry is
+          // refused while a worker holds it: a caller tries again.
+          yield* until(
+            'the retry to be taken',
+            Client.retry(run.id).pipe(
+              Effect.as(true),
+              Effect.catchTag('RunBusy', () => Effect.succeed(false)),
+            ),
+          )
           const { run: done } = yield* reached(run.id, 'completed')
           expect(done.output).toMatch(/^x done$/)
           expect(yield* settled([run.id])).toEqual({ dead: [], claimed: [] })
