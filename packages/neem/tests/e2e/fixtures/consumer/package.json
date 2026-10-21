@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "neem build --config neem.config.ts --outDir dist",
-    "typecheck": "tsgo -p tsconfig.json --noEmit --pretty false"
+    "typecheck": "tsrs -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
     "@nmtjs/neem": "file:../packages/neem",
@@ -12,6 +12,6 @@
   },
   "devDependencies": {
     "@types/node": "^24.13.2",
-    "@typescript/native-preview": "7.0.0-dev.20260421.2"
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929"
   }
 }
