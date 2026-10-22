@@ -157,6 +157,20 @@ jobs:
 
   tests-integration-services:
     needs: [lint]
+    name: Service integration (${{ matrix.name }})
+    # Workflow integration files share these servers, so they run one at a
+    # time; shards split them across jobs that each get their own servers.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: workflows 1/3
+            shard: 1/3
+          - name: workflows 2/3
+            shard: 2/3
+          - name: workflows 3/3
+            shard: 3/3
+          - name: pubsub, store contracts
     runs-on: ubuntu-24.04
     services:
       redis:
@@ -216,19 +230,27 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: pnpm build
-      - name: Run service integration tests
-        # Workflow resilience tests restart shared services and change memory limits.
+      - name: Run workflow integration tests
+        if: ${{ matrix.shard }}
         run: >-
-          pnpm --workspace-concurrency=1 --filter @nmtjs/pubsub --filter @nmtjs/workflows
-          run test:integration --reporter=agent --reporter=github-actions
+          pnpm --filter @nmtjs/workflows run test:integration
+          --shard=${{ matrix.shard }} --reporter=agent --reporter=github-actions
         env:
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
-          NMTJS_ALLOW_REDIS_SERVICE_RESTARTS: '1'
-          NMTJS_ALLOW_REDIS_MEMORY_PRESSURE_TESTS: '1'
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata
+      - name: Run pubsub integration tests
+        if: ${{ !matrix.shard }}
+        run: >-
+          pnpm --filter @nmtjs/pubsub run test:integration
+          --reporter=agent --reporter=github-actions
+        env:
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
+          REDIS_URL: redis://localhost:6379
+          VALKEY_URL: redis://localhost:6380
       - name: Run workflow store contracts against PostgreSQL, Redis and Valkey
+        if: ${{ !matrix.shard }}
         # The unit suite runs these on PGlite or skips them without a server.
         run: >-
           pnpm --filter @nmtjs/workflows exec vitest run
