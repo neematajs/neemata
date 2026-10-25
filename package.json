@@ -38,5 +38,5 @@
     "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "vitest": "5.0.2"
   },
-  "packageManager": "pnpm@12.8.1"
+  "packageManager": "pnpm@12.15.0"
 }
