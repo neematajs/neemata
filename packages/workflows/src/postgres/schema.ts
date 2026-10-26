@@ -8,10 +8,11 @@ import { ACTIVE, PENDING } from './records.ts'
 /**
  * The schema generation this adapter reads and writes. Generations 1 to 4
  * are those of the Promise engine (`@nmtjs/workflows` up to 0.18.0-alpha.4,
- * which installs 4); 6 is reached from 4 by `MIGRATION_FROM_4`, and 7 from 6
- * by `MIGRATION_FROM_6`. No release installed a generation 5.
+ * which installs 4); 6 is reached from 4 by `MIGRATION_FROM_4`, 8 from 6 by
+ * `MIGRATION_FROM_6`, and 8 from 7 by `MIGRATION_FROM_7`. No release
+ * installed a generation 5.
  */
-export const SCHEMA_VERSION = 7
+export const SCHEMA_VERSION = 8
 
 const TERMINAL = STATUSES.terminal.map((status) => `'${status}'`).join(', ')
 
@@ -95,6 +96,7 @@ export const INSTALL: readonly string[] = [
     active_since timestamptz NOT NULL DEFAULT now(),
     created_at timestamptz NOT NULL,
     updated_at timestamptz NOT NULL,
+    headers jsonb,
     CONSTRAINT workflow_runs_parent_run_fk FOREIGN KEY (parent_run_id)
       REFERENCES workflow_runs (id) ON DELETE CASCADE,
     CONSTRAINT workflow_runs_root_run_fk FOREIGN KEY (root_run_id)
@@ -496,20 +498,41 @@ const TO_7: readonly string[] = [
   `ALTER TABLE workflow_nodes ADD COLUMN operation jsonb`,
 ]
 
+/**
+ * Generation 7 to 8: the headers a run was started with. Adds only:
+ * generation 7 runs read as runs started without headers.
+ */
+const TO_8: readonly string[] = [
+  `ALTER TABLE workflow_runs ADD COLUMN headers jsonb`,
+]
+
 const VERSIONED = `UPDATE workflow_schema_version SET version = ${SCHEMA_VERSION} WHERE id = 1`
 
 /**
- * Generation 6 to 7, in place, one statement per entry; run them in one
+ * Generation 7 to 8, in place, one statement per entry; run them in one
  * transaction. It adds and never rewrites, so it takes no time that grows
  * with the history.
  */
-export const MIGRATION_FROM_6: readonly string[] = [...TO_7, VERSIONED]
+export const MIGRATION_FROM_7: readonly string[] = [...TO_8, VERSIONED]
+
+/** The migration from 7 as one script. */
+export const MIGRATION_FROM_7_SQL = `BEGIN;\n\n${MIGRATION_FROM_7.join(';\n\n')};\n\nCOMMIT;\n`
+
+/**
+ * Generation 6 to 8, in place, one statement per entry; run them in one
+ * transaction. It adds and never rewrites, so it takes no time that grows
+ * with the history.
+ */
+export const MIGRATION_FROM_6: readonly string[] = [
+  ...TO_7,
+  ...MIGRATION_FROM_7,
+]
 
 /** The migration from 6 as one script. */
 export const MIGRATION_FROM_6_SQL = `BEGIN;\n\n${MIGRATION_FROM_6.join(';\n\n')};\n\nCOMMIT;\n`
 
 /**
- * Generation 4 to 7, in place, one statement per entry; run them in one
+ * Generation 4 to 8, in place, one statement per entry; run them in one
  * transaction. See `README.md` beside this file for what it requires, and
  * for the identity keys it refuses to carry over.
  */
@@ -535,8 +558,11 @@ const apply = (statements: readonly string[]) =>
 
 export const install = apply(INSTALL)
 
-/** Generation 6 to 7, in one transaction. */
+/** Generation 6 to 8, in one transaction. */
 export const migrateFrom6 = apply(MIGRATION_FROM_6)
+
+/** Generation 7 to 8, in one transaction. */
+export const migrateFrom7 = apply(MIGRATION_FROM_7)
 
 const KEY_BATCH = 1_000
 
@@ -603,7 +629,7 @@ export const migrateFrom4 = Effect.flatMap(SqlClient.SqlClient, (sql) =>
 export const COLUMNS: Readonly<Record<string, string>> = {
   workflow_definitions: 'key text, value jsonb, created_at timestamptz',
   workflow_runs:
-    'id uuid, kind workflow_run_kind, name text, status workflow_run_status, input jsonb?, output jsonb?, error jsonb?, parent_run_id uuid?, parent_node_name text?, parent_route_name text?, parent_route_revision text?, root_run_id uuid, tags jsonb, idempotency_key jsonb?, unique_key jsonb?, unique_scope text?, unique_behavior text?, execution_revision text?, graph_hash text?, graph_presentation jsonb?, version int4, active_since timestamptz, created_at timestamptz, updated_at timestamptz',
+    'id uuid, kind workflow_run_kind, name text, status workflow_run_status, input jsonb?, output jsonb?, error jsonb?, parent_run_id uuid?, parent_node_name text?, parent_route_name text?, parent_route_revision text?, root_run_id uuid, tags jsonb, idempotency_key jsonb?, unique_key jsonb?, unique_scope text?, unique_behavior text?, execution_revision text?, graph_hash text?, graph_presentation jsonb?, version int4, active_since timestamptz, created_at timestamptz, updated_at timestamptz, headers jsonb?',
   workflow_nodes:
     'run_id uuid, name text, kind workflow_node_kind, status workflow_node_status, input jsonb?, output jsonb?, error jsonb?, selected_case text?, operation jsonb?, version int4, created_at timestamptz, updated_at timestamptz',
   workflow_attempts:

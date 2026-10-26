@@ -16,8 +16,10 @@ The package README is the full guide; its examples run in
 Use package subpaths, not an umbrella `nmtjs` import:
 
 - `@nmtjs/workflows`: `task`, `workflow`, `durable`, `schedule`, `decodeRun`, the
-  `Client`, `Worker` and `InMemory` modules, the `Store` service, tagged
-  errors, record types and `InputOf` / `OutputOf` / `Services`.
+  `Client`, `Worker` and `InMemory` modules, the `Store` and
+  `Instrumentation` services, tagged errors, record types (`Headers`,
+  `AttemptInfo`, `AttemptResult`, `StartRequest`) and `InputOf` /
+  `OutputOf` / `Services`.
 - `@nmtjs/workflows/postgres`: `layer`, `install`, `verify`, `migrateFrom4`;
   `/postgres/pg` and `/postgres/pglite`: their `notifications` layers;
   `/postgres/drizzle`: `createSchema`. See [PostgreSQL](postgres.md).
@@ -49,11 +51,15 @@ A task or activity handler is `(input, attempt) => Effect<Output, unknown, R>`:
 - A failure or defect fails the attempt, which is retried under its policy.
 - Interruption tells a handler to stop: cancellation, attempt timeout,
   shutdown or a lost claim. There is no signal argument; use
-  `Effect.tryPromise` with its `AbortSignal` for Promise APIs. A handler
-  cannot tell why it was interrupted.
+  `Effect.tryPromise` with its `AbortSignal` for Promise APIs.
+  `attempt.stopReason` (`cancelled`, `timedOut`, `shutdown`, `claimLost`) is
+  set before the interruption, so finalizers can read why.
 - `attempt` carries `runId`, `nodeName`, `childKey`, `attemptNumber` (from 1,
   across retries) and `idempotencyKey`: one opaque string for every attempt
-  of this work, manual retries included.
+  of this work, manual retries included. Also `kind` (`task` / `activity`),
+  `name`, `revision`, `attemptId`, `deliveries`, the run's `headers`, and
+  `createdAt` / `availableAt` / `claimedAt` by the store's clock (claimed
+  less available is the wait for a worker).
 
 ## Tasks
 
@@ -351,7 +357,10 @@ const program = Effect.gen(function* () {
 
 Start options replace what the declaration's builders give: `tags`,
 `idempotencyKey`, `unique: { key, scope?, behavior? }`, and `startAt` (Unix
-ms; the run exists at once and is worked from then). `start` answers with the
+ms; the run exists at once and is worked from then). `headers` is a string
+map (at most 8 KiB as JSON) kept with the run for instrumentation: not
+compared by keys, not indexed, fixed for the run's life and copied to the
+runs it starts; put a `traceparent` here, never in `tags`. `start` answers with the
 decoded run, written in one commit with its command and saved definition.
 
 - Idempotency key: the same kind, name, revision and input answer with the
@@ -453,6 +462,116 @@ const workers = Effect.all(
   commands wait. Run `Worker.verify` with everything a deployment serves.
 - Storage failures of one command or sweep are logged and retried; a worker
   fails with `StorageError` only before it holds anything.
+- Tracing, metrics and logs of runs are the application's: see
+  [Instrumentation](#instrumentation).
+
+## Instrumentation
+
+The engine emits no spans or metrics, and logs only its own failures; the
+application plugs in whatever tracer and metrics it uses. Two pieces:
+
+**Headers**: an opaque `Record<string, string>` kept with a run
+(`Client.start(decl, input, { headers })`). Rules:
+
+- Never compared by idempotency or unique keys: a keyed start repeated with
+  other headers joins the run, which keeps its own (`created: false`).
+- Fixed for the run's life (retry, reopen, resume keep them); runs a step
+  starts are created with their parent's, so a family shares one context.
+- Schedule fires have none; `restart` gets what its own start gives, not the
+  old run's.
+- Strings only, at most 8 KiB as JSON; otherwise the start is a defect and
+  writes nothing. Not an index: a per-run `traceparent` goes here, never in
+  `tags`.
+- Handlers read them as `attempt.headers` (`{}` when none), with no hooks.
+
+**`Instrumentation`**: a `Context.Reference`, no-op by default, with three
+optional hooks. Provide it with `Layer.succeed(Instrumentation, { ... })`
+where each hook runs: the client's process for `start`, execution workers for
+the others.
+
+| Hook                            | Runs                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------- |
+| `start(request, next)`          | around `Client.start` / `restart`; `next(headers)` makes the start, `Started.created` |
+| `handler(attempt, run)`         | around each handler, in the handler's fiber: a span opened here parents the handler's |
+| `attemptEnded(attempt, result)` | once per delivery of an attempt that began, after its worker is done; `Effect<void>`  |
+
+`AttemptResult` is `{ kind: 'settlement', execution: 'completed' | 'failed' |
+'timedOut', settlement: 'settled' | 'retrying' | 'stale', error? }`, `{ kind:
+'stopped', reason: 'cancelled' | 'claimLost' | 'shutdown' }` or `{ kind:
+'error', error: 'storage' | 'cleanupTimeout' | 'defect', cause }`. `failed`
+with `settled` means no retry follows, not that the run ended.
+
+`attempt` also carries `kind` (`task` / `activity`), `name` (the task, or the
+activity's workflow), `revision`, `attemptId`, `deliveries`, and
+`createdAt` / `availableAt` / `claimedAt` by the store's clock: claimed minus
+available is the wait for a worker (a retry's backoff is not counted).
+
+```ts
+import { Instrumentation } from '@nmtjs/workflows'
+import type { Headers } from '@nmtjs/workflows'
+
+const traceparent = (span: Tracer.Span) =>
+  `00-${span.traceId}-${span.spanId}-${span.sampled ? '01' : '00'}`
+const parentOf = ({ traceparent }: Headers) => {
+  const [, traceId, spanId, flags] = traceparent?.split('-') ?? []
+  return traceId && spanId
+    ? Tracer.externalSpan({ traceId, spanId, sampled: flags === '01' })
+    : undefined
+}
+const attempts = Metric.counter('workflow_attempts')
+
+export const Tracing = Layer.succeed(Instrumentation, {
+  start: (request, next) =>
+    Effect.flatMap(Effect.option(Effect.currentSpan), (span) =>
+      next(
+        Option.isSome(span)
+          ? { ...request.headers, traceparent: traceparent(span.value) }
+          : request.headers,
+      ),
+    ),
+  handler: (attempt, run) =>
+    Effect.withSpan(run, `${attempt.kind} ${attempt.name}`, {
+      kind: 'consumer',
+      parent: parentOf(attempt.headers),
+      attributes: {
+        'workflow.run_id': attempt.runId,
+        'workflow.attempt': attempt.attemptNumber,
+        'workflow.queued_ms': attempt.claimedAt - attempt.availableAt,
+      },
+    }),
+  attemptEnded: (attempt, result) =>
+    Metric.update(
+      Metric.withAttributes(attempts, {
+        name: attempt.name,
+        outcome:
+          result.kind === 'settlement'
+            ? `${result.execution}:${result.settlement}`
+            : result.kind === 'stopped'
+              ? result.reason
+              : result.error,
+      }),
+      1,
+    ),
+})
+
+// API process: Layer.mergeAll(storeLayer, Tracing, otlpLayer)
+// Worker:      Worker.execution({ ...served }).pipe(Effect.provide(Tracing))
+// Neem:        layer: (ctx) => Layer.mergeAll(handlerServices(ctx), Tracing)
+```
+
+- Hooks are trusted middleware: `start` and `handler` must run their
+  continuation once and return what it gave. A `handler` hook that fails or
+  throws fails the attempt as the handler would. `attemptEnded` failures are
+  logged and ignored; it runs before the worker frees the slot, so keep it
+  non-blocking (buffer exports).
+- The `handler` span ends with the handler, before settlement: read
+  `attempt.stopReason` there for why it was stopped; `retrying` / `stale`
+  reach only `attemptEnded`.
+- Keep metric labels bounded (name, kind, outcome; never run ids).
+- For long durable families, prefer a span link to `parentOf(...)` over a
+  parent, so one trace does not span days.
+- Not covered: coordination passes, run-level events (a run ended) and
+  backlog; read those from the store or `Client`.
 
 ## Schedules
 
@@ -593,7 +712,8 @@ export default defineWorkflowsWorker({
   `InMemory.layer()` would give each thread its own.
 - `layer` must provide every handler service of the whole definition (the
   type requires it; optional when there are none). It may use the store and
-  is built only in execution threads.
+  is built only in execution threads. Merge `Instrumentation` into it to
+  instrument the thread's handlers.
 - A thread starts only if `Worker.verify` accepts what is served, scheduled
   and planned. `Effect.log*` goes to `ctx.logger`.
 - Stopping interrupts handlers, gives their commands back, then releases the

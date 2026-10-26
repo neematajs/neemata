@@ -150,6 +150,14 @@ handlers and gives their commands back; a crashed worker's commands come back
 when their leases end. A storage failure of one command is that command's:
 it is given back and the worker goes on.
 
+The engine observes nothing itself: `Instrumentation`
+(`src/instrumentation.ts`) is where an application does. The client calls its
+`start` around a start, and an execution worker its `handler` around a
+handler, in the handler's fiber, and its `attemptEnded` once the worker is
+done with an attempt. What the application needs to observe a run anywhere
+travels with the run as its `headers`, which plans copy and never read, and a
+claim says when its command was queued, due and claimed, by the store's clock.
+
 ### 4. Programs: what plans run (`src/program.ts`)
 
 A program is a workflow's steps or a task's handler as plain functions over

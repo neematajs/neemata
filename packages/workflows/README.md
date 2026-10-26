@@ -766,10 +766,18 @@ It receives the decoded input and returns the decoded output.
 
 | Field            | Holds                                                                          |
 | ---------------- | ------------------------------------------------------------------------------ |
+| `kind`, `name`   | `task` and the task's name, or `activity` and its workflow's                   |
+| `revision`       | the revision the run is pinned to, if any                                      |
 | `runId`          | the run the attempt belongs to; for a task, the task's own run                 |
 | `nodeName`       | the step                                                                       |
 | `childKey`       | which child of the step: its only one, a branch's case, a parallel's member    |
+| `attemptId`      | this attempt                                                                   |
 | `attemptNumber`  | counts every attempt of the work, from 1                                       |
+| `deliveries`     | deliveries of this attempt, this one included: more after a worker crashed     |
+| `headers`        | what the run was started with (see [Instrumentation](#instrumentation)), `{}`  |
+| `createdAt`      | when the attempt was queued, by the store's clock                              |
+| `availableAt`    | when it became due: later for a delayed retry or start                         |
+| `claimedAt`      | when this delivery claimed it; less `availableAt`, the wait for a worker       |
 | `idempotencyKey` | one opaque string for every attempt of this work, a manual retry's included    |
 | `stopReason`     | an `Effect` of why the worker is stopping the handler; `undefined` until it is |
 
@@ -928,6 +936,7 @@ run is `queued` until a worker takes it.
 | `idempotencyKey` | replaces what the declaration's `idempotency` builds                     |
 | `unique`         | `{ key, scope?, behavior? }`; replaces what the declaration's builds     |
 | `startAt`        | Unix milliseconds: the run exists at once, and is not worked before this |
+| `headers`        | a string map kept with the run, see [Instrumentation](#instrumentation)  |
 
 **Idempotency key.** It names one request. The same task or workflow, the
 same revision and the same input under a key that a run holds is answered
@@ -1334,6 +1343,103 @@ starts. An execution worker finishes the handlers it has first.
 A coordinator fails with `DefinitionConflict` when a declared schedule's
 runnable is not what is saved for its revision.
 
+## Instrumentation
+
+The engine traces and measures nothing of its own, and logs only its own
+failures (see [Storage failures](#storage-failures)). It keeps what an
+application needs to observe runs, and calls the application where only the
+engine can.
+
+**Headers.** A run may be started with `headers`, a string map the engine
+stores with it and never reads: a trace context, a tenant, a correlation id.
+They are not input, so a start repeated with other headers under an
+idempotency key is the same start, and is answered with the run, which keeps
+its own. A run's headers are fixed for its life: a retry, a reopen and a
+resume keep them, and the runs it starts are created with them. A schedule's
+runs have none; `restart` starts a run with what its own start gives. They are
+at most 8 KiB as JSON; more, or a value that is not a string, is a defect and
+starts nothing. Unlike `tags`, they are no index: what is unique to each run,
+such as a `traceparent`, belongs here.
+
+**Hooks.** `Instrumentation` is a service with three optional hooks, provided
+with `Layer.succeed`, where the client runs for `start` and to the execution
+workers for the others (in Neem, merged into the worker's `layer`); nothing
+is called without it.
+
+| Hook                            | Called                                                                     |
+| ------------------------------- | -------------------------------------------------------------------------- |
+| `start(request, next)`          | around every `Client.start` and `restart`; `next(headers)` makes the start |
+| `handler(attempt, run)`         | around every handler, in its fiber: a span opened here is its parent       |
+| `attemptEnded(attempt, result)` | once for every delivery of an attempt that began, when its worker is done  |
+
+`start` answers with `created: false` when an existing run answered the start.
+The span `handler` opens ends with the handler, before the attempt is settled;
+`attempt.stopReason` tells why a handler was stopped. `attemptEnded` is given
+the `AttemptResult`: what the handler came to (`completed`, `failed`,
+`timedOut`) and what was recorded of it (`settled`, `retrying`, or `stale` when
+the attempt no longer counted), or that it was `stopped` without an outcome
+(`cancelled`, `claimLost`, `shutdown`), or an `error` of the worker's. It runs
+before the worker takes other work in its place, so it should not wait; what
+it fails with is logged and changes nothing. The wrappers must run their
+continuation once, and give back what it gave.
+
+Tracing attempts as children of the request that started their run, and
+counting them:
+
+```ts
+/** The span as W3C `traceparent` carries it, and the span it names. */
+const traceparent = (span: Tracer.Span) =>
+  `00-${span.traceId}-${span.spanId}-${span.sampled ? '01' : '00'}`
+const parentOf = ({ traceparent }: Headers) => {
+  const [, traceId, spanId, flags] = traceparent?.split('-') ?? []
+  return traceId && spanId
+    ? Tracer.externalSpan({ traceId, spanId, sampled: flags === '01' })
+    : undefined
+}
+
+const attempts = Metric.counter('workflow_attempts')
+
+const Tracing = Layer.succeed(Instrumentation, {
+  start: (request, next) =>
+    Effect.flatMap(Effect.option(Effect.currentSpan), (span) =>
+      next(
+        Option.isSome(span)
+          ? { ...request.headers, traceparent: traceparent(span.value) }
+          : request.headers,
+      ),
+    ),
+  handler: (attempt, run) =>
+    Effect.withSpan(run, `${attempt.kind} ${attempt.name}`, {
+      kind: 'consumer',
+      parent: parentOf(attempt.headers),
+      attributes: {
+        'workflow.run_id': attempt.runId,
+        'workflow.attempt': attempt.attemptNumber,
+        'workflow.queued_ms': attempt.claimedAt - attempt.availableAt,
+      },
+    }),
+  attemptEnded: (attempt, result) =>
+    Metric.update(
+      Metric.withAttributes(attempts, {
+        name: attempt.name,
+        outcome:
+          result.kind === 'settlement'
+            ? `${result.execution}:${result.settlement}`
+            : result.kind === 'stopped'
+              ? result.reason
+              : result.error,
+      }),
+      1,
+    ),
+})
+```
+
+Labels of a metric are best kept few: the name and the outcome, never a run
+id. A run a workflow's step starts is created with the headers of the run
+that started it, so all of a family's attempts are children of the request
+that started the family, however long it takes. A trace that should
+not span days links to that context instead of naming it as parent.
+
 ## Revisions
 
 Without a `revision`, a run is identified by name: whatever code of
@@ -1673,8 +1779,9 @@ The schema is the application's to migrate.
 tests, and `Postgres.verify` dies at startup unless the installed schema is
 the one the adapter needs. Engine calls take part in the caller's
 transaction, as [shown above](#starting-a-run). This release's schema is
-generation 7: a database at 6 moves to it with `Postgres.migrateFrom6`, which
-only adds, once the older release's workers are stopped.
+generation 8: a database at 7 moves to it with `Postgres.migrateFrom7`, and
+one at 6 with `Postgres.migrateFrom6`, which only add, once the older
+release's workers are stopped.
 
 Options (`maxDeliveries`, `channel`, `answerTimeoutMs`), how commits are
 guarded, the tables and the migration:
@@ -1930,7 +2037,7 @@ case:
 2. Stop every process of the old engine.
 3. Upgrade the storage as below, then start the new engine.
 
-**PostgreSQL: generation 4 to 7.** `0.18.0-alpha.4` installs schema
+**PostgreSQL: generation 4 to 8.** `0.18.0-alpha.4` installs schema
 generation 4; a database at an earlier generation applies that release's
 upgrades to 4 first. The migration keeps history, identity keys and
 schedules in place, all unversioned, and rebuilds the command queue. It

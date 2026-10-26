@@ -158,6 +158,7 @@ export function createSchema(options: CreateSchemaOptions = {}) {
       activeSince: at('active_since').notNull().defaultNow(),
       createdAt: at('created_at').notNull(),
       updatedAt: at('updated_at').notNull(),
+      headers: jsonb('headers'),
     },
     (t) => [
       index('workflow_runs_parent_idx')

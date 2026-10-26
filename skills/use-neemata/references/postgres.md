@@ -2,9 +2,10 @@
 
 `@nmtjs/workflows/postgres` is a `Store` on Effect SQL. It depends on
 `SqlClient` alone, so `@effect/sql-pg` and `@effect/sql-pglite` share one code
-path. Exports: `layer`, `make`, `install`, `verify`, `migrateFrom6`,
+path. Exports: `layer`, `make`, `install`, `verify`, `migrateFrom7`,
+`MIGRATION_FROM_7`, `MIGRATION_FROM_7_SQL`, `migrateFrom6`,
 `MIGRATION_FROM_6`, `MIGRATION_FROM_6_SQL`, `migrateFrom4`,
-`MIGRATION_FROM_4`, `MIGRATION_FROM_4_SQL`, `SCHEMA_VERSION` (7), `CHANNEL`
+`MIGRATION_FROM_4`, `MIGRATION_FROM_4_SQL`, `SCHEMA_VERSION` (8), `CHANNEL`
 and `Notifications`.
 
 ## Store layer
@@ -94,17 +95,17 @@ spelling of the same UUID names no run.
 
 ## Schema and migrations
 
-The schema is generation **7**. The application owns production migrations.
+The schema is generation **8**. The application owns production migrations.
 
 - `createSchema({ searchIndexes? })` from `@nmtjs/workflows/postgres/drizzle`
   returns the tables and enums as Drizzle objects; object names are fixed.
   `searchIndexes: true` adds GIN indexes for the `tags` / `input` list
   filters, at a cost on every run write. The optional `drizzle-orm` peer is
   `>=1.0.0-rc.4 <2.0.0`.
-- `Postgres.verify` dies unless the schema on `search_path` is generation 7
+- `Postgres.verify` dies unless the schema on `search_path` is generation 8
   with the columns and indexes the adapter needs. Run it at startup;
   building the layer verifies nothing.
-- `Postgres.install` creates generation 7 on an empty database; it is for
+- `Postgres.install` creates generation 8 on an empty database; it is for
   tests and local development, not production migrations.
 - Tables: `workflow_runs`, `workflow_nodes`, `workflow_node_children`,
   `workflow_attempts`, `workflow_keys`, `workflow_definitions`,
@@ -112,11 +113,12 @@ The schema is generation **7**. The application owns production migrations.
   `workflow_schema_version`. Unqualified: set `search_path` to place them in
   a schema.
 
-Generation 7 adds what durable workflows store: the node kinds `sleep`,
-`now` and `input`, `workflow_nodes.operation`, and the run status
-`blocked`. It only adds, so it takes
-no time that grows with history. Stop the older workers, then run
-`Postgres.migrateFrom6` (in process) or `MIGRATION_FROM_6_SQL` in one
+Generation 8 adds `workflow_runs.headers`; generation 7 added what durable
+workflows store: the node kinds `sleep`, `now` and `input`,
+`workflow_nodes.operation`, and the run status `blocked`. Both only add, so
+they take no time that grows with history. Stop the older workers, then run
+`Postgres.migrateFrom7` from 7, or `Postgres.migrateFrom6` from 6 (in
+process), or `MIGRATION_FROM_7_SQL` / `MIGRATION_FROM_6_SQL` in one
 transaction.
 
 Generations 1 to 4 belong to the Promise engine; its last release,
@@ -128,7 +130,7 @@ installed a generation 5. To upgrade:
 3. Stop every process of the old engine.
 4. Run `Postgres.migrateFrom4` (in process) or `MIGRATION_FROM_4_SQL` (a
    script) in one transaction, then start the new engine. It ends at
-   generation 7, the steps from 6 included.
+   generation 8, the steps from 6 included.
 
 The migration refuses unless the generation is 4, every run has ended and
 no command is queued; dead commands are deleted. It keeps history, identity

@@ -291,7 +291,7 @@ describe('the schema', slow, () => {
       expect(
         yield* failure('UPDATE workflow_schema_version SET version = 5'),
       ).toContain(
-        'Unsupported workflow schema generation [5], expected [7]: apply the schema upgrades',
+        'Unsupported workflow schema generation [5], expected [8]: apply the schema upgrades',
       )
       expect(yield* failure('DELETE FROM workflow_schema_version')).toContain(
         'Missing workflow schema version',
@@ -337,6 +337,32 @@ describe('the schema', slow, () => {
       expect(loaded?.nodes.every((node) => node.operation === undefined)).toBe(
         true,
       )
+    }).pipe(Effect.provide(database)),
+  )
+
+  it.live('migrating generation 7 gives the schema an install gives', () =>
+    Effect.gen(function* () {
+      const expected = yield* installed
+      yield* generation4
+      // Generation 7 as the release before this one installed it.
+      const to7 = Postgres.MIGRATION_FROM_4.slice(
+        0,
+        -Postgres.MIGRATION_FROM_7.length,
+      )
+      const { pglite } = yield* PgliteClient.PgliteClient
+      yield* Effect.promise(() =>
+        pglite.exec(
+          `BEGIN; ${to7.join(';\n')}; UPDATE workflow_schema_version SET version = 7; COMMIT;`,
+        ),
+      )
+      yield* Postgres.migrateFrom7
+      yield* Postgres.verify
+      expect(yield* catalog).toEqual(expected)
+
+      // What generation 7 stored reads as runs started without headers.
+      const store = yield* Postgres.make()
+      const loaded = yield* store.load(RUN)
+      expect(loaded?.run.headers).toBeUndefined()
     }).pipe(Effect.provide(database)),
   )
 
@@ -1037,6 +1063,9 @@ function adapter(real: boolean) {
           token: 'claim-1',
           command: continueRun({ id: 'run-1', name: 'flow' }),
           deliveries: 1,
+          createdAt: 0,
+          availableAt: 0,
+          claimedAt: 0,
         }
         const stale = new StaleClaim({ commandId: forged.id })
         expect(yield* Effect.flip(store.renew(forged, 1_000))).toEqual(stale)

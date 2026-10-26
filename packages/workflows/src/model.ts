@@ -77,6 +77,13 @@ export type RunUnique = {
   readonly behavior: RunUniqueBehavior
 }
 
+/**
+ * What a caller attached to a run for whatever observes it, such as a trace
+ * context: a string map, as propagators read and write one. The engine
+ * stores and copies it and never reads it.
+ */
+export type Headers = Readonly<Record<string, string>>
+
 export type StoredError = {
   readonly name?: string
   readonly message: string
@@ -102,6 +109,13 @@ export type StoredRun = {
   readonly parentRoute?: Route
   readonly rootRunId: string
   readonly tags: Readonly<Record<string, string>>
+  /**
+   * Fixed when the run is created and kept for its life, by a reopen and a
+   * resume as well; a child run is created with its parent's. Never part of
+   * what an idempotency or unique key compares, so a start repeated with
+   * other headers is the same start. Unlike `tags`, not an index.
+   */
+  readonly headers?: Headers
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: RunUnique
   /** Immutable for the run's life: nothing changes what a run is pinned to. */

@@ -234,6 +234,7 @@ export function storeContract<R>(
               parentRoute: { name: FLOW, revision: 'p1' },
               rootRunId: parent.id,
               tags: { tenant: 'a' },
+              headers: { traceparent: '00-abc-def-01', empty: '' },
               idempotencyKey: ['order', 1, { b: 2 }],
               unique: { key: ['k'], scope: 'all', behavior: 'join' },
               revision: 'r1',
@@ -2497,6 +2498,54 @@ export function storeContract<R>(
           { id: first!.id, deliveries: 2, command: continueRun(run) },
         ])
       }),
+    )
+
+    it.effect(
+      'tells when a claimed command was queued, became due and was claimed',
+      () =>
+        Effect.gen(function* () {
+          const { store } = yield* harness.make()
+          const [later, released, hastened] = [
+            yield* create(store),
+            yield* create(store),
+            yield* create(store),
+          ]
+          const at = yield* now(store)
+
+          // Due later than it was queued.
+          yield* enqueue(store, wake(later, at + SHORT))
+          yield* harness.elapse(PAST_SHORT)
+          const [first] = yield* claims(store)
+          expect(first!.createdAt).toBeGreaterThanOrEqual(at)
+          expect(first!.availableAt).toBe(at + SHORT)
+          expect(first!.claimedAt).toBeGreaterThanOrEqual(first!.availableAt)
+          yield* ack(store, first!)
+
+          // Given back with a delay, it is due again after it; when it was
+          // queued stays.
+          yield* enqueue(store, wake(released))
+          const [claimed] = yield* claims(store)
+          expect(claimed!.availableAt).toBe(claimed!.createdAt)
+          yield* store.release(claimed!, { delayMs: SHORT })
+          yield* harness.elapse(PAST_SHORT)
+          const [again] = yield* claims(store)
+          expect(again!.createdAt).toBe(claimed!.createdAt)
+          expect(again!.availableAt).toBeGreaterThanOrEqual(
+            claimed!.claimedAt + SHORT,
+          )
+          expect(again!.claimedAt).toBeGreaterThanOrEqual(again!.availableAt)
+          yield* ack(store, again!)
+
+          // Merged with an earlier wake, it is due at the earlier time,
+          // whether it waits or is due already.
+          const queued = yield* now(store)
+          yield* enqueue(store, wake(hastened, queued + LEASE))
+          yield* enqueue(store, wake(hastened, queued + SHORT))
+          yield* harness.elapse(PAST_SHORT)
+          yield* enqueue(store, wake(hastened, queued - SHORT))
+          const [merged] = yield* claims(store)
+          expect(merged!.availableAt).toBe(queued - SHORT)
+        }),
     )
 
     it.effect(

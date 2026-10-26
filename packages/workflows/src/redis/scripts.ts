@@ -627,8 +627,13 @@ for _, entry in ipairs(m.enqueue) do
     -- Not added: the one that waits, the first queued of them, is due no
     -- later than this one would have been. One that is due already is in
     -- no wait, and stays as it is.
-    local command = redis.call('HMGET', root .. 'command:' .. waiting, 'lane', 'seq', 'kind')
+    local command = redis.call('HMGET', root .. 'command:' .. waiting, 'lane', 'seq', 'kind', 'availableAt')
     local due = redis.call('ZSCORE', root .. 'wait:' .. command[1], waiting)
+    -- When it is due is kept as the other stores keep it: the earlier of the
+    -- two, even for one that is due already.
+    if command[4] and at < tonumber(command[4]) then
+      redis.call('HSET', root .. 'command:' .. waiting, 'availableAt', at)
+    end
     if due and at < tonumber(due) then
       if at <= now then
         redis.call('ZREM', root .. 'wait:' .. command[1], waiting)
@@ -643,7 +648,8 @@ for _, entry in ipairs(m.enqueue) do
     local id = string.format('%d', turn)
     redis.call('HSET', root .. 'command:' .. id, 'command', entry.command,
       'dedupe', entry.dedupe, 'kind', entry.kind, 'lane', entry.lane,
-      'runId', entry.runId, 'seq', turn, 'deliveries', 0, 'createdAt', m.now)
+      'runId', entry.runId, 'seq', turn, 'deliveries', 0, 'createdAt', m.now,
+      'availableAt', at)
     redis.call('SADD', root .. 'commands:' .. entry.runId, id)
     redis.call('ZADD', root .. 'waiting:' .. entry.dedupe, turn, id)
     if at <= now then
@@ -665,6 +671,9 @@ export type Claimed = readonly (readonly [
   token: string,
   command: string,
   deliveries: number,
+  createdAt: number,
+  availableAt: number,
+  claimedAt: number,
 ])[]
 
 /**
@@ -709,7 +718,8 @@ while #claims < limit do
   for i = 1, math.min(wanted, #found) do
     local id, lane = found[i].id, found[i].lane
     local key = root .. 'command:' .. id
-    local command = redis.call('HMGET', key, 'command', 'deliveries', 'expiresAt', 'runId', 'dedupe')
+    local command = redis.call('HMGET', key, 'command', 'deliveries', 'expiresAt', 'runId', 'dedupe',
+      'createdAt', 'availableAt')
     local runId, dedupe = command[4], command[5]
     redis.call('ZREM', root .. 'due:' .. lane, id)
     if not command[3] then unwait(dedupe, id) end
@@ -731,7 +741,11 @@ while #claims < limit do
       redis.call('HSET', key, 'token', token, 'expiresAt', now + lease, 'deliveries', deliveries)
       redis.call('ZADD', root .. 'wait:' .. lane, now + lease, id)
       redis.call('ZADD', root .. 'claims:' .. runId, now + lease, id)
-      claims[#claims + 1] = { id, token, command[1], deliveries }
+      -- A command queued before \`availableAt\` was kept has only the time it
+      -- was queued, which it is reported as due from.
+      local created = tonumber(command[6])
+      claims[#claims + 1] = { id, token, command[1], deliveries, created,
+        tonumber(command[7]) or created, now }
     end
   end
 end
@@ -755,6 +769,7 @@ if ARGV[4] == '' then
 else
   redis.call('HSET', key, 'error', ARGV[4])
 end
+redis.call('HSET', key, 'availableAt', now + math.max(delay, 0))
 redis.call('ZADD', root .. 'waiting:' .. command[3], command[4], id)
 redis.call('ZREM', root .. 'claims:' .. command[2], id)
 if delay <= 0 then

@@ -5,9 +5,11 @@ import type {
   CancellationPolicy,
   DefinitionRecord,
   DurationString,
+  Headers,
   RetryPolicy,
   Route,
   StoredError,
+  Timestamp,
 } from './model.ts'
 import type { NodeWithoutInput } from './store.ts'
 import { caseKey, memberKey, SELF } from './model.ts'
@@ -58,6 +60,11 @@ export type Compute<A = unknown> = (
 
 /** What a handler is told about the attempt it runs. */
 export type AttemptInfo = {
+  /** A task's own handler, or an activity: a step of a workflow. */
+  readonly kind: 'task' | 'activity'
+  /** The task, or the workflow whose activity it is. */
+  readonly name: string
+  readonly revision?: string
   readonly runId: string
   readonly nodeName: string
   /**
@@ -65,8 +72,24 @@ export type AttemptInfo = {
    * parallel's member. A task run has one node with one child.
    */
   readonly childKey: string
+  readonly attemptId: string
   /** Counts every attempt of the work, from 1. */
   readonly attemptNumber: number
+  /**
+   * How many deliveries of this attempt count, this one included: more than
+   * one when a worker before this one crashed or failed to settle it.
+   */
+  readonly deliveries: number
+  /** What the run was started with, `{}` when nothing. */
+  readonly headers: Headers
+  /**
+   * When the attempt's command was queued, when it became due, and when
+   * this delivery claimed it, all by the store's clock: the time from due to
+   * claimed is what the attempt waited for a worker. See `Claim`.
+   */
+  readonly createdAt: Timestamp
+  readonly availableAt: Timestamp
+  readonly claimedAt: Timestamp
   /**
    * Names the work and not the attempt: every attempt of one child of one
    * node of one run gets the same key, a manual retry's included, and no

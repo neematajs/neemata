@@ -1,5 +1,6 @@
 import type { DefinitionConflict } from '../errors.ts'
 import type {
+  Headers,
   Route,
   RunKind,
   RunUnique,
@@ -26,6 +27,8 @@ export type StartInput = Route & {
   readonly definition?: Described
   readonly input: unknown
   readonly tags?: Readonly<Record<string, string>>
+  /** Kept with a run this start creates; one it joins keeps its own. */
+  readonly headers?: Headers
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: Pick<RunUnique, 'key'> & Partial<RunUnique>
   /**
@@ -49,6 +52,39 @@ function resolveUnique(unique: StartInput['unique']): RunUnique | undefined {
   return { key, scope, behavior }
 }
 
+/** The most a run's headers may take, as compact JSON in UTF-8 bytes. */
+export const HEADERS_LIMIT = 8_192
+
+/**
+ * Headers as a run keeps them: a copy, which the caller's later changes do
+ * not reach. Anything but a string map, or one past `HEADERS_LIMIT`, is the
+ * caller's mistake and a defect: nothing is written.
+ */
+export function storedHeaders(headers: Headers): Headers {
+  if (
+    typeof headers !== 'object' ||
+    headers === null ||
+    Array.isArray(headers)
+  ) {
+    throw new TypeError('Run headers are not a string map')
+  }
+  const entries = Object.entries(headers)
+  for (const [key, value] of entries) {
+    if (typeof value !== 'string') {
+      throw new TypeError(`Run header [${key}] is not a string`)
+    }
+  }
+  // Defined, not assigned: a key such as `__proto__` is kept as given.
+  const copy = Object.fromEntries(entries)
+  const size = new TextEncoder().encode(JSON.stringify(copy)).byteLength
+  if (size > HEADERS_LIMIT) {
+    throw new RangeError(
+      `Run headers take ${size} bytes, more than the ${HEADERS_LIMIT} allowed`,
+    )
+  }
+  return copy
+}
+
 export function startScope(input: StartInput): ReadScope {
   const unique = resolveUnique(input.unique)
   return {
@@ -68,7 +104,7 @@ export function createRoot(
   draft: Draft,
   root: Route &
     Pick<StoredRun, 'kind' | 'input' | 'graphHash' | 'presentation'> &
-    Partial<Pick<StoredRun, 'tags' | 'idempotencyKey' | 'unique'>> &
+    Partial<Pick<StoredRun, 'tags' | 'headers' | 'idempotencyKey' | 'unique'>> &
     Pick<StartInput, 'startAt'>,
 ): StoredRun {
   const { startAt, kind, graphHash, presentation, ...rest } = root
@@ -93,6 +129,8 @@ export function createRoot(
 export function planStart(input: StartInput): Plan<Started, StartError> {
   const { kind = 'workflow', name, revision, definition } = input
   const unique = resolveUnique(input.unique)
+  const headers =
+    input.headers === undefined ? undefined : storedHeaders(input.headers)
   const records = definition?.records ?? []
   const sameRunnable = (run: StoredRun) =>
     run.kind === kind && run.name === name && run.revision === revision
@@ -167,6 +205,7 @@ export function planStart(input: StartInput): Plan<Started, StartError> {
       ...described(definition),
       input: input.input,
       ...(input.tags === undefined ? {} : { tags: input.tags }),
+      ...(headers === undefined ? {} : { headers }),
       ...(input.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: input.idempotencyKey }),
