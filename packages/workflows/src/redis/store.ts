@@ -831,9 +831,23 @@ export const make = Effect.fnUntraced(function* (options: RedisOptions = {}) {
       ),
       (claimed) =>
         claimed.map(
-          ([id, token, command, deliveries]): Claim<
-            Extract<Command, { kind: K }>
-          > => ({ id, token, command: JSON.parse(command), deliveries }),
+          ([
+            id,
+            token,
+            command,
+            deliveries,
+            createdAt,
+            availableAt,
+            claimedAt,
+          ]): Claim<Extract<Command, { kind: K }>> => ({
+            id,
+            token,
+            command: JSON.parse(command),
+            deliveries,
+            createdAt,
+            availableAt,
+            claimedAt,
+          }),
         ),
     )
   }

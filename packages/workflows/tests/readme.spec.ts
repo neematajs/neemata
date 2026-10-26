@@ -6,14 +6,18 @@ import { describe, expect, expectTypeOf, it } from '@effect/vitest'
 import * as Context from 'effect/Context'
 import * as Effect from 'effect/Effect'
 import * as Layer from 'effect/Layer'
+import * as Metric from 'effect/Metric'
+import * as Option from 'effect/Option'
 import * as Schema from 'effect/Schema'
 import * as SqlClient from 'effect/sql/SqlClient'
 import * as Stream from 'effect/Stream'
 import * as TestClock from 'effect/testing/TestClock'
+import * as Tracer from 'effect/Tracer'
 
 import type {
   CleanupTimeout,
   DefinitionConflict,
+  Headers,
   StorageError,
   Store,
 } from '../src/index.ts'
@@ -23,6 +27,7 @@ import {
   decodeRun,
   durable,
   InMemory,
+  Instrumentation,
   schedule,
   task,
   Worker,
@@ -417,6 +422,54 @@ const show = (inspection: RunInspection) => {
 }
 // #endregion
 
+// #region instrumentation
+/** The span as W3C `traceparent` carries it, and the span it names. */
+const traceparent = (span: Tracer.Span) =>
+  `00-${span.traceId}-${span.spanId}-${span.sampled ? '01' : '00'}`
+const parentOf = ({ traceparent }: Headers) => {
+  const [, traceId, spanId, flags] = traceparent?.split('-') ?? []
+  return traceId && spanId
+    ? Tracer.externalSpan({ traceId, spanId, sampled: flags === '01' })
+    : undefined
+}
+
+const attempts = Metric.counter('workflow_attempts')
+
+const Tracing = Layer.succeed(Instrumentation, {
+  start: (request, next) =>
+    Effect.flatMap(Effect.option(Effect.currentSpan), (span) =>
+      next(
+        Option.isSome(span)
+          ? { ...request.headers, traceparent: traceparent(span.value) }
+          : request.headers,
+      ),
+    ),
+  handler: (attempt, run) =>
+    Effect.withSpan(run, `${attempt.kind} ${attempt.name}`, {
+      kind: 'consumer',
+      parent: parentOf(attempt.headers),
+      attributes: {
+        'workflow.run_id': attempt.runId,
+        'workflow.attempt': attempt.attemptNumber,
+        'workflow.queued_ms': attempt.claimedAt - attempt.availableAt,
+      },
+    }),
+  attemptEnded: (attempt, result) =>
+    Metric.update(
+      Metric.withAttributes(attempts, {
+        name: attempt.name,
+        outcome:
+          result.kind === 'settlement'
+            ? `${result.execution}:${result.settlement}`
+            : result.kind === 'stopped'
+              ? result.reason
+              : result.error,
+      }),
+      1,
+    ),
+})
+// #endregion
+
 describe('the quick start', () => {
   it.live('runs a workflow to its output on the in-memory store', () =>
     Effect.gen(function* () {
@@ -539,6 +592,47 @@ describe('the stop reason example', () => {
       )
     },
   )
+})
+
+describe('the instrumentation example', () => {
+  it.effect('traces attempts under the request that started their run', () => {
+    const seen: Tracer.AnySpan[] = []
+    const Traced = task({
+      name: 'traced',
+      pool: 'default',
+      input: Schema.String,
+      output: Schema.String,
+      handler: (input) =>
+        Effect.as(
+          Effect.flatMap(Effect.currentSpan, (span) =>
+            Effect.sync(() => seen.push(span)),
+          ),
+          input,
+        ),
+    })
+    const { provide } = deployment()
+
+    return provide(
+      Effect.gen(function* () {
+        const { request, run } = yield* Effect.withSpan(
+          Effect.all({
+            request: Effect.currentSpan,
+            run: Client.start(Traced, 'a'),
+          }),
+          'request',
+        )
+        yield* serve({ tasks: [Traced] })
+
+        expect((yield* Client.get(run.id))!.run.status).toBe('completed')
+        const [handled] = seen as [Tracer.Span]
+        expect(handled.name).toBe('task traced')
+        expect(handled.traceId).toBe(request.traceId)
+        expect(Option.getOrThrow(handled.parent).spanId).toBe(
+          (yield* Client.get(run.id))!.run.headers!.traceparent!.split('-')[2],
+        )
+      }).pipe(Effect.provide(Tracing)),
+    )
+  })
 })
 
 describe('the client examples', () => {

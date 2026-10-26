@@ -227,9 +227,9 @@ no guard and no claim, and a write under it is refused as a defect.
 
 ## Schema
 
-`install` creates generation 7 on a database without workflow tables; it is
+`install` creates generation 8 on a database without workflow tables; it is
 for tests and local development. `verify` dies unless the schema on
-`search_path` is generation 7 with the columns and indexes the adapter's
+`search_path` is generation 8 with the columns and indexes the adapter's
 statements need. `@nmtjs/workflows/postgres/drizzle` has the same schema
 as Drizzle objects, for applications that keep their migrations with Drizzle.
 
@@ -294,16 +294,26 @@ claim takes fewer than its limit and the next one goes on. Commands held by
 another claim (a lease that has not ended) are read and passed over one by
 one, so a lane costs a claim what it has in flight.
 
+## Migrating from generation 7
+
+Generation 8 adds the `headers` column of `workflow_runs`, which runs are
+started with. It only adds, so it takes no time that grows with the history,
+and a run generation 7 stored reads as one started without headers.
+`MIGRATION_FROM_7` is the migration, one statement per entry, to run in one
+transaction; `MIGRATION_FROM_7_SQL` is the same as a script, and
+`migrateFrom7` runs it. Stop the workers of the older release first: their
+code knows no generation 8.
+
 ## Migrating from generation 6
 
 Generation 7 adds what durable workflows store: the node kinds `sleep`, `now`
 and `input`, the `operation` column of `workflow_nodes`, and the run status
-`blocked`. It only adds, so
-it takes no time that grows with the history, and what generation 6 stored
-reads as it did. `MIGRATION_FROM_6` is the migration, one statement per entry,
-to run in one transaction; `MIGRATION_FROM_6_SQL` is the same as a script, and
-`migrateFrom6` runs it. Stop the workers of the older release first: their
-code knows no generation 7.
+`blocked`; generation 8 adds what is said above. `MIGRATION_FROM_6` takes a
+database from 6 to 8 and only adds, so it takes no time that grows with the
+history, and what generation 6 stored reads as it did. It is one statement per
+entry, to run in one transaction; `MIGRATION_FROM_6_SQL` is the same as a
+script, and `migrateFrom6` runs it. Stop the workers of the older release
+first: their code knows no generation 8.
 
 ## Migrating from generation 4
 
@@ -313,7 +323,7 @@ generation 4. A database at an earlier generation applies that release's
 upgrades to 4 first. No release installed a generation 5, and the migration
 refuses every generation but 4.
 
-It ends at generation 7, the steps from 6 included.
+It ends at generation 8, the steps from 6 included.
 `MIGRATION_FROM_4` is the migration, one statement per entry, to run in one
 transaction; `MIGRATION_FROM_4_SQL` is the same as a script. Tables are named
 unqualified: set `search_path` first when they live in another schema.

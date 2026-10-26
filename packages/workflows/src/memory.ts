@@ -906,6 +906,9 @@ export function makeInMemoryStore(options: InMemoryOptions = {}) {
           token,
           command: command as Extract<Command, { kind: K }>,
           deliveries,
+          createdAt: queued.createdAt,
+          availableAt: queued.availableAt,
+          claimedAt: now,
         })
         put({
           ...queued,

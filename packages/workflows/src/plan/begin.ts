@@ -91,15 +91,24 @@ export function planBegin(
     // must not learn that the work is its to do, so the claim is checked in
     // the commit itself, where no pause can follow the check.
     draft.hold(claim)
-    const { runId, nodeName, childKey } = command
+    const { name, revision, runId, nodeName, childKey, attemptId } = command
     return {
       _tag: 'Begun',
       executable,
       attempt: {
+        kind: command.kind === 'runTask' ? 'task' : 'activity',
+        name,
+        ...(revision === undefined ? {} : { revision }),
         runId,
         nodeName,
         childKey,
+        attemptId,
         attemptNumber: attempt.attemptNumber,
+        deliveries: claim.deliveries,
+        headers: run.headers ?? {},
+        createdAt: claim.createdAt,
+        availableAt: claim.availableAt,
+        claimedAt: claim.claimedAt,
         // Unambiguous whatever the names contain, which a joined path is not.
         idempotencyKey: JSON.stringify([runId, nodeName, childKey]),
         // Nothing stops a handler but a worker, which says why itself.

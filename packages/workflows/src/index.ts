@@ -118,6 +118,8 @@ export type {
   WorkflowGraphTarget,
   WorkflowStructure,
 } from './graph/index.ts'
+export { Instrumentation } from './instrumentation.ts'
+export type { AttemptResult, StartRequest } from './instrumentation.ts'
 export * as InMemory from './memory.ts'
 export {
   caseKey,

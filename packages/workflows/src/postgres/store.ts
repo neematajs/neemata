@@ -1142,9 +1142,12 @@ export const CLAIM = compact(`
         delivery_count = command.delivery_count + 1
     WHERE command.id = ANY(ARRAY(SELECT id FROM picked))
     RETURNING command.id, command.seq, command.lease_token, command.payload,
-              command.delivery_count
+              command.delivery_count, command.created_at, command.run_at
   )
-  SELECT id, lease_token AS token, payload AS command, delivery_count AS deliveries
+  SELECT id, lease_token AS token, payload AS command, delivery_count AS deliveries,
+    ${millis('created_at')}::float8 AS "createdAt",
+    ${millis('run_at')}::float8 AS "availableAt",
+    ${millis('(SELECT now FROM clock)')}::float8 AS "claimedAt"
   FROM claimed
   ORDER BY seq`)
 

@@ -345,6 +345,17 @@ export type Claim<C extends Command = Command> = {
    * claim but those released without an error.
    */
   readonly deliveries: number
+  /** When the command was queued. */
+  readonly createdAt: Timestamp
+  /**
+   * When the command became due: when it was queued, unless it was queued
+   * for later or given back with a delay, or an earlier wake was merged into
+   * it. A lease that ended does not move it, so a delivery after one counts
+   * the time the delivery before it held the command.
+   */
+  readonly availableAt: Timestamp
+  /** When this delivery claimed it. Store time, as the two above are. */
+  readonly claimedAt: Timestamp
 }
 
 /**

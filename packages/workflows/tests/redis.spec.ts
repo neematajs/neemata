@@ -1516,6 +1516,26 @@ for (const [server, url] of SERVERS) {
     })
     layer(client(url!), options)('as only it is', adapter(url!))
 
+    it.effect(
+      'reports a command queued before due times were kept as due when queued',
+      () =>
+        Effect.gen(function* () {
+          const prefix = yield* prefixed
+          const store = yield* RedisStore.make({ prefix })
+          const redis = yield* Redis.Redis
+          const now = yield* view(store, {}, (snapshot) => snapshot.now)
+          yield* enqueue(store, { ...wake(stored('run', now)), availableAt: 1 })
+          // As a release before this one queued it: without `availableAt`.
+          const [key] = yield* Effect.orDie(
+            redis.send<string[]>('KEYS', `{${prefix}}command:*`),
+          )
+          yield* Effect.orDie(redis.send('HDEL', key!, 'availableAt'))
+
+          const [claim] = yield* claims(store)
+          expect(claim!.availableAt).toBe(claim!.createdAt)
+        }).pipe(Effect.scoped, Effect.provide(client(url!))),
+    )
+
     // The test clock stands still at zero here: time that passes is the
     // server's.
     it.effect('reads the time from the server, not from its process', () =>

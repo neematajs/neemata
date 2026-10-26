@@ -756,6 +756,8 @@ export function start(
     parentNodeName: node.name,
     parentRoute: { name, ...(revision === undefined ? {} : { revision }) },
     rootRunId: run.rootRunId,
+    // Whatever observes the run follows its children too.
+    ...(run.headers === undefined ? {} : { headers: run.headers }),
   }
   if (target.kind === 'task') {
     startTask(draft, childRun, target)

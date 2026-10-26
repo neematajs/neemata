@@ -198,6 +198,7 @@ export const runs = table<StoredRun>('workflow_runs', ['id'], {
   },
   rootRunId: ['root_run_id', 'uuid'],
   tags: ['tags', 'json'],
+  headers: ['headers', 'json'],
   idempotencyKey: ['idempotency_key', 'json'],
   unique: {
     key: ['unique_key', 'json'],

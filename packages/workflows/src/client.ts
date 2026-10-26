@@ -20,6 +20,7 @@ import type {
   GraphPresentation,
 } from './graph/structure.ts'
 import type {
+  Headers,
   RunRecords,
   RunStatus,
   RunSummary,
@@ -51,6 +52,7 @@ import {
 } from './errors.ts'
 import { hashStructure } from './graph/revision.ts'
 import { parseStructure } from './graph/structure.ts'
+import { Instrumentation } from './instrumentation.ts'
 import { isTerminal, ordered } from './model.ts'
 import { graphKey, label, revisionKey } from './plan/definitions.ts'
 import { familyTopic, planning } from './plan/draft.ts'
@@ -64,6 +66,12 @@ type Declaration = AnyTask | ServedWorkflow
 export type StartOptions = {
   /** Each of these replaces what the declaration builds from the input. */
   readonly tags?: Readonly<Record<string, string>>
+  /**
+   * Kept with the run for whatever observes it, as an `Instrumentation`
+   * does, and given to its handlers; inherited by the runs it starts. The
+   * start hook may replace them. Not compared with an existing run's.
+   */
+  readonly headers?: Headers
   readonly idempotencyKey?: readonly unknown[]
   readonly unique?: StartInput['unique']
   /** The run exists at once; what starts it is not delivered before this. */
@@ -120,18 +128,34 @@ export const start = <D extends Declaration>(
       options.idempotencyKey ?? declaration.idempotency?.(input)
     const constraint = options.unique ?? unique(declaration.unique, input)
     const { startAt } = options
-
-    return Engine.start({
+    const encoded = declaration.input.encode(input)
+    const route = {
       kind,
       name,
       ...(revision === undefined ? {} : { revision }),
-      definition: declaration.program.definition,
-      input: declaration.input.encode(input),
-      ...(tags === undefined ? {} : { tags }),
-      ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-      ...(constraint === undefined ? {} : { unique: constraint }),
-      ...(startAt === undefined ? {} : { startAt }),
-    })
+    }
+
+    const next = (headers: Headers | undefined) =>
+      Engine.start({
+        ...route,
+        definition: declaration.program.definition,
+        input: encoded,
+        ...(tags === undefined ? {} : { tags }),
+        ...(headers === undefined ? {} : { headers }),
+        ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
+        ...(constraint === undefined ? {} : { unique: constraint }),
+        ...(startAt === undefined ? {} : { startAt }),
+      })
+    return Effect.flatMap(Instrumentation, (instrumentation) =>
+      instrumentation.start
+        ? instrumentation.start(
+            options.headers === undefined
+              ? route
+              : { ...route, headers: options.headers },
+            next,
+          )
+        : next(options.headers),
+    )
   }).pipe(
     Effect.map(({ run }) => answer(declaration, run)),
     claimless,
@@ -718,7 +742,8 @@ type Restarted<D> = D extends Declaration
  * as only that contract is known to read its input back right. The stored
  * tags and unique constraint are applied again unless `options` replace
  * them, and the rules of `start` hold: a constraint of scope `all` conflicts
- * with the run being restarted.
+ * with the run being restarted. Headers are not carried over: the new run
+ * has those of this start, as `options` and instrumentation give them.
  */
 export const restart = <const Definitions extends readonly Declaration[]>(
   runId: string,

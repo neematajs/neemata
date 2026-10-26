@@ -1,6 +1,6 @@
 ---
 name: use-neemata
-description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: Effect task, workflow and durable (replayed) workflow declarations, execution pools, revisions, the Client and Worker modules, in-memory, PostgreSQL and Redis/Valkey stores, Neem workflow workers, and typed publish/subscribe channels.'
+description: 'Use when answering questions or writing code for Neemata durable workflows and pubsub: Effect task, workflow and durable (replayed) workflow declarations, execution pools, revisions, the Client and Worker modules, instrumentation (tracing/metrics hooks and run headers), in-memory, PostgreSQL and Redis/Valkey stores, Neem workflow workers, and typed publish/subscribe channels.'
 ---
 
 # Use Neemata
@@ -24,9 +24,11 @@ RPC/HTTP APIs and dependency wiring.
 
 - [Workflows](references/workflows.md) - tasks, workflow steps, references,
   durable workflows and operation names, handlers, pools, the client,
-  workers, schedules, revisions, Redis/Valkey, inspector, Neem integration
-  and upgrading from the Promise engine.
+  workers, instrumentation (run headers, tracing and metrics hooks),
+  schedules, revisions, Redis/Valkey, inspector, Neem integration and
+  upgrading from the Promise engine.
 - [PostgreSQL](references/postgres.md) - the Effect SQL store, hints,
-  transactions, schema generation 7, Drizzle and the migrations from 6 and 4.
+  transactions, schema generation 8, Drizzle and the migrations from 7, 6
+  and 4.
 - [PubSub](references/pubsub.md) - typed Effect channels, delivery semantics,
   errors and retrying, in-memory and Redis/Valkey brokers.
