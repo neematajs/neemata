@@ -5,6 +5,7 @@ mod lb;
 mod options;
 mod proxy;
 mod router;
+mod runtime;
 mod server;
 
 #[doc(hidden)]

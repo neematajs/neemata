@@ -1,4 +1,4 @@
-use crate::{lb, options};
+use crate::{lb, options, runtime::ProxyRuntime};
 use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -263,7 +263,11 @@ fn resolve_route(
 }
 
 #[derive(Clone)]
-pub struct SharedRouter(pub Arc<Router>);
+pub struct SharedRouter {
+    pub router: Arc<Router>,
+    // Connection tasks hold the app that holds this, so the runtime outlives them.
+    _runtime: Arc<ProxyRuntime>,
+}
 
 #[derive(Clone, Default)]
 pub struct RouterCtx {
@@ -288,8 +292,11 @@ pub enum FailureHint {
 }
 
 impl SharedRouter {
-    pub fn new(router: Arc<Router>) -> Self {
-        Self(router)
+    pub fn new(router: Arc<Router>, runtime: Arc<ProxyRuntime>) -> Self {
+        Self {
+            router,
+            _runtime: runtime,
+        }
     }
 }
 
@@ -302,9 +309,9 @@ impl ProxyHttp for SharedRouter {
     }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
-        let config = self.0.config.load();
-        let limits = &self.0.limits;
-        let timeouts = &self.0.timeouts;
+        let config = self.router.config.load();
+        let limits = &self.router.limits;
+        let timeouts = &self.router.timeouts;
 
         if let Some(status) = request_limit_rejection_status(session, limits) {
             return reject_request(session, status, failure_body(status.as_u16())).await;
@@ -313,8 +320,11 @@ impl ProxyHttp for SharedRouter {
         apply_downstream_timeouts(session, timeouts);
 
         // Answered before routing so no application can shadow or receive a probe.
-        if let Some(probe) = self.0.match_health_probe(session.req_header().uri.path()) {
-            let status = self.0.health_status.load();
+        if let Some(probe) = self
+            .router
+            .match_health_probe(session.req_header().uri.path())
+        {
+            let status = self.router.health_status.load();
             return respond_health(session, probe, status).await;
         }
 
@@ -374,7 +384,7 @@ impl ProxyHttp for SharedRouter {
         }
 
         if let (Some(sticky), Some(_app_name), Some(_resolved)) = (
-            self.0.sticky.as_ref(),
+            self.router.sticky.as_ref(),
             ctx.app_name.as_ref(),
             ctx.resolved_pool.as_ref(),
         ) {
@@ -439,7 +449,7 @@ impl ProxyHttp for SharedRouter {
         };
 
         let selected_addr = if let (Some(sticky), Some(app_name), Some(affinity_key)) = (
-            self.0.sticky.as_ref(),
+            self.router.sticky.as_ref(),
             ctx.app_name.as_deref(),
             ctx.affinity_key.as_deref(),
         ) {
@@ -479,7 +489,7 @@ impl ProxyHttp for SharedRouter {
             resolved.secure,
             resolved.verify_hostname.clone(),
         );
-        apply_upstream_timeouts(&mut peer, &self.0.timeouts);
+        apply_upstream_timeouts(&mut peer, &self.router.timeouts);
         // For plaintext HTTP/2 upstreams (h2c), Pingora needs the peer's min HTTP version to be 2,
         // otherwise it will assume HTTP/1.1 when no ALPN is present.
         if resolved.is_http2 {
@@ -498,7 +508,7 @@ impl ProxyHttp for SharedRouter {
         ctx: &mut Self::CTX,
     ) -> Result<()> {
         let (Some(sticky), Some(affinity_key)) =
-            (self.0.sticky.as_ref(), ctx.affinity_key.as_deref())
+            (self.router.sticky.as_ref(), ctx.affinity_key.as_deref())
         else {
             return Ok(());
         };
@@ -550,7 +560,7 @@ impl ProxyHttp for SharedRouter {
         mut e: Box<Error>,
     ) -> Box<Error> {
         let (Some(sticky), Some(app_name), Some(transport), Some(affinity_key)) = (
-            self.0.sticky.as_ref(),
+            self.router.sticky.as_ref(),
             ctx.app_name.as_deref(),
             ctx.selected_transport,
             ctx.affinity_key.as_deref(),

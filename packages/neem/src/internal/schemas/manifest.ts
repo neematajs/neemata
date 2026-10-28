@@ -99,6 +99,9 @@ const manifestServerConfigSchema = Schema.Struct({
   upstreamChecks: Schema.optional(
     Schema.Struct({ interval: Schema.optional(Schema.Number) }),
   ),
+  threads: Schema.optional(
+    Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1024 })),
+  ),
   stickySessions: Schema.optional(
     Schema.Struct({
       enabled: Schema.optional(Schema.Boolean),

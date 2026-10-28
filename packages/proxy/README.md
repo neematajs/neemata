@@ -82,6 +82,8 @@ The proxy holds no health logic of its own: its owner pushes status with `setHea
 
 ## Operational notes
 
+- Each proxy runs all of its work, including traffic, health checks, and the operations behind its promises, on its own Tokio runtime with `threads` async worker threads (default `1`). The addon starts no shared Tokio runtime; the only shared thread is Pingora's process-wide timer thread, started on first use. Short-lived blocking threads for binding the listener, loading TLS files, and resolving upstreams are added on demand and share the `neemata-proxy` thread name. The runtime lives until the proxy object is collected and its draining connections finish, so connections still open after `stop()` keep being served.
+- Call `stop()` and await it before the Node environment shuts down. Ending a worker thread or reloading an Electron window with a proxy still running is not supported.
 - After `start()`, `proxy.address()` returns the bound listener address as `{ hostname, port }`. This includes the OS-assigned port when `listen` uses port `0`; it returns `null` when the proxy is not running.
 - Dynamic upstream changes are eventually consistent with health checks. After `addUpstream()` or `start()`, a backend does not become routable until its health-check loop marks it healthy, so callers should expect a short convergence window where requests may still receive `503`.
 - The convergence window is controlled by `healthCheckIntervalMs`. Tests in this repository use polling helpers for that reason, and production callers should follow the same pattern when they need to wait for a backend to become ready.

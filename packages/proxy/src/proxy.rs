@@ -1,5 +1,4 @@
-use crate::{errors, lb, options, router, server};
-use napi::bindgen_prelude::execute_tokio_future;
+use crate::{errors, lb, options, router, runtime, server};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use pingora::lb::{LoadBalancer, health_check::TcpHealthCheck, selection::RoundRobin};
@@ -145,6 +144,7 @@ pub type UpstreamOptions = Either<PortUpstreamOptions, UnixSocketUpstreamOptions
 pub struct Proxy {
     inner: Arc<Mutex<ProxyInner>>,
     update_lock: Arc<TokioMutex<()>>,
+    runtime: Arc<runtime::ProxyRuntime>,
 }
 
 #[napi]
@@ -167,6 +167,16 @@ impl Proxy {
             parsed.timeouts.clone(),
             parsed.health.clone(),
         ));
+
+        let runtime = runtime::ProxyRuntime::new(parsed.threads)
+            .map_err(|e| {
+                errors::generic_error(
+                    &env,
+                    errors::codes::RUNTIME_START_FAILED,
+                    format!("Failed to start proxy runtime: {e}"),
+                )
+            })
+            .map(Arc::new)?;
 
         let mut upstreams_by_app = HashMap::new();
         for app in &parsed.applications {
@@ -192,12 +202,22 @@ impl Proxy {
         Ok(Self {
             inner: Arc::new(Mutex::new(inner)),
             update_lock: Arc::new(TokioMutex::new(())),
+            runtime,
         })
     }
 
     #[napi]
     pub fn start<'env>(&self, env: &'env Env) -> Result<PromiseRaw<'env, ()>> {
-        let (listen, tls, server, inner, shared_router, initial_lb_tasks, mut start_rx) = {
+        let (
+            listen,
+            tls,
+            proxy_runtime,
+            server,
+            inner,
+            shared_router,
+            initial_lb_tasks,
+            mut start_rx,
+        ) = {
             let mut guard = self
                 .inner
                 .lock()
@@ -212,8 +232,9 @@ impl Proxy {
                     };
 
                     let mut rx = notifier.subscribe();
-                    return env
-                        .spawn_future(async move { Self::wait_for_start_ready(&mut rx).await });
+                    return spawn_deferred_result(env, self.runtime.clone(), async move {
+                        Self::wait_for_start_ready(&mut rx).await.map(Ok)
+                    });
                 }
                 ProxyState::Running => {
                     return Err(errors::generic_error(
@@ -239,9 +260,11 @@ impl Proxy {
 
             let listen = guard.options.listen.clone();
             let tls = guard.options.tls.clone();
+            let proxy_runtime = self.runtime.clone();
             let server = guard.server.clone();
             let inner = self.inner.clone();
-            let shared_router = router::SharedRouter::new(guard.router.clone());
+            let shared_router =
+                router::SharedRouter::new(guard.router.clone(), proxy_runtime.clone());
             let initial_lb_tasks = guard
                 .pools
                 .iter()
@@ -251,6 +274,7 @@ impl Proxy {
             (
                 listen,
                 tls,
+                proxy_runtime,
                 server,
                 inner,
                 shared_router,
@@ -261,16 +285,19 @@ impl Proxy {
 
         // Move listener setup and service start behind the async boundary, then resolve once
         // startup is fully wired.
-        spawn_deferred_result(env, async move {
+        let runtime = proxy_runtime.handle().clone();
+        spawn_deferred_result(env, proxy_runtime, async move {
             let listen_for_setup = listen.clone();
+            // A failed setup task takes the reset path below, so start and stop waiters settle.
             let setup_result =
                 tokio::task::spawn_blocking(move || build_start_resources(&listen_for_setup, tls))
                     .await
-                    .map_err(|e| {
-                        napi::Error::from_reason(format!(
-                            "Proxy start task failed during listener setup: {e}"
+                    .unwrap_or_else(|e| {
+                        Err(DeferredJsError::generic(
+                            "GenericFailure",
+                            format!("Proxy start task failed during listener setup: {e}"),
                         ))
-                    })?;
+                    });
 
             let (std_listener, tls_settings, listen_address) = match setup_result {
                 Ok(resources) => resources,
@@ -290,7 +317,7 @@ impl Proxy {
             // Start LB health tasks first so pools become ready.
             for (svc_name, lb) in initial_lb_tasks {
                 server
-                    .upsert_service(svc_name, lb::spawn_lb_health_task(lb))
+                    .upsert_service(svc_name, lb::spawn_lb_health_task(&runtime, lb))
                     .await;
             }
 
@@ -321,7 +348,8 @@ impl Proxy {
             }
 
             let (shutdown, shutdown_rx) = watch::channel(false);
-            let task = tokio::spawn(async move {
+            // Pingora spawns connection tasks onto the runtime running `start_service`.
+            let task = runtime.spawn(async move {
                 use pingora::services::Service as _;
                 #[cfg(unix)]
                 svc.start_service(Some(listen_fds), shutdown_rx, conf.listener_tasks_per_fd)
@@ -386,7 +414,7 @@ impl Proxy {
 
     #[napi]
     pub fn stop<'env>(&self, env: &'env Env) -> Result<PromiseRaw<'env, ()>> {
-        let (server, inner, mut start_rx) = {
+        let (runtime, server, inner, mut start_rx) = {
             let mut guard = self
                 .inner
                 .lock()
@@ -395,7 +423,7 @@ impl Proxy {
             match guard.state {
                 ProxyState::Stopped => {
                     guard.listen_address = None;
-                    return env.spawn_future(async { Ok(()) });
+                    return PromiseRaw::resolve(env, ());
                 }
                 ProxyState::Stopping => {
                     let Some(notifier) = guard.stop_notifier.as_ref() else {
@@ -405,8 +433,9 @@ impl Proxy {
                     };
 
                     let mut rx = notifier.subscribe();
-                    return env
-                        .spawn_future(async move { Self::wait_for_stop_ready(&mut rx).await });
+                    return spawn_deferred_result(env, self.runtime.clone(), async move {
+                        Self::wait_for_stop_ready(&mut rx).await.map(Ok)
+                    });
                 }
                 ProxyState::Starting | ProxyState::Running => {
                     guard.state = ProxyState::Stopping;
@@ -418,13 +447,14 @@ impl Proxy {
             }
 
             (
+                self.runtime.clone(),
                 guard.server.clone(),
                 self.inner.clone(),
                 guard.start_notifier.as_ref().map(watch::Sender::subscribe),
             )
         };
 
-        env.spawn_future(async move {
+        spawn_deferred_result(env, runtime, async move {
             if let Some(rx) = start_rx.as_mut() {
                 let _ = Self::wait_for_start_ready(rx).await;
             }
@@ -438,7 +468,7 @@ impl Proxy {
                     let _ = notifier.send(StopStatus::Ready);
                 }
             }
-            Ok(())
+            Ok(Ok(()))
         })
     }
 
@@ -516,8 +546,9 @@ impl Proxy {
 
         let inner = self.inner.clone();
         let update_lock = self.update_lock.clone();
+        let runtime = self.runtime.handle().clone();
 
-        spawn_deferred_result(env, async move {
+        spawn_deferred_result(env, self.runtime.clone(), async move {
             let _update_guard = update_lock.lock().await;
 
             let (server, app_def, health_check_interval_ms, mut next_upstreams) = {
@@ -620,7 +651,7 @@ impl Proxy {
             if is_running {
                 for (name, lb) in to_upsert {
                     server
-                        .upsert_service(name, lb::spawn_lb_health_task(lb))
+                        .upsert_service(name, lb::spawn_lb_health_task(&runtime, lb))
                         .await;
                 }
                 for name in to_remove {
@@ -643,8 +674,9 @@ impl Proxy {
 
         let inner = self.inner.clone();
         let update_lock = self.update_lock.clone();
+        let runtime = self.runtime.handle().clone();
 
-        spawn_deferred_result(env, async move {
+        spawn_deferred_result(env, self.runtime.clone(), async move {
             let _update_guard = update_lock.lock().await;
 
             let (server, app_def, health_check_interval_ms, mut next_upstreams) = {
@@ -741,7 +773,7 @@ impl Proxy {
             if is_running {
                 for (name, lb) in to_upsert {
                     server
-                        .upsert_service(name, lb::spawn_lb_health_task(lb))
+                        .upsert_service(name, lb::spawn_lb_health_task(&runtime, lb))
                         .await;
                 }
                 for name in to_remove {
@@ -754,24 +786,39 @@ impl Proxy {
     }
 }
 
-fn spawn_deferred_result<'env, F>(env: &'env Env, fut: F) -> Result<PromiseRaw<'env, ()>>
+/// Runs a control-plane operation on the proxy's runtime and settles its promise from a
+/// supervisor task, which turns panics into rejections. The supervisor holds the runtime until
+/// the promise is settled, so the runtime cannot shut down under a pending promise.
+fn spawn_deferred_result<'env, F>(
+    env: &'env Env,
+    runtime: Arc<runtime::ProxyRuntime>,
+    fut: F,
+) -> Result<PromiseRaw<'env, ()>>
 where
     F: 'static + Send + Future<Output = Result<DeferredResult<()>>>,
 {
-    let promise = execute_tokio_future(env.raw(), fut, |raw_env, result| {
-        let env = Env::from_raw(raw_env);
-        let settled = match result {
-            Ok(()) => PromiseRaw::resolve(&env, ())?,
-            Err(err) => {
-                let error = napi::Error::new(err.code.to_string(), err.message);
-                PromiseRaw::<()>::reject(&env, error)?
-            }
-        };
+    let (deferred, promise) = env.create_deferred()?;
+    let handle = runtime.handle().clone();
+    let job = handle.spawn(fut);
+    handle.spawn(async move {
+        match job.await {
+            Ok(Ok(result)) => deferred.resolve(move |env| {
+                // Built on the JS thread so the rejection carries the proxy error code.
+                result.map_err(|err| {
+                    JsError::from(napi::Error::new(err.code, err.message))
+                        .into_unknown(env)
+                        .into()
+                })
+            }),
+            Ok(Err(err)) => deferred.reject(err),
+            Err(err) => deferred.reject(napi::Error::from_reason(format!(
+                "Proxy operation failed: {err}"
+            ))),
+        }
+        drop(runtime);
+    });
 
-        Ok(settled.raw())
-    })?;
-
-    Ok(PromiseRaw::new(env.raw(), promise))
+    Ok(PromiseRaw::new(env.raw(), promise.raw()))
 }
 
 fn build_start_resources(

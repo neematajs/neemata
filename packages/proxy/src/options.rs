@@ -4,6 +4,9 @@ use napi_derive::napi;
 use std::collections::HashSet;
 
 pub mod defaults {
+    pub const THREADS: u32 = 1;
+    pub const MAX_THREADS: u32 = 1024;
+
     pub const MAX_URI_BYTES: usize = 8_192;
     pub const MAX_REQUEST_HEADERS: usize = 100;
     pub const MAX_SINGLE_HEADER_BYTES: usize = 8_192;
@@ -23,6 +26,8 @@ pub struct ProxyOptions {
     pub listen: String,
     pub tls: Option<ListenerTlsOptions>,
     pub applications: Vec<ApplicationOptions>,
+    /// Async worker threads of the Tokio runtime this proxy runs all its work on (default: 1, at most 1024). Blocking helper threads are added on demand.
+    pub threads: Option<u32>,
     /// Health check interval in milliseconds. Defaults to 5000ms (5 seconds).
     pub health_check_interval_ms: Option<u32>,
     /// Sticky session configuration.
@@ -115,6 +120,7 @@ pub struct ProxyOptionsParsed {
     pub listen: String,
     pub tls: Option<ListenerTlsOptionsParsed>,
     pub applications: Vec<ApplicationOptionsParsed>,
+    pub threads: usize,
     /// Health check interval in milliseconds.
     pub health_check_interval_ms: u32,
     pub sticky_sessions: StickySessionOptionsParsed,
@@ -213,11 +219,13 @@ pub fn parse_proxy_options(env: &Env, options: ProxyOptions) -> Result<ProxyOpti
     let sticky_sessions = parse_sticky_session_options(env, options.sticky_sessions)?;
     let timeouts = parse_timeout_options(env, options.timeouts)?;
     let health = parse_health_options(env, options.health, &applications)?;
+    let threads = parse_threads(env, options.threads)?;
 
     Ok(ProxyOptionsParsed {
         listen,
         tls,
         applications,
+        threads,
         health_check_interval_ms: options.health_check_interval_ms.unwrap_or(5000),
         sticky_sessions,
         limits,
@@ -493,6 +501,20 @@ fn parse_positive_u32(env: &Env, field: &str, value: Option<u32>, default: u32) 
         );
     }
     Ok(value)
+}
+
+fn parse_threads(env: &Env, threads: Option<u32>) -> Result<usize> {
+    let threads = threads.unwrap_or(defaults::THREADS);
+    // napi wraps negative numbers to huge u32 values, which would make Tokio abort while
+    // allocating workers, so the upper bound rejects them too.
+    if threads == 0 || threads > defaults::MAX_THREADS {
+        return errors::throw_type_error(
+            env,
+            errors::codes::INVALID_PROXY_OPTIONS,
+            format!("threads must be between 1 and {}", defaults::MAX_THREADS),
+        );
+    }
+    Ok(threads as usize)
 }
 
 fn parse_sticky_session_options(

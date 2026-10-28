@@ -409,6 +409,13 @@ export type NeemServerConfig = {
   health?: { paths?: { health?: string; ready?: string } }
   /** How often routed upstreams are checked, in milliseconds. */
   upstreamChecks?: { interval?: number }
+  /**
+   * Async worker threads the server uses for proxying and upstream checks.
+   * They are separate from the threads that run runtimes. Short-lived
+   * blocking threads are added on demand. At most 1024.
+   * @default 1
+   */
+  threads?: number
   stickySessions?: {
     enabled?: boolean
     cookieName?: string

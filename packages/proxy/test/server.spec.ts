@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import http from 'node:http'
 import http2 from 'node:http2'
 import net from 'node:net'
+import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import WebSocket, { WebSocketServer } from 'ws'
@@ -807,6 +809,48 @@ describe('Proxy wiring', () => {
       'InvalidProxyOptions',
       'timeouts.upstreamConnect must be greater than 0',
     )
+  })
+
+  it('rejects out-of-range threads with stable code', async () => {
+    const port = await getFreePort()
+
+    // -1 covers napi wrapping negative numbers to huge u32 values.
+    for (const threads of [0, -1, 1025]) {
+      await expectRejectCode(
+        () =>
+          new NeemataProxy({
+            listen: `127.0.0.1:${port}`,
+            applications: [{ name: 'app', routing: { type: 'default' } }],
+            threads,
+          }),
+        'InvalidProxyOptions',
+        'threads must be between 1 and 1024',
+      )
+    }
+  })
+
+  it.runIf(process.platform === 'linux')(
+    'runs each proxy on its own runtime with the configured worker threads and no global runtime',
+    () => {
+      const output = execFileSync(
+        process.execPath,
+        [join(__dirname, 'fixtures/thread-count.cjs'), '3'],
+        { timeout: 10_000 },
+      )
+      expect(JSON.parse(output.toString())).toEqual({
+        proxy: 3,
+        tokioDefault: 0,
+      })
+    },
+  )
+
+  it('keeps serving in-flight requests after stop() and collection', () => {
+    const output = execFileSync(
+      process.execPath,
+      ['--expose-gc', join(__dirname, 'fixtures/drain-after-gc.cjs')],
+      { timeout: 10_000 },
+    )
+    expect(output.toString()).toBe('200')
   })
 
   it('requires ApplicationOptions.sni for secure upstreams on default routing', async () => {

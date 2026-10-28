@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use pingora::lb::{LoadBalancer, selection::RoundRobin};
 use pingora::services::background::BackgroundService;
-use tokio::sync::watch;
+use tokio::{runtime::Handle, sync::watch};
 
 use crate::server::ServiceHandle;
 
@@ -25,10 +25,10 @@ pub fn build_round_robin_lb(
 }
 
 #[allow(dead_code)]
-pub fn spawn_lb_health_task(lb: Arc<LoadBalancer<RoundRobin>>) -> ServiceHandle {
+pub fn spawn_lb_health_task(runtime: &Handle, lb: Arc<LoadBalancer<RoundRobin>>) -> ServiceHandle {
     let (shutdown, shutdown_rx) = watch::channel(false);
 
-    let task = tokio::spawn(async move {
+    let task = runtime.spawn(async move {
         lb.start(shutdown_rx).await;
     });
 
