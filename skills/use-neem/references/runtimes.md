@@ -111,7 +111,8 @@ runtimes that opt in with their own `proxy`. `NeemConfig.server` is optional:
 `hostname` (default `0.0.0.0` in production, `127.0.0.1` in development),
 `port` (default `3000`), `health: { paths?: { health?, ready? } }`,
 `upstreamChecks: { interval? }` (routed upstream check interval in
-milliseconds), `stickySessions: { enabled?, cookieName?, headerName?, ttlMs?,
+milliseconds), `threads` (worker threads for proxying and upstream checks,
+default `1`), `stickySessions: { enabled?, cookieName?, headerName?, ttlMs?,
 maxEntries? }`, `limits`, and `tls: { keyPath, certPath }`. The server listens
 before runtimes start and stops after they stop.
 

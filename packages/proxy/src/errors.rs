@@ -6,6 +6,7 @@ pub mod codes {
     pub const UNKNOWN_APPLICATION: &str = "UnknownApplication";
     pub const ALREADY_STARTED: &str = "AlreadyStarted";
     pub const LISTEN_BIND_FAILED: &str = "ListenBindFailed";
+    pub const RUNTIME_START_FAILED: &str = "RuntimeStartFailed";
     pub const UNSUPPORTED_UPSTREAM_TYPE: &str = "UnsupportedUpstreamType";
     pub const UPSTREAM_ALREADY_EXISTS: &str = "UpstreamAlreadyExists";
     pub const UPSTREAM_NOT_FOUND: &str = "UpstreamNotFound";

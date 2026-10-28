@@ -31,6 +31,7 @@ export type NativeProxyOptions = {
     sni?: string
     maxRequestBodySize?: number | null
   }>
+  threads?: number
   healthCheckIntervalMs?: number
   stickySessions?: NeemServerConfig['stickySessions']
   limits?: NeemServerConfig['limits']
@@ -158,6 +159,7 @@ export function createNativeProxyOptions(
     listen: `${config.hostname}:${config.port}`,
     tls: config.tls,
     applications,
+    threads: config.threads,
     healthCheckIntervalMs: config.upstreamChecks?.interval,
     stickySessions: config.stickySessions,
     limits: config.limits,
