@@ -146,7 +146,7 @@
     "@effect/sql-pglite": "4.1.0",
     "@effect/vitest": "4.1.0",
     "@nmtjs/effect": "workspace:*",
-    "@nmtjs/proxy": "1.0.0-beta.10",
+    "@nmtjs/proxy": "1.0.0-beta.11",
     "drizzle-orm": "1.0.0-rc.5",
     "effect": "4.1.0",
     "redis": "6.2.1"

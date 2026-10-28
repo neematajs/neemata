@@ -284,8 +284,8 @@ importers:
         specifier: workspace:*
         version: link:../metrics
       '@nmtjs/proxy':
-        specifier: 1.0.0-beta.10
-        version: 1.0.0-beta.10
+        specifier: 1.0.0-beta.11
+        version: 1.0.0-beta.11
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2
@@ -405,8 +405,8 @@ importers:
         specifier: workspace:*
         version: link:../effect
       '@nmtjs/proxy':
-        specifier: 1.0.0-beta.10
-        version: 1.0.0-beta.10
+        specifier: 1.0.0-beta.11
+        version: 1.0.0-beta.11
       drizzle-orm:
         specifier: 1.0.0-rc.5
         version: 1.0.0-rc.5(@effect/sql-pg@4.1.0(effect@4.1.0))(@effect/sql-pglite@4.1.0(effect@4.1.0))(@electric-sql/pglite@0.5.10)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.1.0)(pg@8.22.0)(valibot@1.4.2)(zod@4.4.3)
@@ -1414,47 +1414,47 @@ packages:
     resolution: {integrity: sha512-VjHyKEqXAwYZK+HY7iJctYvRm3TFEbaQxeZwvAG1QRkoo1a39phMY8J6x9tUEqJI03W6MysB8F2jacI6wvcx+w==}
     engines: {node: '>= 12.22.0'}
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.10':
-    resolution: {integrity: sha512-2xlrzc4yRWKvAOkfHB4ORuFJvLvB55xqVttCAbxIJYQ8n04AifLQZX2ijhV6WU2pVqqF0HScztlTTqQ0BKPqpw==}
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.11':
+    resolution: {integrity: sha512-xn2G8BYDiDE95l1kcnZ/4ExUmWkaA6BohrvlHrbIB5NPrZ9jcN0caE0ht1ooMT47KPEkXetsW1a29jcwVtP6OA==}
     cpu: [arm64]
     os: [darwin]
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.10':
-    resolution: {integrity: sha512-plp9XoJdq8BTYAM4kq25YZGwEuuqV52D+VwBnNGz+fzytgcueMEmySIhwhtcmiHWWz4ycAFzUdJtN5zIDTlZSA==}
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.11':
+    resolution: {integrity: sha512-409tX95amNLARVY+yT2aCUkXrCyv1cCyiHOT/itlADcO3lwMUxrPzzZ0v0BzuVAeWJGv5s1xt5i6imVSV7LvQg==}
     cpu: [x64]
     os: [darwin]
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.10':
-    resolution: {integrity: sha512-LBsbwF5oh6enbLNQL4nx361QdsTMVk2c13YOAxaSSev9ZebBNETwK8ogyxQjLCaG3idh2jf8LBBYLCjkGq/5Ig==}
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.11':
+    resolution: {integrity: sha512-xdsZluTnfP0mphLjYqWUjeNL1i6c9fAi1x7W076Ajf/jz25v0hneQAwIm6kTQXYg1dQN+B972BsmSyGLkU14Xw==}
     cpu: [arm]
     os: [linux]
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.10':
-    resolution: {integrity: sha512-0nD+bQNc8wjVGdGCbPIopXZcc7aCVRMXA6didIRF2PuRNhEe6xBVWOR48qbrmA9EUFxkQdLYw0KaEw7LykiMKg==}
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.11':
+    resolution: {integrity: sha512-uvhs9f9NEfLdPD3nXej0xIi6w+jqURCmOSybw/0/Orchix5FmAyQCMd7bj9NrVKRn3MwYFS9lAiK9zzamUznLw==}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.10':
-    resolution: {integrity: sha512-vamDi7SJUu0W+nN0lvRbay2XlDV7N8WA4SV05CNJvFZSWd3eprBUblufSUSp7FOYyTKqkDIyEP5XNINmBgVv9g==}
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.11':
+    resolution: {integrity: sha512-LbUmOuZ8Wr0IpkBFeblzQgk+q824t1V2mefJmd+MlCBoRv2Zw6WdyCxoytC7fXqU//6tPNl4/mrlM6sVZ8ZfqQ==}
     cpu: [arm64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.10':
-    resolution: {integrity: sha512-9b37OS89MRYo2L8Dno493ik3XGfGYH6+nrS6o7y0qTSouVIcaArjlAZF+32NczwiQjIxAe4fxo3ZAJVTSc+Q0A==}
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.11':
+    resolution: {integrity: sha512-J8dlMUCe1eWn/xPHTWYVfJyjDqDt5VZe4zECZnMq1008P8fsfoe3VXQox+ueLAtwa6H6ozUJZW/uEtQY07tbTA==}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.10':
-    resolution: {integrity: sha512-hQ0APV0JUeaiZ89WpCF58bHrWHKs1totlzUK4NJe88aCCdJxM+YEkdaG6OO5zQ9F2GLw1tKhPO2uiu2eIrbJyA==}
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.11':
+    resolution: {integrity: sha512-zy8SNbdbOOSCZkp9PHWqGjhwjiAgeGms9IzboV6T1bslVX8OuTeI2HqrsDInGpVd2QsmOr+P9OvU+lycXR3n9Q==}
     cpu: [x64]
     os: [linux]
     libc: [musl]
 
-  '@nmtjs/proxy@1.0.0-beta.10':
-    resolution: {integrity: sha512-gq33zcHD93cZRkd3VX864p+gsTv6uEWb1P8AOH3z7o/4dOZYPQtIxv07gfbrJBWygqa5UiyE5rGSdLvZALC1qA==}
+  '@nmtjs/proxy@1.0.0-beta.11':
+    resolution: {integrity: sha512-9LNECJe6thBmVqxgE3fhU8vy4sf/JOxMHuOKPLGtvfPVSTwvdULNcHW8JZfIstu7ZMx8kF5wQS7J1U2KOmOIlA==}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -8353,36 +8353,36 @@ snapshots:
       '@napi-rs/wasm-tools-win32-ia32-msvc': 1.1.0
       '@napi-rs/wasm-tools-win32-x64-msvc': 1.1.0
 
-  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.10':
+  '@nmtjs/proxy-darwin-arm64@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-darwin-x64@1.0.0-beta.10':
+  '@nmtjs/proxy-darwin-x64@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.10':
+  '@nmtjs/proxy-linux-arm-gnueabihf@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.10':
+  '@nmtjs/proxy-linux-arm64-gnu@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.10':
+  '@nmtjs/proxy-linux-arm64-musl@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.10':
+  '@nmtjs/proxy-linux-x64-gnu@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.10':
+  '@nmtjs/proxy-linux-x64-musl@1.0.0-beta.11':
     optional: true
 
-  '@nmtjs/proxy@1.0.0-beta.10':
+  '@nmtjs/proxy@1.0.0-beta.11':
     optionalDependencies:
-      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.10
-      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.10
-      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.10
-      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.10
-      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.10
-      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.10
-      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.10
+      '@nmtjs/proxy-darwin-arm64': 1.0.0-beta.11
+      '@nmtjs/proxy-darwin-x64': 1.0.0-beta.11
+      '@nmtjs/proxy-linux-arm-gnueabihf': 1.0.0-beta.11
+      '@nmtjs/proxy-linux-arm64-gnu': 1.0.0-beta.11
+      '@nmtjs/proxy-linux-arm64-musl': 1.0.0-beta.11
+      '@nmtjs/proxy-linux-x64-gnu': 1.0.0-beta.11
+      '@nmtjs/proxy-linux-x64-musl': 1.0.0-beta.11
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
