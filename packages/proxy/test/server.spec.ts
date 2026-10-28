@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import WebSocket, { WebSocketServer } from 'ws'
 
 import { Proxy as NeemataProxy } from '../dist/index.js'
-import { getFreePort, httpGet, waitFor } from './_helpers'
+import { getFreePort, httpGet, waitFor } from './_helpers.ts'
 
 function trackConnections(server: net.Server) {
   const sockets = new Set<net.Socket>()
@@ -834,7 +834,7 @@ describe('Proxy wiring', () => {
     () => {
       const output = execFileSync(
         process.execPath,
-        [join(__dirname, 'fixtures/thread-count.cjs'), '3'],
+        [join(import.meta.dirname, 'fixtures/thread-count.ts'), '3'],
         { timeout: 10_000 },
       )
       expect(JSON.parse(output.toString())).toEqual({
@@ -847,7 +847,7 @@ describe('Proxy wiring', () => {
   it('keeps serving in-flight requests after stop() and collection', () => {
     const output = execFileSync(
       process.execPath,
-      ['--expose-gc', join(__dirname, 'fixtures/drain-after-gc.cjs')],
+      ['--expose-gc', join(import.meta.dirname, 'fixtures/drain-after-gc.ts')],
       { timeout: 10_000 },
     )
     expect(output.toString()).toBe('200')

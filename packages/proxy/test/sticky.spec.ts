@@ -3,7 +3,7 @@ import http from 'node:http'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Proxy as NeemataProxy } from '../dist/index.js'
-import { httpGet, listenOnEphemeralPort, waitFor } from './_helpers'
+import { httpGet, listenOnEphemeralPort, waitFor } from './_helpers.ts'
 
 describe('Proxy sticky sessions', () => {
   it('supports sticky sessions with cookie precedence over x-nmt-affinity-key', async () => {

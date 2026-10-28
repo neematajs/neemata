@@ -2,8 +2,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "allowJs": false,
-    "types": ["node"],
-    "verbatimModuleSyntax": false
+    "types": ["node"]
   },
   "include": ["test/**/*.ts", "vitest.config.ts"]
 }
