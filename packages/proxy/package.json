@@ -2,7 +2,7 @@
   "name": "@nmtjs/proxy",
   "version": "1.0.0-beta.10",
   "description": "Rust-based reverse proxy for Neemata, exposed via NAPI.",
-  "type": "commonjs",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "repository": {
@@ -16,9 +16,9 @@
   },
   "scripts": {
     "clean-build": "rm -rf dist",
-    "build": "napi build --release --platform --js index.js --output-dir dist -- --locked",
-    "build:debug": "napi build --platform --js index.js --output-dir dist -- --locked",
-    "build:artifact": "napi build --release --platform --js index.js --output-dir dist",
+    "build": "napi build --release --platform --esm --js index.js --output-dir dist -- --locked",
+    "build:debug": "napi build --platform --esm --js index.js --output-dir dist -- --locked",
+    "build:artifact": "napi build --release --platform --esm --js index.js --output-dir dist",
     "check:rust": "cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
     "check:type": "tsrs -p tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "test:rust": "cargo test --locked",
