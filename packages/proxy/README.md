@@ -83,8 +83,11 @@ The proxy holds no health logic of its own: its owner pushes status with `setHea
 ## Operational notes
 
 - After `start()`, `proxy.address()` returns the bound listener address as `{ hostname, port }`. This includes the OS-assigned port when `listen` uses port `0`; it returns `null` when the proxy is not running.
-- Dynamic upstream changes are eventually consistent with health checks. After `addUpstream()` or `start()`, a backend does not become routable until its health-check loop marks it healthy, so callers should expect a short convergence window where requests may still receive `503`.
-- The convergence window is controlled by `healthCheckIntervalMs`. Tests in this repository use polling helpers for that reason, and production callers should follow the same pattern when they need to wait for a backend to become ready.
+- Upstreams start healthy. `addUpstream()` and `start()` put an upstream into rotation without waiting for a health check, so a running proxy routes to it as soon as it is added.
+- While the proxy is running, it probes each upstream with a TCP connect (a TLS handshake for `secure` upstreams) right away and then every `healthCheckIntervalMs` (default 5000). The first probe is not awaited, so it can mark a dead upstream down before `addUpstream()` or `start()` resolves, or after requests have already reached it and received `502`.
+- One failed probe takes an upstream out of rotation: new requests go to the application's other upstreams, or get `503` when none is left. One successful probe brings it back. Failed requests do not mark an upstream down, so a dead upstream keeps receiving requests (`502`) until a probe fails, and a recovered one gets none until a probe succeeds. Probes of an application's upstreams run one after another and each can wait up to 1 second to connect, so a change can take longer than `healthCheckIntervalMs` to be noticed.
+- Sticky sessions keep sending a client to its mapped upstream even after it is marked down. Only a failed connection drops the mapping; that request is then retried once on a newly selected upstream.
+- `addUpstream()` and `removeUpstream()` rebuild the application's load balancers. This resets all of that application's upstreams to healthy, including ones marked down; while the proxy is running, they are probed again right away.
 - Proxy-generated errors are stable. Each has a `text/plain` body and, when the request carries an `Origin`, echoes it in `Access-Control-Allow-Origin` (with `Access-Control-Allow-Credentials: true`) so browsers on other origins can read the status:
   - no application matches the request: `404`;
   - the matched application has no upstream for the request (none registered, or all unhealthy): `503` with `Retry-After: 1`;

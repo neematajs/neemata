@@ -1037,14 +1037,10 @@ fn rebuild_app_pools(
             lb.set_health_check(TcpHealthCheck::new());
         }
 
-        // TODO(vNext): Define dynamic-upstream readiness semantics.
-        // Currently, a newly added upstream becomes eligible only after the LB health-check loop
-        // runs and marks it healthy. This means `addUpstream()` does not imply "immediately routable".
-        // Options:
-        // - optimistic: treat newly-added backends as healthy until the first failed check/connection
-        // - eager: run an initial health check synchronously during addUpstream/start, then serve
-        // - explicit: expose readiness state/events to JS so callers can await health convergence
-        // Acceptance: behavior is documented, deterministic, and covered by integration tests.
+        // Pingora starts every backend healthy, so this pool routes to all of its upstreams as
+        // soon as the router is updated, including ones that were marked down in the pool it
+        // replaces. The health task spawned for it probes right away without being awaited, then
+        // every interval. A single failed or successful probe flips a backend's health.
         lb.health_check_frequency = Some(Duration::from_millis(health_check_interval_ms as u64));
 
         new_pools.insert(

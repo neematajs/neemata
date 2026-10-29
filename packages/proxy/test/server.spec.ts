@@ -1996,6 +1996,47 @@ describe('Proxy wiring', () => {
     }
   })
 
+  it('brings an upstream back into rotation after a successful health check', async () => {
+    const upstreamPort = await getFreePort()
+    const port = await getFreePort()
+    const proxy = new NeemataProxy({
+      listen: `127.0.0.1:${port}`,
+      applications: [{ name: 'app', routing: { type: 'default' } }],
+      healthCheckIntervalMs: 100,
+    })
+
+    await proxy.addUpstream('app', {
+      type: 'port',
+      transport: 'http',
+      secure: false,
+      hostname: '127.0.0.1',
+      port: upstreamPort,
+    })
+    await proxy.start()
+    const upstream = http.createServer((_req, res) => res.end('recovered'))
+    try {
+      await waitFor(
+        async () => await httpGet(port, '/hello'),
+        (r) => r.status === 503,
+      )
+
+      // No membership change follows, so only a later probe can restore it.
+      await new Promise<void>((resolve) =>
+        upstream.listen(upstreamPort, '127.0.0.1', resolve),
+      )
+      await waitFor(
+        async () => await httpGet(port, '/hello'),
+        (r) => r.status === 200 && r.body === 'recovered',
+      )
+    } finally {
+      await proxy.stop()
+      upstream.closeAllConnections()
+      await new Promise<void>((resolve) =>
+        upstream.close(() => resolve()),
+      ).catch(() => {})
+    }
+  })
+
   it('maintains existing WebSocket connections when upstream is removed', async () => {
     const port = await getFreePort()
     const proxy = new NeemataProxy({
