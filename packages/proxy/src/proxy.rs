@@ -208,16 +208,7 @@ impl Proxy {
 
     #[napi]
     pub fn start<'env>(&self, env: &'env Env) -> Result<PromiseRaw<'env, ()>> {
-        let (
-            listen,
-            tls,
-            proxy_runtime,
-            server,
-            inner,
-            shared_router,
-            initial_lb_tasks,
-            mut start_rx,
-        ) = {
+        let (listen, tls, proxy_runtime, server, inner, shared_router, mut start_rx) = {
             let mut guard = self
                 .inner
                 .lock()
@@ -265,12 +256,6 @@ impl Proxy {
             let inner = self.inner.clone();
             let shared_router =
                 router::SharedRouter::new(guard.router.clone(), proxy_runtime.clone());
-            let initial_lb_tasks = guard
-                .pools
-                .iter()
-                .map(|((app, transport), pool)| (lb_service_name(app, *transport), pool.lb.clone()))
-                .collect::<Vec<_>>();
-
             (
                 listen,
                 tls,
@@ -278,10 +263,11 @@ impl Proxy {
                 server,
                 inner,
                 shared_router,
-                initial_lb_tasks,
                 start_rx,
             )
         };
+
+        let update_lock = self.update_lock.clone();
 
         // Move listener setup and service start behind the async boundary, then resolve once
         // startup is fully wired.
@@ -314,8 +300,25 @@ impl Proxy {
                 }
             };
 
+            // Upstream updates spawn health tasks only once `Running`, so hold their lock from
+            // reading pools until the state flips: each update either lands in this snapshot or
+            // sees `Running` and starts its own task.
+            let update_guard = update_lock.lock().await;
+            let lb_tasks = {
+                let guard = inner
+                    .lock()
+                    .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
+                guard
+                    .pools
+                    .iter()
+                    .map(|((app, transport), pool)| {
+                        (lb_service_name(app, *transport), pool.lb.clone())
+                    })
+                    .collect::<Vec<_>>()
+            };
+
             // Start LB health tasks first so pools become ready.
-            for (svc_name, lb) in initial_lb_tasks {
+            for (svc_name, lb) in lb_tasks {
                 server
                     .upsert_service(svc_name, lb::spawn_lb_health_task(&runtime, lb))
                     .await;
@@ -394,6 +397,7 @@ impl Proxy {
 
                 result
             };
+            drop(update_guard);
 
             if start_result.is_err() {
                 server.stop_all().await;

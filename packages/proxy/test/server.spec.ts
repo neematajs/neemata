@@ -1928,6 +1928,44 @@ describe('Proxy wiring', () => {
         await proxy.stop()
       }
     })
+
+    it('health-checks upstreams added while start() is in flight', async () => {
+      // The race window is short, so repeat it to make a regression likely to show.
+      for (let i = 0; i < 10; i++) {
+        const port = await getFreePort()
+        const deadPort = await getFreePort()
+        const proxy = new NeemataProxy({
+          listen: `127.0.0.1:${port}`,
+          applications: [
+            { name: 'api', routing: { type: 'path', name: 'api' } },
+          ],
+          healthCheckIntervalMs: 100,
+        })
+
+        // Nothing is awaited between the calls, so the upstream lands while start() runs.
+        const started = proxy.start()
+        await proxy.addUpstream('api', {
+          type: 'port',
+          transport: 'http',
+          secure: false,
+          hostname: '127.0.0.1',
+          port: deadPort,
+        })
+        await started
+        try {
+          // Without a health task the dead upstream stays selectable and answers 502.
+          expectNoUpstream(
+            await waitFor(
+              async () => await httpGet(port, '/api/hello'),
+              (r) => r.status === 503,
+              2000,
+            ),
+          )
+        } finally {
+          await proxy.stop()
+        }
+      }
+    })
   })
 
   it('fails over to healthy upstream when one becomes unavailable', async () => {
