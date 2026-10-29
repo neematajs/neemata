@@ -7,7 +7,7 @@
   "include": [
     "../src/**/*",
     "../vitest.*.config.ts",
-    "unit/**/*.spec.ts",
+    "integration/**/*.spec.ts",
     "e2e/**/*.spec.ts",
     "e2e/support/support.ts"
   ],

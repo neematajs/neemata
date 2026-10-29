@@ -198,24 +198,24 @@ them.
 ## Tests
 
 ```sh
-pnpm vitest run --project @nmtjs/workflows --reporter=agent
+pnpm --filter @nmtjs/workflows test:unit
+pnpm --filter @nmtjs/workflows test:integration
+pnpm --filter @nmtjs/workflows test:e2e
 ```
 
 Tests use `@effect/vitest`, so time is a `TestClock`: backoff, leases and
 timeouts are tested by moving it, never by waiting. `tests/store-contract.ts`
-is the contract every adapter passes. The PostgreSQL suites run on PGlite, and
+is the contract every adapter passes. `tests/unit` runs it and the engine in
+memory.
+
+`tests/integration` needs a database. The PostgreSQL suites run on PGlite, and
 on a server when `POSTGRES_URL` is set; the Redis suites run when `REDIS_URL`
-or `VALKEY_URL` is set and are skipped otherwise.
-
-`tests/integration` is not part of that run. Its suites drive the built
-package through its exports, with real workers as fibers, as processes of
-their own and as Neem threads, on real clocks against the servers: crashes,
+or `VALKEY_URL` is set and are skipped otherwise. Its other suites drive the
+built package through its exports, with real workers as fibers and as
+processes of their own, on real clocks against the servers: crashes,
 hand-overs, races, revisions across deployments, the caller's transactions.
-Build the workspace first, then:
+Build the workspace first. Each server's variable runs its suites; with
+`NMTJS_REQUIRE_SERVICE_TESTS=1` a missing one is an error instead of a skip.
 
-```sh
-pnpm --filter @nmtjs/workflows test:integration
-```
-
-Each server's variable runs its suites; with `NMTJS_REQUIRE_SERVICE_TESTS=1` a
-missing one is an error instead of a skip.
+`tests/e2e` builds and hosts the workers as Neem threads through its CLI; its
+PostgreSQL cases run when `POSTGRES_URL` is set.

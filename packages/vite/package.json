@@ -15,8 +15,9 @@
     "playground:dev": "cd playground && neem dev",
     "playground:build": "cd playground && neem build",
     "playground:start": "cd playground && neem start",
-    "test": "pnpm run test:e2e",
-    "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts"
+    "test": "pnpm run test:integration && pnpm run test:e2e",
+    "test:e2e": "pnpm run build && vitest run --config vitest.e2e.config.ts",
+    "test:integration": "pnpm run build && vitest run --config vitest.integration.config.ts"
   },
   "exports": {
     ".": {

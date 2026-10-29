@@ -10,8 +10,9 @@
   },
   "scripts": {
     "clean-build": "rm -rf ./dist",
-    "test": "vitest run --config vitest.config.ts",
-    "test:integration": "vitest run --config vitest.config.ts tests/integration"
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts"
   },
   "exports": {
     ".": {

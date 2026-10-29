@@ -23,39 +23,27 @@ const SERVICE_VARIABLES = [
   'VALKEY_URL',
 ]
 
-// Mirrors the Test workflow's unit and service integration jobs, so coverage
+// Mirrors the Test workflow's unit, integration and service jobs, so coverage
 // reflects the suites that gate merges. Each run only sees the service
-// variables its CI counterpart gets.
+// variables its CI counterpart gets. E2E suites other than the workflows one
+// run in child processes that coverage cannot see.
 const RUNS = [
-  { name: 'unit', args: [], env: [] },
+  { name: 'unit', args: ['--project', '*:unit'], env: [] },
+  { name: 'integration', args: ['--project', '*:integration'], env: [] },
   {
     name: 'pubsub-integration',
-    args: ['--project', '@nmtjs/pubsub', 'packages/pubsub/tests/integration'],
+    args: ['--project', 'pubsub:integration'],
     env: SERVICE_VARIABLES,
   },
   {
     name: 'workflows-integration',
-    args: [
-      '--project',
-      '@nmtjs/workflows',
-      'packages/workflows/tests/integration',
-    ],
+    args: ['--project', 'workflows:integration'],
     env: SERVICE_VARIABLES,
   },
   {
-    name: 'workflows-store-contracts',
-    args: [
-      '--project',
-      '@nmtjs/workflows',
-      'packages/workflows/tests/postgres.spec.ts',
-      'packages/workflows/tests/postgres-contract.spec.ts',
-      'packages/workflows/tests/postgres-engine.spec.ts',
-      'packages/workflows/tests/redis.spec.ts',
-      'packages/workflows/tests/redis-contract.spec.ts',
-      'packages/workflows/tests/redis-engine.spec.ts',
-      'packages/workflows/tests/neem-e2e.spec.ts',
-    ],
-    env: ['POSTGRES_URL', 'REDIS_URL', 'VALKEY_URL'],
+    name: 'workflows-e2e',
+    args: ['--project', 'workflows:e2e'],
+    env: ['NMTJS_REQUIRE_SERVICE_TESTS', 'POSTGRES_URL'],
   },
 ]
 

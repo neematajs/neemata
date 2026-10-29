@@ -154,6 +154,29 @@ Apache-2.0 and includes its upstream notices. Configure npm publishing access
 for `publish-proxy.yml` on proxy and its platform packages, and for
 `publish-prom-client.yml` on prom-client. Stack packages use `publish.yml`.
 
+## Tests
+
+Each package splits its tests by what they touch, with a Vitest config and
+timeout per tier:
+
+- `tests/unit`: pure in-memory logic.
+- `tests/integration`: sockets, services (PGlite included), child processes,
+  worker threads, files, or real Rolldown builds.
+- `tests/e2e`: a built CLI or app, driven the way a user runs it.
+
+```sh
+pnpm run build
+pnpm run test:unit
+pnpm run test:integration
+pnpm run test:e2e
+```
+
+`pnpm run test` builds and runs all three. Root projects are named
+`<package>:<tier>`, so `pnpm vitest run --project neem:unit` runs one of them.
+Neem's stress tests (`pnpm --filter @nmtjs/neem run test:stress`) and the
+proxy's tests (`pnpm run test:proxy`, which needs a native build) run on their
+own.
+
 ## Service integration tests
 
 Service-backed integration tests live beside package owners under

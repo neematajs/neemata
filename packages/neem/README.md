@@ -358,11 +358,14 @@ Bun also loads `.env.local` in development, but skips it with `NODE_ENV=test`.
 
 ```sh
 vp env exec -- pnpm --filter @nmtjs/neem run test:unit --reporter=agent
+vp env exec -- pnpm --filter @nmtjs/neem run test:integration --reporter=agent
 vp env exec -- pnpm --filter @nmtjs/neem run test:e2e --reporter=agent
 vp env exec -- pnpm --filter @nmtjs/neem run test:stress --reporter=agent
 ```
 
 Unit tests cover shared build contracts and Effect ownership, clocks, schemas,
-transport cancellation, and recovery. End-to-end tests exercise the canonical CLI,
+and patching in memory. Integration tests run real Rolldown builds, worker
+threads, child processes, and files: the compiler, manifests, transport
+cancellation, supervision, and recovery. End-to-end tests exercise the canonical CLI,
 packaged applications, reloads, proxy readiness, and shutdown. Stress tests exercise
 repeated reloads and resource cleanup.
