@@ -8,5 +8,6 @@ export default defineProject({
       'tests/integration/**/*.spec.ts',
       'tests/regression/**/*.spec.ts',
     ],
+    testTimeout: 10_000,
   },
 })

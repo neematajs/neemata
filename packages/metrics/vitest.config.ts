@@ -4,5 +4,6 @@ export default defineProject({
   test: {
     environment: 'node',
     include: ['tests/**/*.spec.ts'],
+    testTimeout: 10_000,
   },
 })

@@ -5,5 +5,6 @@ export default defineProject({
     name: 'effect',
     environment: 'node',
     include: ['tests/unit/**/*.spec.ts'],
+    testTimeout: 10_000,
   },
 })

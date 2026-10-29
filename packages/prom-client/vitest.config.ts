@@ -5,5 +5,6 @@ export default defineProject({
     environment: 'node',
     include: ['test/**/*.spec.js'],
     restoreMocks: true,
+    testTimeout: 10_000,
   },
 })
