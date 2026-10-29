@@ -40,13 +40,13 @@
     }
   },
   "devDependencies": {
-    "@effect/vitest": "4.0.6",
-    "effect": "4.0.6",
+    "@effect/vitest": "4.1.0",
+    "effect": "4.1.0",
     "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3"
   },
   "peerDependencies": {
-    "effect": "^4.0.6",
+    "effect": "^4.1.0",
     "ioredis": "^5.10.1",
     "iovalkey": "^0.3.3"
   },

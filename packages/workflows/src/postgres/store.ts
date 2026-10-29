@@ -1,5 +1,4 @@
-import { getRandomValues } from 'node:crypto'
-
+import * as SecureRandom from 'effect/crypto/SecureRandom'
 import * as Effect from 'effect/Effect'
 import * as Latch from 'effect/Latch'
 import * as Layer from 'effect/Layer'
@@ -145,25 +144,12 @@ const MAX_TOPIC = 2_000
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-// Time in the first 48 bits and a counter in the next 12, kept as one number
-// that only grows: a counter that overflows borrows from the time.
-let stamp = 0n
-
 /**
  * A UUIDv7 greater than every one this process made before. Runs made at the
  * same instant are listed in the order of their ids, which is then the order
  * they were made in; it also keeps new rows together in the primary keys.
  */
-function nextId() {
-  const now = BigInt(Date.now()) << 12n
-  stamp = now > stamp ? now : stamp + 1n
-  const time = stamp.toString(16).padStart(15, '0')
-  const random = getRandomValues(new Uint8Array(8))
-  // The two bits that say which layout of UUID this is.
-  random[0] = (random[0]! & 0x3f) | 0x80
-  const rest = Array.from(random, (byte) => byte.toString(16).padStart(2, '0'))
-  return `${time.slice(0, 8)}-${time.slice(8, 12)}-7${time.slice(12)}-${rest.slice(0, 2).join('')}-${rest.slice(2).join('')}`
-}
+const nextId = () => SecureRandom.uuidV7Unsafe()
 
 // Sets travel as JSON text: the drivers agree on nothing else, and an empty
 // array has no type one of them could infer.

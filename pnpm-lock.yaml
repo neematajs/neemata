@@ -207,8 +207,8 @@ importers:
         version: 1.1.0
     devDependencies:
       effect:
-        specifier: 4.0.6
-        version: 4.0.6
+        specifier: 4.1.0
+        version: 4.1.0
 
   packages/effect:
     dependencies:
@@ -217,14 +217,14 @@ importers:
         version: link:../neem
     devDependencies:
       '@effect/platform-node':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)(redis@6.2.1(@opentelemetry/api@1.9.0))
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@types/node':
         specifier: ^24.13.2
         version: 24.13.2
       effect:
-        specifier: 4.0.6
-        version: 4.0.6
+        specifier: 4.1.0
+        version: 4.1.0
       pino:
         specifier: ^10.3.1
         version: 10.3.1
@@ -250,8 +250,8 @@ importers:
         specifier: ^2.23.0
         version: 2.23.0
       '@effect/platform-node':
-        specifier: ^4.0.6
-        version: 4.0.6(effect@4.0.6)(redis@6.2.1(@opentelemetry/api@1.9.0))
+        specifier: ^4.1.0
+        version: 4.1.0(effect@4.1.0)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@nmtjs/common':
         specifier: workspace:*
         version: link:../common
@@ -262,8 +262,8 @@ importers:
         specifier: ^6.1.7
         version: 6.1.7
       effect:
-        specifier: ^4.0.6
-        version: 4.0.6
+        specifier: ^4.1.0
+        version: 4.1.0
       oxc-resolver:
         specifier: ^11.21.3
         version: 11.21.3
@@ -301,7 +301,7 @@ importers:
         version: 24.13.2
       nuxt:
         specifier: ^4.5.1
-        version: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.3)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.3))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
+        version: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.10)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.10))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
 
   packages/prom-client:
     dependencies:
@@ -332,7 +332,7 @@ importers:
     devDependencies:
       '@napi-rs/cli':
         specifier: 3.5.1
-        version: 3.5.1(@emnapi/runtime@1.9.2)(@types/node@24.13.2)
+        version: 3.5.1(@emnapi/runtime@1.9.2)(@types/node@24.13.2)(supports-color@10.2.2)
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.2
@@ -343,11 +343,11 @@ importers:
   packages/pubsub:
     devDependencies:
       '@effect/vitest':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.2)
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)(vitest@5.0.2)
       effect:
-        specifier: 4.0.6
-        version: 4.0.6
+        specifier: 4.1.0
+        version: 4.1.0
       ioredis:
         specifier: ^5.11.1
         version: 5.11.1(supports-color@10.2.2)
@@ -390,17 +390,17 @@ importers:
         version: 5.6.1
     devDependencies:
       '@effect/platform-node':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)(redis@6.2.1(@opentelemetry/api@1.9.0))
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)(redis@6.2.1(@opentelemetry/api@1.9.0))
       '@effect/sql-pg':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)
       '@effect/sql-pglite':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)
       '@effect/vitest':
-        specifier: 4.0.6
-        version: 4.0.6(effect@4.0.6)(vitest@5.0.2)
+        specifier: 4.1.0
+        version: 4.1.0(effect@4.1.0)(vitest@5.0.2)
       '@nmtjs/effect':
         specifier: workspace:*
         version: link:../effect
@@ -409,10 +409,10 @@ importers:
         version: 1.0.0-beta.10
       drizzle-orm:
         specifier: 1.0.0-rc.5
-        version: 1.0.0-rc.5(@effect/sql-pg@4.0.6(effect@4.0.6))(@effect/sql-pglite@4.0.6(effect@4.0.6))(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.6)(pg@8.22.0)(valibot@1.4.2)(zod@4.4.3)
+        version: 1.0.0-rc.5(@effect/sql-pg@4.1.0(effect@4.1.0))(@effect/sql-pglite@4.1.0(effect@4.1.0))(@electric-sql/pglite@0.5.10)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.1.0)(pg@8.22.0)(valibot@1.4.2)(zod@4.4.3)
       effect:
-        specifier: 4.0.6
-        version: 4.0.6
+        specifier: 4.1.0
+        version: 4.1.0
       redis:
         specifier: 6.2.1
         version: 6.2.1(@opentelemetry/api@1.9.0)
@@ -625,40 +625,37 @@ packages:
   '@dxup/unimport@0.1.2':
     resolution: {integrity: sha512-/B8YJGPzaYq1NbsQmwgP8EZqg40NpTw4ZB3suuI0TplbxKHeK94jeaawLmVhCv+YwUnOpiWEz9U6SeThku/8JQ==}
 
-  '@effect/platform-node-shared@4.0.6':
-    resolution: {integrity: sha512-0PhyC4uG30xGtsajnxjkcBWfTjNRzUh4ZKl1Kvo/MNyCTb+W2O+fBzf7wCRCoqt+nLudiq4V7vX40Q8XIBuMaQ==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node-shared@4.1.0':
+    resolution: {integrity: sha512-uYQfFRoxWLo8fIhiSeBcmz/R1ooOfE3HF3cWHFgxz82tZMk2Wn02BGABcdLmaAch9VpDLbtWnuhSxNyBsGMUFg==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
 
-  '@effect/platform-node@4.0.6':
-    resolution: {integrity: sha512-gXvGHAy0/8PZbWvMMguloDUyeSP+rzYEo3FSEqUuGduxo9ORcGioDxPI+GOLCIFfam7VuNkmSUxBOiRMIrMrBw==}
-    engines: {node: '>=18.0.0'}
+  '@effect/platform-node@4.1.0':
+    resolution: {integrity: sha512-v+X7moGVF9k5oMVvz0slA+NgtEod+W+oygeI285MDJgSlUCW3JcqElj+cD3rlijFZtpKhC7RLkU1GuCxjGHTpA==}
+    engines: {node: '>=22.19.0'}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
       redis: '>=5.0.0 <7.0.0'
 
-  '@effect/sql-pg@4.0.6':
-    resolution: {integrity: sha512-mh2Z+Hi1/AWtkoGuzub2PPCHN7ZsMAbY8dlv/YbdJ6PoXVdrVAGsr+FeeoeD6f0rdnln4DQm7PvFjv1htAjY9w==}
+  '@effect/sql-pg@4.1.0':
+    resolution: {integrity: sha512-/Q1M2PEuk8eSLEmgjfvix1/WZTuRBxu75ZENbKkIh2J3c50dQb8NMFOGMPocMFlPFh5k4WUOUKZQcgXzBljTFA==}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
 
-  '@effect/sql-pglite@4.0.6':
-    resolution: {integrity: sha512-pAKT7ZyY4Y6Nud3MlHXyFuLlH4pFUYpUeywtGWIcHOJtuA/8A8UvXijxrCkZ1dmLYThOqr7tWx5/mqN+lb8/EA==}
+  '@effect/sql-pglite@4.1.0':
+    resolution: {integrity: sha512-A96DVuabAR+reNjltGr5OoE06sSXVp7Uth4wHtcffv0vsIyODDBbwkdyAA7Jtgdq8rYYdnKyjrtKd8iPVZcJzw==}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
 
-  '@effect/vitest@4.0.6':
-    resolution: {integrity: sha512-oKNbtyUHK5+0o730CXwojULEu7f3+c235pYFD4U5T//o+hHrJbYbZU4bRkcv936tPr5IOnmujeyQiC/LuJJjHw==}
+  '@effect/vitest@4.1.0':
+    resolution: {integrity: sha512-+APF69oTYgGj5WCewowk1/udepH74xz4ONyH7d+UfcK0SrF3osiSwsWEyODUpJvWd6MIk5F5PcFJiE4evMuG2A==}
     peerDependencies:
-      effect: ^4.0.6
+      effect: ^4.1.0
       vitest: '>=5.0.0 <6.0.0'
 
   '@electric-sql/pglite@0.5.10':
     resolution: {integrity: sha512-tXc/25U3ulOkiRQuTFdwIv+JhBqtMdAF7Gvo6CfZZWtSB4+hgC4Wr2vwK5ngvvN5PJfAAEGIsfyCVy1JhCOBYw==}
-
-  '@electric-sql/pglite@0.5.3':
-    resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
 
   '@emnapi/core@1.10.0':
     resolution: {integrity: sha512-yq6OkJ4p82CAfPl0u9mQebQHKPJkY7WrIuk205cTYnYe+k2Z8YBh11FrbRG/H6ihirqcacOgl2BIO8oyMQLeXw==}
@@ -3104,6 +3101,11 @@ packages:
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
+    peerDependencies:
+      ajv: ^8.0.0
+    peerDependenciesMeta:
+      ajv:
+        optional: true
 
   ajv@6.15.0:
     resolution: {integrity: sha512-fgFx7Hfoq60ytK2c7DhnF8jIvzYgOMxfugjLOSMHjLIPgenqa7S7oaagATUq99mV6IYvN2tRmC0wnTYX6iPbMw==}
@@ -3994,8 +3996,8 @@ packages:
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
-  effect@4.0.6:
-    resolution: {integrity: sha512-Tc3mkzuLR6t6P9dhLt0D2GrxYtmU5td4XEJEiXCmILz53IRIfJyHsKZWjTA3xEjiwpNTtXBgI4iqYPxMztBDrw==}
+  effect@4.1.0:
+    resolution: {integrity: sha512-lGx2MJJyrXA8RZb2UpQ/0Nkb5Utaimby7oD92+18noBxLPE85IFOvptdzau8dvcxAOwfwHo9iqapbKeFzqQM/Q==}
 
   electron-to-chromium@1.5.398:
     resolution: {integrity: sha512-AsvhAxopJGh6museTDMIjn6JpDYOfgu4RLlygomt87MUwBUqTfd/1EiPtx10/LZE8xpTvkP2E9Gafq7lkLtodQ==}
@@ -7674,43 +7676,40 @@ snapshots:
 
   '@dxup/unimport@0.1.2': {}
 
-  '@effect/platform-node-shared@4.0.6(effect@4.0.6)':
+  '@effect/platform-node-shared@4.1.0(effect@4.1.0)':
     dependencies:
       '@types/ws': 8.18.2
-      effect: 4.0.6
+      effect: 4.1.0
       ws: 8.22.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/platform-node@4.0.6(effect@4.0.6)(redis@6.2.1(@opentelemetry/api@1.9.0))':
+  '@effect/platform-node@4.1.0(effect@4.1.0)(redis@6.2.1(@opentelemetry/api@1.9.0))':
     dependencies:
-      '@effect/platform-node-shared': 4.0.6(effect@4.0.6)
-      effect: 4.0.6
+      '@effect/platform-node-shared': 4.1.0(effect@4.1.0)
+      effect: 4.1.0
       redis: 6.2.1(@opentelemetry/api@1.9.0)
       undici: 8.12.3
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@effect/sql-pg@4.0.6(effect@4.0.6)':
+  '@effect/sql-pg@4.1.0(effect@4.1.0)':
     dependencies:
-      effect: 4.0.6
+      effect: 4.1.0
 
-  '@effect/sql-pglite@4.0.6(effect@4.0.6)':
+  '@effect/sql-pglite@4.1.0(effect@4.1.0)':
     dependencies:
       '@electric-sql/pglite': 0.5.10
-      effect: 4.0.6
+      effect: 4.1.0
 
-  '@effect/vitest@4.0.6(effect@4.0.6)(vitest@5.0.2)':
+  '@effect/vitest@4.1.0(effect@4.1.0)(vitest@5.0.2)':
     dependencies:
-      effect: 4.0.6
+      effect: 4.1.0
       vitest: 5.0.2(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@5.0.2)(@vitest/ui@5.0.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
 
   '@electric-sql/pglite@0.5.10': {}
-
-  '@electric-sql/pglite@0.5.3':
-    optional: true
 
   '@emnapi/core@1.10.0':
     dependencies:
@@ -8075,10 +8074,10 @@ snapshots:
       - supports-color
     optional: true
 
-  '@napi-rs/cli@3.5.1(@emnapi/runtime@1.9.2)(@types/node@24.13.2)':
+  '@napi-rs/cli@3.5.1(@emnapi/runtime@1.9.2)(@types/node@24.13.2)(supports-color@10.2.2)':
     dependencies:
       '@inquirer/prompts': 8.7.2(@types/node@24.13.2)
-      '@napi-rs/cross-toolchain': 1.0.3
+      '@napi-rs/cross-toolchain': 1.0.3(supports-color@10.2.2)
       '@napi-rs/wasm-tools': 1.1.0
       '@octokit/rest': 22.0.1
       clipanion: 4.0.0-rc.4(typanion@3.14.0)
@@ -8106,7 +8105,7 @@ snapshots:
       - node-addon-api
       - supports-color
 
-  '@napi-rs/cross-toolchain@1.0.3':
+  '@napi-rs/cross-toolchain@1.0.3(supports-color@10.2.2)':
     dependencies:
       '@napi-rs/lzma': 1.5.1
       '@napi-rs/tar': 1.1.1
@@ -8461,7 +8460,7 @@ snapshots:
       pkg-types: 2.3.1
       semver: 7.8.4
 
-  '@nuxt/devtools@3.3.1(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2))(magic-string@1.1.0)(oxc-parser@0.140.0)(rolldown@1.2.10)(supports-color@10.2.2)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)':
+  '@nuxt/devtools@3.3.1(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2))(magic-string@1.1.0)(oxc-parser@0.140.0)(rolldown@1.2.10)(supports-color@10.2.2)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)':
     dependencies:
       '@nuxt/devtools-kit': 3.3.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       '@nuxt/devtools-wizard': 3.3.1
@@ -8491,7 +8490,7 @@ snapshots:
       sirv: 3.0.2
       structured-clone-es: 2.0.0
       tinyglobby: 0.2.17
-      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2))
+      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2))
       vite: 8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)
       vite-plugin-inspect: 11.4.1(@nuxt/kit@4.5.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       vite-plugin-vue-tracer: 1.4.0(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)
@@ -8586,7 +8585,7 @@ snapshots:
       - rolldown
       - unplugin
 
-  '@nuxt/nitro-server@4.5.1(9917eaa7694ea1597ae6765463963c16)':
+  '@nuxt/nitro-server@4.5.1(3ffd70d6d5dc55f7acb282b56add4b9b)':
     dependencies:
       '@nuxt/devalue': 2.0.2
       '@nuxt/kit': 4.5.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))
@@ -8603,9 +8602,9 @@ snapshots:
       impound: 1.1.6(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       klona: 2.0.6
       mocked-exports: 0.1.1
-      nitropack: 2.13.4(@electric-sql/pglite@0.5.3)(encoding@0.1.13)(oxc-parser@0.140.0)(rolldown@1.2.10)(srvx@0.11.22)(supports-color@10.2.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
+      nitropack: 2.13.4(@electric-sql/pglite@0.5.10)(encoding@0.1.13)(oxc-parser@0.140.0)(rolldown@1.2.10)(srvx@0.11.22)(supports-color@10.2.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       nostics: 1.2.0
-      nuxt: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.3)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.3))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
+      nuxt: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.10)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.10))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
       nypm: 0.6.9
       ohash: 2.0.11
       pathe: 2.0.3
@@ -8613,7 +8612,7 @@ snapshots:
       std-env: 4.2.0
       ufo: 1.6.4
       unctx: 3.0.0(magic-string@1.1.0)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))
-      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2))
+      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2))
       vue: 3.5.40
       vue-bundle-renderer: 2.3.1
       vue-devtools-stub: 0.1.0
@@ -8690,7 +8689,7 @@ snapshots:
       rc9: 3.0.1
       std-env: 4.2.0
 
-  '@nuxt/vite-builder@4.5.1(c4061e0c8529be4d8e258e68564b284d)':
+  '@nuxt/vite-builder@4.5.1(73bbc9206773eb0fd575d7daf87d7abd)':
     dependencies:
       '@nuxt/kit': 4.5.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))
       '@vitejs/plugin-vue': 6.0.8(vite@8.1.5(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)
@@ -8708,7 +8707,7 @@ snapshots:
       knitwork: 1.3.0
       mlly: 1.8.2
       mocked-exports: 0.1.1
-      nuxt: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.3)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.3))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
+      nuxt: 4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.10)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.10))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0)
       nypm: 0.6.9
       pathe: 2.0.3
       pkg-types: 2.3.1
@@ -10493,9 +10492,9 @@ snapshots:
 
   dateformat@4.6.3: {}
 
-  db0@0.3.4(@electric-sql/pglite@0.5.3):
+  db0@0.3.4(@electric-sql/pglite@0.5.10):
     optionalDependencies:
-      '@electric-sql/pglite': 0.5.3
+      '@electric-sql/pglite': 0.5.10
 
   debug@3.1.0(supports-color@10.2.2):
     dependencies:
@@ -10598,15 +10597,15 @@ snapshots:
 
   dotenv@17.4.2: {}
 
-  drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.0.6(effect@4.0.6))(@effect/sql-pglite@4.0.6(effect@4.0.6))(@electric-sql/pglite@0.5.3)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.0.6)(pg@8.22.0)(valibot@1.4.2)(zod@4.4.3):
+  drizzle-orm@1.0.0-rc.5(@effect/sql-pg@4.1.0(effect@4.1.0))(@effect/sql-pglite@4.1.0(effect@4.1.0))(@electric-sql/pglite@0.5.10)(@opentelemetry/api@1.9.0)(@types/pg@8.20.0)(bun-types@1.3.2(@types/react@19.1.9))(effect@4.1.0)(pg@8.22.0)(valibot@1.4.2)(zod@4.4.3):
     optionalDependencies:
-      '@effect/sql-pg': 4.0.6(effect@4.0.6)
-      '@effect/sql-pglite': 4.0.6(effect@4.0.6)
-      '@electric-sql/pglite': 0.5.3
+      '@effect/sql-pg': 4.1.0(effect@4.1.0)
+      '@effect/sql-pglite': 4.1.0(effect@4.1.0)
+      '@electric-sql/pglite': 0.5.10
       '@opentelemetry/api': 1.9.0
       '@types/pg': 8.20.0
       bun-types: 1.3.2(@types/react@19.1.9)
-      effect: 4.0.6
+      effect: 4.1.0
       pg: 8.22.0
       valibot: 1.4.2
       zod: 4.4.3
@@ -10635,7 +10634,7 @@ snapshots:
 
   ee-first@1.1.1: {}
 
-  effect@4.0.6: {}
+  effect@4.1.0: {}
 
   electron-to-chromium@1.5.398: {}
 
@@ -12056,7 +12055,7 @@ snapshots:
     dependencies:
       content-type: 2.1.0
 
-  nitropack@2.13.4(@electric-sql/pglite@0.5.3)(encoding@0.1.13)(oxc-parser@0.140.0)(rolldown@1.2.10)(srvx@0.11.22)(supports-color@10.2.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)):
+  nitropack@2.13.4(@electric-sql/pglite@0.5.10)(encoding@0.1.13)(oxc-parser@0.140.0)(rolldown@1.2.10)(srvx@0.11.22)(supports-color@10.2.2)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)):
     dependencies:
       '@cloudflare/kv-asset-handler': 0.4.2
       '@rollup/plugin-alias': 6.0.0(rollup@4.62.3)
@@ -12077,7 +12076,7 @@ snapshots:
       cookie-es: 2.0.1
       croner: 10.0.1
       crossws: 0.3.5
-      db0: 0.3.4(@electric-sql/pglite@0.5.3)
+      db0: 0.3.4(@electric-sql/pglite@0.5.10)
       defu: 6.1.7
       destr: 2.0.5
       dot-prop: 10.2.0
@@ -12123,7 +12122,7 @@ snapshots:
       unenv: 2.0.0-rc.24
       unimport: 6.3.1(esbuild@0.28.1)(oxc-parser@0.140.0)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       unplugin-utils: 0.3.2
-      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2))
+      unstorage: 1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2))
       untyped: 2.0.0
       unwasm: 0.5.3
       youch: 4.1.1
@@ -12324,16 +12323,16 @@ snapshots:
 
   number-is-nan@1.0.1: {}
 
-  nuxt@4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.3)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.3))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0):
+  nuxt@4.5.1(@babel/plugin-syntax-jsx@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@babel/plugin-syntax-typescript@7.29.7(@babel/core@7.29.7(supports-color@10.2.2)))(@electric-sql/pglite@0.5.10)(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(@types/node@24.13.2)(@vue/compiler-sfc@3.5.40)(db0@0.3.4(@electric-sql/pglite@0.5.10))(encoding@0.1.13)(esbuild@0.28.1)(ioredis@5.11.1(supports-color@10.2.2))(lightningcss@1.32.0)(magicast@0.5.5)(oxc-parser@0.140.0)(oxlint@1.71.0(oxlint-tsgolint@0.23.0))(rollup-plugin-visualizer@7.0.1(rolldown@1.2.10)(rollup@4.62.3))(rollup@4.62.3)(srvx@0.11.22)(supports-color@10.2.2)(terser@5.49.0)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(yaml@2.9.0):
     dependencies:
       '@dxup/nuxt': 0.5.5(esbuild@0.28.1)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))
       '@nuxt/cli': 3.37.0(@nuxt/schema@4.5.1)(magicast@0.5.5)(supports-color@10.2.2)
-      '@nuxt/devtools': 3.3.1(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2))(magic-string@1.1.0)(oxc-parser@0.140.0)(rolldown@1.2.10)(supports-color@10.2.2)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)
+      '@nuxt/devtools': 3.3.1(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2))(magic-string@1.1.0)(oxc-parser@0.140.0)(rolldown@1.2.10)(supports-color@10.2.2)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)
       '@nuxt/kit': 4.5.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0)))
-      '@nuxt/nitro-server': 4.5.1(9917eaa7694ea1597ae6765463963c16)
+      '@nuxt/nitro-server': 4.5.1(3ffd70d6d5dc55f7acb282b56add4b9b)
       '@nuxt/schema': 4.5.1
       '@nuxt/telemetry': 2.8.0(@nuxt/kit@4.5.1(magic-string@1.1.0)(magicast@0.5.5)(oxc-parser@0.140.0)(rolldown@1.2.10)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.10)(rollup@4.62.3)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))))
-      '@nuxt/vite-builder': 4.5.1(c4061e0c8529be4d8e258e68564b284d)
+      '@nuxt/vite-builder': 4.5.1(73bbc9206773eb0fd575d7daf87d7abd)
       '@unhead/vue': 3.2.3(@modelcontextprotocol/sdk@1.30.0(supports-color@10.2.2)(zod@4.4.3))(esbuild@0.28.1)(lightningcss@1.32.0)(rolldown@1.2.10)(rollup@4.62.3)(srvx@0.11.22)(vite@8.3.2(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.49.0)(yaml@2.9.0))(vue@3.5.40)
       '@vue/shared': 3.5.40
       chokidar: 5.0.0
@@ -14098,7 +14097,7 @@ snapshots:
       escape-string-regexp: 5.0.0
       ufo: 1.6.4
 
-  unstorage@1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.3))(ioredis@5.11.1(supports-color@10.2.2)):
+  unstorage@1.17.5(db0@0.3.4(@electric-sql/pglite@0.5.10))(ioredis@5.11.1(supports-color@10.2.2)):
     dependencies:
       anymatch: 3.1.3
       chokidar: 5.0.0
@@ -14109,7 +14108,7 @@ snapshots:
       ofetch: 1.5.1
       ufo: 1.6.4
     optionalDependencies:
-      db0: 0.3.4(@electric-sql/pglite@0.5.3)
+      db0: 0.3.4(@electric-sql/pglite@0.5.10)
       ioredis: 5.11.1(supports-color@10.2.2)
 
   untun@0.2.2: {}

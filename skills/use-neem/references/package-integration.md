@@ -54,7 +54,7 @@ threads `<runtime>:coordinator:<n>` and `<runtime>:execution:<n>`.
 ### Worker
 
 `defineWorkflowsWorker` from `@nmtjs/workflows/neem/worker` (requires the
-`@nmtjs/effect` and `effect@^4.0.4` peers) takes
+`@nmtjs/effect` and `effect@^4.1.0` peers) takes
 `{ workflows?, tasks?, schedules?, store, layer? }`:
 
 - `workflows` / `tasks` are declaration arrays, typically

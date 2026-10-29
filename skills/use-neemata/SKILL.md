@@ -12,7 +12,7 @@ RPC/HTTP APIs and dependency wiring.
 
 - Workflows are Effect-only: declarations, `Client`, `Worker` and `InMemory`
   come from `@nmtjs/workflows`; stores from `@nmtjs/workflows/postgres` and
-  `@nmtjs/workflows/redis`. They require `effect@^4.0.4`.
+  `@nmtjs/workflows/redis`. They require `effect@^4.1.0`.
 - Pubsub is Effect-only: it imports from `@nmtjs/pubsub` and
   `@nmtjs/pubsub/RedisBroker`.
 - Neem hosts workflows with `@nmtjs/workflows/neem` (runtime declaration and

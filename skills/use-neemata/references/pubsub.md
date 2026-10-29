@@ -1,7 +1,7 @@
 # PubSub
 
 `@nmtjs/pubsub` is typed, ephemeral fanout across workers, processes and
-servers, built on Effect. It requires `effect` `^4.0.0`; its Redis broker takes
+servers, built on Effect. It requires `effect` `^4.1.0`; its Redis broker takes
 the optional peer `ioredis` `^5.10.1` or `iovalkey` `^0.3.3`. The root exports
 the `Broker`, `Channel`, `PubSub` and `PubSubError` modules; the Redis broker is
 only at `@nmtjs/pubsub/RedisBroker`.

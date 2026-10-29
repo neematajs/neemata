@@ -4,7 +4,7 @@ Run a supervised Effect application in a Neem worker. The application supplies i
 services, main effect, and upstreams; the preset owns their lifetime. Neem uses
 Effect internally, while this preset supplies the application-level integration.
 
-It targets **Effect 4** (`effect@^4.0.4`). The preset imports only stable
+It targets **Effect 4** (`effect@^4.1.0`). The preset imports only stable
 Effect modules, so it follows Effect's semver guarantees. Applications choose and
 pin their own HTTP, RPC, and platform integrations, including any modules marked
 `@stability unstable`.
