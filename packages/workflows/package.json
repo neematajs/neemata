@@ -114,11 +114,11 @@
     "cron-parser": "^5.6.1"
   },
   "peerDependencies": {
-    "@effect/sql-pg": "^4.0.6",
-    "@effect/sql-pglite": "^4.0.6",
+    "@effect/sql-pg": "^4.1.0",
+    "@effect/sql-pglite": "^4.1.0",
     "@nmtjs/effect": "workspace:*",
     "drizzle-orm": ">=1.0.0-rc.4 <2.0.0",
-    "effect": "^4.0.6"
+    "effect": "^4.1.0"
   },
   "peerDependenciesMeta": {
     "@effect/sql-pg": {
@@ -141,14 +141,14 @@
     "README.md"
   ],
   "devDependencies": {
-    "@effect/platform-node": "4.0.6",
-    "@effect/sql-pg": "4.0.6",
-    "@effect/sql-pglite": "4.0.6",
-    "@effect/vitest": "4.0.6",
+    "@effect/platform-node": "4.1.0",
+    "@effect/sql-pg": "4.1.0",
+    "@effect/sql-pglite": "4.1.0",
+    "@effect/vitest": "4.1.0",
     "@nmtjs/effect": "workspace:*",
     "@nmtjs/proxy": "1.0.0-beta.10",
     "drizzle-orm": "1.0.0-rc.5",
-    "effect": "4.0.6",
+    "effect": "4.1.0",
     "redis": "6.2.1"
   }
 }

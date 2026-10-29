@@ -17,7 +17,7 @@ Neemata supervises their processes and coordinates their durable work.
 | `@nmtjs/common`      | Utilities shared by the packages above                                                                                          |
 
 `@nmtjs/workflows`, `@nmtjs/effect` and `@nmtjs/pubsub` require **Effect 4**
-(`effect@^4.0.4`).
+(`effect@^4.1.0`).
 
 ## Workflows with typed steps
 

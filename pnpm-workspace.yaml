@@ -15,15 +15,15 @@ minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  # The workspace is pinned to Effect 4.0.6 (published 2026-10-22). Only these
+  # The workspace is pinned to Effect 4.1.0 (published 2026-10-29). Only these
   # versions are admitted early: any later release still waits out the policy.
-  # These entries are redundant from 2026-10-26 and can be removed.
-  - effect@4.0.6
-  - '@effect/platform-node@4.0.6'
-  - '@effect/platform-node-shared@4.0.6'
-  - '@effect/sql-pg@4.0.6'
-  - '@effect/sql-pglite@4.0.6'
-  - '@effect/vitest@4.0.6'
+  # These entries are redundant from 2026-11-02 and can be removed.
+  - effect@4.1.0
+  - '@effect/platform-node@4.1.0'
+  - '@effect/platform-node-shared@4.1.0'
+  - '@effect/sql-pg@4.1.0'
+  - '@effect/sql-pglite@4.1.0'
+  - '@effect/vitest@4.1.0'
   # Rolldown 1.2.15 (published 2026-10-21) is admitted early, with its exact
   # platform binaries and @oxc-project/types pin; later releases still wait out
   # the policy. These entries are redundant from 2026-10-24 and can be removed.

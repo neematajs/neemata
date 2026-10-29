@@ -30,7 +30,7 @@ Use package subpaths, not an umbrella `nmtjs` import:
 - `@nmtjs/workflows/neem`: `createWorkflowsRuntime`, `defineWorkflowsPlanner`;
   `@nmtjs/workflows/neem/worker`: `defineWorkflowsWorker`.
 
-Peers: `effect@^4.0.4`; `@effect/sql-pg` or `@effect/sql-pglite` for
+Peers: `effect@^4.1.0`; `@effect/sql-pg` or `@effect/sql-pglite` for
 PostgreSQL; `drizzle-orm` for `/postgres/drizzle`; `@nmtjs/effect` for
 `/neem/worker`. Redis needs a driver that provides Effect's `Redis` service,
 such as `NodeRedis.layer` from `@effect/platform-node`.
