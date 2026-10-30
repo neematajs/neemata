@@ -1,5 +1,4 @@
 import { appendFile, readFile, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -9,6 +8,7 @@ import {
   createNeemFixture,
   editWorkerFile,
   expectFile,
+  getFreePort,
   readRuntimeEvents,
   runNeem,
   spawnNeem,
@@ -756,26 +756,6 @@ async function readLogEvents(
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, any>)
-}
-
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolvePort, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate local TCP port'))
-        return
-      }
-
-      server.close((error) => {
-        if (error) reject(error)
-        else resolvePort(address.port)
-      })
-    })
-  })
 }
 
 async function fetchJson(
