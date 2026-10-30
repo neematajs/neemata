@@ -2270,10 +2270,13 @@ export function storeContract<R>(
 
           // The earlier of the two times, whichever came first: a later one
           // moves nothing, and of two in one mutation the earlier counts.
-          // Already due: database clocks keep moving while these calls run.
-          yield* enqueue(store, wake(near, at))
-          yield* enqueue(store, wake(near, at + LEASE))
-          yield* enqueue(store, wake(twice, at + LEASE), wake(twice, at))
+          // Database clocks keep moving while these calls run, so the earlier
+          // time may already have passed before the first claim.
+          const soon = (yield* now(store)) + SHORT
+          yield* enqueue(store, wake(near, soon))
+          yield* enqueue(store, wake(near, soon + LEASE))
+          yield* enqueue(store, wake(twice, soon + LEASE), wake(twice, soon))
+          yield* harness.elapse(PAST_SHORT)
           const due = yield* claims(store)
           expect(runIds(due)).toEqual([near.id, twice.id])
           yield* ack(store, ...due)
