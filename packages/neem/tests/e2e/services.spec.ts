@@ -589,19 +589,19 @@ describe('Neem v2 services', () => {
 
   it('restarts the whole runtime after a worker failure', async () => {
     const fixture = await createNeemFixture({ config: 'fail-once' })
-    const markerFile = resolve(fixture.dir, 'fail-once-marker')
-    await rm(markerFile, { force: true })
+    const failureFile = resolve(fixture.dir, 'fail-once-trigger')
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_FAIL_ONCE_MARKER: markerFile,
+          NEEM_FAIL_ONCE_TRIGGER: failureFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
     )
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
+    await writeFile(failureFile, '')
     await waitForEventCount(fixture.eventsFile, 'fail-once-start', 2)
     await waitForEventCount(fixture.eventsFile, 'plugin-runtime-fail', 1)
     await waitForEventCount(fixture.eventsFile, 'plugin-runtime-ready', 2)

@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, unlinkSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { defineRuntimeWorker } from '@nmtjs/neem'
@@ -15,20 +15,26 @@ export default defineRuntimeWorker<{ label: string }>({
       rejectFinished = reject
     })
     void finished.catch(() => {})
+    let failureTimer: ReturnType<typeof setInterval> | undefined
 
     return {
       finished,
       start() {
         record({ event: 'fail-once-start', name: ctx.name })
-        const marker = resolve(process.env.NEEM_FAIL_ONCE_MARKER ?? 'marker')
-        if (!existsSync(marker)) {
-          writeFileSync(marker, 'failed')
-          setTimeout(() => {
-            rejectFinished(new Error('fixture runtime failure once'))
-          }, 25)
-        }
+        const trigger = resolve(
+          process.env.NEEM_FAIL_ONCE_TRIGGER ?? 'fail-once-trigger',
+        )
+        // The test requests failure after host readiness; a startup timer can
+        // otherwise fail the initial start instead of exercising recovery.
+        failureTimer = setInterval(() => {
+          if (!existsSync(trigger)) return
+          clearInterval(failureTimer)
+          unlinkSync(trigger)
+          rejectFinished(new Error('fixture runtime failure once'))
+        }, 25)
       },
       stop() {
+        clearInterval(failureTimer)
         resolveFinished()
         record({ event: 'fail-once-stop', name: ctx.name })
       },
