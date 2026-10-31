@@ -9,7 +9,7 @@ Redis/Valkey suits high throughput with history pruned by retention. Use the
 in-memory store for tests.
 
 The package README is the full guide; its examples run in
-`packages/workflows/tests/readme.spec.ts`.
+`packages/workflows/tests/integration/readme.spec.ts`.
 
 ## Imports
 

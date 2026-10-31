@@ -92,8 +92,10 @@ jobs:
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
       - run: |
-          pnpm run test --reporter=agent --reporter=github-actions
-          pnpm --filter @nmtjs/neem run test:e2e --reporter=agent --reporter=github-actions
+          pnpm run build
+          pnpm run test:unit --reporter=agent --reporter=github-actions
+          pnpm run test:integration --reporter=agent --reporter=github-actions
+          pnpm run test:e2e --reporter=agent --reporter=github-actions
           pnpm --filter @nmtjs/neem run test:stress --reporter=agent --reporter=github-actions
 
   # prom-client's engines still include Node 22, which the main test matrix doesn't cover.
@@ -114,7 +116,9 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @nmtjs/prom-client run test --reporter=github-actions
+      - run: |
+          pnpm --filter @nmtjs/prom-client run test:unit --reporter=github-actions
+          pnpm --filter @nmtjs/prom-client run test:integration --reporter=github-actions
 
   tests-bun:
     needs: [lint]
@@ -151,9 +155,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
       - run: pnpm install
-      - run: bun run --bun test --reporter=agent --reporter=github-actions
+      - run: bun run --bun build
+      - run: bun run --bun test:unit --reporter=agent --reporter=github-actions
+      - run: bun run --bun test:integration --reporter=agent --reporter=github-actions
       - run: bun run --bun test:e2e --reporter=agent --reporter=github-actions
-        working-directory: packages/neem
 
   tests-integration-services:
     needs: [lint]
@@ -170,7 +175,7 @@ jobs:
             shard: 2/3
           - name: workflows 3/3
             shard: 3/3
-          - name: pubsub, store contracts
+          - name: pubsub, workflows e2e
     runs-on: ubuntu-24.04
     services:
       redis:
@@ -249,17 +254,12 @@ jobs:
           NMTJS_REQUIRE_SERVICE_TESTS: '1'
           REDIS_URL: redis://localhost:6379
           VALKEY_URL: redis://localhost:6380
-      - name: Run workflow store contracts against PostgreSQL, Redis and Valkey
+      - name: Run workflow e2e tests against PostgreSQL
         if: ${{ !matrix.shard }}
-        # The unit suite runs these on PGlite or skips them without a server.
+        # The Tests jobs run these without a server, skipping the PostgreSQL case.
         run: >-
-          pnpm --filter @nmtjs/workflows exec vitest run
-          --config vitest.config.ts tests/postgres.spec.ts
-          tests/postgres-contract.spec.ts tests/postgres-engine.spec.ts
-          tests/redis.spec.ts tests/redis-contract.spec.ts
-          tests/redis-engine.spec.ts tests/neem-e2e.spec.ts
+          pnpm --filter @nmtjs/workflows run test:e2e
           --reporter=agent --reporter=github-actions
         env:
-          REDIS_URL: redis://localhost:6379
-          VALKEY_URL: redis://localhost:6380
+          NMTJS_REQUIRE_SERVICE_TESTS: '1'
           POSTGRES_URL: postgres://neemata:neemata@localhost:5432/neemata

@@ -22,7 +22,7 @@
     "check:rust": "cargo fmt --check && cargo clippy --locked --all-targets -- -D warnings",
     "check:type": "tsrs -p tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "test:rust": "cargo test --locked",
-    "test": "pnpm run test:rust && pnpm run build:debug && pnpm run check:type && vitest run --reporter=agent"
+    "test": "pnpm run test:rust && pnpm run build:debug && pnpm run check:type && vitest run --config vitest.integration.config.ts --reporter=agent"
   },
   "napi": {
     "binaryName": "neemata-proxy",

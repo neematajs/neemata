@@ -4,5 +4,5 @@
     "allowJs": false,
     "types": ["node"]
   },
-  "include": ["test/**/*.ts", "vitest.config.ts"]
+  "include": ["tests/**/*.ts", "vitest*.ts"]
 }

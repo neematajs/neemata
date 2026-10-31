@@ -25,7 +25,7 @@ Contents: [Quick start](#quick-start) · [Authoring](#authoring) ·
 [Upgrading from the Promise engine](#upgrading-from-the-promise-engine)
 
 The examples of this guide are run by
-[`tests/readme.spec.ts`](./tests/readme.spec.ts). How the engine is built is
+[`tests/integration/readme.spec.ts`](./tests/integration/readme.spec.ts). How the engine is built is
 in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ## Quick start

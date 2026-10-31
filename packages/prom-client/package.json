@@ -14,7 +14,9 @@
     "node": "^22 || ^24 || >=26"
   },
   "scripts": {
-    "test": "vitest run --reporter=agent",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts",
     "check:type": "tsrs -p tsconfig.json --noEmit --pretty false ${CI:+--singleThreaded}",
     "benchmarks": "node --max-heap-size=5000 ./benchmarks/index.js"
   },

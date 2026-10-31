@@ -12,8 +12,9 @@
     "build": "tsrs -b tsconfig.build.json",
     "clean-build": "rm -rf ./dist",
     "check:type": "tsrs -p tsconfig.json --noEmit",
-    "test": "vitest run --config vitest.config.ts",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test": "pnpm run test:unit && pnpm run test:e2e",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:unit": "vitest run --config vitest.unit.config.ts"
   },
   "exports": {
     ".": {

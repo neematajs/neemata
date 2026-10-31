@@ -5,16 +5,11 @@ export default defineConfig({
     // Package projects don't inherit test options from here, so each package
     // config sets its own testTimeout.
     passWithNoTests: true,
-    // Proxy tests need a local native build; they run in the proxy workflow.
+    // One project per package and tier, named `<package>:<tier>`. Proxy tests
+    // need a local native build; they run in the proxy workflow.
     projects: [
-      './packages/*',
-      '!./packages/proxy',
-      // Packages without a default config: run them with their named configs.
-      '!./packages/nuxt',
-      '!./packages/vite',
-      './packages/nuxt/vitest.unit.config.ts',
-      './packages/nuxt/vitest.e2e.config.ts',
-      './packages/vite/vitest.e2e.config.ts',
+      './packages/*/vitest.{unit,integration,e2e}.config.ts',
+      '!./packages/proxy/**',
     ],
     coverage: {
       enabled: false,
