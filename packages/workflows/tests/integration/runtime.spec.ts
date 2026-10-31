@@ -558,18 +558,24 @@ for (const target of targets) {
           yield* Deferred.succeed(finish, undefined)
           expect((yield* reached(free, 'completed')).run.output).toBe('a done')
 
-          // A cancelled attempt is not a failed one: nothing was retried,
-          // and nothing is left to deliver.
+          // A cancelled attempt is not a failed one: nothing was retried.
+          // The detached child's completion can still be waking the cancelled
+          // parent, whose graph has no attempt of its own. Allow that wake,
+          // whether queued or claimed, but no child claim or attempt command.
           expect(started).toEqual({ activity: 1, task: 1, detached: 1 })
           const family = yield* Client.getFamily(run.id)
           expect(family).toHaveLength(4)
-          expect(yield* settled(family.map(({ run }) => run.id))).toEqual({
-            dead: [],
-            claimed: [],
-          })
+          const descendants = family
+            .map(({ run }) => run.id)
+            .filter((id) => id !== run.id)
+          expect(yield* settled(descendants)).toEqual({ dead: [], claimed: [] })
+          const remaining = yield* queued(
+            [...served.workflows, Endless].map(({ name }) => name),
+          )
           expect(
-            yield* queued(
-              [...served.workflows, Endless].map(({ name }) => name),
+            remaining.filter(
+              ({ command }) =>
+                command.kind !== 'continueRun' || command.runId !== run.id,
             ),
           ).toEqual([])
           expect((yield* Client.get(run.id))!.run).toMatchObject({
