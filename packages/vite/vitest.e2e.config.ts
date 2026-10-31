@@ -8,7 +8,6 @@ export default defineProject({
     fileParallelism: false,
     hookTimeout: 45_000,
     maxWorkers: 1,
-    typecheck: { enabled: true, tsconfig: './tests/tsconfig.json' },
     testTimeout: 60_000,
   },
 })

@@ -848,7 +848,8 @@ describe('a coordinator given schedules', () => {
     'reconciles them as it starts, then fires each slot and works its run',
     () => {
       const { provide } = setup()
-      const hourly = every('hourly', { every: '1h', immediately: true })
+      // TestClock replays every worker poll, so keep the two slots close.
+      const scheduled = every('s', { immediately: true })
 
       return provide(
         Effect.scoped(
@@ -856,26 +857,25 @@ describe('a coordinator given schedules', () => {
             yield* reconcile([every('stale')])
             // Two schedulers: a slot is still fired once.
             for (const worker of [
-              coordinator({ schedules: [hourly] }),
-              coordinator({ schedules: [hourly] }),
+              coordinator({ schedules: [scheduled] }),
+              coordinator({ schedules: [scheduled] }),
               execution,
             ]) {
               yield* Effect.forkScoped(worker)
             }
             yield* idle
-            expect((yield* list).map(({ name }) => name)).toEqual(['hourly'])
+            expect((yield* list).map(({ name }) => name)).toEqual(['s'])
 
             yield* elapse(5_000)
-            expect(yield* runsOf('hourly')).toMatchObject([
-              { status: 'completed', output: 'hourly@undefined' },
+            expect(yield* runsOf('s')).toMatchObject([
+              { status: 'completed', output: 's@undefined' },
             ])
-            yield* elapse(3_600_000, 60_000)
-            yield* elapse(5_000)
+            yield* elapse(10_000)
             expect(
-              (yield* runsOf('hourly')).map(({ idempotencyKey }) =>
+              (yield* runsOf('s')).map(({ idempotencyKey }) =>
                 idempotencyKey?.at(-1),
               ),
-            ).toEqual([START + 3_600_000, START])
+            ).toEqual([START + 10_000, START])
           }),
         ),
       )

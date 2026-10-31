@@ -1,5 +1,4 @@
 import { appendFile, readFile, rm, writeFile } from 'node:fs/promises'
-import { createServer } from 'node:net'
 import { resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
@@ -9,6 +8,7 @@ import {
   createNeemFixture,
   editWorkerFile,
   expectFile,
+  getFreePort,
   readRuntimeEvents,
   runNeem,
   spawnNeem,
@@ -589,19 +589,19 @@ describe('Neem v2 services', () => {
 
   it('restarts the whole runtime after a worker failure', async () => {
     const fixture = await createNeemFixture({ config: 'fail-once' })
-    const markerFile = resolve(fixture.dir, 'fail-once-marker')
-    await rm(markerFile, { force: true })
+    const failureFile = resolve(fixture.dir, 'fail-once-trigger')
     const neem = spawnNeem(
       ['dev', '--config', fixture.configFile, '--outDir', fixture.outDir],
       {
         env: {
-          NEEM_FAIL_ONCE_MARKER: markerFile,
+          NEEM_FAIL_ONCE_TRIGGER: failureFile,
           NEEM_RUNTIME_EVENTS_FILE: fixture.eventsFile,
         },
       },
     )
 
     await neem.waitForEvent((event) => event.event === 'runtime:ready', 30_000)
+    await writeFile(failureFile, '')
     await waitForEventCount(fixture.eventsFile, 'fail-once-start', 2)
     await waitForEventCount(fixture.eventsFile, 'plugin-runtime-fail', 1)
     await waitForEventCount(fixture.eventsFile, 'plugin-runtime-ready', 2)
@@ -756,26 +756,6 @@ async function readLogEvents(
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as Record<string, any>)
-}
-
-async function getFreePort(): Promise<number> {
-  return await new Promise((resolvePort, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate local TCP port'))
-        return
-      }
-
-      server.close((error) => {
-        if (error) reject(error)
-        else resolvePort(address.port)
-      })
-    })
-  })
 }
 
 async function fetchJson(

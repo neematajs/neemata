@@ -25,6 +25,9 @@
       "path": "./packages/vite/tsconfig.json"
     },
     {
+      "path": "./packages/vite/tests/tsconfig.json"
+    },
+    {
       "path": "./packages/workflows/tsconfig.json"
     },
     {

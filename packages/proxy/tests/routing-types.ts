@@ -50,4 +50,6 @@ const defaultRoutingWithName: ProxyApplicationRouting = {
 void pathRouting
 void subdomainRouting
 void defaultProxyOptions
+void proxyOptionsWithDisabledLimits
+void proxyOptionsWithDisabledUriLimit
 void defaultRoutingWithName

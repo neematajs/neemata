@@ -392,22 +392,28 @@ export async function waitFor<T>(
   throw new Error(`Timed out after ${timeoutMs}ms\n${details}`)
 }
 
-export async function getFreePort(): Promise<number> {
-  return await new Promise((resolvePort, reject) => {
-    const server = createServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address()
-      if (!address || typeof address === 'string') {
-        server.close()
-        reject(new Error('Failed to allocate local TCP port'))
-        return
-      }
+// A port that listen(0) hands out comes from the ephemeral range, so once the
+// probe releases it, any concurrent connect or listen(0) can take it before
+// Neem binds it. Pick ports below the Linux (32768-60999) and macOS
+// (49152-65535) ephemeral ranges, which only explicit binds can claim.
+const PROBED_PORTS = { min: 20_000, max: 32_000 }
 
-      server.close((error) => {
-        if (error) reject(error)
-        else resolvePort(address.port)
-      })
+export async function getFreePort(): Promise<number> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const port =
+      PROBED_PORTS.min +
+      Math.floor(Math.random() * (PROBED_PORTS.max - PROBED_PORTS.min))
+    if (await canListen(port)) return port
+  }
+  throw new Error('Failed to find a free local TCP port')
+}
+
+function canListen(port: number): Promise<boolean> {
+  return new Promise((resolveListen) => {
+    const server = createServer()
+    server.once('error', () => resolveListen(false))
+    server.listen(port, '127.0.0.1', () => {
+      server.close(() => resolveListen(true))
     })
   })
 }

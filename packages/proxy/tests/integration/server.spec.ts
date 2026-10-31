@@ -201,8 +201,9 @@ describe('Proxy wiring', () => {
     const wss = new WebSocketServer({ server: wsHttp })
     const closeWsHttpSockets = trackConnections(wsHttp)
     wss.on('connection', (socket) => {
+      // With the default binaryType, ws delivers every message as a Buffer.
       socket.on('message', (msg) => {
-        socket.send(`echo:${msg.toString()}`)
+        socket.send(`echo:${(msg as Buffer).toString()}`)
       })
     })
     await new Promise<void>((resolve) =>
@@ -1542,7 +1543,7 @@ describe('Proxy wiring', () => {
       const ws = new WebSocket(`ws://127.0.0.1:${proxyWsPort}/ws`)
       const msg = await new Promise<string>((resolve, reject) => {
         ws.on('open', () => ws.send('ping'))
-        ws.on('message', (data) => resolve(data.toString()))
+        ws.on('message', (data) => resolve((data as Buffer).toString()))
         ws.on('error', reject)
       })
       await closeWs(ws)
@@ -1584,7 +1585,7 @@ describe('Proxy wiring', () => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
       const msg = await new Promise<string>((resolve, reject) => {
         ws.on('open', () => ws.send('ping'))
-        ws.on('message', (data) => resolve(data.toString()))
+        ws.on('message', (data) => resolve((data as Buffer).toString()))
         ws.on('error', reject)
       })
       await closeWs(ws)
@@ -1643,7 +1644,7 @@ describe('Proxy wiring', () => {
         const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`)
         const msg = await new Promise<string>((resolve, reject) => {
           ws.on('open', () => ws.send('ping'))
-          ws.on('message', (data) => resolve(data.toString()))
+          ws.on('message', (data) => resolve((data as Buffer).toString()))
           ws.on('error', reject)
         })
         await closeWs(ws)
@@ -2147,7 +2148,7 @@ describe('Proxy wiring', () => {
 
       // Verify connection works
       const msg1 = await new Promise<string>((resolve, reject) => {
-        ws.on('message', (data) => resolve(data.toString()))
+        ws.on('message', (data) => resolve((data as Buffer).toString()))
         ws.on('error', reject)
         ws.send('ping1')
       })
@@ -2158,7 +2159,7 @@ describe('Proxy wiring', () => {
 
       // Existing connection should still work
       const msg2 = await new Promise<string>((resolve, reject) => {
-        ws.once('message', (data) => resolve(data.toString()))
+        ws.once('message', (data) => resolve((data as Buffer).toString()))
         ws.once('error', reject)
         ws.send('ping2')
       })
