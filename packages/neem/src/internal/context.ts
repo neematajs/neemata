@@ -1,5 +1,5 @@
-import type * as Effect from 'effect/Effect'
 import type { Logger } from 'pino'
+import * as Effect from 'effect/Effect'
 import { RpcClientError } from 'effect/rpc/RpcClientError'
 
 import type { NeemHostHookMap as HostHookMap } from '../shared/types.ts'
@@ -25,13 +25,39 @@ export type HostContext = {
 export const lifecycleOf = (snapshot: RuntimeSnapshot) =>
   resolveLifecycle(snapshot.config.lifecycle)
 
-/** Runs every callback of a host hook; a wait for it can be interrupted. */
-export const callHook = <Name extends keyof HostHookMap>(
+export const hookCall = (
   hooks: HostHooks,
-  logger: Logger,
+  snapshot: RuntimeSnapshot,
+  logger: Logger = snapshot.logger,
+): HookCall => ({ hooks, logger, timeout: lifecycleOf(snapshot).hookTimeout })
+
+export type HookCall = {
+  hooks: HostHooks
+  logger: Logger
+  /** Bounds the whole dispatch, not each callback. */
+  timeout: number
+}
+
+/**
+ * Runs every callback of a host hook within `timeout`. A hook that runs out
+ * fails like a hook that threw; its callbacks are not cancelled, only no
+ * longer waited for, so a hung plugin cannot stall a start, a recovery or a
+ * stop.
+ */
+export const callHook = <Name extends keyof HostHookMap>(
+  { hooks, logger, timeout }: HookCall,
   name: Name,
   ...args: Parameters<HostHookMap[Name]>
-): Effect.Effect<void, Error> => hooks.call(logger, name, ...args)
+): Effect.Effect<void, Error> =>
+  hooks.call(logger, name, ...args).pipe(
+    Effect.timeoutOrElse({
+      duration: timeout,
+      orElse: () =>
+        Effect.fail(
+          new Error(`Neem hook [${name}] did not finish within ${timeout}ms`),
+        ),
+    }),
+  )
 
 /** A request's failure: the worker's own error, or why no reply came. */
 export function requestError(error: Error | RpcClientError): Error {

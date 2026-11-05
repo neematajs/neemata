@@ -20,7 +20,7 @@ import type { HostContext, ThreadLifecycleEvent } from './context.ts'
 import type { RecoveryOptions } from './host/recovery.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
 import type { RuntimePatchResult } from './runtime.ts'
-import { callHook, lifecycleOf } from './context.ts'
+import { callHook, hookCall, lifecycleOf } from './context.ts'
 import { createHostHooks, type HostHooks } from './hooks.ts'
 import { evaluateHealth } from './host/health.ts'
 import {
@@ -201,12 +201,16 @@ export class Host {
           }
           yield* this.syncProxy()
           this.markSettled()
-          yield* callHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
-            mode: this.snapshot.mode,
-            name: runtimeName,
-            upstreams:
-              subsystems.runtimes.get(runtimeName)?.getUpstreams() ?? [],
-          })
+          yield* callHook(
+            this.hookCall(this.snapshot.logger),
+            'runtime:reload',
+            {
+              mode: this.snapshot.mode,
+              name: runtimeName,
+              upstreams:
+                subsystems.runtimes.get(runtimeName)?.getUpstreams() ?? [],
+            },
+          )
           this.logger.debug(
             {
               runtimeName,
@@ -311,7 +315,7 @@ export class Host {
       const hook = yield* Effect.exit(
         releaseStep(
           'Neem hook [server:stop]',
-          callHook(this.hooks, this.logger, 'server:stop', {
+          callHook(this.hookCall(), 'server:stop', {
             mode: this.snapshot.mode,
           }),
           deadline,
@@ -600,14 +604,18 @@ export class Host {
     this.logger.debug(`Neem server state: ${previous} -> ${state}`)
   }
 
+  private hookCall(logger: Logger = this.logger) {
+    return hookCall(this.hooks, this.snapshot, logger)
+  }
+
   private serverHook(
     name: 'server:start' | 'server:ready' | 'server:reload',
   ): Effect.Effect<void, Error> {
-    return callHook(this.hooks, this.logger, name, { mode: this.snapshot.mode })
+    return callHook(this.hookCall(), name, { mode: this.snapshot.mode })
   }
 
   private failHook(error: Error): Effect.Effect<void> {
-    return callHook(this.hooks, this.logger, 'server:fail', {
+    return callHook(this.hookCall(), 'server:fail', {
       mode: this.snapshot.mode,
       error,
     }).pipe(

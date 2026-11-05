@@ -6,6 +6,7 @@ import * as Fiber from 'effect/Fiber'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import { serve, type Host } from '../../../src/host.ts'
+import { createHostHooks } from '../../../src/internal/hooks.ts'
 import { Deadline } from '../../../src/internal/lifetime.ts'
 import { createTempDir } from '../../support/temp.ts'
 import { createSupervisor, listenToWorkers } from './support/runtime.ts'
@@ -224,5 +225,88 @@ describe('RuntimeSupervisor', () => {
     expect(
       await Effect.runPromise(supervisor.stop(Deadline.after(5_000))),
     ).toEqual([])
+  })
+
+  it('withdraws surviving routes before it stops their threads', async () => {
+    workers = listenToWorkers()
+    const marker = join(await createTempDir('neem-withdraw-'), 'crash')
+    writeFileSync(marker, '')
+    // What routing would publish at each change, and how many native workers
+    // (threads and host runner) were still running then.
+    const published: { routes: number; running: number }[] = []
+    const harness = createSupervisor({
+      plan: [
+        {
+          id: 'crashing',
+          crashOnceFile: marker,
+          upstream: 'http://127.0.0.1:1',
+        },
+        { id: 'sibling', upstream: 'http://127.0.0.1:2' },
+      ],
+      recoveryAttempts: 1,
+      onUpstreamsChange: () =>
+        published.push({
+          routes: harness.supervisor.getUpstreams().length,
+          running: harness.registry.size,
+        }),
+    })
+    const { supervisor, recovered } = harness
+    await Effect.runPromise(supervisor.start())
+    workers.crash('crashing')
+
+    const until = Date.now() + 10_000
+    while (recovered() === 0 && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(recovered()).toBe(1)
+    // The replaced generation's sibling left routing while it still ran.
+    const withdrawal = published.find(({ routes }) => routes === 0)
+    expect(withdrawal?.running).toBeGreaterThan(0)
+
+    published.length = 0
+    await Effect.runPromise(supervisor.stop(Deadline.after(5_000)))
+    expect(published[0]).toEqual({ routes: 0, running: 3 })
+  })
+
+  it('recovers although a fail hook never settles', async () => {
+    workers = listenToWorkers()
+    const marker = join(await createTempDir('neem-fail-hook-'), 'crash')
+    writeFileSync(marker, '')
+    const hooks = createHostHooks()
+    hooks.hook('runtime:fail', () => new Promise<void>(() => {}))
+    const { supervisor, recovered } = createSupervisor({
+      plan: [{ id: 'crashing', crashOnceFile: marker }],
+      recoveryAttempts: 1,
+      hooks,
+      hookTimeout: 100,
+    })
+    await Effect.runPromise(supervisor.start())
+    workers.crash('crashing')
+
+    const until = Date.now() + 10_000
+    while (recovered() === 0 && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(recovered()).toBe(1)
+    expect(supervisor.getState()).toBe('ready')
+  })
+
+  it('leaves threads time to stop when the runtime host stop hangs', async () => {
+    workers = listenToWorkers()
+    const { supervisor, registry } = createSupervisor({
+      plan: [{ id: 'drained' }],
+      hostStop: 'hang',
+    })
+    await Effect.runPromise(supervisor.start())
+
+    const errors = await Effect.runPromise(
+      supervisor.stop(Deadline.after(1_000)),
+    )
+    // The host spent its half of the budget; the thread still stopped itself.
+    expect(errors.map((error) => error.message)).toEqual([
+      expect.stringMatching(/request \[stop\] timed out after \d+ms$/),
+    ])
+    expect(workers.events).toContain('drained:stop')
+    expect(registry.size).toBe(0)
   })
 })

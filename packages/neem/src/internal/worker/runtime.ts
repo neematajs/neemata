@@ -20,6 +20,9 @@ import { attempt, causeErrors, closeWithin, within } from '../lifetime.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { normalizeError } from '../utils.ts'
 
+const FORCE_STOP_MARGIN_MS = 1_000
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+
 /** One runtime the user's worker created, and the scope that stops it. */
 type Generation = {
   readonly scope: Scope.Closeable
@@ -64,6 +67,9 @@ export class WorkerRuntime {
   private upstreams: readonly NeemRuntimeUpstream[] = []
   private replacing = false
   private stopped = false
+  // Handed to every runtime.stop(). Only a worker stop has a deadline to
+  // abort it at; a development patch replacing a generation never aborts it.
+  private readonly forceStop = new AbortController()
 
   constructor(options: WorkerRuntimeOptions) {
     this.options = options
@@ -155,6 +161,7 @@ export class WorkerRuntime {
   stop(deadline: Deadline): Effect.Effect<readonly Error[]> {
     return Effect.gen({ self: this }, function* () {
       this.stopped = true
+      this.scheduleForceStop(deadline)
       const errors: Error[] = []
       // The interrupt only ends waits; an acquisition in flight completes and
       // is released at once, inside the fiber joined here.
@@ -174,6 +181,19 @@ export class WorkerRuntime {
       }
       return errors
     })
+  }
+
+  // Leaves the runtime time to force-close what its graceful stop still waits
+  // for, and the worker time to flush its logger and exit before the host
+  // terminates it. A budget smaller than twice the margin is split in half.
+  private scheduleForceStop(deadline: Deadline): void {
+    const remaining = deadline.remaining()
+    const delay = Math.max(remaining - FORCE_STOP_MARGIN_MS, remaining / 2)
+    // setTimeout treats a delay beyond its 32-bit range as an immediate one.
+    if (delay > MAX_TIMER_DELAY_MS) return
+    const timer = setTimeout(() => this.forceStop.abort(), delay)
+    // Nothing else may keep the thread alive once the runtime has stopped.
+    timer.unref()
   }
 
   private start(
@@ -220,7 +240,10 @@ export class WorkerRuntime {
       const scope = Scope.forkUnsafe(this.root)
       return Effect.acquireRelease(
         attempt(() => worker.createRuntime(context)),
-        (runtime) => attempt(() => runtime.stop()).pipe(Effect.orDie),
+        (runtime) =>
+          attempt(() => runtime.stop({ signal: this.forceStop.signal })).pipe(
+            Effect.orDie,
+          ),
       ).pipe(
         Scope.provide(scope),
         Effect.map((runtime) => {

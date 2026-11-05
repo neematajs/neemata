@@ -61,6 +61,7 @@ export type {
   NeemRuntimeServerSnapshot,
   NeemRuntimeServerState,
   NeemRuntimeState,
+  NeemRuntimeStopOptions,
   NeemRuntimeThreadHandle,
   NeemRuntimeUpstream,
   NeemRuntimeUpstreamType,
@@ -83,6 +84,7 @@ export {
   isNeemRuntimeDeclaration,
 } from './config.ts'
 export { definePluginHooks } from './hooks.ts'
+export { closeHttpServer } from './http.ts'
 export {
   defineRuntimeHost,
   defineRuntimePlanner,

@@ -30,7 +30,7 @@ import type {
 import type { SpawnedWorker } from './transport.ts'
 import { NeemWorkerError } from '../shared/errors.ts'
 import { hostSettings } from './config.ts'
-import { callHook, lifecycleOf, requestError } from './context.ts'
+import { callHook, hookCall, lifecycleOf, requestError } from './context.ts'
 import { createRuntimeEnv } from './host/env.ts'
 import { DEFAULT_REQUEST_TIMEOUT_MS } from './host/lifecycle.ts'
 import { releaseStep } from './lifetime.ts'
@@ -373,7 +373,7 @@ export class Thread {
     error?: Error,
   ): Effect.Effect<void, Error> {
     const { context, snapshot } = this.options
-    return callHook(context.hooks, snapshot.logger, name, {
+    return callHook(hookCall(context.hooks, snapshot), name, {
       mode: snapshot.mode,
       id: this.id,
       name: this.name,

@@ -36,6 +36,7 @@ function createHarness(mode: 'development' | 'production' = 'development') {
       created?: Promise<void>
       finished?: Promise<void>
       upstreams?: { type: 'http'; url: string }[]
+      stop?: NeemRuntime['stop']
     } = {},
   ): NeemRuntimeWorker =>
     ({
@@ -49,8 +50,9 @@ function createHarness(mode: 'development' | 'production' = 'development') {
             events.push(`${name}:start`)
             return options.upstreams ?? []
           },
-          stop: () => {
+          stop: (stopOptions) => {
             events.push(`${name}:stop`)
+            return options.stop?.(stopOptions)
           },
           finished: options.finished,
         }
@@ -81,6 +83,36 @@ describe('WorkerRuntime', () => {
     expect(await stopping).toEqual([])
     // The stop waited for the late runtime and stopped it, without starting it.
     expect(events).toEqual(['first:create', 'first:created', 'first:stop'])
+  })
+
+  it('signals a stop still waiting to force-close before the deadline passes', async () => {
+    const { runtime, events, worker, boot } = createHarness('production')
+    let abortedAfter: number | undefined
+    const startedAt = Date.now()
+    // A graceful stop that would wait forever, e.g. on a long-lived request,
+    // unless it force-closes once signalled.
+    const stop: NeemRuntime['stop'] = (options) =>
+      new Promise<void>((resolve) => {
+        options?.signal.addEventListener('abort', () => {
+          abortedAfter = Date.now() - startedAt
+          resolve()
+        })
+      })
+    boot(worker('first', { stop }))
+    await Effect.runPromise(Deferred.await(runtime.ready))
+
+    expect(await Effect.runPromise(runtime.stop(Deadline.after(600)))).toEqual(
+      [],
+    )
+    expect(events).toEqual([
+      'first:create',
+      'first:created',
+      'first:start',
+      'first:stop',
+    ])
+    // Half of a budget this small, leaving the rest to finish the stop.
+    expect(abortedAfter).toBeGreaterThanOrEqual(250)
+    expect(abortedAfter).toBeLessThan(550)
   })
 
   it('runs one patch at a time even when the caller stops waiting', async () => {

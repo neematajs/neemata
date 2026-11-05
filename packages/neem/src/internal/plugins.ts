@@ -10,6 +10,7 @@ import type {
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import type { Lifetime } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
+import { callHook, hookCall } from './context.ts'
 import { invoke } from './hooks.ts'
 import { attempt, boundedScope, releaseStep } from './lifetime.ts'
 import { importDefault } from './utils.ts'
@@ -76,5 +77,7 @@ export const acquirePlugins = (
         (remove) => Effect.sync(remove),
       ).pipe(Scope.provide(scope))
     }
-    yield* hooks.call(snapshot.logger, 'initialize', { mode: snapshot.mode })
+    yield* callHook(hookCall(hooks, snapshot), 'initialize', {
+      mode: snapshot.mode,
+    })
   }).pipe(Scope.provide(lifetime.scope))

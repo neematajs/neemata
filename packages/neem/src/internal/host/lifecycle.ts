@@ -4,6 +4,7 @@ import { raceWithTimeout, wait } from '../utils.ts'
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000
 export const DEFAULT_START_TIMEOUT_MS = 30_000
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+export const DEFAULT_HOOK_TIMEOUT_MS = 5_000
 // Held back from the exit budget a stopping thread is given, so its exit still
 // reaches the host, which terminates it at the deadline, after the thread has
 // spent that budget flushing.
@@ -21,6 +22,7 @@ export function resolveLifecycle(
   return {
     stopTimeout: config?.stopTimeout ?? DEFAULT_STOP_TIMEOUT_MS,
     startTimeout: config?.startTimeout ?? DEFAULT_START_TIMEOUT_MS,
+    hookTimeout: config?.hookTimeout ?? DEFAULT_HOOK_TIMEOUT_MS,
   }
 }
 

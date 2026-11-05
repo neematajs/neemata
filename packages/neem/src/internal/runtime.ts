@@ -23,7 +23,7 @@ import type { RecoveryOptions, RecoveryPolicy } from './host/recovery.ts'
 import type { Deadline } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
 import type { WorkerPatchResult } from './protocol.ts'
-import { callHook, lifecycleOf } from './context.ts'
+import { callHook, hookCall, lifecycleOf } from './context.ts'
 import { createRuntimeEnv } from './host/env.ts'
 import { createRecoveryPolicy } from './host/recovery.ts'
 import {
@@ -115,6 +115,8 @@ export class RuntimeSupervisor {
   }
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
+    // A stopping runtime takes no new traffic while its threads drain.
+    if (this.state === 'stopping' || this.state === 'stopped') return []
     return this.listThreads().flatMap((thread) => thread.getUpstreams())
   }
 
@@ -269,6 +271,9 @@ export class RuntimeSupervisor {
     return Effect.gen({ self: this }, function* () {
       this.setState('stopping')
       const errors: Error[] = []
+      // Routing stops before any thread does, so requests never reach a
+      // thread that is already shutting down.
+      yield* within(this.options.onUpstreamsChange(), deadline)
       const recovery = this.recovery
       if (recovery) {
         recovery.interruptUnsafe()
@@ -483,7 +488,6 @@ export class RuntimeSupervisor {
         )
         yield* next(lastError).pipe(Effect.orDie)
         yield* this.releaseCurrent()
-        yield* this.options.onUpstreamsChange()
         if (this.options.prepareRecovery)
           yield* attempt(this.options.prepareRecovery)
         yield* this.startGeneration()
@@ -511,31 +515,30 @@ export class RuntimeSupervisor {
   }
 
   // A replaced generation is gone either way: what missed the deadline was
-  // terminated. Its replacement still starts.
+  // terminated. Its replacement still starts. Its surviving threads leave
+  // routing before they stop, so they drain instead of failing requests.
   private releaseCurrent(): Effect.Effect<void> {
     return Effect.suspend(() => {
       const generation = this.current
       if (!generation) return Effect.void
       this.current = undefined
-      return generation.lifetime
-        .close(
-          DeadlineClass.after(
-            lifecycleOf(this.options.snapshot).stopTimeout,
-            this.lifetime.clock,
-          ),
-        )
-        .pipe(
-          Effect.flatMap((errors) =>
-            Effect.sync(() => {
-              for (const error of errors) {
-                this.logger.error(
-                  { err: error },
-                  'Neem runtime did not stop cleanly before its replacement',
-                )
-              }
-            }),
-          ),
-        )
+      const deadline = DeadlineClass.after(
+        lifecycleOf(this.options.snapshot).stopTimeout,
+        this.lifetime.clock,
+      )
+      return within(this.options.onUpstreamsChange(), deadline).pipe(
+        Effect.andThen(generation.lifetime.close(deadline)),
+        Effect.flatMap((errors) =>
+          Effect.sync(() => {
+            for (const error of errors) {
+              this.logger.error(
+                { err: error },
+                'Neem runtime did not stop cleanly before its replacement',
+              )
+            }
+          }),
+        ),
+      )
     })
   }
 
@@ -580,7 +583,7 @@ export class RuntimeSupervisor {
     error?: Error,
   ): Effect.Effect<void, Error> {
     const { context, snapshot } = this.options
-    return callHook(context.hooks, snapshot.logger, name, {
+    return callHook(hookCall(context.hooks, snapshot), name, {
       mode: snapshot.mode,
       name: this.name,
       upstreams,
