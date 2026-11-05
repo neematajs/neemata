@@ -462,8 +462,14 @@ export class RuntimeSupervisor {
     policy: RecoveryPolicy,
   ): Effect.Effect<void> {
     return Effect.gen({ self: this }, function* () {
-      // Detached before hooks and delays, so routing stops reaching the dead worker.
-      yield* this.options.onUpstreamsChange()
+      // Detached before hooks and delays, so routing stops reaching the dead
+      // worker. Bounded, so a stuck update cannot hold up a stop's join.
+      yield* this.withdrawRoutes(
+        DeadlineClass.after(
+          lifecycleOf(this.options.snapshot).stopTimeout,
+          this.lifetime.clock,
+        ),
+      )
       yield* this.failHook(initialError)
       if (policy.attempts === 0) {
         this.options.onFailure(initialError)
@@ -544,7 +550,8 @@ export class RuntimeSupervisor {
   }
 
   // Routing changes are normally instant. One stuck in native code may take
-  // half of what is left at most, so the threads keep time to stop.
+  // half of what is left at most, so the threads keep time to stop. Waiting
+  // for it stays interruptible, so a stop never joins a stuck update.
   private withdrawRoutes(deadline: Deadline): Effect.Effect<void> {
     return Effect.suspend(() =>
       detachedWithin(
@@ -555,9 +562,7 @@ export class RuntimeSupervisor {
       Effect.flatMap((done) =>
         Effect.sync(() => {
           if (Option.isNone(done)) {
-            this.logger.warn(
-              'Neem runtime routes were not withdrawn before its threads stopped',
-            )
+            this.logger.warn('Neem runtime routes were not withdrawn in time')
           }
         }),
       ),

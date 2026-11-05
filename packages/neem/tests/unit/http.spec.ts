@@ -30,14 +30,16 @@ async function listen(handler: Parameters<typeof createServer>[1]) {
 
 describe('closeHttpServer', () => {
   it('lets in-flight responses finish, then closes their kept-alive connections', async () => {
+    const entered = Promise.withResolvers<void>()
     const { server, request } = await listen((req, res) => {
-      if (req.url === '/slow') setTimeout(() => res.end('slow'), 200)
-      else res.end('fast')
+      if (req.url !== '/slow') return res.end('fast')
+      entered.resolve()
+      setTimeout(() => res.end('slow'), 200)
     })
     // Leaves one connection idle and one busy when the close begins.
     await request('/fast')
     const slow = request('/slow')
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await entered.promise
 
     const startedAt = Date.now()
     const closed = closeHttpServer(server)
@@ -49,11 +51,13 @@ describe('closeHttpServer', () => {
   })
 
   it('force-closes requests still running once the signal aborts', async () => {
+    const entered = Promise.withResolvers<void>()
     const { server, request } = await listen(() => {
       // Never responds.
+      entered.resolve()
     })
     const hanging = request('/hang')
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await entered.promise
 
     const controller = new AbortController()
     const closed = closeHttpServer(server, { signal: controller.signal })

@@ -82,8 +82,14 @@ describe('Nuxt production runtime', () => {
     const { runtime, url } = await startRuntime({})
     // fetch keeps the connection alive, as the Neem proxy's upstream pool does.
     await (await fetch(`${url}/root.txt`)).text()
+    const entered = Promise.withResolvers<void>()
+    const slowGlobal = globalThis as { __neemSlowRequest?: () => void }
+    slowGlobal.__neemSlowRequest = entered.resolve
+    cleanups.push(async () => {
+      delete slowGlobal.__neemSlowRequest
+    })
     const slow = fetch(`${url}/slow`).then((response) => response.json())
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50))
+    await entered.promise
 
     await runtime.stop()
     await expect(slow).resolves.toMatchObject({ url: '/slow' })

@@ -286,6 +286,41 @@ describe('RuntimeSupervisor', () => {
     expect(registry.size).toBe(0)
   })
 
+  it('stops a recovery whose route withdrawal never finishes, and its sibling cleanly', async () => {
+    workers = listenToWorkers()
+    const marker = join(await createTempDir('neem-stuck-recovery-'), 'crash')
+    writeFileSync(marker, '')
+    let stuck = false
+    const { supervisor, registry } = createSupervisor({
+      plan: [
+        {
+          id: 'crashing',
+          crashOnceFile: marker,
+          upstream: 'http://127.0.0.1:1',
+        },
+        { id: 'sibling', upstream: 'http://127.0.0.1:2' },
+      ],
+      recoveryAttempts: 1,
+      // Every update after the crash hangs, like a stuck native mutation.
+      onUpstreamsChange: () =>
+        stuck ? Effect.uninterruptible(Effect.never) : undefined,
+    })
+    await Effect.runPromise(supervisor.start())
+    stuck = true
+    workers.crash('crashing')
+    const until = Date.now() + 10_000
+    while (supervisor.getState() !== 'recovering' && Date.now() < until) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    const errors = await Effect.runPromise(
+      supervisor.stop(Deadline.after(2_000)),
+    )
+    expect(errors).toEqual([])
+    expect(workers.events).toContain('sibling:stop')
+    expect(registry.size).toBe(0)
+  })
+
   it('recovers although a fail hook never settles', async () => {
     workers = listenToWorkers()
     const marker = join(await createTempDir('neem-fail-hook-'), 'crash')
