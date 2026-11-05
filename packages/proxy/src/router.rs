@@ -2,7 +2,7 @@ use crate::{lb, options, runtime::ProxyRuntime};
 use std::borrow::Cow;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,10 +14,11 @@ use http::header;
 use http::{StatusCode, Uri};
 use pingora::http::RequestHeader;
 use pingora::http::ResponseHeader;
-use pingora::lb::{LoadBalancer, selection::RoundRobin};
+use pingora::lb::{Backend, LoadBalancer, selection::RoundRobin};
 use pingora::protocols::http::ServerSession;
+use pingora::protocols::l4::socket::SocketAddr as PeerAddr;
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
-use pingora::upstreams::peer::HttpPeer;
+use pingora::upstreams::peer::{HttpPeer, Peer};
 use pingora::{Error, ErrorSource, ErrorType, Result};
 
 #[derive(Clone, Default)]
@@ -42,7 +43,6 @@ pub struct PoolConfig {
     pub lb: Arc<LoadBalancer<RoundRobin>>,
     pub secure: bool,
     pub verify_hostname: String,
-    pub backends: Arc<HashSet<String>>,
 }
 
 /// Pre-resolved pool information cached in context to avoid repeated lookups.
@@ -53,7 +53,6 @@ pub struct ResolvedPool {
     pub verify_hostname: String,
     pub is_http2: bool,
     pub transport: lb::TransportKind,
-    pub backends: Arc<HashSet<String>>,
 }
 
 #[derive(Clone)]
@@ -279,7 +278,8 @@ pub struct RouterCtx {
     pub selected_transport: Option<lb::TransportKind>,
     pub affinity_key: Option<String>,
     pub should_set_cookie: bool,
-    pub sticky_retry_attempted: bool,
+    /// The backend whose connect failed; set once, when the request is retried.
+    pub failed_peer: Option<PeerAddr>,
     pub failure_hint: Option<FailureHint>,
 }
 
@@ -378,7 +378,6 @@ impl ProxyHttp for SharedRouter {
                     } else {
                         lb::TransportKind::Http1
                     },
-                    backends: Arc::clone(&pool.backends),
                 });
             }
         }
@@ -448,40 +447,58 @@ impl ProxyHttp for SharedRouter {
             ));
         };
 
-        let selected_addr = if let (Some(sticky), Some(app_name), Some(affinity_key)) = (
+        let sticky_target = match (
             self.router.sticky.as_ref(),
             ctx.app_name.as_deref(),
             ctx.affinity_key.as_deref(),
         ) {
-            if let Some(mapped) = sticky.lookup(
-                app_name,
-                resolved.transport,
-                affinity_key,
-                &resolved.backends,
-            ) {
-                mapped
-            } else {
-                let Some(backend) = resolved.lb.select(affinity_key.as_bytes(), 8) else {
-                    ctx.failure_hint = Some(FailureHint::UnhealthyUpstream);
-                    return Err(Error::explain(
-                        ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
-                        "no healthy upstreams available",
-                    ));
-                };
-
-                let selected = backend.addr.to_string();
-                sticky.bind(app_name, resolved.transport, affinity_key, selected.clone());
-                selected
+            (Some(sticky), Some(app_name), Some(affinity_key)) => {
+                Some((sticky, app_name, affinity_key))
             }
+            _ => None,
+        };
+
+        // A retry never goes back to the backend that refused it, even when a concurrent
+        // request with the same affinity key has bound it again meanwhile.
+        let failed_peer = ctx.failed_peer.as_ref();
+        // The pool's load balancer is long-lived, so this sees current membership and health.
+        let mapped = sticky_target.and_then(|(sticky, app_name, affinity_key)| {
+            sticky.lookup(app_name, resolved.transport, affinity_key, |addr| {
+                Backend::new(addr).is_ok_and(|backend| {
+                    resolved.lb.backends().ready(&backend)
+                        && failed_peer.is_none_or(|failed| backend.addr != *failed)
+                })
+            })
+        });
+
+        let selected_addr = if let Some(mapped) = mapped {
+            mapped
         } else {
-            let Some(backend) = resolved.lb.select(b"", 8) else {
+            let key =
+                sticky_target.map_or(&b""[..], |(_, _, affinity_key)| affinity_key.as_bytes());
+            let Some(backend) = resolved.lb.select_with(key, 8, |backend, ready| {
+                ready && failed_peer.is_none_or(|failed| backend.addr != *failed)
+            }) else {
+                if failed_peer.is_some() {
+                    // Retrying a failed connect with no other backend left keeps the 502.
+                    return Err(Error::explain(
+                        ErrorType::ConnectError,
+                        "no other healthy upstream to retry on",
+                    )
+                    .into_up());
+                }
                 ctx.failure_hint = Some(FailureHint::UnhealthyUpstream);
                 return Err(Error::explain(
                     ErrorType::HTTPStatus(StatusCode::SERVICE_UNAVAILABLE.as_u16()),
                     "no healthy upstreams available",
                 ));
             };
-            backend.addr.to_string()
+
+            let selected = backend.addr.to_string();
+            if let Some((sticky, app_name, affinity_key)) = sticky_target {
+                sticky.bind(app_name, resolved.transport, affinity_key, selected.clone());
+            }
+            selected
         };
 
         let mut peer = HttpPeer::new(
@@ -555,23 +572,23 @@ impl ProxyHttp for SharedRouter {
     fn fail_to_connect(
         &self,
         _session: &mut Session,
-        _peer: &HttpPeer,
+        peer: &HttpPeer,
         ctx: &mut Self::CTX,
         mut e: Box<Error>,
     ) -> Box<Error> {
-        let (Some(sticky), Some(app_name), Some(transport), Some(affinity_key)) = (
+        if let (Some(sticky), Some(app_name), Some(transport), Some(affinity_key)) = (
             self.router.sticky.as_ref(),
             ctx.app_name.as_deref(),
             ctx.selected_transport,
             ctx.affinity_key.as_deref(),
-        ) else {
-            return e;
-        };
+        ) {
+            sticky.remove(app_name, transport, affinity_key);
+        }
 
-        sticky.remove(app_name, transport, affinity_key);
-
-        if !ctx.sticky_retry_attempted {
-            ctx.sticky_retry_attempted = true;
+        // Nothing reached the upstream, so any request, whatever its method or body, can be
+        // retried once; `upstream_peer` then picks another backend.
+        if ctx.failed_peer.is_none() {
+            ctx.failed_peer = Some(peer.address().clone());
             e.set_retry(true);
         }
 
@@ -619,7 +636,7 @@ impl StickySessionState {
         app_name: &str,
         transport: lb::TransportKind,
         affinity_key: &str,
-        allowed_backends: &HashSet<String>,
+        is_usable: impl Fn(&str) -> bool,
     ) -> Option<String> {
         let now = Instant::now();
         let key = AffinityMapKey {
@@ -637,7 +654,7 @@ impl StickySessionState {
         let mut entries = shard.entries.lock().ok()?;
 
         match entries.get_mut(&key) {
-            Some(entry) if entry.expires_at > now && allowed_backends.contains(&entry.backend) => {
+            Some(entry) if entry.expires_at > now && is_usable(&entry.backend) => {
                 entry.expires_at = now + self.config.ttl;
                 Some(entry.backend.clone())
             }
@@ -1280,12 +1297,10 @@ pub mod bench {
         }
 
         pub fn lookup(&self, affinity_key: &str) -> Option<String> {
-            self.state.lookup(
-                "app",
-                lb::TransportKind::Http1,
-                affinity_key,
-                &self.allowed_backends,
-            )
+            self.state
+                .lookup("app", lb::TransportKind::Http1, affinity_key, |backend| {
+                    self.allowed_backends.contains(backend)
+                })
         }
 
         pub fn generate_affinity_key(&self) -> String {
