@@ -89,13 +89,17 @@ export class HostRunner {
     )
   }
 
-  /** Stops the user's host, bounded by the request timeout and the deadline. */
+  /**
+   * Stops the user's host, bounded by the request timeout and half of what the
+   * deadline leaves: the host stops before the threads, and a slow host must
+   * not spend the budget the threads need to drain.
+   */
   stopHost(deadline: Deadline): Effect.Effect<void, Error> {
     if (this.failed) return Effect.void
     return this.request(
       'stop',
       this.worker.client.stop(),
-      Math.min(this.requestTimeout, deadline.remaining()),
+      Math.min(this.requestTimeout, Math.floor(deadline.remaining() / 2)),
     )
   }
 

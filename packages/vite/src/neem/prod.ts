@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { Server, ServerMiddleware } from 'srvx'
+import { closeHttpServer } from '@nmtjs/neem'
 // Explicit Node adapter per srvx's bundler guidance: neem bundles this module
 // with rolldown, and the artifact only ever runs in Node worker threads, so
 // resolving the runtime at bundle time is correct — importing srvx/node just
@@ -70,13 +71,16 @@ const createViteProdRuntime: NeemViteRuntimeFactory = (ctx, options) => {
       ctx.logger.info(`Vite app server listening at ${url} (base ${base})`)
       return [{ type: 'http', url }]
     },
-    async stop() {
+    async stop(options) {
       stopping = true
       const instance = server
       server = undefined
-      // The Neem proxy holds keep-alive upstream connections; a default
-      // graceful close would wait on those idle sockets indefinitely.
-      await instance?.close(true)
+      // In-flight requests finish; force-closed only when the budget runs out.
+      const node = instance?.node?.server
+      // Only HTTP/1 servers track idle connections; this one never serves h2.
+      if (node && 'closeIdleConnections' in node) {
+        await closeHttpServer(node, options)
+      } else await instance?.close(true)
     },
   }
 }

@@ -174,6 +174,29 @@ export const attempt = <A>(
   Effect.tryPromise({ try: async () => evaluate(), catch: normalizeError })
 
 /**
+ * Runs `effect` in a fiber of its own and waits for it until the deadline:
+ * `None` once it passes. Unlike `within`, an effect that cannot be interrupted
+ * out of its wait (an uninterruptible finalizer, a native mutation) does not
+ * hold the caller past the deadline. Its fiber is interrupted, without waiting
+ * for it, once the deadline passes or the caller is interrupted.
+ */
+export const detachedWithin = <A, E>(
+  effect: Effect.Effect<A, E>,
+  deadline: Deadline,
+): Effect.Effect<Option.Option<A>, E> =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkDetach(effect)
+    const exit = yield* within(Fiber.await(fiber), deadline).pipe(
+      Effect.onInterrupt(() => Effect.sync(() => fiber.interruptUnsafe())),
+    )
+    if (Option.isNone(exit)) {
+      fiber.interruptUnsafe()
+      return Option.none()
+    }
+    return Option.some(yield* exit.value)
+  })
+
+/**
  * Closes a scope in a fiber of its own and waits for it until the deadline.
  * Closing is uninterruptible, so a missed deadline leaves it running.
  */

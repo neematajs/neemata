@@ -1,4 +1,12 @@
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve } from 'node:path'
@@ -70,6 +78,24 @@ describe('Nuxt production runtime', () => {
     await runtime.stop()
   })
 
+  it('finishes an in-flight request before its stop resolves', async () => {
+    const { runtime, url } = await startRuntime({})
+    // fetch keeps the connection alive, as the Neem proxy's upstream pool does.
+    await (await fetch(`${url}/root.txt`)).text()
+    const entered = Promise.withResolvers<void>()
+    const slowGlobal = globalThis as { __neemSlowRequest?: () => void }
+    slowGlobal.__neemSlowRequest = entered.resolve
+    cleanups.push(async () => {
+      delete slowGlobal.__neemSlowRequest
+    })
+    const slow = fetch(`${url}/slow`).then((response) => response.json())
+    await entered.promise
+
+    await runtime.stop()
+    await expect(slow).resolves.toMatchObject({ url: '/slow' })
+    await expect(fetch(`${url}/root.txt`)).rejects.toThrow()
+  })
+
   it('strips a default-routing base only for static lookup', async () => {
     const { runtime, url } = await startRuntime({
       base: '/admin/',
@@ -134,6 +160,13 @@ async function createArtifact(withServer: boolean): Promise<{
   const dir = await mkdtemp(resolve(tmpdir(), 'nmtjs-nuxt-prod-'))
   cleanups.push(() => rm(dir, { recursive: true, force: true }))
   const distDir = resolve(dir, 'dist')
+  // A built artifact bundles the implementation's package imports; the copy
+  // resolves them from this package's dependencies instead.
+  await symlink(
+    resolve(import.meta.dirname, '../../node_modules'),
+    resolve(dir, 'node_modules'),
+    'dir',
+  )
   await cp(resolve(import.meta.dirname, '../../dist'), distDir, {
     filter: (source) => !source.endsWith('.map'),
     recursive: true,

@@ -4,6 +4,7 @@ import * as Effect from 'effect/Effect'
 import { pino } from 'pino'
 import { onTestFinished } from 'vitest'
 
+import type { HostHooks } from '../../../../src/internal/hooks.ts'
 import type {
   Manifest,
   ManifestArtifact,
@@ -36,6 +37,12 @@ export function createSupervisor(options: {
   recoveryAttempts?: number
   prepareRecovery?: () => Promise<void>
   onStateChange?: () => void
+  // An Effect it returns stands in for the proxy reconciliation.
+  onUpstreamsChange?: () => void | Effect.Effect<void>
+  hooks?: HostHooks
+  hookTimeout?: number
+  // `hang` makes the runtime host's stop never settle.
+  hostStop?: 'hang'
 }) {
   const manifest: Manifest = {
     schemaVersion: 5,
@@ -52,7 +59,10 @@ export function createSupervisor(options: {
       ),
     },
     config: {
-      lifecycle: { stopTimeout: options.stopTimeout ?? 5_000 },
+      lifecycle: {
+        stopTimeout: options.stopTimeout ?? 5_000,
+        hookTimeout: options.hookTimeout,
+      },
       runtimes: { app: {} },
     },
     runtimes: {
@@ -67,7 +77,10 @@ export function createSupervisor(options: {
   const snapshot = createRuntimeSnapshot({
     mode: 'production',
     outDir: path('../fixtures'),
-    env: { NEEM_EFFECT_TEST_PLAN: JSON.stringify(options.plan) },
+    env: {
+      NEEM_EFFECT_TEST_PLAN: JSON.stringify(options.plan),
+      NEEM_EFFECT_TEST_HOST_STOP: options.hostStop ?? '',
+    },
     manifest,
     logger: pino({ enabled: false }),
   })
@@ -75,14 +88,18 @@ export function createSupervisor(options: {
   const failures: Error[] = []
   let recovered = 0
   const supervisor = new RuntimeSupervisor({
-    context: { hooks: createHostHooks(), registry },
+    context: { hooks: options.hooks ?? createHostHooks(), registry },
     snapshot,
     runtimeName: 'app',
     recovery: { attempts: options.recoveryAttempts ?? 0, delayMs: 0 },
     prepareRecovery: options.prepareRecovery,
     onFailure: (error) => failures.push(error),
     onRecovered: () => recovered++,
-    onUpstreamsChange: () => Effect.void,
+    onUpstreamsChange: () =>
+      Effect.suspend(() => {
+        const change = options.onUpstreamsChange?.()
+        return Effect.isEffect(change) ? change : Effect.void
+      }),
     onStateChange: () => options.onStateChange?.(),
   })
   // Failed assertions must still release native threads so the test runner can exit.

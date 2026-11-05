@@ -187,6 +187,11 @@ host operation removes it before it can mutate the running server.
 
 Lifecycle hooks execute sequentially as Effects. Hooks may return an Effect, a
 Promise, or nothing; an interrupted hook cannot continue invoking later callbacks.
+Each dispatch (every callback of one hook) is bounded by `lifecycle.hookTimeout`
+(milliseconds, default `5000`). A start or ready hook that runs out fails its
+start; a stop or fail hook that runs out is logged and the lifecycle goes on, so
+a hung plugin cannot stall a recovery. Callbacks are not cancelled, only no
+longer waited for.
 Plugin acquisitions register disposal immediately, including partial startup.
 `definePluginHooks` from this package also accepts Effect factories using
 `acquireRelease`; their resources belong to a plugin scope closed within the
@@ -315,6 +320,20 @@ created directly and their bundles contain no DevEngine instrumentation.
 Host `stop()` hooks, runtime hosts, workers and plugins share it: each step
 gets what earlier steps left over. Anything still running when the budget runs
 out is terminated.
+
+A stopping runtime first stops routing to its workers, so they drain instead of
+receiving new requests; a recovering runtime does the same for the workers it
+replaces. A runtime host's `stop()` runs before its workers stop and gets at
+most half of the remaining budget, so a slow host cannot leave the workers
+without time to drain.
+
+A worker runtime's `stop({ signal })` should finish in-flight work gracefully;
+`signal` aborts shortly before the budget runs out, when anything still waiting
+should be force-closed. `closeHttpServer(server, { signal })` from
+`@nmtjs/neem` does this for a Node HTTP server: it refuses new connections,
+lets in-flight responses finish, closes keep-alive connections once idle and
+closes the rest when `signal` aborts. The Vite and Nuxt production presets use
+it.
 
 Before a worker, host runner or the host itself exits, it flushes its logger
 within what is left of that budget, so asynchronous destinations keep the

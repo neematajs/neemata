@@ -12,6 +12,8 @@ export type AppWorkerData = {
   stop?: 'hang' | 'block' | 'throw'
   // Patches wait until the test releases them, then are rejected.
   holdPatch?: boolean
+  // Advertised as this worker's upstream; nothing listens on it.
+  upstream?: string
 }
 
 // Every event reaches the test through this channel.
@@ -57,7 +59,9 @@ export default defineRuntimeWorker<AppWorkerData, { app: true }>({
             throw new Error(`crash ${data.id}`)
           }
         }
-        return []
+        return data.upstream
+          ? [{ type: 'http' as const, url: data.upstream }]
+          : []
       },
       async stop() {
         emit(data.id, 'stop')

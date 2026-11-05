@@ -291,9 +291,19 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
   proxy: NeemProxyHealth
 }
 
+export type NeemRuntimeStopOptions = {
+  /**
+   * Aborts shortly before the stop budget runs out: a graceful stop that is
+   * still waiting (e.g. on in-flight requests) should then force-close what
+   * remains, or the worker is terminated and the shutdown fails.
+   */
+  signal: AbortSignal
+}
+
 export type NeemRuntime = {
   start: () => MaybePromise<readonly NeemRuntimeUpstream[] | undefined>
-  stop: () => MaybePromise<void>
+  /** Neem always passes `options`; other callers may omit them. */
+  stop: (options?: NeemRuntimeStopOptions) => MaybePromise<void>
   /**
    * Settles when long-lived runtime work ends. Completion before a requested
    * stop is treated as a runtime failure so a ready worker cannot become a
@@ -440,6 +450,12 @@ export type NeemLifecycleConfig = {
   stopTimeout?: number
   /** How long a worker may take to become ready (default `30000`). */
   startTimeout?: number
+  /**
+   * How long one host hook dispatch (every callback of one hook) may take
+   * (default `5000`). A start or ready hook that runs out fails its start;
+   * a stop or fail hook that runs out is reported and the lifecycle goes on.
+   */
+  hookTimeout?: number
 }
 
 export type NeemConfig = {
