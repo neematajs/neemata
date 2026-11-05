@@ -14,9 +14,10 @@ async function listen(handler: Parameters<typeof createServer>[1]) {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const { port } = server.address() as AddressInfo
   agent = new Agent({ keepAlive: true })
-  const request = (path: string) =>
+  // `fresh` opens a connection of its own instead of reusing a pooled one.
+  const request = (path: string, fresh = false) =>
     new Promise<string>((resolve) => {
-      get({ port, path, agent }, (res) => {
+      get({ port, path, agent: fresh ? false : agent }, (res) => {
         let body = ''
         res.on('data', (chunk) => (body += chunk))
         res.on('end', () => resolve(body))
@@ -47,7 +48,7 @@ describe('closeHttpServer', () => {
     await closed
     // Plain server.close() would still wait on the slow request's socket.
     expect(Date.now() - startedAt).toBeLessThan(1_000)
-    expect(await request('/fast')).toBe('ECONNREFUSED')
+    expect(await request('/fast', true)).toBe('ECONNREFUSED')
   })
 
   it('force-closes requests still running once the signal aborts', async () => {
