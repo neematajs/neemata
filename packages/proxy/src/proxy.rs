@@ -1,15 +1,15 @@
 use crate::{errors, lb, options, router, runtime, server};
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use pingora::lb::{LoadBalancer, health_check::TcpHealthCheck, selection::RoundRobin};
-use std::collections::{HashMap, HashSet};
+use pingora::lb::health_check::TcpHealthCheck;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::net::{SocketAddr, ToSocketAddrs};
 #[cfg(unix)]
 use std::os::unix::io::IntoRawFd;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::{Mutex as TokioMutex, watch};
+use tokio::sync::{Mutex as TokioMutex, Notify, watch};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -65,9 +65,21 @@ struct ProxyInner {
     server: server::Server,
     router: Arc<router::Router>,
     // Upstreams are mutable; app definitions are immutable (from `options`).
-    upstreams_by_app: HashMap<String, HashSet<PortUpstream>>,
-    // One pool per (app, transport).
-    pools: HashMap<(String, lb::TransportKind), router::PoolConfig>,
+    upstreams_by_app: HashMap<String, AppUpstreams>,
+    // One pool per (app, transport), kept while it has members so backend health survives
+    // membership changes.
+    pools: HashMap<(String, lb::TransportKind), AppPool>,
+}
+
+/// An application's upstreams and the addresses each resolved to when it was added.
+type AppUpstreams = HashMap<PortUpstream, Vec<SocketAddr>>;
+
+#[derive(Clone)]
+struct AppPool {
+    config: router::PoolConfig,
+    members: lb::Members,
+    /// Wakes the pool's health task so backends added while running are probed right away.
+    probe_now: Arc<Notify>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -140,6 +152,13 @@ pub struct ProxyHealthStatus {
 #[napi]
 pub type UpstreamOptions = Either<PortUpstreamOptions, UnixSocketUpstreamOptions>;
 
+#[napi(object)]
+pub struct ApplicationUpstream {
+    pub application: String,
+    #[napi(ts_type = "UpstreamOptions")]
+    pub upstream: UpstreamOptions,
+}
+
 #[napi]
 pub struct Proxy {
     inner: Arc<Mutex<ProxyInner>>,
@@ -180,7 +199,7 @@ impl Proxy {
 
         let mut upstreams_by_app = HashMap::new();
         for app in &parsed.applications {
-            upstreams_by_app.insert(app.name.clone(), HashSet::new());
+            upstreams_by_app.insert(app.name.clone(), AppUpstreams::new());
         }
 
         let inner = ProxyInner {
@@ -304,23 +323,27 @@ impl Proxy {
             // reading pools until the state flips: each update either lands in this snapshot or
             // sees `Running` and starts its own task.
             let update_guard = update_lock.lock().await;
-            let lb_tasks = {
+            let (lb_tasks, health_check_interval) = {
                 let guard = inner
                     .lock()
                     .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
-                guard
+                let tasks = guard
                     .pools
                     .iter()
                     .map(|((app, transport), pool)| {
-                        (lb_service_name(app, *transport), pool.lb.clone())
+                        (lb_service_name(app, *transport), pool.clone())
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<Vec<_>>();
+                (tasks, health_check_interval(&guard.options))
             };
 
             // Start LB health tasks first so pools become ready.
-            for (svc_name, lb) in lb_tasks {
+            for (svc_name, pool) in lb_tasks {
                 server
-                    .upsert_service(svc_name, lb::spawn_lb_health_task(&runtime, lb))
+                    .upsert_service(
+                        svc_name,
+                        spawn_pool_health_task(&runtime, &pool, health_check_interval),
+                    )
                     .await;
             }
 
@@ -548,122 +571,20 @@ impl Proxy {
     ) -> Result<PromiseRaw<'env, ()>> {
         let upstream = parse_port_upstream(env, upstream)?;
 
-        let inner = self.inner.clone();
-        let update_lock = self.update_lock.clone();
-        let runtime = self.runtime.handle().clone();
-
-        spawn_deferred_result(env, self.runtime.clone(), async move {
-            let _update_guard = update_lock.lock().await;
-
-            let (server, app_def, health_check_interval_ms, mut next_upstreams) = {
-                let guard = inner
-                    .lock()
-                    .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
-
-                let Some(app_def) = guard
-                    .options
-                    .applications
-                    .iter()
-                    .find(|a| a.name == app_name)
-                    .cloned()
-                else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-
-                let Some(current_upstreams) = guard.upstreams_by_app.get(&app_name) else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-
-                if current_upstreams.contains(&upstream) {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UPSTREAM_ALREADY_EXISTS,
-                        "Upstream already exists",
-                    )));
-                }
-
-                (
-                    guard.server.clone(),
-                    app_def,
-                    guard.options.health_check_interval_ms,
-                    current_upstreams.clone(),
-                )
+        self.update_upstreams(env, move |current| {
+            let Some(upstreams) = current.get(&app_name) else {
+                return Err(unknown_application(&app_name));
             };
-
-            next_upstreams.insert(upstream.clone());
-
-            if upstream.secure
-                && let Err(err) = verify_hostname_for_secure_upstream(&app_def)
-            {
-                return Ok(Err(err));
+            if upstreams.contains_key(&upstream) {
+                return Err(DeferredJsError::generic(
+                    errors::codes::UPSTREAM_ALREADY_EXISTS,
+                    "Upstream already exists",
+                ));
             }
 
-            let rebuilt = tokio::task::spawn_blocking({
-                let app_def = app_def.clone();
-                let next_upstreams = next_upstreams.clone();
-                move || rebuild_app_pools(&app_def, &next_upstreams, health_check_interval_ms)
-            })
-            .await
-            .map_err(|e| {
-                napi::Error::from_reason(format!(
-                    "Upstream rebuild task failed while adding upstream: {e}"
-                ))
-            })?;
-
-            let (new_pools, removed_transports) = match rebuilt {
-                Ok(pools) => pools,
-                Err(err) => return Ok(Err(err)),
-            };
-
-            let (is_running, to_upsert, to_remove) = {
-                let mut guard = inner
-                    .lock()
-                    .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
-
-                let Some(upstreams) = guard.upstreams_by_app.get_mut(&app_name) else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-                *upstreams = next_upstreams;
-
-                let mut to_upsert = Vec::new();
-                let mut to_remove = Vec::new();
-
-                for (transport, pool) in new_pools {
-                    to_upsert.push((lb_service_name(&app_name, transport), pool.lb.clone()));
-                    guard.pools.insert((app_name.clone(), transport), pool);
-                }
-                for transport in removed_transports {
-                    if guard.pools.remove(&(app_name.clone(), transport)).is_some() {
-                        to_remove.push(lb_service_name(&app_name, transport));
-                    }
-                }
-
-                let cfg = build_router_config(&guard.options, &guard.pools);
-                guard.router.update(cfg);
-
-                (guard.state == ProxyState::Running, to_upsert, to_remove)
-            };
-
-            if is_running {
-                for (name, lb) in to_upsert {
-                    server
-                        .upsert_service(name, lb::spawn_lb_health_task(&runtime, lb))
-                        .await;
-                }
-                for name in to_remove {
-                    server.remove_service(&name).await;
-                }
-            }
-
-            Ok(Ok(()))
+            let mut next = upstreams.keys().cloned().collect::<HashSet<_>>();
+            next.insert(upstream);
+            Ok(HashMap::from([(app_name, next)]))
         })
     }
 
@@ -676,118 +597,259 @@ impl Proxy {
     ) -> Result<PromiseRaw<'env, ()>> {
         let upstream = parse_port_upstream(env, upstream)?;
 
+        self.update_upstreams(env, move |current| {
+            let Some(upstreams) = current.get(&app_name) else {
+                return Err(unknown_application(&app_name));
+            };
+            if !upstreams.contains_key(&upstream) {
+                return Err(DeferredJsError::generic(
+                    errors::codes::UPSTREAM_NOT_FOUND,
+                    "Upstream not found",
+                ));
+            }
+
+            let mut next = upstreams.keys().cloned().collect::<HashSet<_>>();
+            next.remove(&upstream);
+            Ok(HashMap::from([(app_name, next)]))
+        })
+    }
+
+    /// Replaces the upstreams of every application: those not listed are left with none. The
+    /// whole list is validated first, so an invalid entry rejects the call and changes nothing.
+    #[napi]
+    pub fn set_upstreams<'env>(
+        &self,
+        env: &'env Env,
+        upstreams: Vec<ApplicationUpstream>,
+    ) -> Result<PromiseRaw<'env, ()>> {
+        let entries = upstreams
+            .into_iter()
+            .map(|entry| Ok((entry.application, parse_port_upstream(env, entry.upstream)?)))
+            .collect::<Result<Vec<_>>>()?;
+
+        self.update_upstreams(env, move |current| {
+            let mut next = current
+                .keys()
+                .map(|app| (app.clone(), HashSet::new()))
+                .collect::<HashMap<_, _>>();
+            for (app_name, upstream) in entries {
+                let Some(upstreams) = next.get_mut(&app_name) else {
+                    return Err(unknown_application(&app_name));
+                };
+                if !upstreams.insert(upstream) {
+                    return Err(DeferredJsError::generic(
+                        errors::codes::UPSTREAM_ALREADY_EXISTS,
+                        format!("Upstream is listed twice for application '{app_name}'"),
+                    ));
+                }
+            }
+            Ok(next)
+        })
+    }
+
+    /// Serializes a membership change with other changes and with `start()`. `plan` maps the
+    /// current upstreams to the next upstream sets of the applications to change.
+    fn update_upstreams<'env, F>(&self, env: &'env Env, plan: F) -> Result<PromiseRaw<'env, ()>>
+    where
+        F: FnOnce(
+                &HashMap<String, AppUpstreams>,
+            ) -> DeferredResult<HashMap<String, HashSet<PortUpstream>>>
+            + Send
+            + 'static,
+    {
         let inner = self.inner.clone();
         let update_lock = self.update_lock.clone();
         let runtime = self.runtime.handle().clone();
 
         spawn_deferred_result(env, self.runtime.clone(), async move {
             let _update_guard = update_lock.lock().await;
+            apply_upstreams(&inner, &runtime, plan).await
+        })
+    }
+}
 
-            let (server, app_def, health_check_interval_ms, mut next_upstreams) = {
-                let guard = inner
-                    .lock()
-                    .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
+/// Validates the next upstream sets, then updates the affected pools and publishes them to the
+/// router once. The caller holds `update_lock`.
+async fn apply_upstreams<F>(
+    inner: &Mutex<ProxyInner>,
+    runtime: &tokio::runtime::Handle,
+    plan: F,
+) -> Result<DeferredResult<()>>
+where
+    F: FnOnce(
+        &HashMap<String, AppUpstreams>,
+    ) -> DeferredResult<HashMap<String, HashSet<PortUpstream>>>,
+{
+    let (server, health_check_interval, next, apps, current, current_pools) = {
+        let guard = inner
+            .lock()
+            .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
 
-                let Some(app_def) = guard
+        let next = match plan(&guard.upstreams_by_app) {
+            Ok(next) => next,
+            Err(err) => return Ok(Err(err)),
+        };
+
+        let mut apps = HashMap::new();
+        let mut current = HashMap::new();
+        for app_name in next.keys() {
+            let (Some(app), Some(upstreams)) = (
+                guard
                     .options
                     .applications
                     .iter()
-                    .find(|a| a.name == app_name)
-                    .cloned()
-                else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-
-                let Some(current_upstreams) = guard.upstreams_by_app.get(&app_name) else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-
-                if !current_upstreams.contains(&upstream) {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UPSTREAM_NOT_FOUND,
-                        "Upstream not found",
-                    )));
-                }
-
-                (
-                    guard.server.clone(),
-                    app_def,
-                    guard.options.health_check_interval_ms,
-                    current_upstreams.clone(),
-                )
+                    .find(|a| &a.name == app_name),
+                guard.upstreams_by_app.get(app_name),
+            ) else {
+                return Ok(Err(unknown_application(app_name)));
             };
+            apps.insert(app_name.clone(), app.clone());
+            current.insert(app_name.clone(), upstreams.clone());
+        }
 
-            next_upstreams.remove(&upstream);
+        let current_pools = guard
+            .pools
+            .iter()
+            .filter(|((app_name, _), _)| next.contains_key(app_name))
+            .map(|(key, pool)| (key.clone(), pool.clone()))
+            .collect::<HashMap<_, _>>();
 
-            let rebuilt = tokio::task::spawn_blocking({
-                let app_def = app_def.clone();
-                let next_upstreams = next_upstreams.clone();
-                move || rebuild_app_pools(&app_def, &next_upstreams, health_check_interval_ms)
-            })
-            .await
-            .map_err(|e| {
-                napi::Error::from_reason(format!(
-                    "Upstream rebuild task failed while removing upstream: {e}"
-                ))
-            })?;
+        (
+            guard.server.clone(),
+            health_check_interval(&guard.options),
+            next,
+            apps,
+            current,
+            current_pools,
+        )
+    };
 
-            let (new_pools, removed_transports) = match rebuilt {
-                Ok(pools) => pools,
-                Err(err) => return Ok(Err(err)),
-            };
+    let mut pool_tls = HashMap::new();
+    for (app_name, upstreams) in &next {
+        match validate_pool_tls(&apps[app_name], upstreams) {
+            Ok(tls) => pool_tls.insert(app_name.clone(), tls),
+            Err(err) => return Ok(Err(err)),
+        };
+    }
 
-            let (is_running, to_upsert, to_remove) = {
-                let mut guard = inner
-                    .lock()
-                    .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
+    // Retained upstreams keep the addresses they resolved to; only new ones are looked up.
+    let to_resolve = next
+        .iter()
+        .flat_map(|(app_name, upstreams)| {
+            upstreams
+                .iter()
+                .filter(|u| !current[app_name].contains_key(*u))
+                .cloned()
+        })
+        .collect::<HashSet<_>>();
+    let resolved = tokio::task::spawn_blocking(move || resolve_upstreams(to_resolve))
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Upstream resolution task failed: {e}")))?;
+    let resolved = match resolved {
+        Ok(resolved) => resolved,
+        Err(err) => return Ok(Err(err)),
+    };
 
-                let Some(upstreams) = guard.upstreams_by_app.get_mut(&app_name) else {
-                    return Ok(Err(DeferredJsError::generic(
-                        errors::codes::UNKNOWN_APPLICATION,
-                        format!("Unknown application '{app_name}'"),
-                    )));
-                };
-                *upstreams = next_upstreams;
+    let next = next
+        .into_iter()
+        .map(|(app_name, upstreams)| {
+            let upstreams = upstreams
+                .into_iter()
+                .map(|u| {
+                    let addrs = current[&app_name]
+                        .get(&u)
+                        .unwrap_or_else(|| &resolved[&u])
+                        .clone();
+                    (u, addrs)
+                })
+                .collect::<AppUpstreams>();
+            (app_name, upstreams)
+        })
+        .collect::<HashMap<_, _>>();
 
-                let mut to_upsert = Vec::new();
-                let mut to_remove = Vec::new();
-
-                for (transport, pool) in new_pools {
-                    to_upsert.push((lb_service_name(&app_name, transport), pool.lb.clone()));
-                    guard.pools.insert((app_name.clone(), transport), pool);
-                }
-                for transport in removed_transports {
-                    if guard.pools.remove(&(app_name.clone(), transport)).is_some() {
-                        to_remove.push(lb_service_name(&app_name, transport));
+    // Nothing below can fail, so the change applies completely.
+    let mut created = Vec::new();
+    let mut removed = Vec::new();
+    let mut to_probe = Vec::new();
+    for (app_name, upstreams) in &next {
+        let old_members = pool_members(&current[app_name]);
+        let mut new_members = pool_members(upstreams);
+        for transport in [
+            lb::TransportKind::Http1,
+            lb::TransportKind::Http2,
+            lb::TransportKind::Ws,
+        ] {
+            let key = (app_name.clone(), transport);
+            match (current_pools.get(&key), new_members.remove(&transport)) {
+                (Some(pool), Some(addrs))
+                    if pool.config.secure == pool_tls[app_name][&transport].0 =>
+                {
+                    let old = old_members.get(&transport);
+                    if old == Some(&addrs) {
+                        continue;
+                    }
+                    pool.members.set(&addrs);
+                    // Requests holding this pool see the new membership; retained backends keep
+                    // their health.
+                    update_lb(&pool.config.lb).await?;
+                    if old.is_none_or(|old| !addrs.is_subset(old)) {
+                        to_probe.push(pool.probe_now.clone());
                     }
                 }
-
-                let cfg = build_router_config(&guard.options, &guard.pools);
-                guard.router.update(cfg);
-
-                (guard.state == ProxyState::Running, to_upsert, to_remove)
-            };
-
-            if is_running {
-                for (name, lb) in to_upsert {
-                    server
-                        .upsert_service(name, lb::spawn_lb_health_task(&runtime, lb))
-                        .await;
+                // A new pool, or one whose upstreams switched between plain and TLS.
+                (_, Some(addrs)) => {
+                    let (secure, verify_hostname) = pool_tls[app_name][&transport].clone();
+                    let pool = new_pool(&addrs, secure, verify_hostname).await?;
+                    created.push((key, pool));
                 }
-                for name in to_remove {
-                    server.remove_service(&name).await;
-                }
+                (Some(_), None) => removed.push(key),
+                (None, None) => {}
             }
-
-            Ok(Ok(()))
-        })
+        }
     }
+
+    let is_running = {
+        let mut guard = inner
+            .lock()
+            .map_err(|_| napi::Error::from_reason("Proxy mutex poisoned"))?;
+
+        for (app_name, upstreams) in next {
+            guard.upstreams_by_app.insert(app_name, upstreams);
+        }
+        for (key, pool) in &created {
+            guard.pools.insert(key.clone(), pool.clone());
+        }
+        for key in &removed {
+            guard.pools.remove(key);
+        }
+
+        let cfg = build_router_config(&guard.options, &guard.pools);
+        guard.router.update(cfg);
+
+        guard.state == ProxyState::Running
+    };
+
+    // While stopped, `start()` spawns every pool's health task, which probes right away.
+    if is_running {
+        for ((app_name, transport), pool) in created {
+            server
+                .upsert_service(
+                    lb_service_name(&app_name, transport),
+                    spawn_pool_health_task(runtime, &pool, health_check_interval),
+                )
+                .await;
+        }
+        for (app_name, transport) in removed {
+            server
+                .remove_service(&lb_service_name(&app_name, transport))
+                .await;
+        }
+        for probe_now in to_probe {
+            probe_now.notify_one();
+        }
+    }
+
+    Ok(Ok(()))
 }
 
 /// Runs a control-plane operation on the proxy's runtime and settles its promise from a
@@ -881,7 +943,7 @@ fn build_start_resources(
 
 fn build_router_config(
     options: &options::ProxyOptionsParsed,
-    pools: &HashMap<(String, lb::TransportKind), router::PoolConfig>,
+    pools: &HashMap<(String, lb::TransportKind), AppPool>,
 ) -> router::RouterConfig {
     let mut cfg = router::RouterConfig::default();
 
@@ -901,13 +963,13 @@ fn build_router_config(
 
         let http1 = pools
             .get(&(app.name.clone(), lb::TransportKind::Http1))
-            .cloned();
+            .map(|pool| pool.config.clone());
         let ws = pools
             .get(&(app.name.clone(), lb::TransportKind::Ws))
-            .cloned();
+            .map(|pool| pool.config.clone());
         let http2 = pools
             .get(&(app.name.clone(), lb::TransportKind::Http2))
-            .cloned();
+            .map(|pool| pool.config.clone());
         cfg.apps
             .insert(app.name.clone(), router::AppPools { http1, ws, http2 });
         if let Some(limit) = app.max_request_body_bytes {
@@ -1008,43 +1070,67 @@ fn verify_hostname_for_secure_upstream(
     }
 }
 
-fn rebuild_app_pools(
+fn unknown_application(app_name: &str) -> DeferredJsError {
+    DeferredJsError::generic(
+        errors::codes::UNKNOWN_APPLICATION,
+        format!("Unknown application '{app_name}'"),
+    )
+}
+
+fn health_check_interval(options: &options::ProxyOptionsParsed) -> Duration {
+    Duration::from_millis(options.health_check_interval_ms as u64)
+}
+
+fn spawn_pool_health_task(
+    runtime: &tokio::runtime::Handle,
+    pool: &AppPool,
+    interval: Duration,
+) -> server::ServiceHandle {
+    lb::spawn_lb_health_task(
+        runtime,
+        pool.config.lb.clone(),
+        pool.probe_now.clone(),
+        interval,
+    )
+}
+
+/// Returns `(secure, verify_hostname)` per transport. A pool must be all TLS or all plain, and
+/// TLS pools need a hostname to verify.
+fn validate_pool_tls(
     app: &options::ApplicationOptionsParsed,
     upstreams: &HashSet<PortUpstream>,
-    health_check_interval_ms: u32,
-) -> DeferredResult<(
-    HashMap<lb::TransportKind, router::PoolConfig>,
-    Vec<lb::TransportKind>,
-)> {
-    let mut by_transport: HashMap<lb::TransportKind, Vec<&PortUpstream>> = HashMap::new();
+) -> DeferredResult<HashMap<lb::TransportKind, (bool, String)>> {
+    let mut secure_by_transport = HashMap::new();
     for u in upstreams {
-        by_transport.entry(u.transport).or_default().push(u);
-    }
-
-    let mut new_pools = HashMap::new();
-
-    for (transport, list) in by_transport {
-        if list.is_empty() {
-            continue;
-        }
-
-        let secure = list[0].secure;
-        if list.iter().any(|u| u.secure != secure) {
+        if *secure_by_transport.entry(u.transport).or_insert(u.secure) != u.secure {
             return Err(DeferredJsError::type_error(
                 errors::codes::INVALID_PROXY_OPTIONS,
                 "Mixing secure and insecure upstreams within the same (app, transport) pool is not supported",
             ));
         }
+    }
 
-        let verify_hostname = if secure {
-            verify_hostname_for_secure_upstream(app)?
-        } else {
-            String::new()
-        };
+    secure_by_transport
+        .into_iter()
+        .map(|(transport, secure)| {
+            let verify_hostname = if secure {
+                verify_hostname_for_secure_upstream(app)?
+            } else {
+                String::new()
+            };
+            Ok((transport, (secure, verify_hostname)))
+        })
+        .collect()
+}
 
-        let mut addrs = Vec::new();
-        for u in &list {
-            let iter = (u.hostname.as_str(), u.port)
+/// Blocking: may look hostnames up in DNS.
+fn resolve_upstreams(
+    upstreams: HashSet<PortUpstream>,
+) -> DeferredResult<HashMap<PortUpstream, Vec<SocketAddr>>> {
+    upstreams
+        .into_iter()
+        .map(|u| {
+            let addrs = (u.hostname.as_str(), u.port)
                 .to_socket_addrs()
                 .map_err(|e| {
                     DeferredJsError::type_error(
@@ -1054,67 +1140,126 @@ fn rebuild_app_pools(
                             u.hostname, u.port
                         ),
                     )
-                })?;
-            addrs.extend(iter);
-        }
+                })?
+                .collect::<Vec<_>>();
+            if addrs.is_empty() {
+                return Err(DeferredJsError::type_error(
+                    errors::codes::INVALID_PROXY_OPTIONS,
+                    format!(
+                        "Failed to resolve upstream '{}:{}': no addresses were returned",
+                        u.hostname, u.port
+                    ),
+                ));
+            }
+            Ok((u, addrs))
+        })
+        .collect()
+}
 
-        if addrs.is_empty() {
-            return Err(DeferredJsError::type_error(
-                errors::codes::INVALID_PROXY_OPTIONS,
-                format!(
-                    "Failed to resolve upstream '{}:{}': no addresses were returned",
-                    list[0].hostname, list[0].port
-                ),
-            ));
-        }
+/// The backend addresses of each of an application's pools. Upstreams resolving to the same
+/// address share one backend, which stays while any of them remains.
+fn pool_members(upstreams: &AppUpstreams) -> HashMap<lb::TransportKind, BTreeSet<SocketAddr>> {
+    let mut members = HashMap::<_, BTreeSet<_>>::new();
+    for (u, addrs) in upstreams {
+        members
+            .entry(u.transport)
+            .or_default()
+            .extend(addrs.iter().copied());
+    }
+    members
+}
 
-        let backends = Arc::new(
-            addrs
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<HashSet<_>>(),
-        );
+async fn update_lb(
+    lb: &pingora::lb::LoadBalancer<pingora::lb::selection::RoundRobin>,
+) -> Result<()> {
+    // `lb::Members` discovery never fails, so this is not reachable in practice.
+    lb.update()
+        .await
+        .map_err(|e| napi::Error::from_reason(format!("Failed to update load balancer: {e}")))
+}
 
-        let mut lb = LoadBalancer::<RoundRobin>::try_from_iter(addrs).map_err(|e| {
-            DeferredJsError::type_error(
-                errors::codes::INVALID_PROXY_OPTIONS,
-                format!("Failed to build load balancer: {e}"),
-            )
-        })?;
+async fn new_pool(
+    addrs: &BTreeSet<SocketAddr>,
+    secure: bool,
+    verify_hostname: String,
+) -> Result<AppPool> {
+    let members = lb::Members::default();
+    members.set(addrs);
+    let mut lb = lb::new_round_robin_lb(members.clone());
+    if secure {
+        lb.set_health_check(TcpHealthCheck::new_tls(&verify_hostname));
+    } else {
+        lb.set_health_check(TcpHealthCheck::new());
+    }
+    // Backends start healthy, so the pool routes to them as soon as it is published. Its health
+    // task probes right away, then every interval; one failed or successful probe flips a
+    // backend's health.
+    update_lb(&lb).await?;
 
-        if secure {
-            lb.set_health_check(TcpHealthCheck::new_tls(&verify_hostname));
-        } else {
-            lb.set_health_check(TcpHealthCheck::new());
-        }
+    Ok(AppPool {
+        config: router::PoolConfig {
+            lb: Arc::new(lb),
+            secure,
+            verify_hostname,
+        },
+        members,
+        probe_now: Arc::new(Notify::new()),
+    })
+}
 
-        // Pingora starts every backend healthy, so this pool routes to all of its upstreams as
-        // soon as the router is updated, including ones that were marked down in the pool it
-        // replaces. The health task spawned for it probes right away without being awaited, then
-        // every interval. A single failed or successful probe flips a backend's health.
-        lb.health_check_frequency = Some(Duration::from_millis(health_check_interval_ms as u64));
+#[cfg(test)]
+mod tests {
+    use super::{AppUpstreams, PortUpstream, pool_members};
+    use crate::lb::TransportKind;
+    use std::collections::BTreeSet;
+    use std::net::SocketAddr;
 
-        new_pools.insert(
+    fn upstream(transport: TransportKind, hostname: &str, port: u16) -> PortUpstream {
+        PortUpstream {
             transport,
-            router::PoolConfig {
-                lb: Arc::new(lb),
-                secure,
-                verify_hostname,
-                backends,
-            },
-        );
-    }
-
-    let mut removed = Vec::new();
-    for t in [
-        lb::TransportKind::Http1,
-        lb::TransportKind::Http2,
-        lb::TransportKind::Ws,
-    ] {
-        if !new_pools.contains_key(&t) {
-            removed.push(t);
+            secure: false,
+            hostname: hostname.to_string(),
+            port,
         }
     }
 
-    Ok((new_pools, removed))
+    fn addr(port: u16) -> SocketAddr {
+        SocketAddr::from(([127, 0, 0, 1], port))
+    }
+
+    #[test]
+    fn pool_members_split_by_transport_and_share_addresses() {
+        let mut upstreams = AppUpstreams::new();
+        upstreams.insert(
+            upstream(TransportKind::Http1, "localhost", 3000),
+            vec![addr(3000)],
+        );
+        upstreams.insert(
+            upstream(TransportKind::Http1, "127.0.0.1", 3000),
+            vec![addr(3000)],
+        );
+        upstreams.insert(
+            upstream(TransportKind::Http1, "127.0.0.1", 3001),
+            vec![addr(3001)],
+        );
+        upstreams.insert(
+            upstream(TransportKind::Ws, "127.0.0.1", 3002),
+            vec![addr(3002)],
+        );
+
+        let members = pool_members(&upstreams);
+        assert_eq!(
+            members[&TransportKind::Http1],
+            BTreeSet::from([addr(3000), addr(3001)])
+        );
+        assert_eq!(members[&TransportKind::Ws], BTreeSet::from([addr(3002)]));
+        assert!(!members.contains_key(&TransportKind::Http2));
+
+        // The shared address stays while one upstream that resolved to it remains.
+        upstreams.remove(&upstream(TransportKind::Http1, "localhost", 3000));
+        assert_eq!(
+            pool_members(&upstreams)[&TransportKind::Http1],
+            BTreeSet::from([addr(3000), addr(3001)])
+        );
+    }
 }

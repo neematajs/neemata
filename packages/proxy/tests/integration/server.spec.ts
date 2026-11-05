@@ -8,7 +8,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import WebSocket, { WebSocketServer } from 'ws'
 
 import { Proxy as NeemataProxy } from '../../dist/index.js'
-import { getFreePort, httpGet, waitFor } from '../_helpers.ts'
+import {
+  expectRejectCode,
+  getFreePort,
+  httpGet,
+  httpRequest,
+  waitFor,
+} from '../_helpers.ts'
 
 function trackConnections(server: net.Server) {
   const sockets = new Set<net.Socket>()
@@ -25,67 +31,6 @@ function trackConnections(server: net.Server) {
       socket.destroy()
     }
   }
-}
-
-async function expectRejectCode(
-  fn: () => unknown,
-  code: string,
-  message?: string | RegExp,
-) {
-  let err: any
-  try {
-    const maybePromise = fn()
-    await maybePromise
-  } catch (e) {
-    err = e
-  }
-  expect(err).toBeTruthy()
-  expect(err).toHaveProperty('code', code)
-  if (message instanceof RegExp) {
-    expect(String(err.message)).toMatch(message)
-  } else if (message) {
-    expect(String(err.message)).toContain(message)
-  }
-}
-
-async function httpRequest(
-  port: number,
-  options: {
-    method?: string
-    path?: string
-    headers?: Record<string, string>
-    body?: string | Buffer
-  },
-): Promise<{
-  status: number
-  body: string
-  headers: http.IncomingHttpHeaders
-}> {
-  return await new Promise((resolve, reject) => {
-    const req = http.request(
-      {
-        host: '127.0.0.1',
-        port,
-        method: options.method ?? 'GET',
-        path: options.path ?? '/',
-        headers: options.headers,
-      },
-      (res) => {
-        const chunks: Buffer[] = []
-        res.on('data', (c) => chunks.push(Buffer.from(c)))
-        res.on('end', () => {
-          resolve({
-            status: res.statusCode ?? 0,
-            body: Buffer.concat(chunks).toString('utf8'),
-            headers: res.headers,
-          })
-        })
-      },
-    )
-    req.on('error', reject)
-    if (options.body) req.end(options.body)
-    else req.end()
-  })
 }
 
 async function waitForWsFailure(
