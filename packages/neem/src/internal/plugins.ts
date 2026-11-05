@@ -10,7 +10,7 @@ import type {
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import type { Lifetime } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
-import { callHook, hookCall } from './context.ts'
+import { callHook, hookCall, lifecycleOf, withHookTimeout } from './context.ts'
 import { invoke } from './hooks.ts'
 import { attempt, boundedScope, releaseStep } from './lifetime.ts'
 import { importDefault } from './utils.ts'
@@ -36,7 +36,9 @@ export const acquirePlugins = (
       Effect.suspend(() =>
         releaseStep(
           'Host hook disposal',
-          hooks.call(snapshot.logger, 'dispose', { mode: snapshot.mode }),
+          callHook(hookCall(hooks, snapshot), 'dispose', {
+            mode: snapshot.mode,
+          }),
           lifetime.deadline(),
         ),
       ),
@@ -68,7 +70,11 @@ export const acquirePlugins = (
         (callbacks) =>
           releaseStep(
             `Plugin [${plugin.name}] disposal`,
-            invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+            withHookTimeout(
+              `${plugin.name}:dispose`,
+              invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+              lifecycleOf(snapshot).hookTimeout,
+            ),
             lifetime.deadline(),
           ),
       ).pipe(Scope.provide(scope))

@@ -37,7 +37,8 @@ export function createSupervisor(options: {
   recoveryAttempts?: number
   prepareRecovery?: () => Promise<void>
   onStateChange?: () => void
-  onUpstreamsChange?: () => void
+  // An Effect it returns stands in for the proxy reconciliation.
+  onUpstreamsChange?: () => void | Effect.Effect<void>
   hooks?: HostHooks
   hookTimeout?: number
   // `hang` makes the runtime host's stop never settle.
@@ -94,7 +95,11 @@ export function createSupervisor(options: {
     prepareRecovery: options.prepareRecovery,
     onFailure: (error) => failures.push(error),
     onRecovered: () => recovered++,
-    onUpstreamsChange: () => Effect.sync(() => options.onUpstreamsChange?.()),
+    onUpstreamsChange: () =>
+      Effect.suspend(() => {
+        const change = options.onUpstreamsChange?.()
+        return Effect.isEffect(change) ? change : Effect.void
+      }),
     onStateChange: () => options.onStateChange?.(),
   })
   // Failed assertions must still release native threads so the test runner can exit.

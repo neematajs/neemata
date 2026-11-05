@@ -33,6 +33,7 @@ import {
 import {
   attempt,
   Deadline as DeadlineClass,
+  detachedWithin,
   Lifetime,
   releaseStep,
   within,
@@ -273,7 +274,7 @@ export class RuntimeSupervisor {
       const errors: Error[] = []
       // Routing stops before any thread does, so requests never reach a
       // thread that is already shutting down.
-      yield* within(this.options.onUpstreamsChange(), deadline)
+      yield* this.withdrawRoutes(deadline)
       const recovery = this.recovery
       if (recovery) {
         recovery.interruptUnsafe()
@@ -526,7 +527,7 @@ export class RuntimeSupervisor {
         lifecycleOf(this.options.snapshot).stopTimeout,
         this.lifetime.clock,
       )
-      return within(this.options.onUpstreamsChange(), deadline).pipe(
+      return this.withdrawRoutes(deadline).pipe(
         Effect.andThen(generation.lifetime.close(deadline)),
         Effect.flatMap((errors) =>
           Effect.sync(() => {
@@ -540,6 +541,27 @@ export class RuntimeSupervisor {
         ),
       )
     })
+  }
+
+  // Routing changes are normally instant. One stuck in native code may take
+  // half of what is left at most, so the threads keep time to stop.
+  private withdrawRoutes(deadline: Deadline): Effect.Effect<void> {
+    return Effect.suspend(() =>
+      detachedWithin(
+        this.options.onUpstreamsChange(),
+        DeadlineClass.after(deadline.remaining() / 2, this.lifetime.clock),
+      ),
+    ).pipe(
+      Effect.flatMap((done) =>
+        Effect.sync(() => {
+          if (Option.isNone(done)) {
+            this.logger.warn(
+              'Neem runtime routes were not withdrawn before its threads stopped',
+            )
+          }
+        }),
+      ),
+    )
   }
 
   // Stopping and stopped belong to stop: an operation settling after the stop

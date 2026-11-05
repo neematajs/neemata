@@ -244,11 +244,12 @@ describe('RuntimeSupervisor', () => {
         { id: 'sibling', upstream: 'http://127.0.0.1:2' },
       ],
       recoveryAttempts: 1,
-      onUpstreamsChange: () =>
+      onUpstreamsChange: () => {
         published.push({
           routes: harness.supervisor.getUpstreams().length,
           running: harness.registry.size,
-        }),
+        })
+      },
     })
     const { supervisor, recovered } = harness
     await Effect.runPromise(supervisor.start())
@@ -266,6 +267,23 @@ describe('RuntimeSupervisor', () => {
     published.length = 0
     await Effect.runPromise(supervisor.stop(Deadline.after(5_000)))
     expect(published[0]).toEqual({ routes: 0, running: 3 })
+  })
+
+  it('stops its threads although withdrawing their routes never finishes', async () => {
+    workers = listenToWorkers()
+    const { supervisor, registry } = createSupervisor({
+      plan: [{ id: 'unrouted', upstream: 'http://127.0.0.1:1' }],
+      // A native proxy mutation cannot be interrupted.
+      onUpstreamsChange: () => Effect.uninterruptible(Effect.never),
+    })
+    await Effect.runPromise(supervisor.start())
+
+    const errors = await Effect.runPromise(
+      supervisor.stop(Deadline.after(1_000)),
+    )
+    expect(errors).toEqual([])
+    expect(workers.events).toContain('unrouted:stop')
+    expect(registry.size).toBe(0)
   })
 
   it('recovers although a fail hook never settles', async () => {

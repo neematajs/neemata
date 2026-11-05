@@ -1,5 +1,6 @@
 import type { Logger } from 'pino'
 import * as Effect from 'effect/Effect'
+import * as Option from 'effect/Option'
 import { RpcClientError } from 'effect/rpc/RpcClientError'
 
 import type { NeemHostHookMap as HostHookMap } from '../shared/types.ts'
@@ -7,6 +8,7 @@ import type { HostHooks } from './hooks.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
 import type { WorkerRegistry } from './transport.ts'
 import { resolveLifecycle } from './host/lifecycle.ts'
+import { Deadline, detachedWithin } from './lifetime.ts'
 import { normalizeError } from './utils.ts'
 
 export type ThreadLifecycleEvent = {
@@ -49,14 +51,26 @@ export const callHook = <Name extends keyof HostHookMap>(
   name: Name,
   ...args: Parameters<HostHookMap[Name]>
 ): Effect.Effect<void, Error> =>
-  hooks.call(logger, name, ...args).pipe(
-    Effect.timeoutOrElse({
-      duration: timeout,
-      orElse: () =>
-        Effect.fail(
-          new Error(`Neem hook [${name}] did not finish within ${timeout}ms`),
-        ),
-    }),
+  withHookTimeout(name, hooks.call(logger, name, ...args), timeout)
+
+/**
+ * Bounds plugin code by the hook timeout. It runs in a fiber of its own, so
+ * even an Effect hook stuck in uninterruptible cleanup cannot hold the caller.
+ */
+export const withHookTimeout = (
+  name: string,
+  effect: Effect.Effect<unknown, Error>,
+  timeout: number,
+): Effect.Effect<void, Error> =>
+  Deadline.make(timeout).pipe(
+    Effect.flatMap((deadline) => detachedWithin(effect, deadline)),
+    Effect.flatMap((done) =>
+      Option.isSome(done)
+        ? Effect.void
+        : Effect.fail(
+            new Error(`Neem hook [${name}] did not finish within ${timeout}ms`),
+          ),
+    ),
   )
 
 /** A request's failure: the worker's own error, or why no reply came. */
