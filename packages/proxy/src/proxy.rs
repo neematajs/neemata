@@ -481,11 +481,17 @@ impl Proxy {
             )
         };
 
+        let update_lock = self.update_lock.clone();
         spawn_deferred_result(env, runtime, async move {
+            // A pending start holds `update_lock` until it settles, so wait for it first.
             if let Some(rx) = start_rx.as_mut() {
                 let _ = Self::wait_for_start_ready(rx).await;
             }
 
+            // An update that saw `Running` before this stop began may still be spawning health
+            // tasks; holding its lock lets it finish before they are drained, and any later
+            // update sees `Stopped` and spawns none.
+            let _update_guard = update_lock.lock().await;
             server.stop_all().await;
             if let Ok(mut guard) = inner.lock() {
                 guard.state = ProxyState::Stopped;
