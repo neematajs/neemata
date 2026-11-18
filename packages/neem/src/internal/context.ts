@@ -43,21 +43,29 @@ export type HookCall = {
 /**
  * Runs every callback of a host hook within `timeout`. A hook that runs out
  * fails like a hook that threw, so a hung plugin cannot stall a start, a
- * recovery or a stop. The dispatch is then interrupted: an Effect callback
- * stops and later callbacks never run, but a promise already returned cannot
- * be cancelled and is only no longer waited for. The dispatch runs in a fiber
- * of its own, so even an Effect callback stuck in uninterruptible cleanup
- * cannot hold the caller.
+ * recovery or a stop.
  */
 export const callHook = <Name extends keyof HostHookMap>(
   { hooks, logger, timeout }: HookCall,
   name: Name,
   ...args: Parameters<HostHookMap[Name]>
 ): Effect.Effect<void, Error> =>
+  withHookTimeout(name, hooks.call(logger, name, ...args), timeout)
+
+/**
+ * Bounds plugin code by the hook timeout, then interrupts it: an Effect
+ * callback stops and later callbacks never run, but a promise already
+ * returned cannot be cancelled and is only no longer waited for. The code runs
+ * in a fiber of its own, so even an Effect callback stuck in uninterruptible
+ * cleanup cannot hold the caller.
+ */
+export const withHookTimeout = (
+  name: string,
+  effect: Effect.Effect<unknown, Error>,
+  timeout: number,
+): Effect.Effect<void, Error> =>
   Deadline.make(timeout).pipe(
-    Effect.flatMap((deadline) =>
-      detachedWithin(hooks.call(logger, name, ...args), deadline),
-    ),
+    Effect.flatMap((deadline) => detachedWithin(effect, deadline)),
     Effect.flatMap((done) =>
       Option.isSome(done)
         ? Effect.void

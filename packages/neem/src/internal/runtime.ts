@@ -556,6 +556,7 @@ export class RuntimeSupervisor {
   // half of what is left at most, so the threads keep time to stop. Waiting
   // for it stays interruptible, so a stop never joins a stuck update.
   // Resolves with why routing may still reach the threads; they stop anyway.
+  // The update covers every runtime, so the failure may be another one's.
   private withdrawRoutes(deadline: Deadline): Effect.Effect<Error | undefined> {
     return Effect.suspend(() =>
       detachedWithin(
@@ -570,9 +571,12 @@ export class RuntimeSupervisor {
       Effect.map(
         (cause) =>
           cause &&
-          new Error(`Runtime [${this.name}] routes were not withdrawn`, {
-            cause,
-          }),
+          new Error(
+            `Runtime [${this.name}] route withdrawal was not confirmed`,
+            {
+              cause,
+            },
+          ),
       ),
     )
   }

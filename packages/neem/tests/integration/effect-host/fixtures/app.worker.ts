@@ -53,6 +53,7 @@ export default defineRuntimeWorker<AppWorkerData, { app: true }>({
         channel.onmessage = (event) => {
           if (event.data?.busy === data.id) {
             // Holds the thread, so whatever the host sends meanwhile queues.
+            emit(data.id, 'busy')
             const until = Date.now() + event.data.ms
             while (Date.now() < until);
             return

@@ -283,7 +283,7 @@ describe('RuntimeSupervisor', () => {
     )
     expect(errors).toMatchObject([
       {
-        message: 'Runtime [app] routes were not withdrawn',
+        message: 'Runtime [app] route withdrawal was not confirmed',
         cause: { message: 'timed out' },
       },
     ])
@@ -307,7 +307,7 @@ describe('RuntimeSupervisor', () => {
     )
     expect(errors).toMatchObject([
       {
-        message: 'Runtime [app] routes were not withdrawn',
+        message: 'Runtime [app] route withdrawal was not confirmed',
         cause: { message: 'proxy refused' },
       },
     ])
@@ -321,14 +321,14 @@ describe('RuntimeSupervisor', () => {
       plan: [{ id: 'busy', stop: 'drain' }],
     })
     await Effect.runPromise(supervisor.start())
-    // The stop request reaches the worker two thirds into the budget. Told
-    // only how long it has, the worker would start counting then and signal
-    // its drain to end after the host has already terminated it.
-    workers.busy('busy', 2_000)
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // The stop request reaches the worker well into the budget. Told only
+    // how long it has, the worker would start counting then and signal its
+    // drain to end after the host has already terminated it.
+    workers.busy('busy', 2_500)
+    await workers.waitFor('busy:busy')
 
     const errors = await Effect.runPromise(
-      supervisor.stop(Deadline.after(3_000)),
+      supervisor.stop(Deadline.after(4_000)),
     )
     expect(errors).toEqual([])
     expect(workers.events).toContain('busy:forced')
@@ -366,7 +366,7 @@ describe('RuntimeSupervisor', () => {
     )
     // The stop's own withdrawal is stuck as well; nothing else fails.
     expect(errors).toMatchObject([
-      { message: 'Runtime [app] routes were not withdrawn' },
+      { message: 'Runtime [app] route withdrawal was not confirmed' },
     ])
     expect(workers.events).toContain('sibling:stop')
     expect(registry.size).toBe(0)

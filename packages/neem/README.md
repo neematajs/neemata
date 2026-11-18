@@ -332,8 +332,9 @@ without time to drain.
 
 A worker runtime's `stop({ signal })` should finish in-flight work gracefully;
 `signal` aborts once two thirds of the worker's stop budget are spent, when
-anything still waiting should be force-closed. The last third is left for the
-worker to exit and for the hooks, proxy and plugins that stop after it. When a
+anything still waiting should be force-closed. The last third is shared by the
+worker's logger flush and exit and by the hooks, proxy and plugins that stop
+after it. When a
 development reload replaces a runtime, `signal` is already aborted: the old
 runtime makes way at once. `closeHttpServer(server, { signal })` from
 `@nmtjs/neem` does this for a Node HTTP server: it refuses new connections,
@@ -342,8 +343,9 @@ when `signal` aborts closes the rest and resolves. It cannot close upgraded
 connections (WebSockets); their owner should. The Vite and Nuxt production
 presets use it.
 
-A stop that could not withdraw a runtime's routes, because the proxy failed or
-did not answer in time, still stops the workers and reports the failure.
+A stop that could not confirm a runtime's routes were withdrawn, because the
+proxy update failed or did not finish in time, still stops the workers and
+reports the failure.
 
 Before a worker, host runner or the host itself exits, it flushes its logger
 within what is left of that budget, so asynchronous destinations keep the

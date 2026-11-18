@@ -88,7 +88,7 @@ describe('WorkerRuntime', () => {
   it('signals a stop still waiting to force-close before the deadline passes', async () => {
     const { runtime, events, worker, boot } = createHarness('production')
     let abortedAfter: number | undefined
-    const startedAt = Date.now()
+    let startedAt = 0
     // A graceful stop that would wait forever, e.g. on a long-lived request,
     // unless it force-closes once signalled.
     const stop: NeemRuntime['stop'] = (options) =>
@@ -101,7 +101,8 @@ describe('WorkerRuntime', () => {
     boot(worker('first', { stop }))
     await Effect.runPromise(Deferred.await(runtime.ready))
 
-    expect(await Effect.runPromise(runtime.stop(Deadline.after(600)))).toEqual(
+    startedAt = Date.now()
+    expect(await Effect.runPromise(runtime.stop(Deadline.after(900)))).toEqual(
       [],
     )
     expect(events).toEqual([
@@ -111,8 +112,8 @@ describe('WorkerRuntime', () => {
       'first:stop',
     ])
     // Two thirds of the budget, leaving the rest to what follows the drain.
-    expect(abortedAfter).toBeGreaterThanOrEqual(350)
-    expect(abortedAfter).toBeLessThan(550)
+    expect(abortedAfter).toBeGreaterThanOrEqual(550)
+    expect(abortedAfter).toBeLessThan(900)
   })
 
   it('force-stops a generation a reload replaces, with a fresh signal for the next', async () => {

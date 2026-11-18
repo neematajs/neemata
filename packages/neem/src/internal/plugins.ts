@@ -10,7 +10,7 @@ import type {
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import type { Lifetime } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
-import { callHook, hookCall, lifecycleOf } from './context.ts'
+import { callHook, hookCall, lifecycleOf, withHookTimeout } from './context.ts'
 import { invoke } from './hooks.ts'
 import { attempt, boundedScope, releaseStep } from './lifetime.ts'
 import { importDefault } from './utils.ts'
@@ -57,7 +57,8 @@ export const acquirePlugins = (
           ),
         )
       // The hook timeout bounds the plugin's whole cleanup: `dispose` and the
-      // resources of an Effect factory.
+      // resources of an Effect factory. `dispose` has the same bound of its
+      // own, so one that hangs still lets those resources be released.
       const scope = yield* boundedScope(
         lifetime,
         `Plugin [${plugin.name}]`,
@@ -76,7 +77,11 @@ export const acquirePlugins = (
         (callbacks) =>
           releaseStep(
             `Plugin [${plugin.name}] disposal`,
-            invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+            withHookTimeout(
+              `${plugin.name}:dispose`,
+              invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+              lifecycleOf(snapshot).hookTimeout,
+            ),
             lifetime.deadline(),
           ),
       ).pipe(Scope.provide(scope))

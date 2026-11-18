@@ -57,7 +57,7 @@ const patchResult = Schema.Union([
   }),
 ])
 const ExitBudget = {
-  /** Wall-clock milliseconds; see `exitDeadline`. */
+  /** Milliseconds on the clock threads share; see `exitDeadline`. */
   exitBy: Schema.Number,
 }
 
