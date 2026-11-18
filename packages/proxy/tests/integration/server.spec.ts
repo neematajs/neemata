@@ -388,6 +388,24 @@ describe('Proxy wiring', () => {
     await proxy.stop()
   })
 
+  it('starts again right after a stop() that cancelled a start in flight', async () => {
+    const proxy = new NeemataProxy({
+      listen: '127.0.0.1:0',
+      applications: [{ name: 'app', routing: { type: 'default' } }],
+    })
+
+    // The cancelled start cleans up after stop() has what it needs; a stop()
+    // resolving before that let the cleanup undo the next start.
+    for (let i = 0; i < 20; i++) {
+      const cancelled = proxy.start().catch(() => {})
+      await proxy.stop()
+      await proxy.start()
+      await cancelled
+      expect(proxy.address()).not.toBeNull()
+      await proxy.stop()
+    }
+  })
+
   it('concurrent stop() callers resolve after the listener is released', async () => {
     const port = await getFreePort()
     const proxy = new NeemataProxy({

@@ -46,12 +46,23 @@ pub struct PoolConfig {
 }
 
 impl AppPools {
-    fn get(&self, transport: lb::TransportKind) -> Option<&PoolConfig> {
-        match transport {
-            lb::TransportKind::Http1 => self.http1.as_ref(),
-            lb::TransportKind::Http2 => self.http2.as_ref(),
-            lb::TransportKind::Ws => self.ws.as_ref(),
-        }
+    /// The pool a request goes to: upgrades to the WebSocket pool, everything else to the
+    /// HTTP/2 pool when the application has one, and to the HTTP/1 pool otherwise.
+    fn route(&self, is_upgrade: bool) -> Option<ResolvedPool> {
+        let (pool, transport) = if is_upgrade {
+            (&self.ws, lb::TransportKind::Ws)
+        } else if self.http2.is_some() {
+            (&self.http2, lb::TransportKind::Http2)
+        } else {
+            (&self.http1, lb::TransportKind::Http1)
+        };
+        pool.as_ref().map(|pool| ResolvedPool {
+            lb: Arc::clone(&pool.lb),
+            secure: pool.secure,
+            verify_hostname: pool.verify_hostname.clone(),
+            is_http2: transport == lb::TransportKind::Http2,
+            transport,
+        })
     }
 }
 
@@ -63,18 +74,6 @@ pub struct ResolvedPool {
     pub verify_hostname: String,
     pub is_http2: bool,
     pub transport: lb::TransportKind,
-}
-
-impl ResolvedPool {
-    fn new(pool: &PoolConfig, transport: lb::TransportKind) -> Self {
-        Self {
-            lb: Arc::clone(&pool.lb),
-            secure: pool.secure,
-            verify_hostname: pool.verify_hostname.clone(),
-            is_http2: transport == lb::TransportKind::Http2,
-            transport,
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -379,17 +378,7 @@ impl ProxyHttp for SharedRouter {
         if let Some(ref app_name) = ctx.app_name
             && let Some(pools) = config.apps.get(app_name)
         {
-            let transport = if is_upgrade {
-                lb::TransportKind::Ws
-            } else if pools.http2.is_some() {
-                lb::TransportKind::Http2
-            } else {
-                lb::TransportKind::Http1
-            };
-
-            ctx.resolved_pool = pools
-                .get(transport)
-                .map(|pool| ResolvedPool::new(pool, transport));
+            ctx.resolved_pool = pools.route(is_upgrade);
         }
 
         if let (Some(sticky), Some(_app_name), Some(_resolved)) = (
@@ -448,18 +437,15 @@ impl ProxyHttp for SharedRouter {
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
         // The first connect can outlast its pool: when the last upstream goes and then one is
-        // added, the application gets a new pool. A retry therefore selects from the pool the
-        // application has now, on the same transport, and fails as a connect error without one.
-        if ctx.failed_peer.is_some()
-            && let Some(transport) = ctx.selected_transport
-        {
+        // added, the application gets a new pool, possibly on another HTTP transport. A retry
+        // is therefore routed again, and fails as a connect error when no pool is left.
+        if ctx.failed_peer.is_some() {
             let config = self.router.config.load();
             ctx.resolved_pool = ctx
                 .app_name
                 .as_ref()
                 .and_then(|app_name| config.apps.get(app_name))
-                .and_then(|pools| pools.get(transport))
-                .map(|pool| ResolvedPool::new(pool, transport));
+                .and_then(|pools| pools.route(ctx.is_upgrade));
             if ctx.resolved_pool.is_none() {
                 return Err(no_retry_upstream());
             }
@@ -651,16 +637,25 @@ impl ProxyHttp for SharedRouter {
     }
 }
 
-/// Selects a healthy backend other than `failed_peer`. Every member is considered once: Pingora
-/// stops after `max_iterations` steps, so a smaller bound can miss the only healthy one.
+/// Selects a healthy backend other than `failed_peer`, finding one whenever one exists.
+/// Round robin alone cannot promise that: it stops after a number of steps, and concurrent
+/// selections share its position, so a selection's steps can land on the same members twice
+/// and skip others. When it comes up empty, the members are checked in order.
 fn select_backend(
     lb: &LoadBalancer<RoundRobin>,
     key: &[u8],
     failed_peer: Option<&PeerAddr>,
 ) -> Option<Backend> {
-    let members = lb.backends().get_backend().len();
-    lb.select_with(key, members, |backend, ready| {
+    let usable = |backend: &Backend, ready: bool| {
         ready && failed_peer.is_none_or(|failed| backend.addr != *failed)
+    };
+    let backends = lb.backends();
+    let members = backends.get_backend();
+    lb.select_with(key, members.len(), usable).or_else(|| {
+        members
+            .iter()
+            .find(|backend| usable(backend, backends.ready(backend)))
+            .cloned()
     })
 }
 
@@ -1385,8 +1380,8 @@ mod tests {
     use pingora::{Error, ErrorType};
     use std::collections::{BTreeSet, HashMap};
     use std::net::SocketAddr;
-    use std::sync::Mutex;
     use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Barrier, Mutex};
     use std::time::{Duration, Instant};
 
     fn sticky_state(max_entries: usize) -> StickySessionState {
@@ -1457,6 +1452,38 @@ mod tests {
             let selected = select_backend(&pool, b"", None).map(|b| b.addr);
             assert_eq!(selected, Some(PeerAddr::Inet(healthy)));
         }
+    }
+
+    #[tokio::test]
+    async fn concurrent_selections_all_find_the_healthy_backend() {
+        let healthy = SocketAddr::from(([127, 0, 0, 1], 2));
+        let members = lb::Members::default();
+        members.set(&BTreeSet::from([
+            SocketAddr::from(([127, 0, 0, 1], 1)),
+            healthy,
+        ]));
+        let mut pool = lb::new_round_robin_lb(members);
+        pool.set_health_check(Box::new(OnlyHealthy(healthy)));
+        pool.update().await.unwrap();
+        pool.backends().run_health_check(false).await;
+
+        // Selections share the round-robin position, so one can step onto the down member
+        // twice while another takes the healthy one in between.
+        let pool = Arc::new(pool);
+        let start = Arc::new(Barrier::new(8));
+        let threads = (0..8)
+            .map(|_| {
+                let (pool, start) = (pool.clone(), start.clone());
+                std::thread::spawn(move || {
+                    start.wait();
+                    (0..20_000)
+                        .filter(|_| select_backend(&pool, b"", None).is_none())
+                        .count()
+                })
+            })
+            .collect::<Vec<_>>();
+        let missed: usize = threads.into_iter().map(|t| t.join().unwrap()).sum();
+        assert_eq!(missed, 0);
     }
 
     #[test]

@@ -420,9 +420,10 @@ impl Proxy {
 
                 result
             };
-            drop(update_guard);
 
             if start_result.is_err() {
+                // Still under `update_lock`, which the cancelling `stop()` waits for: it must
+                // not resolve, and let a new start begin, before this cleanup is done.
                 server.stop_all().await;
                 let mut guard = inner
                     .lock()
@@ -433,6 +434,7 @@ impl Proxy {
                     "Proxy start was cancelled while stopping",
                 ));
             }
+            drop(update_guard);
 
             Self::wait_for_start_ready(&mut start_rx).await?;
             Ok(Ok(()))

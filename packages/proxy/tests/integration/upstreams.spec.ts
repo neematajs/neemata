@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import http from 'node:http'
+import http2 from 'node:http2'
 import net from 'node:net'
 
 import { afterEach, describe, expect, it } from 'vitest'
@@ -447,7 +448,8 @@ describe('retry after a refused connect', () => {
     const replacement = await startUpstream('replacement')
     const proxy = await startProxy({
       healthCheckIntervalMs: 60_000,
-      timeouts: { upstreamConnect: 1000 },
+      // Long enough to replace the pool while the first connect is still pending.
+      timeouts: { upstreamConnect: 3000 },
     })
     await proxy.addUpstream('app', await blackholedUpstream())
     await proxy.start()
@@ -462,5 +464,40 @@ describe('retry after a refused connect', () => {
     ])
 
     expect(await pending).toMatchObject({ status: 200, body: 'replacement' })
+  })
+
+  it('retries on an HTTP/2 pool that replaced the HTTP/1 pool the first connect used', async () => {
+    const h2 = http2.createServer()
+    h2.on('stream', (stream) => {
+      stream.respond({ ':status': 200 })
+      stream.end('h2 replacement')
+    })
+    const h2Port = await listenOnEphemeralPort(h2)
+    cleanups.push(() => new Promise((resolve) => h2.close(() => resolve())))
+
+    const proxy = await startProxy({
+      healthCheckIntervalMs: 60_000,
+      timeouts: { upstreamConnect: 3000 },
+    })
+    await proxy.addUpstream('app', await blackholedUpstream())
+    await proxy.start()
+
+    const pending = httpGet(proxy.address()!.port, '/')
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    // One call: the HTTP/1 pool goes and an HTTP/2 pool takes its place.
+    await proxy.setUpstreams([
+      {
+        application: 'app',
+        upstream: {
+          type: 'port',
+          transport: 'http2',
+          secure: false,
+          hostname: '127.0.0.1',
+          port: h2Port,
+        },
+      },
+    ])
+
+    expect(await pending).toMatchObject({ status: 200, body: 'h2 replacement' })
   })
 })
