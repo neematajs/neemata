@@ -1,6 +1,8 @@
 import http from 'node:http'
 import net from 'node:net'
 
+import { expect } from 'vitest'
+
 export async function getFreePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const server = net.createServer()
@@ -97,4 +99,65 @@ export async function waitFor<T>(
   }
 
   throw new Error(`timeout waiting for condition; last=${String(last)}`)
+}
+
+export async function expectRejectCode(
+  fn: () => unknown,
+  code: string,
+  message?: string | RegExp,
+) {
+  let err: any
+  try {
+    const maybePromise = fn()
+    await maybePromise
+  } catch (e) {
+    err = e
+  }
+  expect(err).toBeTruthy()
+  expect(err).toHaveProperty('code', code)
+  if (message instanceof RegExp) {
+    expect(String(err.message)).toMatch(message)
+  } else if (message) {
+    expect(String(err.message)).toContain(message)
+  }
+}
+
+export async function httpRequest(
+  port: number,
+  options: {
+    method?: string
+    path?: string
+    headers?: Record<string, string>
+    body?: string | Buffer
+  },
+): Promise<{
+  status: number
+  body: string
+  headers: http.IncomingHttpHeaders
+}> {
+  return await new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        host: '127.0.0.1',
+        port,
+        method: options.method ?? 'GET',
+        path: options.path ?? '/',
+        headers: options.headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (c) => chunks.push(Buffer.from(c)))
+        res.on('end', () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: res.headers,
+          })
+        })
+      },
+    )
+    req.on('error', reject)
+    if (options.body) req.end(options.body)
+    else req.end()
+  })
 }
