@@ -45,6 +45,16 @@ pub struct PoolConfig {
     pub verify_hostname: String,
 }
 
+impl AppPools {
+    fn get(&self, transport: lb::TransportKind) -> Option<&PoolConfig> {
+        match transport {
+            lb::TransportKind::Http1 => self.http1.as_ref(),
+            lb::TransportKind::Http2 => self.http2.as_ref(),
+            lb::TransportKind::Ws => self.ws.as_ref(),
+        }
+    }
+}
+
 /// Pre-resolved pool information cached in context to avoid repeated lookups.
 #[derive(Clone)]
 pub struct ResolvedPool {
@@ -53,6 +63,18 @@ pub struct ResolvedPool {
     pub verify_hostname: String,
     pub is_http2: bool,
     pub transport: lb::TransportKind,
+}
+
+impl ResolvedPool {
+    fn new(pool: &PoolConfig, transport: lb::TransportKind) -> Self {
+        Self {
+            lb: Arc::clone(&pool.lb),
+            secure: pool.secure,
+            verify_hostname: pool.verify_hostname.clone(),
+            is_http2: transport == lb::TransportKind::Http2,
+            transport,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -357,29 +379,17 @@ impl ProxyHttp for SharedRouter {
         if let Some(ref app_name) = ctx.app_name
             && let Some(pools) = config.apps.get(app_name)
         {
-            let (pool, is_http2) = if is_upgrade {
-                (pools.ws.as_ref(), false)
-            } else if let Some(p) = pools.http2.as_ref() {
-                (Some(p), true)
+            let transport = if is_upgrade {
+                lb::TransportKind::Ws
+            } else if pools.http2.is_some() {
+                lb::TransportKind::Http2
             } else {
-                (pools.http1.as_ref(), false)
+                lb::TransportKind::Http1
             };
 
-            if let Some(pool) = pool {
-                ctx.resolved_pool = Some(ResolvedPool {
-                    lb: Arc::clone(&pool.lb),
-                    secure: pool.secure,
-                    verify_hostname: pool.verify_hostname.clone(),
-                    is_http2,
-                    transport: if is_upgrade {
-                        lb::TransportKind::Ws
-                    } else if is_http2 {
-                        lb::TransportKind::Http2
-                    } else {
-                        lb::TransportKind::Http1
-                    },
-                });
-            }
+            ctx.resolved_pool = pools
+                .get(transport)
+                .map(|pool| ResolvedPool::new(pool, transport));
         }
 
         if let (Some(sticky), Some(_app_name), Some(_resolved)) = (
@@ -437,6 +447,24 @@ impl ProxyHttp for SharedRouter {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
+        // The first connect can outlast its pool: when the last upstream goes and then one is
+        // added, the application gets a new pool. A retry therefore selects from the pool the
+        // application has now, on the same transport, and fails as a connect error without one.
+        if ctx.failed_peer.is_some()
+            && let Some(transport) = ctx.selected_transport
+        {
+            let config = self.router.config.load();
+            ctx.resolved_pool = ctx
+                .app_name
+                .as_ref()
+                .and_then(|app_name| config.apps.get(app_name))
+                .and_then(|pools| pools.get(transport))
+                .map(|pool| ResolvedPool::new(pool, transport));
+            if ctx.resolved_pool.is_none() {
+                return Err(no_retry_upstream());
+            }
+        }
+
         // Use pre-resolved pool from request_filter when available.
         let Some(resolved) = ctx.resolved_pool.as_ref() else {
             ctx.failure_hint = Some(FailureHint::MissingUpstreamPool);
@@ -476,16 +504,9 @@ impl ProxyHttp for SharedRouter {
         } else {
             let key =
                 sticky_target.map_or(&b""[..], |(_, _, affinity_key)| affinity_key.as_bytes());
-            let Some(backend) = resolved.lb.select_with(key, 8, |backend, ready| {
-                ready && failed_peer.is_none_or(|failed| backend.addr != *failed)
-            }) else {
+            let Some(backend) = select_backend(&resolved.lb, key, failed_peer) else {
                 if failed_peer.is_some() {
-                    // Retrying a failed connect with no other backend left keeps the 502.
-                    return Err(Error::explain(
-                        ErrorType::ConnectError,
-                        "no other healthy upstream to retry on",
-                    )
-                    .into_up());
+                    return Err(no_retry_upstream());
                 }
                 ctx.failure_hint = Some(FailureHint::UnhealthyUpstream);
                 return Err(Error::explain(
@@ -628,6 +649,28 @@ impl ProxyHttp for SharedRouter {
         upstream_request.set_uri(uri);
         Ok(())
     }
+}
+
+/// Selects a healthy backend other than `failed_peer`. Every member is considered once: Pingora
+/// stops after `max_iterations` steps, so a smaller bound can miss the only healthy one.
+fn select_backend(
+    lb: &LoadBalancer<RoundRobin>,
+    key: &[u8],
+    failed_peer: Option<&PeerAddr>,
+) -> Option<Backend> {
+    let members = lb.backends().get_backend().len();
+    lb.select_with(key, members, |backend, ready| {
+        ready && failed_peer.is_none_or(|failed| backend.addr != *failed)
+    })
+}
+
+/// Retrying a failed connect with no other backend left keeps the 502.
+fn no_retry_upstream() -> Box<Error> {
+    Error::explain(
+        ErrorType::ConnectError,
+        "no other healthy upstream to retry on",
+    )
+    .into_up()
 }
 
 impl StickySessionState {
@@ -1331,13 +1374,17 @@ mod tests {
         AffinityEntry, AffinityMapKey, FailureHint, HealthProbe, HealthStatus, HealthStatusCell,
         StickySessionConfig, StickySessionState, StickyShard, apply_upstream_timeouts,
         failure_body, failure_status, health_response, is_cookie_safe_affinity_key,
-        proxy_error_response, resolve_route, strip_first_path_segment,
+        proxy_error_response, resolve_route, select_backend, strip_first_path_segment,
     };
-    use crate::lb::TransportKind;
+    use crate::lb::{self, TransportKind};
     use crate::options::ProxyTimeoutOptionsParsed;
+    use pingora::lb::Backend;
+    use pingora::lb::health_check::HealthCheck;
+    use pingora::protocols::l4::socket::SocketAddr as PeerAddr;
     use pingora::upstreams::peer::HttpPeer;
     use pingora::{Error, ErrorType};
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
+    use std::net::SocketAddr;
     use std::sync::Mutex;
     use std::sync::atomic::AtomicU64;
     use std::time::{Duration, Instant};
@@ -1370,6 +1417,45 @@ mod tests {
             app_name: "app".to_string(),
             transport: TransportKind::Http1,
             affinity_key: value.to_string(),
+        }
+    }
+
+    /// Passes only the probe of `healthy`.
+    struct OnlyHealthy(SocketAddr);
+
+    #[async_trait::async_trait]
+    impl HealthCheck for OnlyHealthy {
+        async fn check(&self, target: &Backend) -> pingora::Result<()> {
+            if target.addr == PeerAddr::Inet(self.0) {
+                Ok(())
+            } else {
+                Err(Error::new_str("down"))
+            }
+        }
+
+        fn health_threshold(&self, _success: bool) -> usize {
+            1
+        }
+    }
+
+    #[tokio::test]
+    async fn selection_finds_the_only_healthy_backend_among_nine() {
+        let addrs = (1..=9)
+            .map(|port| SocketAddr::from(([127, 0, 0, 1], port)))
+            .collect::<BTreeSet<_>>();
+        let healthy = SocketAddr::from(([127, 0, 0, 1], 5));
+        let members = lb::Members::default();
+        members.set(&addrs);
+        let mut pool = lb::new_round_robin_lb(members);
+        pool.set_health_check(Box::new(OnlyHealthy(healthy)));
+        pool.update().await.unwrap();
+        pool.backends().run_health_check(false).await;
+
+        // Round robin starts each selection one member further, so nine selections start from
+        // every member once.
+        for _ in 0..addrs.len() {
+            let selected = select_backend(&pool, b"", None).map(|b| b.addr);
+            assert_eq!(selected, Some(PeerAddr::Inet(healthy)));
         }
     }
 

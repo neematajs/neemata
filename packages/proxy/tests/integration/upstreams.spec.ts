@@ -1,4 +1,7 @@
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
 import http from 'node:http'
+import net from 'node:net'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -105,6 +108,57 @@ async function deadUpstream() {
     hostname: '127.0.0.1',
     port: await getFreePort(),
   } as const
+}
+
+/**
+ * An upstream whose connects hang until they time out: its listener is never accepted from,
+ * and once its accept queue is full the kernel drops further connection attempts.
+ */
+async function blackholedUpstream() {
+  const child = spawn(
+    process.execPath,
+    [
+      '-e',
+      `const s = require('node:net').createServer()
+       s.listen({ port: 0, host: '127.0.0.1', backlog: 1 }, () => console.log(s.address().port))`,
+    ],
+    { stdio: ['ignore', 'pipe', 'inherit'] },
+  )
+  const fillers: net.Socket[] = []
+  cleanups.push(async () => {
+    for (const socket of fillers) socket.destroy()
+    child.kill('SIGKILL')
+  })
+  const [chunk] = await once(child.stdout!, 'data')
+  const port = Number(String(chunk).trim())
+  child.kill('SIGSTOP')
+
+  for (let i = 0; i < 64; i++) {
+    const socket = net.connect(port, '127.0.0.1')
+    const connected = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 200)
+      socket.once('connect', () => {
+        clearTimeout(timer)
+        resolve(true)
+      })
+      socket.once('error', () => {
+        clearTimeout(timer)
+        resolve(false)
+      })
+    })
+    if (!connected) {
+      socket.destroy()
+      return {
+        type: 'port',
+        transport: 'http',
+        secure: false,
+        hostname: '127.0.0.1',
+        port,
+      } as const
+    }
+    fillers.push(socket)
+  }
+  throw new Error('the accept queue never filled up')
 }
 
 async function startProxy(
@@ -387,5 +441,26 @@ describe('retry after a refused connect', () => {
     })
     expect(res.status).toBe(502)
     expect(res.body).toBe('Upstream request failed\n')
+  })
+
+  it('retries on the pool that replaced the one the first connect used', async () => {
+    const replacement = await startUpstream('replacement')
+    const proxy = await startProxy({
+      healthCheckIntervalMs: 60_000,
+      timeouts: { upstreamConnect: 1000 },
+    })
+    await proxy.addUpstream('app', await blackholedUpstream())
+    await proxy.start()
+
+    const pending = httpGet(proxy.address()!.port, '/')
+    // Lets the request resolve its pool and start connecting, well within the connect timeout.
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    // Removing the last upstream drops the pool, so the next one gets a new pool.
+    await proxy.setUpstreams([])
+    await proxy.setUpstreams([
+      { application: 'app', upstream: replacement.upstream() },
+    ])
+
+    expect(await pending).toMatchObject({ status: 200, body: 'replacement' })
   })
 })
