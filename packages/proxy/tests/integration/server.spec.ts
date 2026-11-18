@@ -1918,6 +1918,7 @@ describe('Proxy wiring', () => {
     // Create spies to track which upstream receives requests
     const upstream1Spy = vi.fn()
     const upstream2Spy = vi.fn()
+    let upstream2Connections = 0
 
     // Create two HTTP/1 upstreams
     const upstream1Port = await getFreePort()
@@ -1938,6 +1939,9 @@ describe('Proxy wiring', () => {
       res.statusCode = 200
       res.setHeader('content-type', 'text/plain')
       res.end('upstream2')
+    })
+    http1b.on('connection', () => {
+      upstream2Connections++
     })
     await new Promise<void>((resolve) =>
       http1b.listen(upstream2Port, '127.0.0.1', resolve),
@@ -1971,55 +1975,47 @@ describe('Proxy wiring', () => {
     await proxy.start()
 
     try {
-      // Wait for both upstreams to be healthy
-      await waitFor(
-        async () => await httpGet(port, '/hello'),
-        (r) => r.status === 200,
-      )
-
       // Both upstreams should be reachable (round-robin)
       for (let i = 0; i < 10; i++) {
         const res = await httpGet(port, '/hello')
         expect(res.status).toBe(200)
       }
-      // Should have seen both upstreams
       expect(upstream1Spy).toHaveBeenCalled()
       expect(upstream2Spy).toHaveBeenCalled()
 
-      // Shut down upstream1 and reset spies
+      // Also drop the proxy's pooled connections, which would keep serving requests.
+      http1a.closeAllConnections()
       await new Promise<void>((resolve) => http1a.close(() => resolve()))
       upstream1Spy.mockClear()
       upstream2Spy.mockClear()
 
-      // Wait for health check to detect the failure, then verify with spies
-      // that upstream1 is never called again
+      // Each pass probes every upstream of the pool, and without requests only probes connect
+      // to upstream2. Three more of its probes span a whole pass that started after upstream1
+      // closed, so upstream1 has been probed since.
+      const probedSinceClose = upstream2Connections + 3
       await waitFor(
-        async () => {
-          // Make enough requests that round-robin would statistically hit the dead upstream
-          // With 2 upstreams, probability of 20 consecutive hits to one by chance is (1/2)^20
-          const CONSECUTIVE_REQUESTS = 20
-          for (let i = 0; i < CONSECUTIVE_REQUESTS; i++) {
-            const res = await httpGet(port, '/hello')
-            if (res.status !== 200) {
-              // Got an error, health check hasn't kicked in yet
-              return false
-            }
-          }
-          // All requests succeeded - check if upstream1 was called
-          return upstream1Spy.mock.calls.length === 0
-        },
-        (allToUpstream2) => allToUpstream2,
-        10000, // Give health check time to detect
+        async () => upstream2Connections,
+        (n) => n >= probedSinceClose,
+        10000,
       )
 
-      // Final assertion: upstream1 should never have been called after shutdown
+      for (let i = 0; i < 20; i++) {
+        const res = await httpGet(port, '/hello')
+        expect(res).toMatchObject({ status: 200, body: 'upstream2' })
+      }
       expect(upstream1Spy).not.toHaveBeenCalled()
-      expect(upstream2Spy.mock.calls.length).toBeGreaterThanOrEqual(20)
+
+      // A refused connect to upstream1 is retried on upstream2, so the requests above succeed
+      // either way. With upstream2 gone, a still-selectable upstream1 would answer 502; one
+      // taken out of rotation by its failed probe leaves no upstream and answers 503.
+      await proxy.removeUpstream('app', u2)
+      expect((await httpGet(port, '/hello')).status).toBe(503)
     } finally {
       await proxy.stop()
-      await new Promise<void>((resolve) => http1a.close(() => resolve())).catch(
-        () => {},
-      )
+      if (http1a.listening) {
+        http1a.closeAllConnections()
+        await new Promise<void>((resolve) => http1a.close(() => resolve()))
+      }
       await new Promise<void>((resolve) => http1b.close(() => resolve()))
     }
   })
