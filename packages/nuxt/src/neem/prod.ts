@@ -6,6 +6,8 @@ import { extname, join, resolve, sep } from 'node:path'
 import { pipeline } from 'node:stream'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { closeHttpServer } from '@nmtjs/neem'
+
 import type { NeemNuxtRuntimeFactory } from '../types.ts'
 import { APP_DIR } from '../constants.ts'
 import { restoreBase } from '../nuxt-loader.ts'
@@ -103,17 +105,12 @@ const createNuxtProdRuntime: NeemNuxtRuntimeFactory = (ctx, options) => {
       ctx.logger.info(`Nuxt app server listening at ${url} (base ${base})`)
       return [{ type: 'http', url }]
     },
-    async stop() {
+    async stop(options) {
       stopping = true
       const instance = server
       server = undefined
-      await new Promise<void>((resolve) => {
-        if (!instance) return resolve()
-        instance.close(() => resolve())
-        // The Neem proxy holds keep-alive upstream connections; a graceful
-        // close would wait on those idle sockets indefinitely.
-        instance.closeAllConnections()
-      })
+      // In-flight requests finish; force-closed only when the budget runs out.
+      if (instance) await closeHttpServer(instance, options)
     },
   }
 }

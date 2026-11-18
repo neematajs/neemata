@@ -4,15 +4,26 @@ import { raceWithTimeout, wait } from '../utils.ts'
 export const DEFAULT_STOP_TIMEOUT_MS = 15_000
 export const DEFAULT_START_TIMEOUT_MS = 30_000
 export const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
+export const DEFAULT_HOOK_TIMEOUT_MS = 5_000
 // Held back from the exit budget a stopping thread is given, so its exit still
 // reaches the host, which terminates it at the deadline, after the thread has
 // spent that budget flushing.
 const EXIT_BUDGET_MARGIN_MS = 250
 
-// The budget a thread is told it has left to exit in, out of what the host
-// still waits for it.
-export function exitBudget(remainingMs: number): number {
-  return Math.max(0, remainingMs - EXIT_BUDGET_MARGIN_MS)
+// A clock the host and its threads share: each thread's monotonic time on its
+// own origin. `process.hrtime` would do on Node, but is per thread on Bun.
+const processTime = () => performance.timeOrigin + performance.now()
+
+// When a thread is told to have exited by, out of what the host still waits
+// for it. A point in time rather than a duration: the request can sit queued
+// behind the thread's own work, and that wait must come out of the budget.
+export function exitDeadline(remainingMs: number): number {
+  return processTime() + Math.max(0, remainingMs - EXIT_BUDGET_MARGIN_MS)
+}
+
+/** What a thread has left of the exit deadline its host sent. */
+export function exitBudget(exitBy: number): number {
+  return Math.max(0, exitBy - processTime())
 }
 
 export function resolveLifecycle(
@@ -21,6 +32,7 @@ export function resolveLifecycle(
   return {
     stopTimeout: config?.stopTimeout ?? DEFAULT_STOP_TIMEOUT_MS,
     startTimeout: config?.startTimeout ?? DEFAULT_START_TIMEOUT_MS,
+    hookTimeout: config?.hookTimeout ?? DEFAULT_HOOK_TIMEOUT_MS,
   }
 }
 

@@ -20,7 +20,7 @@ import type { HostContext, ThreadLifecycleEvent } from './context.ts'
 import type { RecoveryOptions } from './host/recovery.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
 import type { RuntimePatchResult } from './runtime.ts'
-import { callHook, lifecycleOf } from './context.ts'
+import { callHook, hookCall, lifecycleOf } from './context.ts'
 import { createHostHooks, type HostHooks } from './hooks.ts'
 import { evaluateHealth } from './host/health.ts'
 import {
@@ -185,11 +185,10 @@ export class Host {
           if (current) {
             subsystems.runtimes.delete(runtimeName)
             // Detached from the server, nothing else would stop it, so this
-            // finishes even when a stop interrupts the reload.
+            // finishes even when a stop interrupts the reload. The stop
+            // withdraws the runtime's routes first, within its deadline.
             yield* Effect.uninterruptible(
-              this.syncProxy().pipe(
-                Effect.andThen(this.stopRuntime(current, this.freshDeadline())),
-              ),
+              this.stopRuntime(current, this.freshDeadline()),
             )
           }
           this.replaceSnapshot(snapshot)
@@ -201,12 +200,16 @@ export class Host {
           }
           yield* this.syncProxy()
           this.markSettled()
-          yield* callHook(this.hooks, this.snapshot.logger, 'runtime:reload', {
-            mode: this.snapshot.mode,
-            name: runtimeName,
-            upstreams:
-              subsystems.runtimes.get(runtimeName)?.getUpstreams() ?? [],
-          })
+          yield* callHook(
+            this.hookCall(this.snapshot.logger),
+            'runtime:reload',
+            {
+              mode: this.snapshot.mode,
+              name: runtimeName,
+              upstreams:
+                subsystems.runtimes.get(runtimeName)?.getUpstreams() ?? [],
+            },
+          )
           this.logger.debug(
             {
               runtimeName,
@@ -311,7 +314,7 @@ export class Host {
       const hook = yield* Effect.exit(
         releaseStep(
           'Neem hook [server:stop]',
-          callHook(this.hooks, this.logger, 'server:stop', {
+          callHook(this.hookCall(), 'server:stop', {
             mode: this.snapshot.mode,
           }),
           deadline,
@@ -531,7 +534,7 @@ export class Host {
           ),
         )
       },
-      onUpstreamsChange: () => this.syncProxy(),
+      onUpstreamsChange: () => this.publishRoutes(),
       // Syncing upstreams publishes health too: a recovered runtime is ready
       // before its new upstreams are routed.
       onStateChange: () =>
@@ -557,6 +560,10 @@ export class Host {
   // Proxy reconcile failures are logged and retried by the proxy itself; a
   // runtime's failure or recovery must not fail on them.
   private syncProxy(): Effect.Effect<void> {
+    return Effect.ignore(this.publishRoutes())
+  }
+
+  private publishRoutes(): Effect.Effect<void, Error> {
     return Effect.suspend(() => {
       const subsystems = this.subsystems
       const proxy = subsystems?.proxy
@@ -565,7 +572,7 @@ export class Host {
         runtimeName: runtime.name,
         upstreams: runtime.getUpstreams(),
       }))
-      return proxy.setUpstreams(upstreams).pipe(Effect.ignore)
+      return proxy.setUpstreams(upstreams)
     })
   }
 
@@ -600,14 +607,18 @@ export class Host {
     this.logger.debug(`Neem server state: ${previous} -> ${state}`)
   }
 
+  private hookCall(logger: Logger = this.logger) {
+    return hookCall(this.hooks, this.snapshot, logger)
+  }
+
   private serverHook(
     name: 'server:start' | 'server:ready' | 'server:reload',
   ): Effect.Effect<void, Error> {
-    return callHook(this.hooks, this.logger, name, { mode: this.snapshot.mode })
+    return callHook(this.hookCall(), name, { mode: this.snapshot.mode })
   }
 
   private failHook(error: Error): Effect.Effect<void> {
-    return callHook(this.hooks, this.logger, 'server:fail', {
+    return callHook(this.hookCall(), 'server:fail', {
       mode: this.snapshot.mode,
       error,
     }).pipe(

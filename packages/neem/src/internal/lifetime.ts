@@ -174,6 +174,29 @@ export const attempt = <A>(
   Effect.tryPromise({ try: async () => evaluate(), catch: normalizeError })
 
 /**
+ * Runs `effect` in a fiber of its own and waits for it until the deadline:
+ * `None` once it passes. Unlike `within`, an effect that cannot be interrupted
+ * out of its wait (an uninterruptible finalizer, a native mutation) does not
+ * hold the caller past the deadline. Its fiber is interrupted, without waiting
+ * for it, once the deadline passes or the caller is interrupted.
+ */
+export const detachedWithin = <A, E>(
+  effect: Effect.Effect<A, E>,
+  deadline: Deadline,
+): Effect.Effect<Option.Option<A>, E> =>
+  Effect.gen(function* () {
+    const fiber = yield* Effect.forkDetach(effect)
+    const exit = yield* within(Fiber.await(fiber), deadline).pipe(
+      Effect.onInterrupt(() => Effect.sync(() => fiber.interruptUnsafe())),
+    )
+    if (Option.isNone(exit)) {
+      fiber.interruptUnsafe()
+      return Option.none()
+    }
+    return Option.some(yield* exit.value)
+  })
+
+/**
  * Closes a scope in a fiber of its own and waits for it until the deadline.
  * Closing is uninterruptible, so a missed deadline leaves it running.
  */
@@ -181,24 +204,42 @@ export const closeWithin = (
   label: string,
   scope: Scope.Closeable,
   deadline: Deadline,
+  budget = 'the stop budget',
 ): Effect.Effect<readonly Error[]> =>
   Effect.gen(function* () {
     const closing = yield* Effect.forkDetach(Scope.close(scope, Exit.void))
     const exit = yield* within(Fiber.await(closing), deadline)
     if (Option.isNone(exit)) {
-      return [new Error(`${label} did not finish within the stop budget`)]
+      return [new Error(`${label} did not finish within ${budget}`)]
     }
     return Exit.isFailure(exit.value) ? causeErrors(exit.value.cause) : []
   })
 
-/** A child scope whose arbitrary finalizers cannot extend the parent's deadline. */
-export const boundedScope = (lifetime: Lifetime, label: string) =>
+/**
+ * A child scope whose arbitrary finalizers cannot extend the parent's
+ * deadline, nor take more than `timeout` of it when one is given.
+ */
+export const boundedScope = (
+  lifetime: Lifetime,
+  label: string,
+  timeout = Infinity,
+) =>
   Effect.gen(function* () {
     const scope = Scope.makeUnsafe()
     yield* Scope.addFinalizer(
       lifetime.scope,
-      Effect.suspend(() =>
-        closeWithin(label, scope, lifetime.deadline()).pipe(
+      Effect.suspend(() => {
+        const deadline = lifetime.deadline()
+        const closing =
+          timeout < deadline.remaining()
+            ? closeWithin(
+                label,
+                scope,
+                Deadline.after(timeout, lifetime.clock),
+                `${timeout}ms`,
+              )
+            : closeWithin(label, scope, deadline)
+        return closing.pipe(
           Effect.flatMap((errors) =>
             errors.length
               ? Effect.die(
@@ -206,8 +247,8 @@ export const boundedScope = (lifetime: Lifetime, label: string) =>
                 )
               : Effect.void,
           ),
-        ),
-      ),
+        )
+      }),
     )
     return scope
   })

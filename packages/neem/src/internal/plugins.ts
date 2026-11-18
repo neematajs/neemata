@@ -10,6 +10,7 @@ import type {
 import type { HostHooks, PluginHooks } from './hooks.ts'
 import type { Lifetime } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
+import { callHook, hookCall, lifecycleOf, withHookTimeout } from './context.ts'
 import { invoke } from './hooks.ts'
 import { attempt, boundedScope, releaseStep } from './lifetime.ts'
 import { importDefault } from './utils.ts'
@@ -35,7 +36,9 @@ export const acquirePlugins = (
       Effect.suspend(() =>
         releaseStep(
           'Host hook disposal',
-          hooks.call(snapshot.logger, 'dispose', { mode: snapshot.mode }),
+          callHook(hookCall(hooks, snapshot), 'dispose', {
+            mode: snapshot.mode,
+          }),
           lifetime.deadline(),
         ),
       ),
@@ -53,7 +56,14 @@ export const acquirePlugins = (
             `Neem plugin [${plugin.name}] entry must default-export a plugin factory`,
           ),
         )
-      const scope = yield* boundedScope(lifetime, `Plugin [${plugin.name}]`)
+      // The hook timeout bounds the plugin's whole cleanup: `dispose` and the
+      // resources of an Effect factory. `dispose` has the same bound of its
+      // own, so one that hangs still lets those resources be released.
+      const scope = yield* boundedScope(
+        lifetime,
+        `Plugin [${plugin.name}]`,
+        lifecycleOf(snapshot).hookTimeout,
+      )
       const pluginHooks = yield* Effect.acquireRelease(
         invoke(() =>
           factory({
@@ -67,7 +77,11 @@ export const acquirePlugins = (
         (callbacks) =>
           releaseStep(
             `Plugin [${plugin.name}] disposal`,
-            invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+            withHookTimeout(
+              `${plugin.name}:dispose`,
+              invoke(() => callbacks.dispose?.({ mode: snapshot.mode })),
+              lifecycleOf(snapshot).hookTimeout,
+            ),
             lifetime.deadline(),
           ),
       ).pipe(Scope.provide(scope))
@@ -76,5 +90,7 @@ export const acquirePlugins = (
         (remove) => Effect.sync(remove),
       ).pipe(Scope.provide(scope))
     }
-    yield* hooks.call(snapshot.logger, 'initialize', { mode: snapshot.mode })
+    yield* callHook(hookCall(hooks, snapshot), 'initialize', {
+      mode: snapshot.mode,
+    })
   }).pipe(Scope.provide(lifetime.scope))

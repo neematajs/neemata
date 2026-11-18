@@ -13,6 +13,7 @@ import type { PatchGlobal } from './patch-globals.ts'
 import type { PatchClientResult } from './protocol.ts'
 import { isNeemRuntimeWorker } from '../../public/worker.ts'
 import { hostSettings } from '../config.ts'
+import { exitBudget } from '../host/lifecycle.ts'
 import { attempt, Deadline } from '../lifetime.ts'
 import { childLogger, resolveManifestLogger, runtimeLabel } from '../logger.ts'
 import { ThreadRpcs } from '../protocol.ts'
@@ -133,9 +134,9 @@ async function applyUpdate(
   return { ...result, patches }
 }
 
-const stop = (timeoutMs: number) =>
+const stop = (exitBy: number) =>
   Effect.gen(function* () {
-    const deadline = yield* Deadline.make(timeoutMs)
+    const deadline = yield* Deadline.make(exitBudget(exitBy))
     exit.logger?.trace('Stopping Neem runtime worker')
     const errors = yield* runtime.stop(deadline)
     if (errors.length > 0) {
@@ -150,7 +151,7 @@ const handlers = ThreadRpcs.toLayer({
   start: () => Deferred.await(runtime.ready),
   patch: ({ update, url }) =>
     runtime.patch(Effect.promise(() => applyUpdate(update, url))),
-  stop: ({ timeoutMs }) => stop(timeoutMs),
+  stop: ({ exitBy }) => stop(exitBy),
 })
 
 exit.installCrashHandlers(LABEL)

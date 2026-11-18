@@ -135,6 +135,7 @@ const timeoutMsSchema = Schema.Number.check(
 const manifestLifecycleConfigSchema = Schema.Struct({
   stopTimeout: Schema.optional(timeoutMsSchema),
   startTimeout: Schema.optional(timeoutMsSchema),
+  hookTimeout: Schema.optional(timeoutMsSchema),
 })
 
 const manifestRuntimeConfigSchema = Schema.Struct({

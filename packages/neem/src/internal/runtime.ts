@@ -23,7 +23,7 @@ import type { RecoveryOptions, RecoveryPolicy } from './host/recovery.ts'
 import type { Deadline } from './lifetime.ts'
 import type { RuntimeSnapshot } from './manifest/snapshot.ts'
 import type { WorkerPatchResult } from './protocol.ts'
-import { callHook, lifecycleOf } from './context.ts'
+import { callHook, hookCall, lifecycleOf } from './context.ts'
 import { createRuntimeEnv } from './host/env.ts'
 import { createRecoveryPolicy } from './host/recovery.ts'
 import {
@@ -33,6 +33,7 @@ import {
 import {
   attempt,
   Deadline as DeadlineClass,
+  detachedWithin,
   Lifetime,
   releaseStep,
   within,
@@ -52,8 +53,9 @@ export type RuntimeSupervisorOptions = {
   /** A failure recovery could not repair. */
   onFailure: (error: Error) => void
   onRecovered: () => void
-  // Failed or released threads stopped advertising upstreams.
-  onUpstreamsChange: () => Effect.Effect<void>
+  // Failed or released threads stopped advertising upstreams: publishes the
+  // current ones to routing, and fails when it could not.
+  onUpstreamsChange: () => Effect.Effect<void, Error>
   // Runtime state and patches in flight feed the host's readiness.
   onStateChange: () => void
 }
@@ -115,6 +117,8 @@ export class RuntimeSupervisor {
   }
 
   getUpstreams(): readonly NeemRuntimeUpstream[] {
+    // A stopping runtime takes no new traffic while its threads drain.
+    if (this.state === 'stopping' || this.state === 'stopped') return []
     return this.listThreads().flatMap((thread) => thread.getUpstreams())
   }
 
@@ -269,6 +273,10 @@ export class RuntimeSupervisor {
     return Effect.gen({ self: this }, function* () {
       this.setState('stopping')
       const errors: Error[] = []
+      // Routing stops before any thread does, so requests never reach a
+      // thread that is already shutting down.
+      const withdrawal = yield* this.withdrawRoutes(deadline)
+      if (withdrawal) errors.push(withdrawal)
       const recovery = this.recovery
       if (recovery) {
         recovery.interruptUnsafe()
@@ -456,8 +464,14 @@ export class RuntimeSupervisor {
     policy: RecoveryPolicy,
   ): Effect.Effect<void> {
     return Effect.gen({ self: this }, function* () {
-      // Detached before hooks and delays, so routing stops reaching the dead worker.
-      yield* this.options.onUpstreamsChange()
+      // Detached before hooks and delays, so routing stops reaching the dead
+      // worker. Bounded, so a stuck update cannot hold up a stop's join.
+      yield* this.withdrawRoutes(
+        DeadlineClass.after(
+          lifecycleOf(this.options.snapshot).stopTimeout,
+          this.lifetime.clock,
+        ),
+      ).pipe(Effect.flatMap((error) => this.warnWithdrawal(error)))
       yield* this.failHook(initialError)
       if (policy.attempts === 0) {
         this.options.onFailure(initialError)
@@ -483,7 +497,6 @@ export class RuntimeSupervisor {
         )
         yield* next(lastError).pipe(Effect.orDie)
         yield* this.releaseCurrent()
-        yield* this.options.onUpstreamsChange()
         if (this.options.prepareRecovery)
           yield* attempt(this.options.prepareRecovery)
         yield* this.startGeneration()
@@ -511,31 +524,67 @@ export class RuntimeSupervisor {
   }
 
   // A replaced generation is gone either way: what missed the deadline was
-  // terminated. Its replacement still starts.
+  // terminated. Its replacement still starts. Its surviving threads leave
+  // routing before they stop, so they drain instead of failing requests.
   private releaseCurrent(): Effect.Effect<void> {
     return Effect.suspend(() => {
       const generation = this.current
       if (!generation) return Effect.void
       this.current = undefined
-      return generation.lifetime
-        .close(
-          DeadlineClass.after(
-            lifecycleOf(this.options.snapshot).stopTimeout,
-            this.lifetime.clock,
+      const deadline = DeadlineClass.after(
+        lifecycleOf(this.options.snapshot).stopTimeout,
+        this.lifetime.clock,
+      )
+      return this.withdrawRoutes(deadline).pipe(
+        Effect.flatMap((error) => this.warnWithdrawal(error)),
+        Effect.andThen(generation.lifetime.close(deadline)),
+        Effect.flatMap((errors) =>
+          Effect.sync(() => {
+            for (const error of errors) {
+              this.logger.error(
+                { err: error },
+                'Neem runtime did not stop cleanly before its replacement',
+              )
+            }
+          }),
+        ),
+      )
+    })
+  }
+
+  // Routing changes are normally instant. One stuck in native code may take
+  // half of what is left at most, so the threads keep time to stop. Waiting
+  // for it stays interruptible, so a stop never joins a stuck update.
+  // Resolves with why routing may still reach the threads; they stop anyway.
+  // The update covers every runtime, so the failure may be another one's.
+  private withdrawRoutes(deadline: Deadline): Effect.Effect<Error | undefined> {
+    return Effect.suspend(() =>
+      detachedWithin(
+        this.options.onUpstreamsChange(),
+        DeadlineClass.after(deadline.remaining() / 2, this.lifetime.clock),
+      ),
+    ).pipe(
+      Effect.map((done) =>
+        Option.isSome(done) ? undefined : new Error('timed out'),
+      ),
+      Effect.catch((error) => Effect.succeed(error)),
+      Effect.map(
+        (cause) =>
+          cause &&
+          new Error(
+            `Runtime [${this.name}] route withdrawal was not confirmed`,
+            {
+              cause,
+            },
           ),
-        )
-        .pipe(
-          Effect.flatMap((errors) =>
-            Effect.sync(() => {
-              for (const error of errors) {
-                this.logger.error(
-                  { err: error },
-                  'Neem runtime did not stop cleanly before its replacement',
-                )
-              }
-            }),
-          ),
-        )
+      ),
+    )
+  }
+
+  // A recovery goes on without the withdrawal; only a stop reports it.
+  private warnWithdrawal(error: Error | undefined): Effect.Effect<void> {
+    return Effect.sync(() => {
+      if (error) this.logger.warn({ err: error }, error.message)
     })
   }
 
@@ -580,7 +629,7 @@ export class RuntimeSupervisor {
     error?: Error,
   ): Effect.Effect<void, Error> {
     const { context, snapshot } = this.options
-    return callHook(context.hooks, snapshot.logger, name, {
+    return callHook(hookCall(context.hooks, snapshot), name, {
       mode: snapshot.mode,
       name: this.name,
       upstreams,

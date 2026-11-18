@@ -8,10 +8,13 @@ export type AppWorkerData = {
   createDelayMs?: number
   // Crashes once if this file exists, deleting it first.
   crashOnceFile?: string
-  // `hang` never settles; `block` never yields the thread again.
-  stop?: 'hang' | 'block' | 'throw'
+  // `hang` never settles; `block` never yields the thread again; `drain`
+  // settles once the stop signal aborts, like a server with an open request.
+  stop?: 'hang' | 'block' | 'throw' | 'drain'
   // Patches wait until the test releases them, then are rejected.
   holdPatch?: boolean
+  // Advertised as this worker's upstream; nothing listens on it.
+  upstream?: string
 }
 
 // Every event reaches the test through this channel.
@@ -48,6 +51,13 @@ export default defineRuntimeWorker<AppWorkerData, { app: true }>({
         // Crash only after the test has observed readiness of the entire generation.
         // A short timer could instead crash during sibling startup on a busy runner.
         channel.onmessage = (event) => {
+          if (event.data?.busy === data.id) {
+            // Holds the thread, so whatever the host sends meanwhile queues.
+            emit(data.id, 'busy')
+            const until = Date.now() + event.data.ms
+            while (Date.now() < until);
+            return
+          }
           if (
             event.data?.crash === data.id &&
             data.crashOnceFile &&
@@ -57,10 +67,18 @@ export default defineRuntimeWorker<AppWorkerData, { app: true }>({
             throw new Error(`crash ${data.id}`)
           }
         }
-        return []
+        return data.upstream
+          ? [{ type: 'http' as const, url: data.upstream }]
+          : []
       },
-      async stop() {
+      async stop(options) {
         emit(data.id, 'stop')
+        if (data.stop === 'drain') {
+          await new Promise((resolve) =>
+            options?.signal.addEventListener('abort', resolve),
+          )
+          emit(data.id, 'forced')
+        }
         if (data.stop === 'hang') await new Promise(() => {})
         // oxlint-disable-next-line no-empty
         if (data.stop === 'block') for (;;) {}

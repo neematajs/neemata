@@ -20,10 +20,18 @@ import { attempt, causeErrors, closeWithin, within } from '../lifetime.ts'
 import { parseRuntimeStartResult } from '../schemas/runtime.ts'
 import { normalizeError } from '../utils.ts'
 
+// The share of a worker's stop budget its runtime may spend draining. The rest
+// is for what follows the drain: force-closing what is left, the logger flush
+// and the exit, then the host's own hooks, proxy and plugins.
+const DRAIN_SHARE = 2 / 3
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1
+
 /** One runtime the user's worker created, and the scope that stops it. */
 type Generation = {
   readonly scope: Scope.Closeable
   readonly runtime: NeemRuntime
+  /** Aborts this generation's stop signal ahead of a worker stop. */
+  readonly forceStop: AbortController
 }
 
 export type Bootstrap = {
@@ -64,6 +72,9 @@ export class WorkerRuntime {
   private upstreams: readonly NeemRuntimeUpstream[] = []
   private replacing = false
   private stopped = false
+  // Aborts the stop signal of every generation once a worker stop has used
+  // its drain share.
+  private readonly forceStop = new AbortController()
 
   constructor(options: WorkerRuntimeOptions) {
     this.options = options
@@ -123,6 +134,8 @@ export class WorkerRuntime {
       const previous = this.current
       if (previous) {
         this.current = undefined
+        // A reload has no drain budget: the old generation makes way at once.
+        previous.forceStop.abort()
         const errors = yield* closeScope(previous.scope)
         if (errors.length > 0) return yield* Effect.fail(aggregate(errors))
       }
@@ -155,6 +168,7 @@ export class WorkerRuntime {
   stop(deadline: Deadline): Effect.Effect<readonly Error[]> {
     return Effect.gen({ self: this }, function* () {
       this.stopped = true
+      this.scheduleForceStop(deadline)
       const errors: Error[] = []
       // The interrupt only ends waits; an acquisition in flight completes and
       // is released at once, inside the fiber joined here.
@@ -174,6 +188,15 @@ export class WorkerRuntime {
       }
       return errors
     })
+  }
+
+  private scheduleForceStop(deadline: Deadline): void {
+    const delay = deadline.remaining() * DRAIN_SHARE
+    // setTimeout treats a delay beyond its 32-bit range as an immediate one.
+    if (delay > MAX_TIMER_DELAY_MS) return
+    const timer = setTimeout(() => this.forceStop.abort(), delay)
+    // Nothing else may keep the thread alive once the runtime has stopped.
+    timer.unref()
   }
 
   private start(
@@ -218,13 +241,15 @@ export class WorkerRuntime {
         return Effect.fail(new Error('Neem runtime stopped'))
       }
       const scope = Scope.forkUnsafe(this.root)
+      const forceStop = new AbortController()
+      const signal = AbortSignal.any([this.forceStop.signal, forceStop.signal])
       return Effect.acquireRelease(
         attempt(() => worker.createRuntime(context)),
-        (runtime) => attempt(() => runtime.stop()).pipe(Effect.orDie),
+        (runtime) => attempt(() => runtime.stop({ signal })).pipe(Effect.orDie),
       ).pipe(
         Scope.provide(scope),
         Effect.map((runtime) => {
-          const generation = { scope, runtime }
+          const generation = { scope, runtime, forceStop }
           this.current = generation
           return generation
         }),
@@ -252,6 +277,8 @@ export class WorkerRuntime {
 
   private discard(generation: Generation): Effect.Effect<void> {
     if (this.current === generation) this.current = undefined
+    // It never served, or cannot stay: nothing in it is worth draining.
+    generation.forceStop.abort()
     return closeScope(generation.scope).pipe(
       Effect.flatMap((errors) =>
         Effect.sync(() => {

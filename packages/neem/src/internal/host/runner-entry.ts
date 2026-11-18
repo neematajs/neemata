@@ -30,6 +30,7 @@ import { RunnerRpcs } from '../protocol.ts'
 import { inheritSourceMaps } from '../source-maps.ts'
 import { importDefault } from '../utils.ts'
 import { WorkerExit } from '../worker-exit.ts'
+import { exitBudget } from './lifecycle.ts'
 
 // Before user code loads; see `enableDefaultSourceMaps`.
 inheritSourceMaps()
@@ -147,10 +148,9 @@ const handlers = RunnerRpcs.toLayer({
   plan: () => serial.withPermit(plan),
   start: ({ threads }) => serial.withPermit(start(threads)),
   stop: () => stop,
-  shutdown: ({ timeoutMs }) =>
+  shutdown: ({ exitBy }) =>
     Effect.gen(function* () {
-      // The host's wait for the exit began when it sent this.
-      const deadline = yield* Deadline.make(timeoutMs)
+      const deadline = yield* Deadline.make(exitBudget(exitBy))
       exit.logger?.trace('Neem host runner shutting down')
       // Without an earlier stop, a host still being created would outlive
       // the runner.
