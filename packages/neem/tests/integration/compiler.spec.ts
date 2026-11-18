@@ -449,8 +449,7 @@ describe('Neem compiler', () => {
       try {
         expect(devSpy.dev).toHaveBeenCalledTimes(1)
         expect(devSpy.dev.mock.calls[0]?.[2]?.watch).toMatchObject({
-          usePolling: true,
-          pollInterval: 25,
+          watcher: { usePolling: true, pollInterval: 25 },
         })
         await watcher.addPatchClient('api', 'client')
         expect(

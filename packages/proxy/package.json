@@ -37,9 +37,9 @@
     ]
   },
   "devDependencies": {
-    "@napi-rs/cli": "3.5.1",
+    "@napi-rs/cli": "3.10.12",
     "@types/ws": "^8.18.1",
-    "ws": "^8.18.3"
+    "ws": "^8.23.0"
   },
   "files": [
     "dist/index.js",

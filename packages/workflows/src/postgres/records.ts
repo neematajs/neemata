@@ -91,11 +91,27 @@ function read({ column, type }: Field) {
   return column
 }
 
+/**
+ * Named, rather than inferred, because `without` nests it: the expanded type
+ * of a table outgrows what the declaration emitter will write.
+ */
+type Rows<Stored extends object> = {
+  readonly row: string
+  readonly rows: string
+  readonly upsert: (param: string) => string
+  readonly update: (param: string) => string
+  readonly decode: (row: readonly unknown[]) => Stored
+  readonly latest: (records?: readonly Stored[]) => readonly Stored[]
+  readonly without: <Left extends keyof Stored & string>(
+    ...left: readonly Left[]
+  ) => Rows<Omit<Stored, Left>>
+}
+
 function table<Stored extends object>(
   name: string,
   key: readonly (keyof Stored & string)[],
   columns: Columns<Stored>,
-) {
+): Rows<Stored> {
   const fields = Object.entries<Column | Readonly<Record<string, Column>>>(
     columns,
   ).flatMap(([field, spec]): Field[] =>
@@ -114,9 +130,9 @@ function rows<Stored extends object>(
   name: string,
   key: readonly (keyof Stored & string)[],
   fields: readonly Field[],
-) {
-  const keyFields = key.map(
-    (field) => fields.find(({ path }) => path[0] === field)!,
+): Rows<Stored> {
+  const keyFields = key.map((field) =>
+    fields.find(({ path }) => path[0] === field)!,
   )
   const keyColumns = keyFields.map(({ column }) => column)
   const names = fields.map(({ column }) => column)

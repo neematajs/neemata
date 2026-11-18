@@ -22,11 +22,12 @@ export default createEffectRuntime({
 ```ts
 // neem.worker.ts — HTTP is application code, not part of the preset.
 import { createServer } from 'node:http'
+
 import { NodeHttpServer } from '@effect/platform-node'
 import { defineEffectWorker } from '@nmtjs/effect/neem/worker'
 import * as Effect from 'effect/Effect'
-import * as Layer from 'effect/Layer'
 import { HttpServer, HttpServerResponse } from 'effect/http'
+import * as Layer from 'effect/Layer'
 
 export default defineEffectWorker(() => ({
   layer: Layer.empty,

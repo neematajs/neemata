@@ -129,7 +129,7 @@ class Waiting {
   #push(entry: { readonly ordinal: number; readonly id: number }) {
     const heap = this.#heap
     heap.push(entry)
-    for (let at = heap.length - 1; at > 0; ) {
+    for (let at = heap.length - 1; at > 0;) {
       const parent = (at - 1) >> 1
       if (!before(heap[at]!, heap[parent]!)) break
       ;[heap[at], heap[parent]] = [heap[parent]!, heap[at]!]
@@ -143,7 +143,7 @@ class Waiting {
     const last = heap.pop()!
     if (heap.length > 0) {
       heap[0] = last
-      for (let at = 0; ; ) {
+      for (let at = 0; ;) {
         const left = 2 * at + 1
         const right = left + 1
         let least = at

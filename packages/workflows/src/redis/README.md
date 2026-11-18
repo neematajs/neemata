@@ -173,7 +173,7 @@ was reconnecting is lost, and workers find the work by polling.
   way.
 - **Durability is the server's.** A commit is acknowledged when Redis has
   applied it, not when it is on disk or on a replica: with `appendfsync
-everysec` a crash may lose the last second, and a failover may lose what a
+  everysec` a crash may lose the last second, and a failover may lose what a
   replica had not received. The engine then sees an older, consistent state:
   what was read or claimed before it is void, as the tokens tell. The turns
   that order runs and commands are still counted by the server and may be

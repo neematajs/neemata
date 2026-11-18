@@ -5,7 +5,7 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  rolldown: ^1.2.15
+  rolldown: ^1.3.2
   zod: ^4.4.3
 
 # 3 days, in minutes.
@@ -15,45 +15,3 @@ minimumReleaseAgeExclude:
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
-  # The workspace is pinned to Effect 4.1.0 (published 2026-10-29). Only these
-  # versions are admitted early: any later release still waits out the policy.
-  # These entries are redundant from 2026-11-02 and can be removed.
-  - effect@4.1.0
-  - '@effect/platform-node@4.1.0'
-  - '@effect/platform-node-shared@4.1.0'
-  - '@effect/sql-pg@4.1.0'
-  - '@effect/sql-pglite@4.1.0'
-  - '@effect/vitest@4.1.0'
-  # Rolldown 1.2.15 (published 2026-10-21) is admitted early, with its exact
-  # platform binaries and @oxc-project/types pin; later releases still wait out
-  # the policy. These entries are redundant from 2026-10-24 and can be removed.
-  - rolldown@1.2.15
-  - '@rolldown/binding-android-arm-eabi@1.2.15'
-  - '@rolldown/binding-android-arm64@1.2.15'
-  - '@rolldown/binding-darwin-arm64@1.2.15'
-  - '@rolldown/binding-darwin-x64@1.2.15'
-  - '@rolldown/binding-freebsd-x64@1.2.15'
-  - '@rolldown/binding-linux-arm-gnueabihf@1.2.15'
-  - '@rolldown/binding-linux-arm64-gnu@1.2.15'
-  - '@rolldown/binding-linux-arm64-musl@1.2.15'
-  - '@rolldown/binding-linux-ppc64-gnu@1.2.15'
-  - '@rolldown/binding-linux-s390x-gnu@1.2.15'
-  - '@rolldown/binding-linux-x64-gnu@1.2.15'
-  - '@rolldown/binding-linux-x64-musl@1.2.15'
-  - '@rolldown/binding-openharmony-arm64@1.2.15'
-  - '@rolldown/binding-win32-arm64-msvc@1.2.15'
-  - '@rolldown/binding-win32-x64-msvc@1.2.15'
-  - '@oxc-project/types@0.155.0'
-  # tsrs 0.18.0-ts7.1.0-dev.20260929 (published 2026-10-19) is admitted early, with its exact platform
-  # binaries; later releases still wait out the policy. These entries are
-  # redundant from 2026-10-22 and can be removed.
-  - tsrs@0.18.0-ts7.1.0-dev.20260929
-  - '@tsrs/darwin-arm64@0.18.0-ts7.1.0-dev.20260929'
-  - '@tsrs/linux-arm64-gnu@0.18.0-ts7.1.0-dev.20260929'
-  - '@tsrs/linux-arm64-musl@0.18.0-ts7.1.0-dev.20260929'
-  - '@tsrs/linux-x64-gnu@0.18.0-ts7.1.0-dev.20260929'
-  - '@tsrs/linux-x64-musl@0.18.0-ts7.1.0-dev.20260929'
-  # drizzle-orm 1.0.0-rc.5 (published 2026-10-21) is admitted early; later
-  # releases still wait out the policy. This entry is redundant from 2026-10-25
-  # and can be removed.
-  - drizzle-orm@1.0.0-rc.5

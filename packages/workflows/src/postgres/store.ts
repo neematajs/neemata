@@ -162,7 +162,7 @@ const json = (value: unknown) => JSON.stringify(value)
  */
 function compact(sql: string) {
   let out = ''
-  for (let at = 0; at < sql.length; ) {
+  for (let at = 0; at < sql.length;) {
     const char = sql[at]!
     if (char === "'" || char === '"') {
       // A quote doubled within is the end of one part and the start of the
@@ -1511,14 +1511,13 @@ export const make = Effect.fnUntraced(function* (
         )
         const records: OpenRecords = {
           run: heads.get(runId)!,
-          nodes: read.map(
-            ([whole, row]): NodeRead =>
-              whole
-                ? { view: 'full', record: nodes.decode(row) }
-                : {
-                    view: 'withoutInput',
-                    record: nodesWithoutInput.decode(row),
-                  },
+          nodes: read.map(([whole, row]): NodeRead =>
+            whole
+              ? { view: 'full', record: nodes.decode(row) }
+              : {
+                  view: 'withoutInput',
+                  record: nodesWithoutInput.decode(row),
+                },
           ),
           childSets,
           attempts: current.map((row) => attempts.decode(row)),

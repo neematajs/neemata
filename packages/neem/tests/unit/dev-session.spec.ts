@@ -89,12 +89,10 @@ vi.mock('../../src/internal/host/controller.ts', () => ({
     })
     stop = vi.fn(async () => this.thread('thread-stopped'))
     reloadRuntime = vi.fn(async () => {})
-    applyPatch = vi.fn(
-      async (): Promise<RuntimePatchResult> => ({
-        outcome: 'applied',
-        deliveredFiles: [],
-      }),
-    )
+    applyPatch = vi.fn(async (): Promise<RuntimePatchResult> => ({
+      outcome: 'applied',
+      deliveredFiles: [],
+    }))
     constructor(options: HostControllerOptions) {
       this.options = options
       state.controllers.push(this as unknown as FakeController)

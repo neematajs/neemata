@@ -41,8 +41,8 @@
     }
   },
   "devDependencies": {
-    "@effect/vitest": "4.1.0",
-    "effect": "4.1.0",
+    "@effect/vitest": "4.1.4",
+    "effect": "4.1.4",
     "ioredis": "^5.11.1",
     "iovalkey": "^0.3.3"
   },

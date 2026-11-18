@@ -226,8 +226,8 @@ timestamp; pass relative budgets through the factories.
 ## Embed in an Effect application
 
 ```ts
-import * as Effect from 'effect/Effect'
 import { loadSnapshot, serve } from '@nmtjs/neem/host'
+import * as Effect from 'effect/Effect'
 
 const program = Effect.scoped(
   Effect.gen(function* () {

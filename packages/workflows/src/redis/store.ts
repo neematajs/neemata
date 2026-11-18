@@ -764,7 +764,7 @@ export const make = Effect.fnUntraced(function* (options: RedisOptions = {}) {
   ): Effect.Effect<A, E | StaleClaim | StorageError> =>
     Effect.gen(function* () {
       let scope = initial
-      for (let lost = 0; lost < maxAttempts; ) {
+      for (let lost = 0; lost < maxAttempts;) {
         const { snapshot, guards: seen, minted } = yield* read(scope)
         const planned = plan(snapshot)
         if (planned._tag === 'Fail') return yield* Effect.fail(planned.error)
