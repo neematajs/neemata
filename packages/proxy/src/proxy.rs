@@ -622,6 +622,8 @@ impl Proxy {
 
     /// Replaces the upstreams of every application: those not listed are left with none. The
     /// whole list is validated first, so an invalid entry rejects the call and changes nothing.
+    /// A valid list then changes the pools one after another, so a request during the call can
+    /// see one application's new upstreams and another's old ones.
     #[napi]
     pub fn set_upstreams<'env>(
         &self,
@@ -674,8 +676,10 @@ impl Proxy {
     }
 }
 
-/// Validates the next upstream sets, then updates the affected pools and publishes them to the
-/// router once. The caller holds `update_lock`.
+/// Validates the next upstream sets and resolves new upstreams, then changes the affected pools
+/// one after another: existing pools in place, each visible to requests at once, and created or
+/// removed pools when the router is published at the end. Nothing makes the change atomic across
+/// pools. The caller holds `update_lock`.
 async fn apply_upstreams<F>(
     inner: &Mutex<ProxyInner>,
     runtime: &tokio::runtime::Handle,
@@ -773,7 +777,11 @@ where
         })
         .collect::<HashMap<_, _>>();
 
-    // Nothing below can fail, so the change applies completely.
+    // Validation and resolution are done, so the change can no longer be rejected. The `?`s
+    // below are internal errors that do not happen in practice: `lb::Members` discovery never
+    // fails, and the mutex is poisoned only by a panic. If one did occur, the pools changed
+    // before it would stay changed while the other pools, the recorded upstreams and the router
+    // stay as they were.
     let mut created = Vec::new();
     let mut removed = Vec::new();
     let mut to_probe = Vec::new();
