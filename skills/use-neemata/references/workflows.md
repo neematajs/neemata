@@ -376,7 +376,7 @@ decoded run, written in one commit with its command and saved definition.
 Other calls:
 
 - `send(Durable | [revisions], runId | { unique, scope? }, family, key,
-value)`: an input for a durable run, see [Inputs](#inputs). Fails with
+  value)`: an input for a durable run, see [Inputs](#inputs). Fails with
   `InputRefused` (`reason`, `input`, `runId?`, `found?`).
 - `resume(runId, { expectedVersion?, blockers? })`: unblocks a blocked
   durable run, see [Blocking and resuming](#blocking-and-resuming).
@@ -399,7 +399,7 @@ value)`: an input for a durable run, see [Inputs](#inputs). Fails with
   `inspect` (`{ detail, definition }`); `getDetail` and `inspect` take
   `{ children: true }` to add `childDetails` (one level, with attempts),
   `getDefinition({ kind, name,
-revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
+  revision })`. Filters: `kind`, `name`, `revision` (`null` = unversioned),
   `status`, `parentRunId` (`null` = roots), `rootRunId`, `tags`, `input`
   (JSON containment), `createdBefore`, `activeBefore`, `limit` (100),
   `cursor`. Records are stored JSON with Unix-ms times; `decodeRun(decl, run)`
@@ -507,8 +507,8 @@ activity's workflow), `revision`, `attemptId`, `deliveries`, and
 available is the wait for a worker (a retry's backoff is not counted).
 
 ```ts
-import { Instrumentation } from '@nmtjs/workflows'
 import type { Headers } from '@nmtjs/workflows'
+import { Instrumentation } from '@nmtjs/workflows'
 
 const traceparent = (span: Tracer.Span) =>
   `00-${span.traceId}-${span.spanId}-${span.sampled ? '01' : '00'}`

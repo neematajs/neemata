@@ -54,7 +54,7 @@
     "@nmtjs/common": "workspace:*",
     "@nmtjs/neem": "workspace:*",
     "@nmtjs/prom-client": "workspace:^",
-    "pino": "^10.3.1"
+    "pino": "^10.4.0"
   },
   "files": [
     "dist",

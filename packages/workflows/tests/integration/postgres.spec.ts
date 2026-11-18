@@ -1092,13 +1092,10 @@ function adapter(real: boolean) {
             const scope = { runs: [run.id], keys: ['k'] }
             // Refused, stale and broken: each is undone with its locks.
             yield* Effect.exit(
-              store.transact(
-                scope,
-                (): Planned<never, string> => ({
-                  _tag: 'Fail',
-                  error: 'no',
-                }),
-              ),
+              store.transact(scope, (): Planned<never, string> => ({
+                _tag: 'Fail',
+                error: 'no',
+              })),
             )
             yield* Effect.exit(
               store.transact(scope, () =>

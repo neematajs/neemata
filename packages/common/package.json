@@ -46,7 +46,7 @@
     }
   },
   "devDependencies": {
-    "effect": "4.1.0"
+    "effect": "4.1.4"
   },
   "files": [
     "dist",

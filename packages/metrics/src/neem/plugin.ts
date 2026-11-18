@@ -1,3 +1,4 @@
+import type { NeemPluginHooks } from '@nmtjs/neem'
 import { definePluginHooks } from '@nmtjs/neem'
 
 import type { MetricsServerConfig } from '../server.ts'
@@ -17,7 +18,9 @@ import { createNeemMetricsLifecycle } from './observer.ts'
 
 type MetricsPluginOptions = { server?: MetricsServerConfig }
 
-export default definePluginHooks((ctx) => {
+// Annotated: inferred, the spread hooks would name Effect, which this package
+// does not depend on.
+export default definePluginHooks((ctx): NeemPluginHooks => {
   const options = parseOptions(ctx.options)
   // Options were frozen into the manifest at build time; the factory runs at
   // start, so the live environment gets the final say on server/push knobs.

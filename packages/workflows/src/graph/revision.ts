@@ -76,30 +76,26 @@ export function describeDefinition(
 
   const steps = definition.kind === 'task' ? [] : definition.steps
   const uses = definition.kind === 'task' ? [] : (definition.uses ?? [])
-  const used = uses.map(
-    (target): RevisionBinding => ({
-      nodeName: USES,
+  const used = uses.map((target): RevisionBinding => ({
+    nodeName: USES,
+    target: {
+      kind: target.kind,
+      name: target.name,
+      // `durable(...)` refuses a target without a revision.
+      revision: target.revision!,
+    },
+  }))
+  const bindings = steps.flatMap((step) =>
+    stepTargets(step).map(({ caseKey, target }): RevisionBinding => ({
+      nodeName: step.name,
+      ...(caseKey === undefined ? {} : { caseKey }),
       target: {
         kind: target.kind,
         name: target.name,
-        // `durable(...)` refuses a target without a revision.
+        // `workflow(...)` refused a versioned workflow whose target is not.
         revision: target.revision!,
       },
-    }),
-  )
-  const bindings = steps.flatMap((step) =>
-    stepTargets(step).map(
-      ({ caseKey, target }): RevisionBinding => ({
-        nodeName: step.name,
-        ...(caseKey === undefined ? {} : { caseKey }),
-        target: {
-          kind: target.kind,
-          name: target.name,
-          // `workflow(...)` refused a versioned workflow whose target is not.
-          revision: target.revision!,
-        },
-      }),
-    ),
+    })),
   )
   return {
     ...base,

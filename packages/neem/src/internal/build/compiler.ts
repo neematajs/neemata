@@ -446,9 +446,11 @@ async function watchWorkerTarget(
     rebuildStrategy: 'never',
     watch: {
       skipWrite: false,
-      useDebounce: true,
-      debounceDuration: watchConfig?.debounceDelay ?? 50,
-      ...resolvePollingOptions(watchConfig),
+      watcher: {
+        useDebounce: true,
+        debounceDelay: watchConfig?.debounceDelay ?? 50,
+        ...resolvePollingOptions(watchConfig),
+      },
     },
     onOutput(result) {
       // DevEngine does not await callbacks. Keep the application promise so a

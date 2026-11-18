@@ -365,17 +365,15 @@ export function storeContract<R>(
                   status: 'running',
                 }),
               ),
-              children: pairs.map(
-                ([nodeName, childKey]): StoredChild => ({
-                  ...record,
-                  ...times,
-                  nodeName,
-                  childKey,
-                  kind: 'task',
-                  status: 'pending',
-                  attemptCount: 0,
-                }),
-              ),
+              children: pairs.map(([nodeName, childKey]): StoredChild => ({
+                ...record,
+                ...times,
+                nodeName,
+                childKey,
+                kind: 'task',
+                status: 'pending',
+                attemptCount: 0,
+              })),
             },
             undefined,
           )
@@ -511,13 +509,10 @@ export function storeContract<R>(
         const run = yield* create(store)
 
         const refused = yield* Effect.flip(
-          store.transact(
-            { runs: [run.id] },
-            (): Planned<never, 'no'> => ({
-              _tag: 'Fail',
-              error: 'no',
-            }),
-          ),
+          store.transact({ runs: [run.id] }, (): Planned<never, 'no'> => ({
+            _tag: 'Fail',
+            error: 'no',
+          })),
         )
         expect(refused).toBe('no')
 
@@ -2858,15 +2853,13 @@ export function storeContract<R>(
 
         // Asked for by a plan, as anything it needs is.
         let calls = 0
-        const seen = yield* store.transact(
-          {},
-          (snapshot): Planned<Snapshot> =>
-            calls++ === 0
-              ? {
-                  _tag: 'Need',
-                  scope: { dead: [lost.id, held!.id, missing!, 'no-command'] },
-                }
-              : commit({}, snapshot),
+        const seen = yield* store.transact({}, (snapshot): Planned<Snapshot> =>
+          calls++ === 0
+            ? {
+                _tag: 'Need',
+                scope: { dead: [lost.id, held!.id, missing!, 'no-command'] },
+              }
+            : commit({}, snapshot),
         )
         expect(Array.from(seen.dead)).toEqual([
           [lost.id, (yield* listed(store))[0]],
