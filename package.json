@@ -39,5 +39,5 @@
     "tsrs": "0.25.0-ts7.1.0-beta",
     "vitest": "5.1.0"
   },
-  "packageManager": "pnpm@12.15.0"
+  "packageManager": "pnpm@12.21.0"
 }
