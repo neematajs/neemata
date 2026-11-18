@@ -10,10 +10,17 @@ export const DEFAULT_HOOK_TIMEOUT_MS = 5_000
 // spent that budget flushing.
 const EXIT_BUDGET_MARGIN_MS = 250
 
-// The budget a thread is told it has left to exit in, out of what the host
-// still waits for it.
-export function exitBudget(remainingMs: number): number {
-  return Math.max(0, remainingMs - EXIT_BUDGET_MARGIN_MS)
+// When a thread is told to have exited by, out of what the host still waits
+// for it. A point in time rather than a duration: the request can sit queued
+// behind the thread's own work, and that wait must come out of the budget.
+// Wall-clock time is the one clock a host and its threads share.
+export function exitDeadline(remainingMs: number): number {
+  return Date.now() + Math.max(0, remainingMs - EXIT_BUDGET_MARGIN_MS)
+}
+
+/** What a thread has left of the exit deadline its host sent. */
+export function exitBudget(exitBy: number): number {
+  return Math.max(0, exitBy - Date.now())
 }
 
 export function resolveLifecycle(

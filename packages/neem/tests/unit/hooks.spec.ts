@@ -74,4 +74,26 @@ describe('callHook', () => {
     ).rejects.toThrow('Neem hook [server:stop] did not finish within 50ms')
     expect(Date.now() - startedAt).toBeLessThan(1_000)
   })
+
+  it('interrupts an Effect hook that runs out and skips the callbacks after it', async () => {
+    const hooks = createHostHooks()
+    const interrupted = Promise.withResolvers<void>()
+    const later = vi.fn()
+    hooks.hook('server:stop', () =>
+      Effect.never.pipe(
+        Effect.onInterrupt(() => Effect.sync(() => interrupted.resolve())),
+      ),
+    )
+    hooks.hook('server:stop', later)
+
+    await expect(
+      Effect.runPromise(
+        callHook({ hooks, logger, timeout: 50 }, 'server:stop', {
+          mode: 'production',
+        }),
+      ),
+    ).rejects.toThrow('did not finish within 50ms')
+    await interrupted.promise
+    expect(later).not.toHaveBeenCalled()
+  }, 2_000)
 })

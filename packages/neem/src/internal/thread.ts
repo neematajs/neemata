@@ -188,8 +188,8 @@ export class Thread {
           }),
         onFailure: (error) => this.fail(error),
         onExit: () => this.onExit(),
-        requestExit: (client, timeoutMs) =>
-          client.stop({ timeoutMs }, { discard: true }),
+        requestExit: (client, exitBy) =>
+          client.stop({ exitBy }, { discard: true }),
       })
       this.worker = worker
       // Registered last, so it runs first: nothing routes to a stopping worker.

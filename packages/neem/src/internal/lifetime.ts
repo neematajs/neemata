@@ -204,24 +204,42 @@ export const closeWithin = (
   label: string,
   scope: Scope.Closeable,
   deadline: Deadline,
+  budget = 'the stop budget',
 ): Effect.Effect<readonly Error[]> =>
   Effect.gen(function* () {
     const closing = yield* Effect.forkDetach(Scope.close(scope, Exit.void))
     const exit = yield* within(Fiber.await(closing), deadline)
     if (Option.isNone(exit)) {
-      return [new Error(`${label} did not finish within the stop budget`)]
+      return [new Error(`${label} did not finish within ${budget}`)]
     }
     return Exit.isFailure(exit.value) ? causeErrors(exit.value.cause) : []
   })
 
-/** A child scope whose arbitrary finalizers cannot extend the parent's deadline. */
-export const boundedScope = (lifetime: Lifetime, label: string) =>
+/**
+ * A child scope whose arbitrary finalizers cannot extend the parent's
+ * deadline, nor take more than `timeout` of it when one is given.
+ */
+export const boundedScope = (
+  lifetime: Lifetime,
+  label: string,
+  timeout = Infinity,
+) =>
   Effect.gen(function* () {
     const scope = Scope.makeUnsafe()
     yield* Scope.addFinalizer(
       lifetime.scope,
-      Effect.suspend(() =>
-        closeWithin(label, scope, lifetime.deadline()).pipe(
+      Effect.suspend(() => {
+        const deadline = lifetime.deadline()
+        const closing =
+          timeout < deadline.remaining()
+            ? closeWithin(
+                label,
+                scope,
+                Deadline.after(timeout, lifetime.clock),
+                `${timeout}ms`,
+              )
+            : closeWithin(label, scope, deadline)
+        return closing.pipe(
           Effect.flatMap((errors) =>
             errors.length
               ? Effect.die(
@@ -229,8 +247,8 @@ export const boundedScope = (lifetime: Lifetime, label: string) =>
                 )
               : Effect.void,
           ),
-        ),
-      ),
+        )
+      }),
     )
     return scope
   })

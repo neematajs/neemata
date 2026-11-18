@@ -20,7 +20,7 @@ import { WorkerError, WorkerReceiveError } from 'effect/workers/WorkerError'
 
 import type { Lifetime } from './lifetime.ts'
 import type { WorkerFatal } from './protocol.ts'
-import { exitBudget } from './host/lifecycle.ts'
+import { exitDeadline } from './host/lifecycle.ts'
 import { within } from './lifetime.ts'
 import { FATAL_FRAME } from './protocol.ts'
 import { normalizeError } from './utils.ts'
@@ -68,10 +68,10 @@ export type SpawnWorkerOptions<Rpcs extends Rpc.Any> = {
   onFailure: (error: Error) => void
   /** Called when the worker exits, for whatever reason. */
   onExit?: (code: number) => void
-  /** Asks the worker to exit; its exit is the acknowledgement. */
+  /** Asks the worker to exit by `exitBy`; its exit is the acknowledgement. */
   requestExit: (
     client: RpcClient.RpcClient<Rpcs, RpcClientError>,
-    timeoutMs: number,
+    exitBy: number,
   ) => Effect.Effect<void, unknown>
 }
 
@@ -281,8 +281,8 @@ export const spawnWorker = <Rpcs extends Rpc.Any>(
       Effect.suspend(() => {
         releasing = true
         if (Deferred.isDoneUnsafe(exited)) return Effect.void
-        const timeoutMs = exitBudget(lifetime.deadline().remaining())
-        return options.requestExit(client, timeoutMs).pipe(Effect.ignore)
+        const exitBy = exitDeadline(lifetime.deadline().remaining())
+        return options.requestExit(client, exitBy).pipe(Effect.ignore)
       }),
     )
 

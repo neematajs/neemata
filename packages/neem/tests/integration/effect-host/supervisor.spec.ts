@@ -281,9 +281,57 @@ describe('RuntimeSupervisor', () => {
     const errors = await Effect.runPromise(
       supervisor.stop(Deadline.after(1_000)),
     )
-    expect(errors).toEqual([])
+    expect(errors).toMatchObject([
+      {
+        message: 'Runtime [app] routes were not withdrawn',
+        cause: { message: 'timed out' },
+      },
+    ])
     expect(workers.events).toContain('unrouted:stop')
     expect(registry.size).toBe(0)
+  })
+
+  it('reports a stop that could not withdraw its routes, and still stops its threads', async () => {
+    workers = listenToWorkers()
+    let failing = false
+    const { supervisor, registry } = createSupervisor({
+      plan: [{ id: 'routed', upstream: 'http://127.0.0.1:1' }],
+      onUpstreamsChange: () =>
+        failing ? Effect.fail(new Error('proxy refused')) : undefined,
+    })
+    await Effect.runPromise(supervisor.start())
+    failing = true
+
+    const errors = await Effect.runPromise(
+      supervisor.stop(Deadline.after(5_000)),
+    )
+    expect(errors).toMatchObject([
+      {
+        message: 'Runtime [app] routes were not withdrawn',
+        cause: { message: 'proxy refused' },
+      },
+    ])
+    expect(workers.events).toContain('routed:stop')
+    expect(registry.size).toBe(0)
+  })
+
+  it('counts the time a stop request waits for a busy worker against its budget', async () => {
+    workers = listenToWorkers()
+    const { supervisor } = createSupervisor({
+      plan: [{ id: 'busy', stop: 'drain' }],
+    })
+    await Effect.runPromise(supervisor.start())
+    // The stop request reaches the worker two thirds into the budget. Told
+    // only how long it has, the worker would start counting then and signal
+    // its drain to end after the host has already terminated it.
+    workers.busy('busy', 2_000)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const errors = await Effect.runPromise(
+      supervisor.stop(Deadline.after(3_000)),
+    )
+    expect(errors).toEqual([])
+    expect(workers.events).toContain('busy:forced')
   })
 
   it('stops a recovery whose route withdrawal never finishes, and its sibling cleanly', async () => {
@@ -316,7 +364,10 @@ describe('RuntimeSupervisor', () => {
     const errors = await Effect.runPromise(
       supervisor.stop(Deadline.after(2_000)),
     )
-    expect(errors).toEqual([])
+    // The stop's own withdrawal is stuck as well; nothing else fails.
+    expect(errors).toMatchObject([
+      { message: 'Runtime [app] routes were not withdrawn' },
+    ])
     expect(workers.events).toContain('sibling:stop')
     expect(registry.size).toBe(0)
   })

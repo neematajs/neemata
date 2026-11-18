@@ -10,10 +10,12 @@ const IDLE_REAP_INTERVAL_MS = 100
  * connections, close as soon as they are idle: `server.close()` alone closes
  * only the ones idle when it is called, so it would otherwise wait on a
  * connection that finished its response later. Once `signal` aborts (see
- * `NeemRuntimeStopOptions`), every remaining connection is closed.
+ * `NeemRuntimeStopOptions`), every remaining HTTP connection is closed and the
+ * promise resolves.
  *
- * Upgraded connections (WebSockets) are not tracked by the HTTP server; their
- * owner must close them.
+ * The HTTP server does not track upgraded connections (WebSockets) or TLS
+ * connections still in their handshake, so it cannot close them. Their owner
+ * should; any still open after the abort no longer hold this promise back.
  */
 export function closeHttpServer(
   server: Server,
@@ -25,15 +27,21 @@ export function closeHttpServer(
       () => server.closeIdleConnections(),
       IDLE_REAP_INTERVAL_MS,
     )
-    const force = () => server.closeAllConnections()
-    signal?.addEventListener('abort', force, { once: true })
-    server.close((error?: NodeJS.ErrnoException) => {
+    const settle = (error?: NodeJS.ErrnoException) => {
       clearInterval(reap)
       signal?.removeEventListener('abort', force)
       // A server that never listened or already closed has nothing to drain.
       if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') reject(error)
       else resolve()
-    })
+    }
+    // `close()` calls back only once every socket is gone, including the ones
+    // `closeAllConnections()` cannot reach, so a forced close does not wait.
+    const force = () => {
+      server.closeAllConnections()
+      settle()
+    }
+    signal?.addEventListener('abort', force, { once: true })
+    server.close(settle)
     if (signal?.aborted) force()
   })
 }

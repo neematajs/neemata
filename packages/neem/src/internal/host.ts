@@ -185,11 +185,10 @@ export class Host {
           if (current) {
             subsystems.runtimes.delete(runtimeName)
             // Detached from the server, nothing else would stop it, so this
-            // finishes even when a stop interrupts the reload.
+            // finishes even when a stop interrupts the reload. The stop
+            // withdraws the runtime's routes first, within its deadline.
             yield* Effect.uninterruptible(
-              this.syncProxy().pipe(
-                Effect.andThen(this.stopRuntime(current, this.freshDeadline())),
-              ),
+              this.stopRuntime(current, this.freshDeadline()),
             )
           }
           this.replaceSnapshot(snapshot)
@@ -535,7 +534,7 @@ export class Host {
           ),
         )
       },
-      onUpstreamsChange: () => this.syncProxy(),
+      onUpstreamsChange: () => this.publishRoutes(),
       // Syncing upstreams publishes health too: a recovered runtime is ready
       // before its new upstreams are routed.
       onStateChange: () =>
@@ -561,6 +560,10 @@ export class Host {
   // Proxy reconcile failures are logged and retried by the proxy itself; a
   // runtime's failure or recovery must not fail on them.
   private syncProxy(): Effect.Effect<void> {
+    return Effect.ignore(this.publishRoutes())
+  }
+
+  private publishRoutes(): Effect.Effect<void, Error> {
     return Effect.suspend(() => {
       const subsystems = this.subsystems
       const proxy = subsystems?.proxy
@@ -569,7 +572,7 @@ export class Host {
         runtimeName: runtime.name,
         upstreams: runtime.getUpstreams(),
       }))
-      return proxy.setUpstreams(upstreams).pipe(Effect.ignore)
+      return proxy.setUpstreams(upstreams)
     })
   }
 

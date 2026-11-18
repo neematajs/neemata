@@ -108,6 +108,29 @@ describe('Lifetime', () => {
     }
   }, 1000)
 
+  it('gives a bounded scope no more than its own timeout of a longer deadline', async () => {
+    const lifetime = Lifetime.make(5_000)
+    const finish = Deferred.makeUnsafe<void>()
+    const plugin = await Effect.runPromise(boundedScope(lifetime, 'Plugin', 50))
+    await Effect.runPromise(Scope.addFinalizer(plugin, Deferred.await(finish)))
+    try {
+      const startedAt = Date.now()
+      const errors = await Effect.runPromise(
+        lifetime.close(Deadline.after(5_000)),
+      )
+      expect(Date.now() - startedAt).toBeLessThan(1_000)
+      expect(errors[0]).toMatchObject({
+        errors: [
+          expect.objectContaining({
+            message: 'Plugin did not finish within 50ms',
+          }),
+        ],
+      })
+    } finally {
+      Deferred.doneUnsafe(finish, Effect.void)
+    }
+  })
+
   it('stops waiting for an uninterruptible close at the deadline', async () => {
     const scope = Scope.makeUnsafe()
     const finish = Deferred.makeUnsafe<void>()

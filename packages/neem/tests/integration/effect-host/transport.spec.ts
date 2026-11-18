@@ -42,8 +42,8 @@ async function worker(
       label: 'Test worker',
       describeFatal: (fatal) => new Error(fatal.message),
       onFailure: (error) => failures.push(error),
-      requestExit: (client, timeoutMs) =>
-        client.stop({ timeoutMs }, { discard: true }),
+      requestExit: (client, exitBy) =>
+        client.stop({ exitBy }, { discard: true }),
     }),
   )
   return { ...spawned, lifetime, failures, registry }

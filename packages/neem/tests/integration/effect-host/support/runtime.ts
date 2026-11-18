@@ -38,7 +38,7 @@ export function createSupervisor(options: {
   prepareRecovery?: () => Promise<void>
   onStateChange?: () => void
   // An Effect it returns stands in for the proxy reconciliation.
-  onUpstreamsChange?: () => void | Effect.Effect<void>
+  onUpstreamsChange?: () => void | Effect.Effect<void, Error>
   hooks?: HostHooks
   hookTimeout?: number
   // `hang` makes the runtime host's stop never settle.
@@ -127,6 +127,8 @@ export function listenToWorkers() {
   return {
     events,
     crash: (id: string) => channel.postMessage({ crash: id }),
+    /** Keeps the worker's thread busy, deaf to the host, for `ms`. */
+    busy: (id: string, ms: number) => channel.postMessage({ busy: id, ms }),
     release: (id: string) => channel.postMessage({ release: id }),
     waitFor: async (event: string, timeoutMs = 10_000) => {
       const until = Date.now() + timeoutMs

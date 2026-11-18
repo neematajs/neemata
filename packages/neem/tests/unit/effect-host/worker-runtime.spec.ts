@@ -110,10 +110,40 @@ describe('WorkerRuntime', () => {
       'first:start',
       'first:stop',
     ])
-    // Half of a budget this small, leaving the rest to finish the stop.
-    expect(abortedAfter).toBeGreaterThanOrEqual(250)
+    // Two thirds of the budget, leaving the rest to what follows the drain.
+    expect(abortedAfter).toBeGreaterThanOrEqual(350)
     expect(abortedAfter).toBeLessThan(550)
   })
+
+  it('force-stops a generation a reload replaces, with a fresh signal for the next', async () => {
+    const { runtime, events, worker, boot } = createHarness()
+    // Like a server with an open request: stops only once force-closed.
+    const drain: NeemRuntime['stop'] = (options) =>
+      new Promise<void>((resolve) => {
+        if (options!.signal.aborted) resolve()
+        options!.signal.addEventListener('abort', () => resolve())
+      })
+    boot(worker('first', { stop: drain }))
+    await Effect.runPromise(Deferred.await(runtime.ready))
+
+    let abortedAtStop: boolean | undefined
+    await Effect.runPromise(
+      runtime.replace(
+        worker('second', {
+          stop: (options) => {
+            abortedAtStop = options!.signal.aborted
+          },
+        }),
+      ),
+    )
+    expect(events).toContain('second:start')
+
+    expect(
+      await Effect.runPromise(runtime.stop(Deadline.after(5_000))),
+    ).toEqual([])
+    // The first generation's abort did not carry over.
+    expect(abortedAtStop).toBe(false)
+  }, 2_000)
 
   it('runs one patch at a time even when the caller stops waiting', async () => {
     const { runtime } = createHarness()

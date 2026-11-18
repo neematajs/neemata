@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net'
 import { Agent, createServer, get } from 'node:http'
+import { connect } from 'node:net'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -66,6 +67,32 @@ describe('closeHttpServer', () => {
     await closed
     expect(await hanging).toBe('ECONNRESET')
   })
+
+  it('resolves once the signal aborts although an upgraded connection stays open', async () => {
+    const { server } = await listen(() => {})
+    // Upgraded sockets leave the HTTP server's tracking, so it cannot close
+    // them, and `server.close()` never calls back while one is open.
+    server.on('upgrade', (_request, socket) => {
+      socket.write(
+        'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+      )
+    })
+    const { port } = server.address() as AddressInfo
+    const client = connect(port, '127.0.0.1')
+    client.write(
+      'GET / HTTP/1.1\r\nHost: neem\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n',
+    )
+    await new Promise((resolve) => client.once('data', resolve))
+
+    try {
+      const controller = new AbortController()
+      const closed = closeHttpServer(server, { signal: controller.signal })
+      setTimeout(() => controller.abort(), 50)
+      await closed
+    } finally {
+      client.destroy()
+    }
+  }, 2_000)
 
   it('resolves for a server that is not listening', async () => {
     await expect(closeHttpServer(createServer())).resolves.toBeUndefined()

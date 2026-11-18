@@ -293,9 +293,10 @@ export type NeemRuntimeServerHealth = NeemRuntimeServerSnapshot & {
 
 export type NeemRuntimeStopOptions = {
   /**
-   * Aborts shortly before the stop budget runs out: a graceful stop that is
-   * still waiting (e.g. on in-flight requests) should then force-close what
-   * remains, or the worker is terminated and the shutdown fails.
+   * Aborts once two thirds of the worker's stop budget are spent: a graceful
+   * stop that is still waiting (e.g. on in-flight requests) should then
+   * force-close what remains, or the worker is terminated and the shutdown
+   * fails. Already aborted when a development reload replaces the runtime.
    */
   signal: AbortSignal
 }

@@ -57,7 +57,8 @@ const patchResult = Schema.Union([
   }),
 ])
 const ExitBudget = {
-  timeoutMs: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** Wall-clock milliseconds; see `exitDeadline`. */
+  exitBy: Schema.Number,
 }
 
 export const ThreadRpcs = RpcGroup.make(

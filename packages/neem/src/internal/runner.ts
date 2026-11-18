@@ -63,8 +63,8 @@ export class HostRunner {
             if (runner) runner.failed = true
             options.onFailure(error)
           },
-          requestExit: (client, timeoutMs) =>
-            client.shutdown({ timeoutMs }, { discard: true }),
+          requestExit: (client, exitBy) =>
+            client.shutdown({ exitBy }, { discard: true }),
         }).pipe(
           Effect.map((worker) => {
             runner = new HostRunner(worker, settings.requestTimeout)
