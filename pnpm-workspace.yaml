@@ -8,11 +8,6 @@ catalog:
   rolldown: ^1.3.2
   zod: ^4.4.3
 
-# Experimental in pnpm 12: one entry per package version with its peer
-# versions as properties, so a peer bump touches only the lines that name it.
-lockfile:
-  format: v13
-
 # 3 days, in minutes.
 minimumReleaseAge: 4320
 
