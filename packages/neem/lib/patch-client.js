@@ -1,6 +1,6 @@
 // @ts-check
-// The DevEngine patch client for worker threads. Rolldown injects this file as
-// text beside its DevRuntime prelude (src/internal/build/dev-runtime.ts), so it
+// The DevEngine patch client for worker threads. Neem injects this file as text
+// after Rolldown's DevRuntime class (src/internal/build/dev-runtime.ts), so it
 // is a script: no imports, and nothing escapes the IIFE except the globals in
 // src/internal/worker/patch-globals.ts. It ships verbatim outside src because
 // tsc would rewrite it as a module. Keeping it transport-free lets Neem
@@ -12,7 +12,7 @@
  * @import { PatchClientResult } from '../src/internal/worker/protocol.ts'
  */
 ;(() => {
-  // @ts-expect-error DevRuntime is declared by the DevEngine prelude this client is injected beside.
+  // @ts-expect-error DevRuntime is declared by the common runtime injected before this client.
   const BaseRuntime = /** @type {DevRuntimeConstructor} */ (DevRuntime)
 
   class NeemHotContext {

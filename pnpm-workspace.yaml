@@ -5,13 +5,17 @@ allowBuilds:
   esbuild: true
 
 catalog:
-  rolldown: ^1.3.2
+  rolldown: ^1.3.4
   zod: ^4.4.3
 
 # 3 days, in minutes.
 minimumReleaseAge: 4320
 
 minimumReleaseAgeExclude:
+  # Rolldown releases fix dev-server memory use, so a fresh release is taken
+  # as soon as it is published.
+  - rolldown
+  - '@rolldown/*'
   # The stack installs proxy from npm, so a fresh release must be usable at once.
   - '@nmtjs/proxy'
   - '@nmtjs/proxy-*'
