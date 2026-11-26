@@ -7,7 +7,7 @@ import type {
   PatchClient,
   PatchGlobal,
 } from '../../src/internal/worker/patch-globals.ts'
-import { NEEM_DEV_RUNTIME } from '../../src/internal/build/dev-runtime.ts'
+import { NEEM_PATCH_CLIENT } from '../../src/internal/build/dev-runtime.ts'
 
 type HotContext = {
   data: Record<string, unknown>
@@ -283,9 +283,10 @@ describe('patch client', () => {
 
 function install() {
   testGlobal.__neem_patch_client_id__ = 'api:0'
-  // The prelude declares DevRuntime in the scope the client source runs in.
+  // In a build, the injected common runtime declares DevRuntime in the scope
+  // the client source runs in. The stub stands in for it here.
   const evaluate = runInThisContext(
-    `(DevRuntime) => {\n${NEEM_DEV_RUNTIME}\n}`,
+    `(DevRuntime) => {\n${NEEM_PATCH_CLIENT}\n}`,
   ) as (runtime: typeof StubDevRuntime) => void
   evaluate(StubDevRuntime)
   const client = testGlobal.__neem_patches__ as PatchClient

@@ -36,7 +36,7 @@ import type {
 import type { WorkerUpdate, WorkerUpdateBatch } from './updates.ts'
 import { mergeRolldownOptions } from '../../shared/rolldown.ts'
 import { normalizeError, toFilePath } from '../utils.ts'
-import { NEEM_DEV_RUNTIME } from './dev-runtime.ts'
+import { getNeemDevRuntime } from './dev-runtime.ts'
 
 type ArtifactInput = { entry: string; input: string; targetKey?: string }
 
@@ -420,7 +420,7 @@ async function watchWorkerTarget(
   const { output, ...input } = createRolldownOptions(target, metadata)
   input.experimental = {
     ...input.experimental,
-    devMode: { implement: NEEM_DEV_RUNTIME, lazy: false },
+    devMode: { implement: getNeemDevRuntime(), lazy: false },
   }
   input.plugins = [
     ...normalizePlugins(input.plugins),
